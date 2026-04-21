@@ -1,0 +1,5 @@
+drivers/net/*
+net/*
+drivers/usb/*
+drivers/pci/*
+drivers/soc/qcom/*

@@ -1,0 +1,4 @@
+net/bluetooth/*
+drivers/bluetooth/*
+net/wireless/*
+drivers/net/wireless/*

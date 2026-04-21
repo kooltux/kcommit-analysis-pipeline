@@ -1,0 +1,12 @@
+Fixes:
+Cc: stable@*
+CVE-*
+*cellular*
+*modem*
+*wwan*
+*mbim*
+*ncm*
+*qmi*
+*bluetooth*
+*wireless*
+*can*

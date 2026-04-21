@@ -1,0 +1,11 @@
+Fixes:
+Cc: stable@*
+CVE-*
+*watchdog*
+*serial*
+*can*
+*spi*
+*i2c*
+*gpio*
+*latency*
+*hardening*

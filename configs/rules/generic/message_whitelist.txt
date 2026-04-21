@@ -1,0 +1,10 @@
+# substring
+Fixes:
+# wildcard
+*regression*
+CVE-*
+syzbot
+*latency*
+*throughput*
+# regex
+re:(?i)use-after-free|out-of-bounds|overflow

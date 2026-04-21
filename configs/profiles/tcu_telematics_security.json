@@ -1,0 +1,16 @@
+{
+  "name": "tcu_telematics_security",
+  "description": "",
+  "enabled": true,
+  "profile_family": "legacy",
+  "category": "generic-embedded",
+  "rule_dir": "../rules/tcu_telematics_security",
+  "notes": [],
+  "shared_rule_dir": "rules/_shared",
+  "rule_files": {
+    "message_whitelist.txt": "../rules/tcu_telematics_security/message_whitelist.txt",
+    "path_whitelist.txt": "../rules/tcu_telematics_security/path_whitelist.txt"
+  },
+  "rule_root": "../rules/tcu_telematics_security",
+  "shared_rule_root": "../rules/_shared"
+}

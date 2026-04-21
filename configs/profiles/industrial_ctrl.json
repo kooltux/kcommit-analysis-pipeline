@@ -1,0 +1,16 @@
+{
+  "name": "industrial_ctrl",
+  "description": "",
+  "enabled": true,
+  "profile_family": "legacy",
+  "category": "generic-embedded",
+  "rule_dir": "../rules/industrial_ctrl",
+  "notes": [],
+  "shared_rule_dir": "rules/_shared",
+  "rule_files": {
+    "message_whitelist.txt": "../rules/industrial_ctrl/message_whitelist.txt",
+    "path_whitelist.txt": "../rules/industrial_ctrl/path_whitelist.txt"
+  },
+  "rule_root": "../rules/industrial_ctrl",
+  "shared_rule_root": "../rules/_shared"
+}

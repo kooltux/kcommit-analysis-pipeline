@@ -1,0 +1,6 @@
+arch/arm/*
+drivers/bluetooth/*
+drivers/net/*
+drivers/usb/*
+net/*
+security/*

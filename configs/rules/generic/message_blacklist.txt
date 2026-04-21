@@ -1,0 +1,6 @@
+spelling
+typo
+*documentation*
+comment only
+whitespace
+*cleanup*

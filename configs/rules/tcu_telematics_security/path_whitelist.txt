@@ -1,0 +1,7 @@
+arch/arm/*
+crypto/*
+drivers/char/hw_random/*
+drivers/char/tpm/*
+security/*
+kernel/*
+lib/*

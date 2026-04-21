@@ -1,0 +1,16 @@
+{
+  "name": "tcu_local_wireless",
+  "description": "Bluetooth, BLE, Wi-Fi, and local wireless stack.",
+  "enabled": true,
+  "profile_family": "qcom_tcu",
+  "category": "qualcomm-tcu",
+  "rule_dir": "../rules/tcu_local_wireless",
+  "notes": [],
+  "shared_rule_dir": "rules/_shared",
+  "rule_files": {
+    "message_whitelist.txt": "../rules/tcu_local_wireless/message_whitelist.txt",
+    "path_whitelist.txt": "../rules/tcu_local_wireless/path_whitelist.txt"
+  },
+  "rule_root": "../rules/tcu_local_wireless",
+  "shared_rule_root": "../rules/_shared"
+}

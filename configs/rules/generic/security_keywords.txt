@@ -1,0 +1,3 @@
+CVE-*
+re:(?i)use-after-free|uaf|overflow|out-of-bounds|refcount|infoleak|race
+copy_*_user

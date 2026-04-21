@@ -1,0 +1,32 @@
+{
+  "version": "v7.10",
+  "top_dir": "kcommit_analysis_pipeline_v7_8",
+  "examples": [
+    "example-qcom-tcu-default.json",
+    "example-qcom-tcu-full.json",
+    "example-workspace-template.json"
+  ],
+  "profile_dir": "configs/profiles",
+  "rule_dir": "configs/rules",
+  "profiles": [
+    "industrial_ctrl.json",
+    "network_product.json",
+    "storage_gateway.json",
+    "tcu_connectivity.json",
+    "tcu_ethernet_doip.json",
+    "tcu_local_wireless.json",
+    "tcu_modem_connectivity.json",
+    "tcu_ota_update_storage.json",
+    "tcu_platform_security.json",
+    "tcu_positioning_gnss.json",
+    "tcu_power_thermal_reliability.json",
+    "tcu_storage_update.json",
+    "tcu_telematics_security.json",
+    "tcu_vehicle_io.json",
+    "tcu_vehicle_networks.json"
+  ],
+  "runtime_state_file": "pipeline_state.json",
+  "report_stats_file": "output/report_stats.json",
+  "library_dir": "lib",
+  "template_dir": "configs/templates"
+}

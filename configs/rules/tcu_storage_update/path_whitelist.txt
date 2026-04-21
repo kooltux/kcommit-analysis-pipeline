@@ -1,0 +1,6 @@
+block/*
+crypto/*
+drivers/mmc/*
+drivers/mtd/*
+fs/*
+security/*

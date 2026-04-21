@@ -1,0 +1,16 @@
+{
+  "name": "tcu_ethernet_doip",
+  "description": "Automotive Ethernet and diagnostic-over-IP adjacency.",
+  "enabled": true,
+  "profile_family": "qcom_tcu",
+  "category": "qualcomm-tcu",
+  "rule_dir": "../rules/tcu_ethernet_doip",
+  "notes": [],
+  "shared_rule_dir": "rules/_shared",
+  "rule_files": {
+    "message_whitelist.txt": "../rules/tcu_ethernet_doip/message_whitelist.txt",
+    "path_whitelist.txt": "../rules/tcu_ethernet_doip/path_whitelist.txt"
+  },
+  "rule_root": "../rules/tcu_ethernet_doip",
+  "shared_rule_root": "../rules/_shared"
+}

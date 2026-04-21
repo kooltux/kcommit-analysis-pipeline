@@ -1,0 +1,10 @@
+arch/arm/*
+crypto/*
+drivers/*
+fs/*
+include/linux/*
+kernel/*
+lib/*
+mm/*
+net/*
+security/*

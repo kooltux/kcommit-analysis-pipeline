@@ -1,0 +1,5 @@
+drivers/thermal/*
+drivers/watchdog/*
+kernel/power/*
+drivers/clk/*
+drivers/regulator/*

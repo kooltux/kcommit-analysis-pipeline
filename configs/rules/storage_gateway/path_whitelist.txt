@@ -1,0 +1,9 @@
+arch/arm/*
+block/*
+crypto/*
+drivers/mmc/*
+drivers/mtd/*
+fs/*
+kernel/*
+mm/*
+security/*
