@@ -74,11 +74,16 @@ def main():
     save_json(os.path.join(outdir, 'profile_summary.json'), profile_summary)
 
     pipeline_state = load_json(os.path.join(work, 'pipeline_state.json'), default={}) or {}
+    with_profiles = len([c for c in scored if c.get('matched_profiles')])
+    without_profiles = len(scored) - with_profiles
+
     report_stats = {
         'total_commits_reported': len(scored),
         'commits_with_security_score': len([c for c in scored if c.get('security_score')]),
         'commits_with_performance_score': len([c for c in scored if c.get('performance_score')]),
         'commits_with_product_evidence': len([c for c in scored if c.get('product_evidence')]),
+        'commits_with_any_profile': with_profiles,
+        'commits_without_profile': without_profiles,
         'active_profiles': cfg.get('active_profiles', []),
         'template_options': cfg.get('templates', {}),
         'pipeline_state': pipeline_state,

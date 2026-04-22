@@ -1,31 +1,16 @@
-# Profile sets in V6.6
+# Profile sets in V7.12
 
-V6.6 clarifies the profile landscape by separating three conceptual groups.
+V7.12 simplifies the profile landscape around a small set of generic embedded-product profiles.
 
-## Legacy profiles
-These remain for backward compatibility:
-- industrial_ctrl
-- storage_gateway
-- network_product
-- tcu_connectivity
-- tcu_telematics_security
-- tcu_storage_update
-- tcu_vehicle_io
-- arm32_embedded_cyber
-- generic
+## Generic ARM-embedded profiles
+These profiles are intended for typical ARM-based embedded products:
+- industrial_ctrl: industrial control and field I/O devices
+- storage_gateway: storage-focused appliances and gateways
+- network_product: routers, switches, and other network-centric products
 
-## Qualcomm TCU-oriented profiles
-These model a connected Qualcomm TCU more precisely:
-- tcu_modem_connectivity
-- tcu_positioning_gnss
-- tcu_vehicle_networks
-- tcu_ethernet_doip
-- tcu_local_wireless
-- tcu_ota_update_storage
-- tcu_platform_security
-- tcu_power_thermal_reliability
+Each profile is backed by a dedicated rule set under `configs/rules/`, plus shared keywords and
+blacklists under `configs/rules/_shared/`.
 
-## Unified profile
-- 
-
-The `` profile is a broad merged profile intended to capture the combined relevance of the Qualcomm TCU-oriented concerns in a single active profile.
+You can extend or replace these profiles by adding new JSON files under `configs/profiles/` and
+corresponding rule directories under `configs/rules/`, then updating your workspace config to
+reference the new profile names in `active_profiles`.

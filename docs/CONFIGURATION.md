@@ -18,7 +18,7 @@ Example:
 
 ```sh
 export WORKSPACE=$HOME/my-product
-./launch.sh ./configs/example--qcom-tcu.json
+./launch.sh ./configs/example---tcu.json
 ```
 ## V6.9 mandatory and optional inputs
 

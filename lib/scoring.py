@@ -22,7 +22,6 @@ def infer_touched_paths(subject):
         ('thermal', 'drivers/thermal/'),
         ('usb', 'drivers/usb/'),
         ('pci', 'drivers/pci/'),
-        ('qcom', 'drivers/soc/qcom/'),
         ('tty', 'drivers/tty/'),
         ('serial', 'drivers/tty/serial/'),
         ('net', 'net/'),
@@ -49,8 +48,7 @@ def _profile_match_flags(commit, profile_rules):
     This applies per-profile whitelists/blacklists and keyword rules using
     the shared helpers from lib.rules.
     """
-    text = '%s
-%s' % (commit.get('subject', ''), commit.get('body', ''))
+    text = '%s\n%s' % (commit.get('subject', ''), commit.get('body', ''))
     files = commit.get('files', []) or []
 
     matched_profiles = []
@@ -88,19 +86,16 @@ def score_commit(commit, product_map, profile_rules):
     The score combines:
     - textual path guesses from the subject,
     - build evidence from logs and optional build_dir scanning,
-    - Kbuild-derived config_dirs from product_map,
+    - Kbuild-derived config_dirs and config_to_paths from product_map,
     - simple keyword-based patch features,
     - and per-profile rule matches.
     """
     guesses = commit.get('touched_paths_guess', []) or []
-    built_log = '
-'.join(product_map.get('built_objects_from_log', []))
-    built_dir = '
-'.join(product_map.get('built_artifacts_from_dir', []))
-    enabled_cfg = '
-'.join(product_map.get('enabled_configs', []))
-    config_dirs = '
-'.join(product_map.get('config_dirs', []))
+    built_log = "\n".join(product_map.get('built_objects_from_log', []))
+    built_dir = "\n".join(product_map.get('built_artifacts_from_dir', []))
+    enabled_cfg = "\n".join(product_map.get('enabled_configs', []))
+    config_dirs = "\n".join(product_map.get('config_dirs', []))
+    cfg_map = product_map.get('config_to_paths', {}) or {}
 
     product = 0
     evidence = []
@@ -117,8 +112,21 @@ def score_commit(commit, product_map, profile_rules):
             evidence.append('config:%s' % token)
         if guess and guess in config_dirs:
             product += 15
-            evidence.append('config_map:%s' % guess)
-    if guesses and product == 0:
+            evidence.append('config_map_dir:%s' % guess)
+
+    # Direct file-to-config mapping based on Kbuild-derived config_to_paths.
+    files = commit.get('files', []) or []
+    config_hits = set()
+    for sym, paths in (cfg_map or {}).items():
+        for p in paths:
+            if p in files:
+                config_hits.add(sym)
+                break
+    for sym in sorted(config_hits):
+        product += 10
+        evidence.append('config_symbol:%s' % sym)
+
+    if guesses and product == 0 and not config_hits:
         product += 5
         evidence.append('textual-path-guess')
     product = min(product, 60)
@@ -132,7 +140,12 @@ def score_commit(commit, product_map, profile_rules):
 
     # Stable/backport hints from both simple term matching and trailers.
     trailers = _rules.trailer_flags(commit)
-    stable_hint = patch.get('stable_terms') or trailers.get('has_fixes') or trailers.get('has_stable_cc') or trailers.get('has_cve')
+    stable_hint = (
+        patch.get('stable_terms')
+        or trailers.get('has_fixes')
+        or trailers.get('has_stable_cc')
+        or trailers.get('has_cve')
+    )
     stable = 10 if stable_hint else 0
 
     scored = dict(commit)

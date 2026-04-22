@@ -8,22 +8,21 @@ import time
 
 def load_state(path):
     if os.path.exists(path):
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, 'r', encoding="utf-8") as f:
             return json.load(f)
-    return {'stages': []}
+    return {"stages": []}
 
 
 def save_state(path, data):
-    with open(path, 'w', encoding='utf-8') as f:
+    with open(path, 'w', encoding="utf-8") as f:
         json.dump(data, f, indent=2)
-        f.write('
-')
+        f.write("\n")
 
 
 def start_stage(state_path, name, index, total):
     state = load_state(state_path)
     now = time.time()
-    entry = {'name': name, 'index': index, 'total': total, 'start_time': now, 'end_time': None, 'duration_sec': None, 'status': 'running'}
+    entry = {"name": name, "index": index, "total": total, "start_time": now, "end_time": None, "duration_sec": None, "status": "running"}
     state['stages'].append(entry)
     save_state(state_path, state)
     render_progress(index - 1, total, 'starting %s' % name)
@@ -54,9 +53,8 @@ def render_progress(done, total, label=''):
     filled = int(width * ratio)
     bar = '#' * filled + '-' * (width - filled)
     msg = '[%s] %d/%d %s' % (bar, done, total, label)
-    sys.stdout.write('' + msg[:200])
+    sys.stdout.write("\n" + msg[:200])
     sys.stdout.flush()
     if done >= total:
-        sys.stdout.write('
-')
+        sys.stdout.write("\n")
         sys.stdout.flush()

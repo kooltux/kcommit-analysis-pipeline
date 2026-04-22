@@ -1,7 +1,0 @@
-arch/arm/*
-drivers/can/*
-drivers/gpio/*
-drivers/i2c/*
-drivers/spi/*
-drivers/tty/serial/*
-security/*

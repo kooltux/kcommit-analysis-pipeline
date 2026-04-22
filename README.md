@@ -15,16 +15,15 @@ Python 3.6-compatible, restartable pipeline to analyze Linux kernel commits betw
 - Config support for relative includes and `${foo}` pseudo variables.
 - Runnable stage skeleton helpers and HTML summary generator.
 ## V6.4 additions
-- Qualcomm TCU-oriented profile rewrite.
-- New TCU profiles for modem connectivity, GNSS, vehicle networks, Ethernet/DoIP, local wireless, OTA/update storage, platform security, and power/thermal reliability.
-- Example Qualcomm TCU configs and matching rule sets.
+- vendor-specific TCU-oriented profile rewrite.
+- Example vendor-specific TCU configs and matching rule sets.
 
 ## V6.5 additions
 - Added explanatory comments to the main Python sources so the control flow is easier to follow.
 ## V6.6 additions
-- Added `docs/PROFILE_SETS.md` to explain legacy, Qualcomm TCU, and merged profile groupings.
-- Added merged `` profile to cover the full Qualcomm TCU-oriented scope with a single profile.
-- Added `configs/example--qcom-tcu.json` as a one-profile configuration example.
+- Added `docs/PROFILE_SETS.md` to explain legacy, vendor-specific TCU, and merged profile groupings.
+- Added merged `` profile to cover the full vendor-specific TCU-oriented scope with a single profile.
+- Added `configs/example---tcu.json` as a one-profile configuration example.
 ## V6.7 additions
 - Updated example configs so they do not hardcode absolute paths.
 - Standardized path construction around the external `WORKSPACE` variable.
@@ -86,3 +85,16 @@ Python 3.6-compatible, restartable pipeline to analyze Linux kernel commits betw
 - Removed `docs/examples/run_all.sh`.
 - Made `tools/generate_message_whitelist.py --output` mandatory.
 - Refreshed HTML summary rendering with embedded CSS.
+
+## V7.11 additions
+- Switched commit collection to a richer git-log format via `lib.gitutils.iter_git_log_records`.
+- Integrated Kconfiglib-backed symbol loading and Kbuild-based `config_to_paths` mapping into the product map.
+- Added profile-aware rule loading (`lib.profile_rules`) and rule-enhanced scoring in `lib.scoring`.
+- Integrated HTML summary generation into the final reporting stage and added HTML templates under `configs/templates/`.
+
+## V7.12 additions
+- Replaced legacy shell helpers with the `kcommit_pipeline.py` Python driver for running single or all stages.
+- Removed product-specific TCU profiles and examples; kept a smaller, generic ARM-embedded profile set.
+- Sanitized rules and documentation to remove vendor-specific references and clarified comment support in JSON and rule files.
+- Extended product scoring to use direct config-to-path mappings and added profile coverage statistics to the report.
+- Added an optional `collect.max_commits` safeguard for very large revision ranges.

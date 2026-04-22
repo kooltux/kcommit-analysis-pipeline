@@ -18,6 +18,8 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config(args.config)
+    collect_cfg = cfg.get('collect', {}) or {}
+    max_commits = int(collect_cfg.get('max_commits', 0) or 0)
     state_path = os.path.join(cfg.get('project', {}).get('work_dir', './work'), 'pipeline_state.json')
     started = start_stage(state_path, 'collect_commits', 1, 6)
 
@@ -36,6 +38,9 @@ def main():
     commits = []
     try:
         for rec in iter_git_log_records(cfg):
+            if max_commits and len(commits) >= max_commits:
+                print('warning: stopping collection after %d commits (collect.max_commits)' % max_commits)
+                break
             commits.append({
                 'commit': rec.get('commit'),
                 'subject': rec.get('subject', ''),

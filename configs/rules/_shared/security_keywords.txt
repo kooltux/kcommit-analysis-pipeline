@@ -1,1 +1,2 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
 re:(?i)cve-|use-after-free|uaf|overflow|oob|bounds|refcount|race|double free

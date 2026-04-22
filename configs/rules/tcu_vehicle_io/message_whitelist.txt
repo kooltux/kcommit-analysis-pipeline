@@ -1,9 +1,0 @@
-Fixes:
-Cc: stable@*
-CVE-*
-*can*
-*serial*
-*spi*
-*i2c*
-*gpio*
-*watchdog*

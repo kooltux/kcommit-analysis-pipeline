@@ -1,5 +1,0 @@
-drivers/net/can/*
-net/can/*
-drivers/tty/*
-drivers/spi/*
-drivers/i2c/*

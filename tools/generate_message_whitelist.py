@@ -13,7 +13,6 @@ COMMON_BAD = {
     'the','and','for','with','from','into','next','branch','tag','of','git','https','http','linux','kernel','driver','drivers','tools','selftests','samples','documentation','maintainers','patch','patches'
 }
 PREFERRED = [
-    'qcom','qrtr','rmnet','ipa','mhi','remoteproc','rpmsg',
     'net','can','ethernet','phy','phylib','phylink','mdio','ethtool','ipv4','ipv6','tcp','udp','tls','xfrm','vlan',
     'bluetooth','wifi','wireless','cfg80211','mac80211','nl80211',
     'usb','pci','tty','serial','i2c','spi','pinctrl','gpio','irqchip','clk','regulator','thermal','watchdog','pm','cpufreq','cpuidle',
@@ -42,7 +41,7 @@ def build_prefix_list(counts, limit=80):
     final = []
     seen = set()
     for tok in PREFERRED:
-        if tok in counts or tok in {'qcom','net','can','usb','pci','arm64','crypto','security','mmc','ext4','thermal','watchdog','pm','bluetooth','wireless','dt-bindings','of'}:
+        if tok in counts or tok in {'net','can','usb','pci','arm64','crypto','security','mmc','ext4','thermal','watchdog','pm','bluetooth','wireless','dt-bindings','of'}:
             final.append(tok)
             seen.add(tok)
     for tok, c in counts.most_common(200):
@@ -66,7 +65,6 @@ def write_whitelist(path, prefixes):
             f.write('re:^%s(?:\\s|:|$)\n' % re.escape(tok))
         f.write('\n# Nested-prefix examples\n')
         f.write('re:^net:\\s*(phy|ipv4|ipv6|tls|xfrm|qrtr)(?:\\s|:|$)\n')
-        f.write('re:^qcom:\\s*[^:]+:\\s*\n')
         f.write('re:^staging:\\s*[^:]+:\\s*\n')
         f.write('re:^dt-bindings:\\s*[^:]+:\\s*\n')
 
