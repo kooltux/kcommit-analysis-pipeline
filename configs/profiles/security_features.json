@@ -1,0 +1,11 @@
+// Comments are allowed: lines starting with // or # are ignored by the loader.
+{
+  "name": "security_features",
+  "description": "New security features, hardening changes, and capability/policy updates.",
+  "rule_categories": [
+    "security_general",
+    "security_auth_caps",
+    "security_crypto_timing",
+    "security_syscalls"
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "version": "v7.12",
+  "version": "v7.13",
   "top_dir": "kcommit_analysis_pipeline_v7_8",
   "examples": [
     "example-arm-embedded-default.json",
@@ -9,9 +9,9 @@
   "profile_dir": "configs/profiles",
   "rule_dir": "configs/rules",
   "profiles": [
-    "industrial_ctrl.json",
-    "network_product.json",
-    "storage_gateway.json"
+    "security_fixes.json",
+    "security_features.json",
+    "performance.json"
   ],
   "runtime_state_file": "pipeline_state.json",
   "report_stats_file": "output/report_stats.json",

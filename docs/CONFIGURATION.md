@@ -18,7 +18,7 @@ Example:
 
 ```sh
 export WORKSPACE=$HOME/my-product
-./launch.sh ./configs/example---tcu.json
+python3 kcommit_pipeline.py --config ./configs/example-arm-embedded-default.json
 ```
 ## V6.9 mandatory and optional inputs
 

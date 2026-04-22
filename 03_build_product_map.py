@@ -32,7 +32,7 @@ def main():
 
     cfg = load_config(args.config)
     state_path = os.path.join(cfg.get('project', {}).get('work_dir', './work'), 'pipeline_state.json')
-    started = start_stage(state_path, 'build_product_map', 3, 6)
+    started = start_stage(state_path, 'build_product_map', 4, 7)
 
     problems, notices = validate_inputs(cfg)
     for note in notices:

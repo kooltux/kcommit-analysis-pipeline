@@ -3,6 +3,7 @@
 from __future__ import print_function
 import argparse
 import os
+import json
 
 from lib.config import load_config
 from lib.io_utils import ensure_dir, save_json
@@ -21,7 +22,7 @@ def main():
     collect_cfg = cfg.get('collect', {}) or {}
     max_commits = int(collect_cfg.get('max_commits', 0) or 0)
     state_path = os.path.join(cfg.get('project', {}).get('work_dir', './work'), 'pipeline_state.json')
-    started = start_stage(state_path, 'collect_commits', 1, 6)
+    started = start_stage(state_path, 'collect_commits', 2, 7)
 
     problems, notices = validate_inputs(cfg)
     for note in notices:
@@ -58,6 +59,14 @@ def main():
         raise
 
     save_json(os.path.join(cache, 'commits.json'), commits)
+
+    # Optional JSONL output for downstream streaming consumers.
+    if collect_cfg.get('jsonl'):
+        jsonl_path = os.path.join(cache, 'commits.jsonl')
+        with open(jsonl_path, 'w', encoding='utf-8') as f:
+            for rec in commits:
+                f.write(json.dumps(rec, sort_keys=True) + '\n')
+
     print('collected %d commits' % len(commits))
     finish_stage(state_path, 'collect_commits', started, status='ok', extra={'commit_count': len(commits)})
 

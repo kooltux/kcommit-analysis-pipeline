@@ -1,0 +1,8 @@
+// Comments are allowed: lines starting with // or # are ignored by the loader.
+{
+  "name": "performance",
+  "description": "Performance, latency, and throughput improvements.",
+  "rule_categories": [
+    "performance_general"
+  ]
+}

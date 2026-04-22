@@ -9,6 +9,7 @@ from lib.config import load_config
 
 
 STAGES = [
+    ('prepare_rules', '00_prepare_rules.py'),
     ('collect_commits', '01_collect_commits.py'),
     ('collect_build_context', '02_collect_build_context.py'),
     ('build_product_map', '03_build_product_map.py'),

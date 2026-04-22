@@ -1,0 +1,14 @@
+// Comments are allowed: lines starting with // or # are ignored by the loader.
+{
+  "name": "security_fixes",
+  "description": "Security bug fixes, CVE backports, and stability-related security updates.",
+  "rule_categories": [
+    "security_general",
+    "security_cve_bugs",
+    "security_memory",
+    "security_bounds",
+    "security_auth_caps",
+    "security_crypto_timing",
+    "security_syscalls"
+  ]
+}

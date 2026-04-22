@@ -98,3 +98,8 @@ Python 3.6-compatible, restartable pipeline to analyze Linux kernel commits betw
 - Sanitized rules and documentation to remove vendor-specific references and clarified comment support in JSON and rule files.
 - Extended product scoring to use direct config-to-path mappings and added profile coverage statistics to the report.
 - Added an optional `collect.max_commits` safeguard for very large revision ranges.
+
+## V7.13 additions
+- Added an initial prepare_rules stage that resolves profiles, rule categories, and compiles deduplicated rule sets for the pipeline.
+- Introduced topic-based profiles (security_fixes, security_features, performance) and security rule categories (general, CVEs/bugs, memory, bounds, auth/caps, crypto/timing, syscalls).
+- Added optional JSONL output for the commit collection stage and exposed collect.max_commits and collect.jsonl in example configs.
