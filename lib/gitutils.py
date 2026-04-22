@@ -4,12 +4,13 @@ import os
 import subprocess
 
 
-RS = u'\x1e'
-FS = u'\x1f'
+RS = u''
+FS = u''
 
 
 def run_git(cfg, args, check=True):
-    git_bin = cfg.get('collect', {}).get('git_binary', 'git')
+    collect = cfg.get('collect', {}) or {}
+    git_bin = collect.get('git_binary', 'git')
     src = cfg['kernel']['source_dir']
     cmd = [git_bin, '-C', src] + args
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
@@ -21,7 +22,7 @@ def run_git(cfg, args, check=True):
 
 def iter_git_log_records(cfg):
     kernel = cfg['kernel']
-    collect = cfg['collect']
+    collect = cfg.get('collect', {}) or {}
     rev_range = '%s..%s' % (kernel['rev_old'], kernel['rev_new'])
     fmt = RS + 'commit=%H%nparents=%P%nauthor_time=%at%ncommit_time=%ct%nauthor_name=%an%nauthor_email=%ae%nsubject=%s%nbody=%B' + FS
     args = ['log', rev_range, '--reverse', '--topo-order', '--format=' + fmt]
@@ -76,7 +77,7 @@ def parse_pretty_block(text):
         elif line.startswith('body='):
             in_body = True
             body_lines.append(line[len('body='):])
-    record['body'] = '\n'.join(body_lines).strip()
+    record['body'] = ' '.join(body_lines).strip()
     return record
 
 
@@ -87,7 +88,7 @@ def parse_tail_block(text):
         line = line.strip()
         if not line:
             continue
-        parts = line.split('\t')
+        parts = line.split('	')
         if len(parts) == 3 and (parts[0].isdigit() or parts[0] == '-'):
             numstat.append({'added': parts[0], 'deleted': parts[1], 'path': parts[2]})
             files.append(parts[2])
@@ -103,11 +104,12 @@ def show_commit_patch(cfg, sha, unified=0):
 
 def list_rev_commits(cfg):
     kernel = cfg['kernel']
+    collect = cfg.get('collect', {}) or {}
     rev_range = '%s..%s' % (kernel['rev_old'], kernel['rev_new'])
     args = ['rev-list', '--reverse', rev_range]
-    if cfg['collect'].get('use_no_merges', True):
+    if collect.get('use_no_merges', True):
         args.append('--no-merges')
-    if cfg['collect'].get('use_first_parent'):
+    if collect.get('use_first_parent'):
         args.append('--first-parent')
     out = run_git(cfg, args)
     return [x.strip() for x in out.splitlines() if x.strip()]

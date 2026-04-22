@@ -3,15 +3,12 @@
 from __future__ import print_function
 import argparse
 import os
-import subprocess
+
 from lib.config import load_config
 from lib.io_utils import ensure_dir, save_json
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import start_stage, finish_stage
-
-
-def run_git(repo, args):
-    return subprocess.check_output(['git', '-C', repo] + args).decode('utf-8', 'replace')
+from lib.gitutils import iter_git_log_records
 
 
 def main():
@@ -19,9 +16,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--config', required=True)
     args = ap.parse_args()
+
     cfg = load_config(args.config)
     state_path = os.path.join(cfg.get('project', {}).get('work_dir', './work'), 'pipeline_state.json')
     started = start_stage(state_path, 'collect_commits', 1, 6)
+
     problems, notices = validate_inputs(cfg)
     for note in notices:
         print(note)
@@ -29,20 +28,30 @@ def main():
         for problem in problems:
             print(problem)
         raise SystemExit(2)
+
     work = cfg.get('project', {}).get('work_dir', './work')
     cache = os.path.join(work, 'cache')
     ensure_dir(cache)
-    repo = cfg.get('kernel', {}).get('source_dir')
-    rev_old = cfg.get('kernel', {}).get('rev_old')
-    rev_new = cfg.get('kernel', {}).get('rev_new')
+
     commits = []
-    if repo and rev_old and rev_new and os.path.isdir(repo):
-        fmt = '%H%x1f%s'
-        out = run_git(repo, ['log', '--no-merges', '--format=' + fmt, '%s..%s' % (rev_old, rev_new)])
-        for line in out.splitlines():
-            if '' in line:
-                sha, subj = line.split('', 1)
-                commits.append({'commit': sha, 'subject': subj})
+    try:
+        for rec in iter_git_log_records(cfg):
+            commits.append({
+                'commit': rec.get('commit'),
+                'subject': rec.get('subject', ''),
+                'body': rec.get('body', ''),
+                'files': rec.get('files', []),
+                'numstat': rec.get('numstat', []),
+                'author_time': rec.get('author_time'),
+                'commit_time': rec.get('commit_time'),
+                'author_name': rec.get('author_name'),
+                'author_email': rec.get('author_email'),
+                'parents': rec.get('parents', []),
+            })
+    except Exception as e:
+        print('ERROR: failed to collect commits via git log: %s' % e)
+        raise
+
     save_json(os.path.join(cache, 'commits.json'), commits)
     print('collected %d commits' % len(commits))
     finish_stage(state_path, 'collect_commits', started, status='ok', extra={'commit_count': len(commits)})
