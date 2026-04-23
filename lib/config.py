@@ -67,7 +67,7 @@ def _strip_json_comments(text):
         if stripped.startswith('//') or stripped.startswith('#'):
             continue
         cleaned_lines.append(line)
-    return ' '.join(cleaned_lines)
+    return '\n'.join(cleaned_lines)
 
 
 def _load_json(path):

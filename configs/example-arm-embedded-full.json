@@ -1,48 +1,59 @@
-// Comments are allowed: lines starting with // or # are ignored by the loader.
 {
+  // kcommit-analysis-pipeline v7.17 – ARM embedded example (all knobs)
   "vars": {
-    "TOOLDIR": "${TOOLDIR}",
     "WORKSPACE": "${WORKSPACE}",
-    "kernel_src": "${WORKSPACE}/linux",
-    "kernel_config": "${WORKSPACE}/kernel.config",
-    "build_dir": "${WORKSPACE}/build",
-    "logs_dir": "${WORKSPACE}/logs",
-    "modules_list": "${WORKSPACE}/modules.txt"
+    "TOOLDIR":   "${TOOLDIR}"
   },
   "project": {
-    "name": "example-arm-embedded-full",
-    "work_dir": "${WORKSPACE}/work-example-arm-embedded-full"
+    "name":     "arm-embedded-full",
+    "work_dir": "${WORKSPACE}/work"
   },
   "kernel": {
-    "source_dir": "${kernel_src}",
-    "rev_old": "v4.14.206",
-    "rev_new": "v4.14.336"
+    "source_dir": "${WORKSPACE}/linux",
+    "rev_old":    "v6.6",
+    "rev_new":    "v6.9"
   },
   "inputs": {
-    "kernel_config": "${kernel_config}",
-    "build_dir": "${build_dir}",
-    "kernel_build_log": "${logs_dir}/kernel-build.log",
-    "yocto_build_log": "${logs_dir}/yocto.log",
-    "modules_file": "${modules_list}",
-    "dts_roots": [
-      "${kernel_src}/arch/arm/boot/dts"
-    ]
+    "kernel_config":    "${WORKSPACE}/linux/.config",
+    "build_dir":        "${WORKSPACE}/build",
+    "kernel_build_log": "${WORKSPACE}/logs/kernel_build.log",
+    "yocto_build_log":  "${WORKSPACE}/logs/yocto_build.log",
+    "dts_roots":        ["${WORKSPACE}/linux/arch/arm64/boot/dts"]
   },
   "profiles": {
-    "active": [
-      "security_fixes",
-      "security_features",
-      "performance"
-    ]
+    "dir": "${TOOLDIR}/configs/profiles",
+    "active": {
+      "security_fixes":    100,
+      "security_features":  80,
+      "performance":        60
+    }
   },
-  "templates": {
-    "report_title": "Kernel commit analysis report",
-    "html_summary": true,
-    "top_n_commits": 50,
-    "include_pipeline_stats": true
+  "rules": {
+    "dir": "${TOOLDIR}/configs/rules"
+  },
+  "scoring": {
+    "product":     1.0,
+    "security":    2.0,
+    "performance": 1.0,
+    "stable":      1.5
   },
   "collect": {
-    "max_commits": 0,
-    "jsonl": false
+    "use_numstat":      true,
+    "use_no_merges":    true,
+    "use_first_parent": false,
+    "max_commits":      0,
+    "score_workers":    4,
+    "jsonl":            false
+  },
+  "history_mapping": {
+    "mode":                  "sampled",
+    "sample_step":           500,
+    "max_commits_per_probe": 3
+  },
+  "templates": {
+    "html_summary":  true,
+    "report_title":  "ARM Embedded – Full Analysis",
+    "top_n":         500,
+    "summary_css":   "${TOOLDIR}/configs/templates/summary.css"
   }
 }

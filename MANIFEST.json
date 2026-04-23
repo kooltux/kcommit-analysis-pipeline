@@ -1,20 +1,26 @@
 {
-  "version": "v7.13",
-  "top_dir": "kcommit_analysis_pipeline_v7_8",
-  "examples": [
-    "example-arm-embedded-default.json",
-    "example-arm-embedded-full.json",
-    "example-workspace-template.json"
-  ],
-  "profile_dir": "configs/profiles",
-  "rule_dir": "configs/rules",
-  "profiles": [
-    "security_fixes.json",
-    "security_features.json",
-    "performance.json"
-  ],
-  "runtime_state_file": "pipeline_state.json",
-  "report_stats_file": "output/report_stats.json",
+  "version": "v7.17",
+  "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for security and performance relevance",
   "library_dir": "lib",
-  "template_dir": "configs/templates"
+  "template_dir": "configs/templates",
+  "scoring_dir":  "configs/scoring",
+  "example_configs": [
+    "configs/example-arm-embedded-default.json",
+    "configs/example-arm-embedded-full.json",
+    "configs/example-qcom-tcu-default.json"
+  ],
+  "example_profiles": [
+    "configs/profiles/security_fixes.json",
+    "configs/profiles/security_features.json",
+    "configs/profiles/performance.json"
+  ],
+  "pipeline_stages": [
+    {"index": 0, "key": "prepare_pipeline",      "script": "00_prepare_pipeline.py"},
+    {"index": 1, "key": "collect_commits",       "script": "01_collect_commits.py"},
+    {"index": 2, "key": "collect_build_context", "script": "02_collect_build_context.py"},
+    {"index": 3, "key": "build_product_map",     "script": "03_build_product_map.py"},
+    {"index": 4, "key": "enrich_commits",        "script": "04_enrich_commits.py"},
+    {"index": 5, "key": "score_commits",         "script": "05_score_commits.py"},
+    {"index": 6, "key": "report_commits",        "script": "06_report_commits.py"}
+  ]
 }
