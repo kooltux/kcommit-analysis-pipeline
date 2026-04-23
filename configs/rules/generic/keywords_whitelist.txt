@@ -1,0 +1,23 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
+Fixes:
+*regression*
+CVE-*
+syzbot
+*latency*
+*throughput*
+re:(?i)use-after-free|out-of-bounds|overflow
+Cc: stable@
+re:(?i)use-after-free|uaf|overflow|out-of-bounds|refcount|infoleak|race
+copy_*_user
+re:(?i)cve-|use-after-free|uaf|overflow|oob|bounds|refcount|race|double free
+*performance*
+*interactivity*
+*cache*
+*contention*
+*batching*
+*wakeups*
+*hot path*
+*fast path*
+latency
+throughput
+regression

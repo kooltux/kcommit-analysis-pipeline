@@ -1,4 +1,0 @@
-# Comments are allowed: lines starting with # are ignored by the rules parser.
-CVE-*
-re:(?i)use-after-free|uaf|overflow|out-of-bounds|refcount|infoleak|race
-copy_*_user

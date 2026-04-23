@@ -2,6 +2,7 @@
 performance
 throughput
 latency
+regression
 reduce latency
 speed up
 speedup
@@ -10,6 +11,5 @@ optimization
 micro-optim
 fast path
 slow path
-regression
 scalability
 scale better

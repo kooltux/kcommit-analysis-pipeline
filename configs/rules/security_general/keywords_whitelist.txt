@@ -1,9 +1,9 @@
 # Comments are allowed: lines starting with # are ignored by the rules parser.
 security
-secure
 hardening
-harden
 mitigation
+secure
+harden
 exploit
 vulnerability
 sanitize

@@ -1,0 +1,9 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
+spelling
+typo
+*documentation*
+comment only
+whitespace
+*cleanup*
+documentation
+comment

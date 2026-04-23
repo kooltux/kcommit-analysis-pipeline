@@ -1,9 +1,0 @@
-# Comments are allowed: lines starting with # are ignored by the rules parser.
-arch/arm/*
-crypto/*
-drivers/net/*
-drivers/firmware/*
-include/linux/netfilter/*
-kernel/*
-net/*
-security/*

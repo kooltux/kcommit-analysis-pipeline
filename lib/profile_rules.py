@@ -3,8 +3,6 @@ import io
 import json
 import os
 
-from lib import rules as _rules
-
 
 def _read_patterns(path):
     patterns = []
@@ -45,6 +43,16 @@ def _active_profiles(cfg):
     return []
 
 
+RULE_SCHEMA = {
+    'keywords_whitelist': 'keywords_whitelist.txt',
+    'keywords_blacklist': 'keywords_blacklist.txt',
+    'path_whitelist': 'path_whitelist.txt',
+    'path_blacklist': 'path_blacklist.txt',
+    'commit_whitelist': 'commit_whitelist.txt',
+    'commit_blacklist': 'commit_blacklist.txt',
+}
+
+
 def compile_rules_for_config(cfg, work_dir):
     """Compile and deduplicate rules across all active profiles for this config.
 
@@ -67,17 +75,6 @@ def compile_rules_for_config(cfg, work_dir):
     if not os.path.isdir(rule_root):
         raise RuntimeError('rules directory not found: %s' % rule_root)
 
-    # Always include shared rules from rules/_shared when present.
-    shared_root = os.path.join(rule_root, '_shared')
-    shared = {
-        'message_whitelist': _read_patterns(os.path.join(shared_root, 'message_whitelist.txt')),
-        'message_blacklist': _read_patterns(os.path.join(shared_root, 'message_blacklist.txt')),
-        'path_whitelist': _read_patterns(os.path.join(shared_root, 'path_whitelist.txt')),
-        'path_blacklist': _read_patterns(os.path.join(shared_root, 'path_blacklist.txt')),
-        'security_keywords': _read_patterns(os.path.join(shared_root, 'security_keywords.txt')),
-        'performance_keywords': _read_patterns(os.path.join(shared_root, 'performance_keywords.txt')),
-    }
-
     profiles_rules = {}
 
     for name in active:
@@ -89,44 +86,17 @@ def compile_rules_for_config(cfg, work_dir):
         if not rule_names:
             raise RuntimeError('profile %r does not define any rules' % name)
 
-        msg_whitelist = set(shared['message_whitelist'])
-        msg_blacklist = set(shared['message_blacklist'])
-        path_whitelist = set(shared['path_whitelist'])
-        path_blacklist = set(shared['path_blacklist'])
-        sec_keywords = set(shared['security_keywords'])
-        perf_keywords = set(shared['performance_keywords'])
-        force_inc_c = set()
-        force_exc_c = set()
-        force_inc_p = set()
-        force_exc_p = set()
+        accum = {key: set() for key in RULE_SCHEMA.keys()}
 
         for rname in rule_names:
             rdir = os.path.join(rule_root, rname)
             if not os.path.isdir(rdir):
                 raise RuntimeError('rule folder %r for profile %r not found under %s' % (rname, name, rule_root))
-            msg_whitelist.update(_read_patterns(os.path.join(rdir, 'message_whitelist.txt')))
-            msg_blacklist.update(_read_patterns(os.path.join(rdir, 'message_blacklist.txt')))
-            path_whitelist.update(_read_patterns(os.path.join(rdir, 'path_whitelist.txt')))
-            path_blacklist.update(_read_patterns(os.path.join(rdir, 'path_blacklist.txt')))
-            sec_keywords.update(_read_patterns(os.path.join(rdir, 'security_keywords.txt')))
-            perf_keywords.update(_read_patterns(os.path.join(rdir, 'performance_keywords.txt')))
-            force_inc_c.update(_read_patterns(os.path.join(rdir, 'force_include_commits.txt')))
-            force_exc_c.update(_read_patterns(os.path.join(rdir, 'force_exclude_commits.txt')))
-            force_inc_p.update(_read_patterns(os.path.join(rdir, 'force_include_paths.txt')))
-            force_exc_p.update(_read_patterns(os.path.join(rdir, 'force_exclude_paths.txt')))
+            for key, fname in RULE_SCHEMA.items():
+                patterns = _read_patterns(os.path.join(rdir, fname))
+                accum[key].update(patterns)
 
-        rules = {
-            'message_whitelist': sorted(msg_whitelist),
-            'message_blacklist': sorted(msg_blacklist),
-            'path_whitelist': sorted(path_whitelist),
-            'path_blacklist': sorted(path_blacklist),
-            'security_keywords': sorted(sec_keywords),
-            'performance_keywords': sorted(perf_keywords),
-            'force_include_commits': sorted(force_inc_c),
-            'force_exclude_commits': sorted(force_exc_c),
-            'force_include_paths': sorted(force_inc_p),
-            'force_exclude_paths': sorted(force_exc_p),
-        }
+        rules = {key: sorted(values) for key, values in accum.items()}
         profiles_rules[name] = rules
 
     cache = os.path.join(work_dir, 'cache')
@@ -141,7 +111,7 @@ def compile_rules_for_config(cfg, work_dir):
 def load_profile_rules(cfg):
     """Load rules for active profiles.
 
-    Prefers compiled_rules.json produced by the prepare_rules stage. Falls
+    Prefers compiled_rules.json produced by the prepare_pipeline stage. Falls
     back to on-the-fly compilation when compiled data is missing.
     """
     work = cfg.get('project', {}).get('work_dir', './work')

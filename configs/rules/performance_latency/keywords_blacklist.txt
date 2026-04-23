@@ -1,4 +1,1 @@
 # Comments are allowed: lines starting with # are ignored by the rules parser.
-CVE-
-Fixes:
-BUG:

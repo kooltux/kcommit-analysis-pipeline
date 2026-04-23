@@ -30,12 +30,12 @@ def match_any_string(value, patterns):
     return hits
 
 
-def match_message_whitelist(message, rules):
-    return match_any_string(message, rules.get('message_whitelist', []))
+def match_keywords_whitelist(text, rules):
+    return match_any_string(text, rules.get('keywords_whitelist', []))
 
 
-def match_message_blacklist(message, rules):
-    return match_any_string(message, rules.get('message_blacklist', []))
+def match_keywords_blacklist(text, rules):
+    return match_any_string(text, rules.get('keywords_blacklist', []))
 
 
 def match_path_list(paths, patterns):
@@ -62,9 +62,8 @@ def extract_keywords(text, patterns):
 
 def classify_message(commit, rules):
     text = '%s\n%s' % (commit.get('subject', ''), commit.get('body', ''))
-    sec = extract_keywords(text, rules.get('security_keywords', []))
-    perf = extract_keywords(text, rules.get('performance_keywords', []))
-    return sec, perf
+    kws = extract_keywords(text, rules.get('keywords_whitelist', []))
+    return kws, []
 
 
 def trailer_flags(commit):
@@ -92,13 +91,13 @@ def list_contains_pattern(values, patterns):
 def is_forced_include(commit, rules):
     sha = commit.get('commit', '')
     paths = commit.get('files', [])
-    return bool(list_contains_pattern([sha], rules.get('force_include_commits', [])) or match_path_list(paths, rules.get('force_include_paths', [])))
+    return bool(list_contains_pattern([sha], rules.get('commit_whitelist', [])) or match_path_list(paths, rules.get('path_whitelist', [])))
 
 
 def is_forced_exclude(commit, rules):
     sha = commit.get('commit', '')
     paths = commit.get('files', [])
-    return bool(list_contains_pattern([sha], rules.get('force_exclude_commits', [])) or match_path_list(paths, rules.get('force_exclude_paths', [])))
+    return bool(list_contains_pattern([sha], rules.get('commit_blacklist', [])) or match_path_list(paths, rules.get('path_blacklist', [])))
 
 
 def profile_matches(commit, profile_rules):
