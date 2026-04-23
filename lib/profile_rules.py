@@ -54,12 +54,30 @@ RULE_SCHEMA = {
 
 
 def compile_rules_for_config(cfg, work_dir):
-    """Compile and deduplicate rules across all active profiles for this config.
+    """Compile and deduplicate rules across all active profiles.
 
-    Profiles are resolved from configs/profiles/<name>.json and rules from
-    configs/rules/<rule_folder>/*, relative to the configuration directory.
-    The result is written to <work_dir>/cache/compiled_rules.json and
-    returned as {profile_name: rules_dict}.
+    For each active profile, this loads its JSON definition from
+    configs/profiles/<name>.json and the referenced rule folders from
+    configs/rules/<rule_name>/.
+
+    The compiled data has the following shape:
+
+        {
+          "profiles": {
+            "profile_name": {
+              "merged": { ... },
+              "rules": {
+                "rule_name": { "weight": int, ...patterns... },
+                ...
+              }
+            },
+            ...
+          }
+        }
+
+    The "merged" entry aggregates all patterns across the profile's rules
+    for fast global checks (e.g., commit-wide blacklist). The per-rule
+    entries retain individual weights so scoring can treat them differently.
     """
     meta = cfg.get('_meta', {}) or {}
     config_dir = meta.get('config_dir') or os.getcwd()
@@ -82,22 +100,37 @@ def compile_rules_for_config(cfg, work_dir):
         pdata = _load_json_with_comments(prof_path)
         if not pdata:
             raise RuntimeError('profile %r not found or empty at %s' % (name, prof_path))
-        rule_names = pdata.get('rules') or []
-        if not rule_names:
-            raise RuntimeError('profile %r does not define any rules' % name)
 
-        accum = {key: set() for key in RULE_SCHEMA.keys()}
+        rules_cfg = pdata.get('rules') or {}
+        if not isinstance(rules_cfg, dict) or not rules_cfg:
+            raise RuntimeError('profile %r must define a non-empty rules mapping' % name)
 
-        for rname in rule_names:
+        merged_accum = {key: set() for key in RULE_SCHEMA.keys()}
+        per_rule = {}
+
+        for rname, weight in rules_cfg.items():
             rdir = os.path.join(rule_root, rname)
             if not os.path.isdir(rdir):
                 raise RuntimeError('rule folder %r for profile %r not found under %s' % (rname, name, rule_root))
+            try:
+                w = int(weight)
+            except (TypeError, ValueError):
+                raise RuntimeError('rule %r in profile %r has non-integer weight %r' % (rname, name, weight))
+            w = max(0, min(100, w))
+
+            rule_data = {'weight': w}
             for key, fname in RULE_SCHEMA.items():
                 patterns = _read_patterns(os.path.join(rdir, fname))
-                accum[key].update(patterns)
+                rule_data[key] = patterns
+                merged_accum[key].update(patterns)
 
-        rules = {key: sorted(values) for key, values in accum.items()}
-        profiles_rules[name] = rules
+            per_rule[rname] = rule_data
+
+        merged = {key: sorted(values) for key, values in merged_accum.items()}
+        profiles_rules[name] = {
+            'merged': merged,
+            'rules': per_rule,
+        }
 
     cache = os.path.join(work_dir, 'cache')
     os.makedirs(cache, exist_ok=True)
@@ -109,7 +142,7 @@ def compile_rules_for_config(cfg, work_dir):
 
 
 def load_profile_rules(cfg):
-    """Load rules for active profiles.
+    """Load compiled rules for active profiles.
 
     Prefers compiled_rules.json produced by the prepare_pipeline stage. Falls
     back to on-the-fly compilation when compiled data is missing.
@@ -117,7 +150,7 @@ def load_profile_rules(cfg):
     work = cfg.get('project', {}).get('work_dir', './work')
     compiled_path = os.path.join(work, 'cache', 'compiled_rules.json')
     if os.path.exists(compiled_path):
-        with open(compiled_path, 'r', encoding='utf-8') as f:
+        with io.open(compiled_path, 'r', encoding='utf-8', errors='replace') as f:
             data = json.load(f)
         return data.get('profiles', {}) or {}
 

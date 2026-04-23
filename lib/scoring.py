@@ -5,7 +5,11 @@ from lib import rules as _rules
 
 
 def infer_touched_paths(subject):
-    # Infer coarse subsystem paths from commit text so later scoring can relate commits to product evidence.
+    """Infer coarse subsystem paths from commit text.
+
+    This is a best-effort textual guess used to relate commits to
+    product-specific evidence (build logs, artifacts, and config dirs).
+    """
     s = (subject or '').lower()
     paths = []
     mapping = [
@@ -33,7 +37,7 @@ def infer_touched_paths(subject):
 
 
 def extract_patch_features(subject):
-    # Extract simple security/performance/stable hints from commit text.
+    """Extract simple security/performance/stable hints from commit text."""
     subj = (subject or '').lower()
     return {
         'security_terms': int(any(k in subj for k in ['cve', 'overflow', 'uaf', 'use-after-free', 'oob', 'security', 'race', 'refcount'])),
@@ -42,42 +46,76 @@ def extract_patch_features(subject):
     }
 
 
-def _profile_match_flags(commit, profile_rules):
-    """Return (matched_profiles, has_rule_security, has_rule_performance).
+def _compute_profile_rule_scores(commit, profile_rules):
+    """Compute per-profile numeric rule scores and matched profile list.
 
-    This applies per-profile whitelists/blacklists and keyword rules using
-    the shared helpers from lib.rules.
+    profile_rules is the compiled structure from lib.profile_rules:
+
+        {
+          'profile_name': {
+              'merged': { ... },
+              'rules': {
+                  'rule_name': { 'weight': int, ...patterns... },
+                  ...
+              }
+          },
+          ...
+        }
+
+    Returns (matched_profiles, profile_scores) where profile_scores maps
+    profile name to an aggregate numeric score in roughly [-100, 100].
     """
-    text = '%s\n%s' % (commit.get('subject', ''), commit.get('body', ''))
-    files = commit.get('files', []) or []
+    if not profile_rules:
+        return [], {}
 
-    matched_profiles = []
-    any_sec = False
-    any_perf = False
+    scores = {}
+    matched = []
 
-    for profile, rules in (profile_rules or {}).items():
-        msg_whitelist = _rules.match_message_whitelist(text, rules)
-        msg_blacklist = _rules.match_message_blacklist(text, rules)
-        path_hits = _rules.match_path_list(files, rules.get('path_whitelist', []))
-        path_black = _rules.match_path_list(files, rules.get('path_blacklist', []))
-        sec_hits = _rules.extract_keywords(text, rules.get('security_keywords', []))
-        perf_hits = _rules.extract_keywords(text, rules.get('performance_keywords', []))
+    for pname, pdata in profile_rules.items():
+        rules = pdata.get('rules', {}) or {}
+        total = 0.0
+        for rname, rdata in rules.items():
+            weight = float(rdata.get('weight', 0))
+            if weight <= 0:
+                continue
+            base = float(_rules.evaluate_rule(commit, rdata))
+            if base == 0.0:
+                continue
+            total += (weight / 100.0) * base
+        scores[pname] = total
 
-        forced_exclude = _rules.is_forced_exclude(commit, rules)
-        forced_include = _rules.is_forced_include(commit, rules)
+    # Simple threshold to decide which profiles consider this commit a candidate.
+    for pname, val in scores.items():
+        if val >= 40.0:
+            matched.append(pname)
 
-        is_candidate = forced_include or (
-            (msg_whitelist or sec_hits or perf_hits or path_hits) and not (msg_blacklist or path_black)
-        )
+    return matched, scores
 
-        if not forced_exclude and is_candidate:
-            matched_profiles.append(profile)
-            if sec_hits:
-                any_sec = True
-            if perf_hits:
-                any_perf = True
 
-    return matched_profiles, any_sec, any_perf
+def _security_and_performance_from_profiles(commit, profile_rules):
+    """Derive security and performance rule scores from per-profile data."""
+    matched_profiles, profile_scores = _compute_profile_rule_scores(commit, profile_rules)
+
+    # Security-oriented profiles: names containing "security".
+    sec_profiles = [
+        name for name in profile_scores.keys()
+        if 'security' in name
+    ]
+    # Performance-oriented profiles: names containing "performance".
+    perf_profiles = [
+        name for name in profile_scores.keys()
+        if 'performance' in name
+    ]
+
+    sec_raw = max((profile_scores[p] for p in sec_profiles), default=0.0)
+    perf_raw = max((profile_scores[p] for p in perf_profiles), default=0.0)
+
+    # Map raw rule scores in [-100, 100] to [0, 50]. Negative scores do not
+    # explicitly penalize the security/performance score; they simply clamp to 0.
+    def _scale(raw):
+        return max(0.0, min(50.0, raw / 2.0))
+
+    return matched_profiles, _scale(sec_raw), _scale(perf_raw)
 
 
 def score_commit(commit, product_map, profile_rules):
@@ -88,13 +126,26 @@ def score_commit(commit, product_map, profile_rules):
     - build evidence from logs and optional build_dir scanning,
     - Kbuild-derived config_dirs and config_to_paths from product_map,
     - simple keyword-based patch features,
-    - and per-profile rule matches.
+    - and per-profile, weighted rule matches.
     """
+    # Global commit-level whitelist/blacklist across all profiles.
+    merged_whitelist = set()
+    merged_blacklist = set()
+    for pdata in (profile_rules or {}).values():
+        merged = pdata.get('merged', {}) or {}
+        merged_whitelist.update(merged.get('commit_whitelist', []) or [])
+        merged_blacklist.update(merged.get('commit_blacklist', []) or [])
+
+    sha = commit.get('commit', '')
+    forced_keep = sha in merged_whitelist
+    forced_drop = (sha in merged_blacklist) and not forced_keep
+
+    # Product scoring based on guessed paths and product_map evidence.
     guesses = commit.get('touched_paths_guess', []) or []
-    built_log = "\n".join(product_map.get('built_objects_from_log', []))
-    built_dir = "\n".join(product_map.get('built_artifacts_from_dir', []))
-    enabled_cfg = "\n".join(product_map.get('enabled_configs', []))
-    config_dirs = "\n".join(product_map.get('config_dirs', []))
+    built_log = '\n'.join(product_map.get('built_objects_from_log', []))
+    built_dir = '\n'.join(product_map.get('built_artifacts_from_dir', []))
+    enabled_cfg = '\n'.join(product_map.get('enabled_configs', []))
+    config_dirs = '\n'.join(product_map.get('config_dirs', []))
     cfg_map = product_map.get('config_to_paths', {}) or {}
 
     product = 0
@@ -114,12 +165,11 @@ def score_commit(commit, product_map, profile_rules):
             product += 15
             evidence.append('config_map_dir:%s' % guess)
 
-    # Direct file-to-config mapping based on Kbuild-derived config_to_paths.
     files = commit.get('files', []) or []
     config_hits = set()
     for sym, paths in (cfg_map or {}).items():
-        for p in paths:
-            if p in files:
+        for pth in paths:
+            if pth in files:
                 config_hits.add(sym)
                 break
     for sym in sorted(config_hits):
@@ -131,15 +181,37 @@ def score_commit(commit, product_map, profile_rules):
         evidence.append('textual-path-guess')
     product = min(product, 60)
 
-    patch = commit.get('patch_features', {}) or {}
-    # Rule-based matches may add extra security/performance weight.
-    matched_profiles, rules_security, rules_performance = _profile_match_flags(commit, profile_rules)
+    # Early drop based on global commit blacklist.
+    if forced_drop:
+        scored = dict(commit)
+        scored.update({
+            'product_score': 0,
+            'security_score': 0,
+            'performance_score': 0,
+            'stable_score': 0,
+            'candidate_score': 0,
+            'matched_profiles': [],
+            'product_evidence': [],
+            'filtered_by_commit_blacklist': True,
+        })
+        return scored
 
-    sec = 50 if (patch.get('security_terms') or rules_security) else 0
-    perf = 50 if (patch.get('performance_terms') or rules_performance) else 0
+    # Rule-driven security and performance scoring.
+    matched_profiles, sec_from_rules, perf_from_rules = _security_and_performance_from_profiles(commit, profile_rules)
+
+    patch = commit.get('patch_features', {}) or {}
+    trailers = _rules.trailer_flags(commit)
+
+    # Patch-based hints can bump scores when rules are neutral.
+    sec = sec_from_rules
+    perf = perf_from_rules
+
+    if patch.get('security_terms'):
+        sec = max(sec, 20.0)
+    if patch.get('performance_terms'):
+        perf = max(perf, 20.0)
 
     # Stable/backport hints from both simple term matching and trailers.
-    trailers = _rules.trailer_flags(commit)
     stable_hint = (
         patch.get('stable_terms')
         or trailers.get('has_fixes')
@@ -147,6 +219,14 @@ def score_commit(commit, product_map, profile_rules):
         or trailers.get('has_cve')
     )
     stable = 10 if stable_hint else 0
+
+    # Forced keep can give a small additional bump.
+    if forced_keep:
+        sec = max(sec, 30.0)
+        perf = max(perf, 30.0)
+
+    sec = float(min(50.0, sec))
+    perf = float(min(50.0, perf))
 
     scored = dict(commit)
     scored.update({

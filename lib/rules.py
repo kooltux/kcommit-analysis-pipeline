@@ -1,4 +1,4 @@
-# Rule matching helpers for substring, wildcard, and regex-based patterns.
+# Rule matching helpers and scoring primitives.
 from __future__ import print_function
 import fnmatch
 import re
@@ -13,7 +13,7 @@ def _regex_body(pattern):
 
 
 def _string_match(value, pattern):
-    # Match a value against regex, wildcard, or plain substring patterns.
+    """Match a value against regex, wildcard, or plain substring patterns."""
     value = value or ''
     if _is_regex(pattern):
         return re.search(_regex_body(pattern), value, re.IGNORECASE) is not None
@@ -30,15 +30,8 @@ def match_any_string(value, patterns):
     return hits
 
 
-def match_keywords_whitelist(text, rules):
-    return match_any_string(text, rules.get('keywords_whitelist', []))
-
-
-def match_keywords_blacklist(text, rules):
-    return match_any_string(text, rules.get('keywords_blacklist', []))
-
-
 def match_path_list(paths, patterns):
+    """Return the list of paths that match at least one pattern."""
     hits = []
     for path in paths or []:
         for pattern in patterns or []:
@@ -60,10 +53,12 @@ def extract_keywords(text, patterns):
     return match_any_string(text or '', patterns)
 
 
-def classify_message(commit, rules):
-    text = '%s\n%s' % (commit.get('subject', ''), commit.get('body', ''))
-    kws = extract_keywords(text, rules.get('keywords_whitelist', []))
-    return kws, []
+def match_keywords_whitelist(text, rules):
+    return match_any_string(text, rules.get('keywords_whitelist', []))
+
+
+def match_keywords_blacklist(text, rules):
+    return match_any_string(text, rules.get('keywords_blacklist', []))
 
 
 def trailer_flags(commit):
@@ -88,32 +83,50 @@ def list_contains_pattern(values, patterns):
     return matched
 
 
-def is_forced_include(commit, rules):
+def _any_path_in_list(paths, patterns):
+    return bool(match_path_list(paths, patterns))
+
+
+def _all_paths_in_list(paths, patterns):
+    if not paths:
+        return False
+    for p in paths:
+        if not match_path_list([p], patterns):
+            return False
+    return True
+
+
+def evaluate_rule(commit, rule):
+    """Evaluate a single rule dict for one commit.
+
+    The rule dict is expected to have the unified schema keys:
+      - keywords_whitelist / keywords_blacklist
+      - path_whitelist / path_blacklist
+      - commit_whitelist / commit_blacklist
+
+    Returns a base score in [-100, 100] representing this rule's vote
+    for the commit, before applying any per-rule weight.
+    """
     sha = commit.get('commit', '')
-    paths = commit.get('files', [])
-    return bool(list_contains_pattern([sha], rules.get('commit_whitelist', [])) or match_path_list(paths, rules.get('path_whitelist', [])))
-
-
-def is_forced_exclude(commit, rules):
-    sha = commit.get('commit', '')
-    paths = commit.get('files', [])
-    return bool(list_contains_pattern([sha], rules.get('commit_blacklist', [])) or match_path_list(paths, rules.get('path_blacklist', [])))
-
-
-def profile_matches(commit, profile_rules):
+    paths = commit.get('files', []) or []
     text = '%s\n%s' % (commit.get('subject', ''), commit.get('body', ''))
-    paths = commit.get('files', [])
-    result = {}
-    for rule_key, data in profile_rules.items():
-        for profile, patterns in data.get('profiles', {}).items():
-            if profile not in result:
-                result[profile] = {}
-            if rule_key.startswith('message_') or rule_key.endswith('_keywords'):
-                hits = match_any_string(text, patterns)
-            elif 'commits' in rule_key:
-                hits = match_any_string(commit.get('commit', ''), patterns)
-            else:
-                hits = match_path_list(paths, patterns)
-            if hits:
-                result[profile][rule_key] = hits
-    return result
+
+    # 1) Commit ID filters: hard overrides for this rule.
+    if list_contains_pattern([sha], rule.get('commit_whitelist', [])):
+        return 100
+    if list_contains_pattern([sha], rule.get('commit_blacklist', [])):
+        return -100
+
+    # 2) Path filters: strong signals.
+    if _any_path_in_list(paths, rule.get('path_whitelist', [])):
+        return 60
+    if _all_paths_in_list(paths, rule.get('path_blacklist', [])):
+        return -60
+
+    # 3) Keyword filters: weaker, text-only signals.
+    if match_keywords_whitelist(text, rule):
+        return 30
+    if match_keywords_blacklist(text, rule):
+        return -30
+
+    return 0
