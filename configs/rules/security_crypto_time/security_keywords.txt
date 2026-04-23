@@ -1,0 +1,17 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
+constant-time
+constant time
+side channel
+side-channel
+timing leak
+timing side channel
+crypto
+cipher
+encryption
+decryption
+mac
+hmac
+digest
+hash
+key material
+key leakage

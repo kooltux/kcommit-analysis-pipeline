@@ -19,99 +19,56 @@ def _read_patterns(path):
     return patterns
 
 
-def _load_profile_json(profile_root, name):
-    path = os.path.join(profile_root, name + '.json')
+def _load_json_with_comments(path):
     if not os.path.exists(path):
-        return None, None
+        return None
     with io.open(path, 'r', encoding='utf-8', errors='replace') as f:
-        data = json.load(f)
-    return path, data
+        raw = f.read()
+    lines = []
+    for line in raw.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith('//') or stripped.startswith('#'):
+            continue
+        lines.append(line)
+    text = '\n'.join(lines)
+    if not text.strip():
+        return None
+    return json.loads(text)
 
 
-# Security rule categories: concise, factorized patterns per theme.
-SECURITY_CATEGORY_PATTERNS = {
-    'security_general': [
-        'security', 'secure', 'hardening', 'harden', 'mitigation', 'exploit', 'vulnerability',
-        'sanitize', 'sanitizer', 'validate', 'validation',
-    ],
-    'security_cve_bugs': [
-        'CVE-', 'Fixes:', 'bug', 'BUG:', 'race condition', 'deadlock', 'use-after-free', 'UAF',
-        'double free', 'null pointer dereference', 'NULL dereference',
-    ],
-    'security_memory': [
-        'use-after-free', 'UAF', 'double free', 'heap overflow', 'stack overflow',
-        'buffer overflow', 'out-of-bounds', 'out of bounds', 'UAF write', 'dangling pointer',
-    ],
-    'security_bounds': [
-        'bounds check', 'boundary check', 'index check', 'array index', 'range check',
-        'off-by-one', 'off by one', 'OOB read', 'OOB write',
-    ],
-    'security_auth_caps': [
-        'authentication', 'authorization', 'privilege escalation', 'priv esc',
-        'credentials', 'passwd', 'password', 'acl', 'access control',
-        'capable(', 'cap_capable', 'capability', 'capabilities', 'uid', 'gid', 'fsuid', 'fsgid',
-    ],
-    'security_crypto_timing': [
-        'constant-time', 'constant time', 'side channel', 'side-channel',
-        'timing leak', 'timing side channel', 'crypto', 'cipher', 'encryption', 'decryption',
-        'mac', 'hmac', 'digest', 'hash', 'key material', 'key leakage',
-    ],
-    'security_syscalls': [
-        'syscall', 'syscalls', 'sys_enter', 'sys_exit', 'seccomp', 'ptrace',
-        'userfaultfd', 'io_uring', 'io uring',
-    ],
-}
-
-PERFORMANCE_CATEGORY_PATTERNS = {
-    'performance_general': [
-        'performance', 'throughput', 'latency', 'reduce latency', 'speed up', 'speedup',
-        'optimize', 'optimization', 'micro-optim', 'fast path', 'slow path', 'regression',
-        'scalability', 'scale better', 'cacheline', 'cache line', 'false sharing',
-    ],
-}
-
-
-def _categories_for_profile(profile_data):
-    cats = profile_data.get('rule_categories') or []
-    return [c for c in cats if isinstance(c, str)]
+def _active_profiles(cfg):
+    profiles_cfg = cfg.get('profiles', {}) or {}
+    if profiles_cfg.get('active'):
+        return profiles_cfg.get('active') or []
+    if cfg.get('active_profiles'):
+        return cfg.get('active_profiles') or []
+    return []
 
 
 def compile_rules_for_config(cfg, work_dir):
     """Compile and deduplicate rules across all active profiles for this config.
 
-    The result is written to <work_dir>/cache/compiled_rules.json and contains
-    a mapping {profile_name: rules_dict}, where each rules_dict has the same
-    shape expected by lib.rules helpers (message_whitelist, message_blacklist,
-    path_whitelist, path_blacklist, security_keywords, performance_keywords,
-    and optional force_* entries).
+    Profiles are resolved from configs/profiles/<name>.json and rules from
+    configs/rules/<rule_folder>/*, relative to the configuration directory.
+    The result is written to <work_dir>/cache/compiled_rules.json and
+    returned as {profile_name: rules_dict}.
     """
     meta = cfg.get('_meta', {}) or {}
     config_dir = meta.get('config_dir') or os.getcwd()
-    profiles_cfg = cfg.get('profiles', {}) or {}
 
-    # Determine active profiles: prefer profiles.active, fall back to legacy top-level active_profiles.
-    active = []
-    if profiles_cfg.get('active'):
-        active = profiles_cfg.get('active') or []
-    elif cfg.get('active_profiles'):
-        active = cfg.get('active_profiles') or []
-
+    active = _active_profiles(cfg)
     if not active:
-        return {}
+        raise RuntimeError('no active profiles configured (profiles.active is empty)')
 
-    profile_root = profiles_cfg.get('profile_root') or ''
-    if profile_root and not os.path.isabs(profile_root):
-        profile_root = os.path.normpath(os.path.join(config_dir, profile_root))
-    if not profile_root:
-        profile_root = os.path.normpath(os.path.join(config_dir, 'profiles'))
+    profile_root = os.path.join(config_dir, 'profiles')
+    rule_root = os.path.join(config_dir, 'rules')
+    if not os.path.isdir(profile_root):
+        raise RuntimeError('profiles directory not found: %s' % profile_root)
+    if not os.path.isdir(rule_root):
+        raise RuntimeError('rules directory not found: %s' % rule_root)
 
-    # Shared rule roots for legacy generic rules.
-    rule_root = profiles_cfg.get('rule_root') or ''
-    if rule_root and not os.path.isabs(rule_root):
-        rule_root = os.path.normpath(os.path.join(config_dir, rule_root))
-    shared_root = os.path.join(rule_root, '_shared') if rule_root else ''
-
-    # Load shared baseline patterns once.
+    # Always include shared rules from rules/_shared when present.
+    shared_root = os.path.join(rule_root, '_shared')
     shared = {
         'message_whitelist': _read_patterns(os.path.join(shared_root, 'message_whitelist.txt')),
         'message_blacklist': _read_patterns(os.path.join(shared_root, 'message_blacklist.txt')),
@@ -124,10 +81,13 @@ def compile_rules_for_config(cfg, work_dir):
     profiles_rules = {}
 
     for name in active:
-        profile_path, pdata = _load_profile_json(profile_root, name)
+        prof_path = os.path.join(profile_root, name + '.json')
+        pdata = _load_json_with_comments(prof_path)
         if not pdata:
-            continue
-        cats = _categories_for_profile(pdata)
+            raise RuntimeError('profile %r not found or empty at %s' % (name, prof_path))
+        rule_names = pdata.get('rules') or []
+        if not rule_names:
+            raise RuntimeError('profile %r does not define any rules' % name)
 
         msg_whitelist = set(shared['message_whitelist'])
         msg_blacklist = set(shared['message_blacklist'])
@@ -135,16 +95,25 @@ def compile_rules_for_config(cfg, work_dir):
         path_blacklist = set(shared['path_blacklist'])
         sec_keywords = set(shared['security_keywords'])
         perf_keywords = set(shared['performance_keywords'])
+        force_inc_c = set()
+        force_exc_c = set()
+        force_inc_p = set()
+        force_exc_p = set()
 
-        # Category-driven security/performance keywords.
-        for cat in cats:
-            if cat in SECURITY_CATEGORY_PATTERNS:
-                sec_keywords.update(SECURITY_CATEGORY_PATTERNS[cat])
-                # Security categories also act as message whitelist hints.
-                msg_whitelist.update(SECURITY_CATEGORY_PATTERNS[cat])
-            if cat in PERFORMANCE_CATEGORY_PATTERNS:
-                perf_keywords.update(PERFORMANCE_CATEGORY_PATTERNS[cat])
-                msg_whitelist.update(PERFORMANCE_CATEGORY_PATTERNS[cat])
+        for rname in rule_names:
+            rdir = os.path.join(rule_root, rname)
+            if not os.path.isdir(rdir):
+                raise RuntimeError('rule folder %r for profile %r not found under %s' % (rname, name, rule_root))
+            msg_whitelist.update(_read_patterns(os.path.join(rdir, 'message_whitelist.txt')))
+            msg_blacklist.update(_read_patterns(os.path.join(rdir, 'message_blacklist.txt')))
+            path_whitelist.update(_read_patterns(os.path.join(rdir, 'path_whitelist.txt')))
+            path_blacklist.update(_read_patterns(os.path.join(rdir, 'path_blacklist.txt')))
+            sec_keywords.update(_read_patterns(os.path.join(rdir, 'security_keywords.txt')))
+            perf_keywords.update(_read_patterns(os.path.join(rdir, 'performance_keywords.txt')))
+            force_inc_c.update(_read_patterns(os.path.join(rdir, 'force_include_commits.txt')))
+            force_exc_c.update(_read_patterns(os.path.join(rdir, 'force_exclude_commits.txt')))
+            force_inc_p.update(_read_patterns(os.path.join(rdir, 'force_include_paths.txt')))
+            force_exc_p.update(_read_patterns(os.path.join(rdir, 'force_exclude_paths.txt')))
 
         rules = {
             'message_whitelist': sorted(msg_whitelist),
@@ -153,10 +122,10 @@ def compile_rules_for_config(cfg, work_dir):
             'path_blacklist': sorted(path_blacklist),
             'security_keywords': sorted(sec_keywords),
             'performance_keywords': sorted(perf_keywords),
-            'force_include_commits': [],
-            'force_exclude_commits': [],
-            'force_include_paths': [],
-            'force_exclude_paths': [],
+            'force_include_commits': sorted(force_inc_c),
+            'force_exclude_commits': sorted(force_exc_c),
+            'force_include_paths': sorted(force_inc_p),
+            'force_exclude_paths': sorted(force_exc_p),
         }
         profiles_rules[name] = rules
 
@@ -173,7 +142,7 @@ def load_profile_rules(cfg):
     """Load rules for active profiles.
 
     Prefers compiled_rules.json produced by the prepare_rules stage. Falls
-    back to legacy on-the-fly loading when compiled data is missing.
+    back to on-the-fly compilation when compiled data is missing.
     """
     work = cfg.get('project', {}).get('work_dir', './work')
     compiled_path = os.path.join(work, 'cache', 'compiled_rules.json')
@@ -182,6 +151,4 @@ def load_profile_rules(cfg):
             data = json.load(f)
         return data.get('profiles', {}) or {}
 
-    # Fallback: compile on the fly and return the in-memory result.
     return compile_rules_for_config(cfg, work)
-

@@ -1,0 +1,12 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
+security
+secure
+hardening
+harden
+mitigation
+exploit
+vulnerability
+sanitize
+sanitizer
+validate
+validation

@@ -1,0 +1,5 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
+latency
+reduce latency
+tail latency
+jitter

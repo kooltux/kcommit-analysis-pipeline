@@ -2,7 +2,9 @@
 {
   "name": "performance",
   "description": "Performance, latency, and throughput improvements.",
-  "rule_categories": [
-    "performance_general"
+  "rules": [
+    "performance_general",
+    "performance_latency",
+    "performance_throughput"
   ]
 }

@@ -33,26 +33,29 @@ def _resolve_stage(name_or_index):
     for name, _ in STAGES:
         if name == key:
             return name
-    raise SystemExit('Unknown stage %r (expected 1-6 or one of %s)' % (name_or_index, ', '.join(n for n, _ in STAGES)))
+    raise SystemExit('Unknown stage %r (expected 1-%d or one of %s)' % (
+        name_or_index, len(STAGES), ', '.join(n for n, _ in STAGES)))
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description='Run kcommit-analysis-pipeline stages')
     ap.add_argument('--config', required=True, help='Path to workspace configuration JSON')
-    ap.add_argument('--stage', help='Single stage to run (1-6 or name). If omitted, runs all stages in order.')
+    ap.add_argument('--stage', help='Single stage to run (1-%d or name). If omitted, runs all stages in order.' % len(STAGES))
     args = ap.parse_args(argv)
 
     cfg = load_config(args.config)
     work_dir = cfg.get('project', {}).get('work_dir', './work')
     os.makedirs(work_dir, exist_ok=True)
 
-    stage_name = _resolve_stage(args.stage) if args.stage else None
-
-    to_run = []
-    if stage_name is None:
-        to_run = [name for name, _ in STAGES]
+    if args.stage:
+        target = _resolve_stage(args.stage)
+        names = [name for name, _ in STAGES]
+        idx = names.index(target)
+        to_run = names[:idx + 1]
+        if idx > 0:
+            print('requested stage %s, running prerequisites: %s' % (target, ', '.join(to_run[:-1])))
     else:
-        to_run = [stage_name]
+        to_run = [name for name, _ in STAGES]
 
     for name, script in STAGES:
         if name not in to_run:

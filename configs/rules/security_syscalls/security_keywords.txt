@@ -1,0 +1,10 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
+syscall
+syscalls
+sys_enter
+sys_exit
+seccomp
+ptrace
+userfaultfd
+io_uring
+io uring

@@ -1,0 +1,10 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
+use-after-free
+UAF
+double free
+heap overflow
+stack overflow
+buffer overflow
+out-of-bounds
+out of bounds
+dangling pointer

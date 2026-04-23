@@ -1,0 +1,18 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
+authentication
+authorization
+privilege escalation
+priv esc
+credentials
+passwd
+password
+acl
+access control
+capable(
+cap_capable
+capability
+capabilities
+uid
+gid
+fsuid
+fsgid

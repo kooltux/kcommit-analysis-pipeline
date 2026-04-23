@@ -7,9 +7,7 @@
     "kernel_config": "${WORKSPACE}/kernel.config",
     "build_dir": "${WORKSPACE}/build",
     "logs_dir": "${WORKSPACE}/logs",
-    "modules_list": "${WORKSPACE}/modules.txt",
-    "profile_dir": "${TOOLDIR}/configs/profiles",
-    "rule_dir": "${TOOLDIR}/configs/rules"
+    "modules_list": "${WORKSPACE}/modules.txt"
   },
   "project": {
     "name": "example-arm-embedded-default",
@@ -31,8 +29,6 @@
     ]
   },
   "profiles": {
-    "profile_root": "${profile_dir}",
-    "rule_root": "${rule_dir}",
     "active": [
       "security_fixes",
       "performance"

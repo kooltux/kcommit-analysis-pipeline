@@ -2,10 +2,10 @@
 {
   "name": "security_features",
   "description": "New security features, hardening changes, and capability/policy updates.",
-  "rule_categories": [
+  "rules": [
     "security_general",
     "security_auth_caps",
-    "security_crypto_timing",
+    "security_crypto_time",
     "security_syscalls"
   ]
 }

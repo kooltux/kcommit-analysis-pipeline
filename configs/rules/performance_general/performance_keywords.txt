@@ -1,0 +1,15 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
+performance
+throughput
+latency
+reduce latency
+speed up
+speedup
+optimize
+optimization
+micro-optim
+fast path
+slow path
+regression
+scalability
+scale better

@@ -1,0 +1,10 @@
+# Comments are allowed: lines starting with # are ignored by the rules parser.
+bounds check
+boundary check
+index check
+array index
+range check
+off-by-one
+off by one
+OOB read
+OOB write
