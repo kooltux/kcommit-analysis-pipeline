@@ -1,3 +1,56 @@
+## v7.18
+
+### Performance
+- `lib/parse_kconfig.py`: new `scan_kbuild_tree()` performs a single `os.walk`
+  of the kernel source tree and returns both `(config_to_paths, kbuild_files)`.
+  Stages 02 and 03 previously each ran a full independent traversal (~75k files,
+  ~5k directories for a mainline kernel).  The result is computed once in stage
+  02 and cached to `cache/kbuild_static_map.json` for stage 03 to reuse without
+  any additional tree traversal.  Both old functions (`scan_makefile_config_map`,
+  `scan_kbuild_makefiles`) are kept as thin backward-compat wrappers.
+- `lib/kbuild.py`: `scan_kbuild_makefiles()` now delegates to
+  `scan_kbuild_tree()` instead of performing its own independent `os.walk`.
+- `lib/history_map.py`: parallel `git show` calls via
+  `concurrent.futures.ThreadPoolExecutor` (default 8 workers, configurable via
+  `collect.history_workers`).  Serial fallback preserved for single-core
+  environments or when the executor is unavailable.  `progress_callback(done,
+  total)` parameter added so stage 03 can display live progress.  Expected
+  wall-clock speedup: 5–10x on a typical SSD + 4-core machine.
+- `05_score_commits.py`: pool **initializer pattern** — `_worker_init()` stores
+  `product_map`, `profile_rules`, and `cfg` as module-level globals in each
+  worker process so they are pickled once at startup rather than once per commit
+  task.  Uses `pool.imap()` for ordered streaming progress updates.
+
+### Usability
+- `lib/pipeline_runtime.py`: new `update_stage_progress(index, total,
+  inner_fraction, label, n_done, n_total)` renders an in-place `\r` progress
+  bar for within-stage loops so the terminal shows continuous feedback.
+- `01_collect_commits.py`: `parents` field is opt-in via
+  `collect.include_parents` (default `false`), significantly reducing
+  `commits.json` size for large ranges (200k+ commits).
+- `02_collect_build_context.py`: five progress milestones reported during
+  kernel-config loading, log reading, build-dir scan, and Kbuild tree walk.
+- `03_build_product_map.py`: live progress from parallel history-map git-show
+  calls fed through `progress_callback`.
+- `04_enrich_commits.py`: within-stage progress updated ~50 times.
+- `05_score_commits.py`: within-stage progress updated ~80 times.
+- `06_report_commits.py`: `profile_summary.json` now stores
+  `{profile: {count, total_score}}` instead of a bare integer; HTML report
+  renders this as a proper summary table.
+
+### Correctness
+- `lib/config.py`: `_strip_json_comments()` already joined lines with `\n`
+  (correct since v7.17).  No change needed.
+- `06_report_commits.py`: `profile_summary` dict now carries `total_score` in
+  addition to `count`, giving the HTML report richer per-profile statistics.
+
+### Python 3.6 compatibility
+- No f-strings, no walrus operator, no APIs introduced after Python 3.4.
+- `concurrent.futures.ThreadPoolExecutor`: available since Python 3.2.
+- `multiprocessing.Pool` with `initializer`: available since Python 3.3.
+- `os.makedirs(exist_ok=True)`: available since Python 3.4.1.
+- All new code uses `from __future__ import print_function` and `io.open()`.
+
 # Changelog
 
 ## v7.17 (2026-04-23)

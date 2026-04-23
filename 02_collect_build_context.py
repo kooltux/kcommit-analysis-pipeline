@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
 """Stage 02: Gather kernel build context (.config, artifacts, logs, Kbuild).
 
-v7.17: kernel_config and build_dir are optional (notices only); fail_stage.
+v7.18 changes vs v7.17:
+  - Uses scan_kbuild_tree() for a single os.walk that yields both the
+    kbuild_files list AND the static config_to_paths map.  The map is saved
+    to cache/kbuild_static_map.json so stage 03 can reuse it without a second
+    tree traversal.
+  - Within-stage progress via update_stage_progress at each major operation.
+  - kernel_config and build_dir remain optional (notices only, not errors).
+  - Python 3.6 compatible.
 """
 from __future__ import print_function
 import argparse
 import os
+import sys
 
 from lib.config import load_config
 from lib.io_utils import ensure_dir, save_json
-from lib.kbuild import load_kernel_config_symbols, scan_kbuild_makefiles
-from lib.parse_kconfig import parse_kernel_config
+from lib.kbuild import load_kernel_config_symbols
+from lib.parse_kconfig import parse_kernel_config, scan_kbuild_tree
 from lib.validation import validate_inputs
-from lib.pipeline_runtime import start_stage, finish_stage, fail_stage
+from lib.pipeline_runtime import (
+    start_stage, finish_stage, fail_stage, update_stage_progress
+)
 
 
 def _read_lines(path):
@@ -29,7 +39,8 @@ def _scan_build_dir(build_dir):
     for root, _, files in os.walk(build_dir):
         for name in files:
             if name.endswith('.o') or name.endswith('.ko'):
-                objects.append(os.path.relpath(os.path.join(root, name), build_dir))
+                objects.append(
+                    os.path.relpath(os.path.join(root, name), build_dir))
     return sorted(objects)
 
 
@@ -46,10 +57,10 @@ def main():
     try:
         problems, notices = validate_inputs(cfg)
         for note in notices:
-            print(note)
+            print('  NOTICE:', note)
         if problems:
             for p in problems:
-                print(p)
+                print('  ERROR:', p)
             fail_stage(state_path, 'collect_build_context', started,
                        error_msg='; '.join(problems))
             raise SystemExit(2)
@@ -58,7 +69,7 @@ def main():
         ensure_dir(cache)
 
         inputs     = cfg.get('inputs', {}) or {}
-        source_dir = cfg.get('kernel', {}).get('source_dir')
+        source_dir = (cfg.get('kernel', {}) or {}).get('source_dir')
 
         kconfig_path = inputs.get('kernel_config')
         if kconfig_path and not os.path.isfile(kconfig_path):
@@ -68,30 +79,67 @@ def main():
         if build_dir and not os.path.isdir(build_dir):
             build_dir = None
 
+        # ── 1. Kernel config symbols ─────────────────────────────────────────
+        update_stage_progress(3, 7, 0.10, 'loading kernel config')
+        kernel_config = load_kernel_config_symbols(kconfig_path, source_dir)
+
+        # ── 2. Parse .config ─────────────────────────────────────────────────
+        update_stage_progress(3, 7, 0.25, 'parsing .config')
+        kernel_config_parsed = parse_kernel_config(kconfig_path)
+
+        # ── 3. Build logs ─────────────────────────────────────────────────────
+        update_stage_progress(3, 7, 0.40, 'reading build logs')
+        kernel_build_log = _read_lines(inputs.get('kernel_build_log'))
+        yocto_build_log  = _read_lines(inputs.get('yocto_build_log'))
+
+        # ── 4. Build artifacts ────────────────────────────────────────────────
+        update_stage_progress(3, 7, 0.55, 'scanning build dir')
+        build_artifacts = _scan_build_dir(build_dir)
+
+        # ── 5. Single os.walk for Kbuild tree ─────────────────────────────────
+        update_stage_progress(3, 7, 0.70, 'walking kbuild tree')
+        if source_dir and os.path.isdir(source_dir):
+            static_config_map, kbuild_files = scan_kbuild_tree(source_dir)
+        else:
+            static_config_map, kbuild_files = {}, []
+
+        # Cache static_config_map so stage 03 can skip its own tree walk
+        save_json(os.path.join(cache, 'kbuild_static_map.json'),
+                  static_config_map)
+
+        # ── 6. Save context ───────────────────────────────────────────────────
+        update_stage_progress(3, 7, 0.90, 'saving build context')
         ctx = {
-            'kernel_config':        load_kernel_config_symbols(kconfig_path, source_dir),
-            'kernel_config_parsed': parse_kernel_config(kconfig_path),
-            'kernel_build_log':     _read_lines(inputs.get('kernel_build_log')),
-            'yocto_build_log':      _read_lines(inputs.get('yocto_build_log')),
+            'kernel_config':        kernel_config,
+            'kernel_config_parsed': kernel_config_parsed,
+            'kernel_build_log':     kernel_build_log,
+            'yocto_build_log':      yocto_build_log,
             'dts_roots':            inputs.get('dts_roots', []),
             'build_dir':            build_dir,
-            'build_artifacts':      _scan_build_dir(build_dir),
-            'kbuild_files':         scan_kbuild_makefiles(source_dir),
+            'build_artifacts':      build_artifacts,
+            'kbuild_files':         kbuild_files,
         }
-
         save_json(os.path.join(cache, 'build_context.json'), ctx)
-        print('build context captured')
+
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+
+        print('  build context captured')
         finish_stage(state_path, 'collect_build_context', started, status='ok',
                      extra={
-                         'build_artifact_count': len(ctx.get('build_artifacts', [])),
-                         'kbuild_file_count':    len(ctx.get('kbuild_files', [])),
-                         'enabled_config_count': len(ctx.get('kernel_config', [])),
+                         'build_artifact_count': len(build_artifacts),
+                         'kbuild_file_count':    len(kbuild_files),
+                         'enabled_config_count': len(kernel_config),
+                         'static_config_map_symbols': len(static_config_map),
                      })
 
     except SystemExit:
         raise
     except Exception as exc:
-        fail_stage(state_path, 'collect_build_context', started, error_msg=str(exc))
+        import traceback
+        traceback.print_exc()
+        fail_stage(state_path, 'collect_build_context', started,
+                   error_msg=str(exc))
         raise
 
 

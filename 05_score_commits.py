@@ -1,25 +1,48 @@
 #!/usr/bin/env python3
 """Stage 05: Score commits using product map, profile rules, and scoring config.
 
-v7.17: cfg passed to score_commit; module-level _score_one for multiprocessing
-       pickling; score_workers defaults to min(4, cpu_count); fail_stage.
+v7.18 changes vs v7.17:
+  - Pool initializer pattern: product_map and profile_rules are pickled ONCE
+    per worker at startup via _worker_init(), not once per task.  For large
+    product maps this is a significant memory / IPC bandwidth saving.
+  - Within-stage progress via update_stage_progress (~80 updates across loop).
+  - score_workers defaults to min(4, cpu_count()) when not set in config.
+  - Graceful serial fallback if multiprocessing raises any exception.
+  - Python 3.6 compatible (Pool initializer available since Python 3.3).
 """
 from __future__ import print_function
 import argparse
 import os
+import sys
 
 from lib.config import load_config
 from lib.io_utils import ensure_dir, load_json, save_json
 from lib.scoring import score_commit
 from lib.profile_rules import load_profile_rules
 from lib.validation import validate_inputs
-from lib.pipeline_runtime import start_stage, finish_stage, fail_stage
+from lib.pipeline_runtime import (
+    start_stage, finish_stage, fail_stage, update_stage_progress
+)
 
 
-def _score_one(args):
-    """Top-level picklable worker function for multiprocessing.Pool."""
-    c, pm, pr, cfg = args
-    return score_commit(c, pm, pr, cfg)
+# ── module-level globals for pool worker initializer ─────────────────────────
+# These are set once per worker process by _worker_init(), avoiding the cost of
+# pickling large product_map / profile_rules dicts for every individual task.
+_g_product_map   = None
+_g_profile_rules = None
+_g_cfg           = None
+
+
+def _worker_init(product_map, profile_rules, cfg):
+    global _g_product_map, _g_profile_rules, _g_cfg
+    _g_product_map   = product_map
+    _g_profile_rules = profile_rules
+    _g_cfg           = cfg
+
+
+def _score_one_global(commit):
+    """Picklable worker function; uses globals set by _worker_init."""
+    return score_commit(commit, _g_product_map, _g_profile_rules, _g_cfg)
 
 
 def _score_all(commits, product_map, profile_rules, cfg):
@@ -30,18 +53,47 @@ def _score_all(commits, product_map, profile_rules, cfg):
     except Exception:
         default_workers = 1
     workers = int(collect.get('score_workers', default_workers) or default_workers)
+    total   = len(commits)
+    step    = max(1, total // 80)
 
-    if workers <= 1:
-        return [score_commit(c, product_map, profile_rules, cfg) for c in commits]
+    # ── serial path ───────────────────────────────────────────────────────────
+    if workers <= 1 or total < 100:
+        results = []
+        for i, c in enumerate(commits):
+            results.append(score_commit(c, product_map, profile_rules, cfg))
+            if i % step == 0 or i == total - 1:
+                update_stage_progress(6, 7, (i + 1) / max(total, 1),
+                                      'scoring', n_done=i + 1, n_total=total)
+        return results
 
+    # ── parallel path with initializer ────────────────────────────────────────
     try:
         from multiprocessing import Pool, cpu_count
-        max_w = max(1, min(workers, cpu_count()))
-        args_list = [(c, product_map, profile_rules, cfg) for c in commits]
-        with Pool(processes=max_w) as pool:
-            return pool.map(_score_one, args_list)
+        max_w   = max(1, min(workers, cpu_count()))
+        results = []
+        with Pool(processes=max_w,
+                  initializer=_worker_init,
+                  initargs=(product_map, profile_rules, cfg)) as pool:
+            # imap preserves order and allows streaming progress updates
+            for i, scored in enumerate(
+                    pool.imap(_score_one_global, commits, chunksize=64)):
+                results.append(scored)
+                if i % step == 0 or i == total - 1:
+                    update_stage_progress(6, 7, (i + 1) / max(total, 1),
+                                          'scoring (parallel)',
+                                          n_done=i + 1, n_total=total)
+        return results
+
     except Exception:
-        return [score_commit(c, product_map, profile_rules, cfg) for c in commits]
+        # Fallback to serial if anything goes wrong with multiprocessing
+        results = []
+        for i, c in enumerate(commits):
+            results.append(score_commit(c, product_map, profile_rules, cfg))
+            if i % step == 0 or i == total - 1:
+                update_stage_progress(6, 7, (i + 1) / max(total, 1),
+                                      'scoring (serial fallback)',
+                                      n_done=i + 1, n_total=total)
+        return results
 
 
 def main():
@@ -57,10 +109,10 @@ def main():
     try:
         problems, notices = validate_inputs(cfg)
         for note in notices:
-            print(note)
+            print('  NOTICE:', note)
         if problems:
             for p in problems:
-                print(p)
+                print('  ERROR:', p)
             fail_stage(state_path, 'score_commits', started,
                        error_msg='; '.join(problems))
             raise SystemExit(2)
@@ -68,20 +120,32 @@ def main():
         cache = os.path.join(work, 'cache')
         ensure_dir(cache)
 
-        commits       = load_json(os.path.join(cache, 'enriched_commits.json'), default=[]) or []
-        product_map   = load_json(os.path.join(cache, 'product_map.json'),       default={}) or {}
+        commits = (load_json(os.path.join(cache, 'enriched_commits.json'),
+                             default=[]) or
+                   load_json(os.path.join(cache, 'commits.json'),
+                             default=[]) or [])
+        product_map   = load_json(os.path.join(cache, 'product_map.json'),
+                                  default={}) or {}
         profile_rules = load_profile_rules(cfg)
+
+        update_stage_progress(6, 7, 0.01, 'ready',
+                              n_done=0, n_total=len(commits))
 
         scored = _score_all(commits, product_map, profile_rules, cfg)
 
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+
         save_json(os.path.join(cache, 'scored_commits.json'), scored)
-        print('scored %d commits' % len(scored))
+        print('  scored %d commits' % len(scored))
         finish_stage(state_path, 'score_commits', started, status='ok',
                      extra={'scored_commit_count': len(scored)})
 
     except SystemExit:
         raise
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         fail_stage(state_path, 'score_commits', started, error_msg=str(exc))
         raise
 
