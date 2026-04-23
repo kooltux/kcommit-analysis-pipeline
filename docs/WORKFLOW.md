@@ -1,3 +1,3 @@
-# Workflow Guide
+# Workflow
 
-Prepare config, select profiles, run stages, inspect reports, then manually review candidate commits.
+Prepare a config, run the pipeline, review reports, tune rules if needed, and rerun from the appropriate stage.

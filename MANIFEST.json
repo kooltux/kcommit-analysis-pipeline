@@ -1,13 +1,12 @@
 {
-  "version": "v7.18",
+  "version": "v7.19",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for security and performance relevance",
   "library_dir": "lib",
   "template_dir": "configs/templates",
   "scoring_dir": "configs/scoring",
   "example_configs": [
     "configs/example-arm-embedded-default.json",
-    "configs/example-arm-embedded-full.json",
-    "configs/example-qcom-tcu-default.json"
+    "configs/example-arm-embedded-full.json"
   ],
   "example_profiles": [
     "configs/profiles/security_fixes.json",

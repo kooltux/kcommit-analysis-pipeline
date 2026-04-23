@@ -1,69 +1,54 @@
 {
-  // ─────────────────────────────────────────────────────────────────────────
-  // kcommit-analysis-pipeline v7.17 – ARM embedded example (minimal)
-  // Copy this file to your workspace config dir and adjust paths.
-  // ─────────────────────────────────────────────────────────────────────────
   "vars": {
-    // WORKSPACE is imported from the calling environment (export WORKSPACE=...)
-    // TOOLDIR is resolved automatically to <config_dir>/..
     "WORKSPACE": "${WORKSPACE}",
-    "TOOLDIR":   "${TOOLDIR}"
+    "TOOLDIR": "${TOOLDIR}",
+    "CONFIGDIR": "${CONFIGDIR}"
   },
   "project": {
-    "name":     "arm-embedded-analysis",
+    "name": "arm-embedded-analysis",
     "work_dir": "${WORKSPACE}/work"
   },
   "kernel": {
     "source_dir": "${WORKSPACE}/linux",
-    "rev_old":    "v6.6",
-    "rev_new":    "v6.9"
+    "rev_old": "v4.14.206",
+    "rev_new": "v4.14.336"
   },
   "inputs": {
-    // kernel_config and build_dir are OPTIONAL (v7.17).
-    // When absent, Kconfig symbol mapping and artifact scanning are skipped.
-    "kernel_config":    "${WORKSPACE}/linux/.config",
-    "build_dir":        "${WORKSPACE}/build",
+    "kernel_config": "${WORKSPACE}/linux/.config",
+    "build_dir": "${WORKSPACE}/build",
     "kernel_build_log": "${WORKSPACE}/logs/kernel_build.log",
-    "yocto_build_log":  "${WORKSPACE}/logs/yocto_build.log",
-    "dts_roots":        ["${WORKSPACE}/linux/arch/arm64/boot/dts"]
+    "yocto_build_log": "${WORKSPACE}/logs/yocto_build.log",
+    "dts_roots": [
+      "${WORKSPACE}/linux/arch/arm/boot/dts"
+    ],
+    "profiles_dir": "${CONFIGDIR}/profiles",
+    "rules_dir": "${CONFIGDIR}/rules",
+    "scoring_dir": "${CONFIGDIR}/scoring",
+    "templates_dir": "${CONFIGDIR}/templates"
   },
-  // ── Profiles ─────────────────────────────────────────────────────────────
-  // v7.17: profiles.active is a dict mapping name → weight (0-100).
-  // Higher weight = larger contribution to the final score from that profile.
   "profiles": {
-    "dir":    "${TOOLDIR}/configs/profiles",
     "active": {
-      "security_fixes":    100,
-      "security_features":  80,
-      "performance":        60
+      "security_fixes": 100,
+      "security_features": 80,
+      "performance": 60
     }
   },
-  "rules": {
-    "dir": "${TOOLDIR}/configs/rules"
-  },
-  // ── Scoring weights ───────────────────────────────────────────────────────
-  // Multipliers applied to each sub-score before summing into 'score'.
-  // Defaults: product 1.0, security 1.5, performance 1.0, stable 1.2.
   "scoring": {
-    "product":     1.0,
-    "security":    1.5,
-    "performance": 1.0,
-    "stable":      1.2
+    "product": 1.0,
+    "stable": 1.2,
+    "symbol_match": 1.0
   },
-  // ── Collection & performance knobs ───────────────────────────────────────
   "collect": {
-    "use_numstat":    true,
-    "use_no_merges":  true,
+    "use_numstat": true,
+    "use_no_merges": true,
     "use_first_parent": false,
-    // max_commits: 0 = no limit; set to e.g. 50000 for a safety cap
-    "max_commits":    0,
-    // score_workers: 0 = auto (min(4, cpu_count)); set explicitly to override
-    "score_workers":  0
+    "max_commits": 0,
+    "score_workers": 0
   },
-  // ── HTML report ───────────────────────────────────────────────────────────
   "templates": {
-    "html_summary":  true,
-    "report_title":  "ARM Embedded Kernel Commit Analysis",
-    "top_n":         200
+    "html_summary": true,
+    "report_title": "ARM Embedded Analysis",
+    "top_n": 200,
+    "summary_css": "${CONFIGDIR}/templates/summary.css"
   }
 }

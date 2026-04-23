@@ -1,3 +1,3 @@
 # Troubleshooting
 
-Check paths, revision ranges, logs, rule breadth, and variable expansion if results look wrong.
+Verify `WORKSPACE`, `TOOLDIR`, `CONFIGDIR`, and relative path resolution when inputs cannot be found.

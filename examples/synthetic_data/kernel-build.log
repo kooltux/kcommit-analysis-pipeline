@@ -1,7 +1,0 @@
-CC drivers/net/ethernet/stmicro/stmmac/stmmac_main.o
-CC drivers/can/dev.o
-CC drivers/mmc/core/core.o
-CC fs/ext4/super.o
-CC security/keys/keyring.o
-CC crypto/aes_generic.o
-CC drivers/tty/serial/8250/8250_core.o

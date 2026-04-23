@@ -1,5 +1,3 @@
-# Usage Guide
+# Usage
 
-Run the full pipeline with `./launch.sh ./configs/local-example-arm32-cyber.json`.
-
-Rerun revision changes from stage 01, build-context changes from stage 02, and rules-only changes from stage 05.
+Run the full pipeline with `python3 kcommit_pipeline.py --config <file>`. Run a single stage with `--stage`. Use `--dry-run` to validate configuration before execution.

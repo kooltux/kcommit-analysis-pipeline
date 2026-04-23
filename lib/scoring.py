@@ -1,21 +1,17 @@
 """Commit scoring helpers for kcommit-analysis-pipeline.
 
-v7.17 changes vs v7.13:
-  - extract_patch_features(subject) renamed to extract_stable_hints(commit).
-    The new function reads the full commit dict (subject + body) to detect
-    Fixes:/Cc:stable/CVE trailers, and the old name is kept as a compat alias.
-  - infer_touched_paths(subject, cfg=None): new cfg parameter loads
-    subsystem->path hints from configs/scoring/subsystem_path_hints.json
-    (resolved via TOOLDIR) instead of using a hardcoded inline table.
-  - score_commit(commit, product_map, profile_rules, cfg=None):
-      * cfg used to read scoring weight multipliers from cfg['scoring'].
-      * cfg['profiles']['active'] dict form used for per-profile multipliers.
-      * Message blacklist pre-filter: skip expensive scoring early.
-      * Real commit files intersected with config_to_paths for strong evidence.
-      * Triple-threat stable bonus: CVE + Fixes: + Cc:stable -> +30 pts.
-      * Output shape: 'score' (int) + 'scoring' sub-dict replaces the old flat
-        candidate_score / security_score / performance_score / stable_score.
+v7.19 scoring model
+===================
+
+- Profiles carry thematic weights via profiles.active.
+- Rules carry local weights inside each profile/rule set.
+- A commit may match multiple rules inside multiple profiles; all positive
+  matches contribute additively.
+- The global config 'scoring' section is reserved for extra non-profile
+  bonuses only, such as product evidence, stable/fix hints, and future
+  symbol-level evidence. It must not duplicate profile or rule weights.
 """
+
 from __future__ import print_function
 import fnmatch
 import json

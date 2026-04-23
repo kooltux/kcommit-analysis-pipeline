@@ -1,3 +1,3 @@
-# Validation Guide
+# Validation
 
-Use the synthetic dataset and example configs to validate config parsing, stage sequencing, and report generation.
+Use a dry-run first and validate resolved inputs, profile directories, rule directories, and template directories before starting a large analysis.

@@ -1,59 +1,60 @@
 {
-  // kcommit-analysis-pipeline v7.17 – ARM embedded example (all knobs)
   "vars": {
     "WORKSPACE": "${WORKSPACE}",
-    "TOOLDIR":   "${TOOLDIR}"
+    "TOOLDIR": "${TOOLDIR}",
+    "CONFIGDIR": "${CONFIGDIR}"
   },
   "project": {
-    "name":     "arm-embedded-full",
+    "name": "arm-embedded-full",
     "work_dir": "${WORKSPACE}/work"
   },
   "kernel": {
     "source_dir": "${WORKSPACE}/linux",
-    "rev_old":    "v6.6",
-    "rev_new":    "v6.9"
+    "rev_old": "v4.14.206",
+    "rev_new": "v4.14.336"
   },
   "inputs": {
-    "kernel_config":    "${WORKSPACE}/linux/.config",
-    "build_dir":        "${WORKSPACE}/build",
+    "kernel_config": "${WORKSPACE}/linux/.config",
+    "build_dir": "${WORKSPACE}/build",
     "kernel_build_log": "${WORKSPACE}/logs/kernel_build.log",
-    "yocto_build_log":  "${WORKSPACE}/logs/yocto_build.log",
-    "dts_roots":        ["${WORKSPACE}/linux/arch/arm64/boot/dts"]
+    "yocto_build_log": "${WORKSPACE}/logs/yocto_build.log",
+    "dts_roots": [
+      "${WORKSPACE}/linux/arch/arm/boot/dts"
+    ],
+    "profiles_dir": "${CONFIGDIR}/profiles",
+    "rules_dir": "${CONFIGDIR}/rules",
+    "scoring_dir": "${CONFIGDIR}/scoring",
+    "templates_dir": "${CONFIGDIR}/templates"
   },
   "profiles": {
-    "dir": "${TOOLDIR}/configs/profiles",
     "active": {
-      "security_fixes":    100,
-      "security_features":  80,
-      "performance":        60
+      "security_fixes": 100,
+      "security_features": 90,
+      "performance": 70
     }
   },
-  "rules": {
-    "dir": "${TOOLDIR}/configs/rules"
-  },
   "scoring": {
-    "product":     1.0,
-    "security":    2.0,
-    "performance": 1.0,
-    "stable":      1.5
+    "product": 1.0,
+    "stable": 1.2,
+    "symbol_match": 1.2
   },
   "collect": {
-    "use_numstat":      true,
-    "use_no_merges":    true,
+    "use_numstat": true,
+    "use_no_merges": true,
     "use_first_parent": false,
-    "max_commits":      0,
-    "score_workers":    4,
-    "jsonl":            false
+    "max_commits": 0,
+    "score_workers": 4,
+    "jsonl": false
   },
   "history_mapping": {
-    "mode":                  "sampled",
-    "sample_step":           500,
+    "mode": "sampled",
+    "sample_step": 500,
     "max_commits_per_probe": 3
   },
   "templates": {
-    "html_summary":  true,
-    "report_title":  "ARM Embedded – Full Analysis",
-    "top_n":         500,
-    "summary_css":   "${TOOLDIR}/configs/templates/summary.css"
+    "html_summary": true,
+    "report_title": "ARM Embedded – Full Analysis",
+    "top_n": 500,
+    "summary_css": "${CONFIGDIR}/templates/summary.css"
   }
 }

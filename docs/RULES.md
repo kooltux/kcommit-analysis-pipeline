@@ -1,3 +1,3 @@
-# Rules Guide
+# Rules
 
-Rules support substrings, wildcard patterns, and regex using the `re:` prefix.
+Rules define low-level commit matching. Shared rules may be referenced by several profiles and contribute within each matching profile.

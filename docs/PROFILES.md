@@ -1,3 +1,3 @@
-# Profiles Guide
+# Profiles
 
-Profiles let you combine viewpoints such as `industrial_ctrl`, `storage_gateway`, `network_product`, and TCU-focused profiles.
+Profiles define high-level relevance axes such as `security_fixes`, `security_features`, and `performance`. Rules contribute inside each profile and profile weights scale the final profile contribution.

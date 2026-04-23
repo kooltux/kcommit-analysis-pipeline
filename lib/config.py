@@ -53,13 +53,6 @@ def _expand_node(node, variables):
 
 
 def _strip_json_comments(text):
-    """Best-effort removal of //, #, and /* */ style comments from JSON content.
-
-    This keeps lines that do not start with a comment marker and removes
-    block comments. It is intentionally simple and targets our config style
-    (full-line comments), not arbitrary JSON-with-comments dialects.
-    """
-    # Remove C-style block comments first
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
     cleaned_lines = []
     for line in text.splitlines():
@@ -77,60 +70,76 @@ def _load_json(path):
     return json.loads(raw)
 
 
+def _resolve_relative_paths(node, base_dir):
+    if isinstance(node, dict):
+        return dict((k, _resolve_relative_paths(v, base_dir)) for k, v in node.items())
+    if isinstance(node, list):
+        return [_resolve_relative_paths(v, base_dir) for v in node]
+    if isinstance(node, str):
+        if '://' in node or node.startswith('${') or node.startswith('/') or node.startswith('~'):
+            return node
+        if '/' in node or node.startswith('.'):
+            return os.path.normpath(os.path.join(base_dir, node))
+    return node
+
+
 def load_config(path, inherited_vars=None, seen=None):
     path = os.path.abspath(path)
     if seen is None:
-        seen = []
+        seen = set()
     if path in seen:
-        raise ValueError('config include cycle detected: %s' % ' -> '.join(seen + [path]))
+        raise ValueError('cyclic include detected: %s' % path)
+    seen.add(path)
 
-    data = _load_json(path)
+    cfg = _load_json(path)
     config_dir = os.path.dirname(path)
 
-    # Seed variable map with inherited variables and environment-derived values.
+    merged = {}
+    include_configs = cfg.get('include_configs', []) or []
+    for inc in include_configs:
+        inc_path = inc
+        if not os.path.isabs(inc_path):
+            inc_path = os.path.join(config_dir, inc_path)
+        inc_cfg = load_config(inc_path, inherited_vars=inherited_vars, seen=seen)
+        deep_merge(merged, inc_cfg)
+
+    local = copy.deepcopy(cfg)
+    local.pop('include_configs', None)
+    deep_merge(merged, local)
+
     vars_map = {}
     if inherited_vars:
         vars_map.update(inherited_vars)
-    vars_map.setdefault('config_dir', config_dir)
-    vars_map.setdefault('cwd', os.getcwd())
+    vars_map.setdefault('WORKSPACE', os.environ.get('WORKSPACE', vars_map.get('WORKSPACE', '')))
     vars_map.setdefault('TOOLDIR', os.environ.get('TOOLDIR', os.path.abspath(os.path.join(config_dir, '..'))))
-    if os.environ.get('WORKSPACE'):
-        vars_map.setdefault('WORKSPACE', os.environ['WORKSPACE'])
+    vars_map.setdefault('CONFIGDIR', config_dir)
+    vars_map.setdefault('CWD', os.getcwd())
 
-    # Accept both "vars" and "variables" sections for user convenience.
-    var_section = {}
-    var_section.update(data.get('vars', {}))
-    var_section.update(data.get('variables', {}))
+    cfg_vars = merged.get('vars', {}) or {}
+    for k, v in cfg_vars.items():
+        vars_map[k] = _expand_string(v, vars_map)
+    merged['vars'] = vars_map
 
-    for key, value in var_section.items():
-        # Keep shell-supplied WORKSPACE/TOOLDIR if the config simply mirrors them
-        if key in ('WORKSPACE', 'TOOLDIR') and key in vars_map and isinstance(value, str) and value == '${%s}' % key:
-            continue
-        vars_map[key] = value
+    expanded = _expand_node(merged, vars_map)
+    expanded = _resolve_relative_paths(expanded, config_dir)
 
-    # Expand variables, supporting nested ${var} references with cycle detection.
-    expanded_vars = {}
-    for key, value in vars_map.items():
-        if isinstance(value, str) and '${' in value:
-            expanded_vars[key] = _expand_string(value, vars_map, [key])
-        else:
-            expanded_vars[key] = value
-    vars_map = expanded_vars
+    inputs = expanded.setdefault('inputs', {})
+    inputs.setdefault('profiles_dir', os.path.join(config_dir, 'profiles'))
+    inputs.setdefault('rules_dir', os.path.join(config_dir, 'rules'))
+    inputs.setdefault('scoring_dir', os.path.join(config_dir, 'scoring'))
+    inputs.setdefault('templates_dir', os.path.join(config_dir, 'templates'))
 
-    # Recursively load and merge any included configs first.
-    merged = {}
-    for inc in data.get('include_configs', []):
-        inc_expanded = _expand_string(inc, vars_map) if isinstance(inc, str) else inc
-        if not os.path.isabs(inc_expanded):
-            inc_expanded = os.path.normpath(os.path.join(config_dir, inc_expanded))
-        child = load_config(inc_expanded, inherited_vars=vars_map, seen=seen + [path])
-        deep_merge(merged, child)
+    profiles = expanded.setdefault('profiles', {})
+    profiles.setdefault('dir', inputs['profiles_dir'])
+    rules = expanded.setdefault('rules', {})
+    rules.setdefault('dir', inputs['rules_dir'])
+    templates = expanded.setdefault('templates', {})
+    templates.setdefault('base_dir', inputs['templates_dir'])
 
-    # Merge the current config body after variable expansion, excluding include list.
-    body = copy.deepcopy(data)
-    body.pop('include_configs', None)
-    body = _expand_node(body, vars_map)
-    deep_merge(merged, body)
-
-    merged['_meta'] = {'config_path': path, 'config_dir': config_dir, 'vars': vars_map}
-    return merged
+    expanded['_meta'] = {
+        'config_path': path,
+        'config_dir': config_dir,
+        'vars': vars_map,
+    }
+    expanded['config_dir'] = config_dir
+    return expanded
