@@ -33,20 +33,15 @@ import subprocess
 import sys
 
 from lib.config import load_config
-from lib.manifest import VERSION
+from lib.manifest import VERSION, load_manifest
 from lib.validation import validate_inputs
-from lib.pipeline_runtime import (get_pipeline_state, is_stage_done,
+from lib.pipeline_runtime import (is_stage_done,
                                    wipe_downstream, init_pipeline_state)
 
-STAGES = [
-    (0, '00_prepare_pipeline.py',      'prepare_pipeline'),
-    (1, '01_collect_commits.py',       'collect_commits'),
-    (2, '02_collect_build_context.py', 'collect_build_context'),
-    (3, '03_build_product_map.py',     'build_product_map'),
-    (4, '04_enrich_commits.py',        'enrich_commits'),
-    (5, '05_score_commits.py',         'score_commits'),
-    (6, '06_report_commits.py',        'report_commits'),
-]
+# Derive STAGES list from MANIFEST.json — single source of truth.
+_manifest = load_manifest()
+STAGES = [(s['index'], s['script'], s['key'])
+          for s in _manifest['pipeline_stages']]
 
 # Explicit stage ordering for wipe_downstream — deterministic on fresh workspaces.
 STAGE_ORDER = [s[2] for s in STAGES]
@@ -54,14 +49,15 @@ STAGE_ORDER = [s[2] for s in STAGES]
 STAGE_OUTPUTS = {
     'prepare_pipeline':       ['cache/compiled_rules.json', 'cache/prepare_summary.json'],
     'collect_commits':        ['cache/commits.json'],
-    'collect_build_context':  ['cache/build_context.json'],
+    'collect_build_context':  ['cache/build_context.json', 'cache/kbuild_static_map.json'],
     'build_product_map':      ['cache/product_map.json'],
     'enrich_commits':         ['cache/enriched_commits.json'],
     'score_commits':          ['cache/scored_commits.json'],
     'report_commits':         ['output/relevant_commits.csv',
                                'output/relevant_commits.json',
                                'output/report_stats.json',
-                               'output/profile_summary.json'],
+                               'output/profile_summary.json',
+                               'output/profile_matrix.csv'],
 }
 
 
@@ -84,7 +80,7 @@ def _resolve_stage(val):
 
 def _dry_run(cfg, args):
     meta       = cfg.get('_meta', {}) or {}
-    work       = cfg.get('project', {}).get('work_dir', './work')
+    work       = cfg['paths']['work_dir']
     kernel_cfg = cfg.get('inputs', {}).get('kernel_config', 'N/A')
     build_dir  = cfg.get('inputs', {}).get('build_dir', 'N/A')
     source_dir = (cfg.get('kernel', {}) or {}).get('source_dir', 'N/A')
@@ -138,7 +134,7 @@ def main():
         ap.error('--stage and --from are mutually exclusive')
 
     cfg        = load_config(args.config)
-    work       = cfg.get('project', {}).get('work_dir', './work')
+    work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     os.makedirs(os.path.join(work, 'cache'),  exist_ok=True)
     os.makedirs(os.path.join(work, 'output'), exist_ok=True)

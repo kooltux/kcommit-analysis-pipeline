@@ -18,7 +18,7 @@ from lib.config import load_config
 from lib.config import load_json, save_json
 from lib.scoring import score_commit, precompile_rules
 from lib.profile_rules import load_profile_rules
-from lib.validation import validate_inputs
+from lib.validation import validate_config_only as validate_inputs
 from lib.pipeline_runtime import (
     start_stage, finish_stage, fail_stage, update_stage_progress
 )
@@ -84,8 +84,9 @@ def _score_all(commits, product_map, profile_rules, cfg):
                                           n_done=i + 1, n_total=total)
         return results
 
-    except Exception:
-        # Fallback to serial if anything goes wrong with multiprocessing
+    except Exception as _mp_exc:
+        print(f'\nWARNING: multiprocessing pool failed ({_mp_exc}); falling back to serial scoring',
+              flush=True)
         results = []
         for i, c in enumerate(commits):
             results.append(score_commit(c, product_map, profile_rules, cfg))
@@ -102,7 +103,7 @@ def main():
     args = ap.parse_args()
 
     cfg        = load_config(args.config)
-    work       = cfg.get('project', {}).get('work_dir', './work')
+    work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'score_commits', 6, 7)
 

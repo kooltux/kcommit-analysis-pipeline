@@ -1,3 +1,41 @@
+## v8.1 (2026-04-24)
+
+### Fixes
+- **#3** `score_commit()` blacklist now scoped per-profile: a commit blacklisted
+  in profile A is no longer silently discarded from profile B.
+- **#4** Parallel scoring fallback in stage 05 now prints a WARNING instead of
+  silently downgrading to serial mode.
+- **#5** `subprocess.call` replaced with `subprocess.run` in `lib/validation.py`.
+
+### Performance
+- **#6** `_load_hints()` in `scoring.py` now uses `functools.lru_cache`; hints
+  JSON is read from disk once per process instead of once per commit.
+- **#8** `validate_config_only()` added to `lib/validation.py`; stages 01-06 now
+  call this lighter variant (no git subprocess), eliminating 12 redundant git
+  subprocesses per full pipeline run. Stage 00 and dry-run keep full validation.
+- **#15** `precompile_rules()` is now idempotent via `_PRECOMPILED_IDS` guard.
+
+### Correctness
+- **#2** `profile_matrix.csv` added to `STAGE_OUTPUTS['report_commits']` so it
+  is correctly wiped on `--from 6` / `--force`.
+- **#13** `kbuild_static_map.json` added to `STAGE_OUTPUTS['collect_build_context']`.
+- **#14** History map failure threshold configurable via
+  `history_mapping.max_failure_rate` (default 0.05).
+
+### Architecture
+- **#1** All stage scripts and orchestrator now use `cfg['paths']['work_dir']`
+  instead of re-deriving the work directory from `cfg['project']['work_dir']`.
+- **#9** `STAGES` list in `kcommit_pipeline.py` derived from `load_manifest()`
+  — `MANIFEST.json` is now the single source of truth for stage ordering.
+- **#11** `concurrent.futures` import moved to module top-level in `history_map.py`.
+- **#12** `_dry_run()` uses `cfg['paths']['work_dir']`.
+
+### Cleanup
+- **#7** Dead import `get_pipeline_state` removed from `kcommit_pipeline.py`.
+- **#10** Remaining `%`-format strings in `00_prepare_pipeline.py` replaced with f-strings.
+- **#16** `extract_patch_features()` dead alias deleted from `lib/scoring.py`.
+- **#17** `_active_profiles()` renamed to public `active_profile_names()`.
+
 ## v8.0 (2026-04-24)
 
 ### Breaking changes

@@ -1,5 +1,10 @@
 """Historical Kbuild/Makefile config-to-paths mapping for kcommit-analysis-pipeline.
 
+v9.0 changes vs v8.0:
+  - concurrent.futures import moved to module top level.
+  - Failure rate threshold now configurable via history_mapping.max_failure_rate
+    (default 0.05); avoids magic constant.
+
 v8.0 changes vs v7.19:
   - Dropped from __future__ import print_function (Py2 dead code).
   - %-formatting replaced with f-strings.
@@ -16,6 +21,7 @@ v7.18 additions vs v7.17:
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from lib.gitutils import list_rev_commits, show_path_history
 
@@ -64,10 +70,10 @@ def build_history_config_map(cfg, base_map, progress_callback=None):
     total = len(tasks)
     results = {}
 
+    max_failure_rate = float(hm.get('max_failure_rate', 0.05))
+
     if max_workers > 1 and total > 0:
         try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-
             def _fetch(task):
                 rev, mk = task
                 text = show_path_history(cfg, rev, mk)
@@ -92,13 +98,13 @@ def build_history_config_map(cfg, base_map, progress_callback=None):
 
             if failed_tasks:
                 failure_rate = len(failed_tasks) / max(total, 1)
-                if failure_rate > 0.05:
+                if failure_rate > max_failure_rate:
                     raise RuntimeError(
                         f'{len(failed_tasks)}/{total} git-show tasks failed '
                         f'({failure_rate:.0%}). First error: {failed_tasks[0][2]}')
                 print(
                     f'\nWARNING: {len(failed_tasks)}/{total} git-show tasks failed '
-                    f'(below 5%% threshold, continuing with partial data)',
+                    f'(below {max_failure_rate:.0%} threshold, continuing with partial data)',
                     file=sys.stderr)
 
         except RuntimeError:

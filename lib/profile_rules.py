@@ -32,7 +32,7 @@ def _load_json_with_comments(path):
     return json.loads(text) if text else None
 
 
-def _active_profiles(cfg):
+def active_profile_names(cfg):
     """Return ordered list of active profile names.
 
     Accepts both dict form {'name': weight, ...} and list form ['name', ...].
@@ -57,7 +57,7 @@ def compile_rules_for_config(cfg, work_dir):
     """Compile rules for all active profiles and cache to compiled_rules.json."""
     meta       = cfg.get('_meta', {}) or {}
     config_dir = meta.get('config_dir') or os.getcwd()
-    active     = _active_profiles(cfg)
+    active     = active_profile_names(cfg)
 
     if not active:
         raise RuntimeError('no active profiles configured (profiles.active is empty)')
@@ -118,7 +118,7 @@ def compile_rules_for_config(cfg, work_dir):
 
 def load_profile_rules(cfg):
     """Load compiled rules from cache, recompiling if necessary."""
-    work       = cfg.get('project', {}).get('work_dir', './work')
+    work       = cfg['paths']['work_dir']
     cache_path = os.path.join(work, 'cache', 'compiled_rules.json')
     if not os.path.exists(cache_path):
         return compile_rules_for_config(cfg, work)

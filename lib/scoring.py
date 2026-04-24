@@ -21,6 +21,7 @@ v7.19 scoring model
 """
 
 import fnmatch
+import functools
 import json
 import os
 import re
@@ -77,6 +78,9 @@ def _match(pattern, text):
 
 # ── Pre-compilation ────────────────────────────────────────────────────────────
 
+_PRECOMPILED_IDS = set()   # set of id(profile_rules) already compiled
+
+
 def precompile_rules(profile_rules):
     """Pre-compile all pattern strings in *profile_rules* to re.Pattern objects.
 
@@ -84,9 +88,15 @@ def precompile_rules(profile_rules):
     profile_rules.  Mutates the dicts in-place by replacing string pattern
     lists with compiled-pattern lists under the same keys.
 
+    Idempotent: calling a second time on the same dict object is a no-op.
+
     score_commit() uses _match(), which transparently handles both str and
     re.Pattern inputs, so no other code needs to change.
     """
+    obj_id = id(profile_rules)
+    if obj_id in _PRECOMPILED_IDS:
+        return
+    _PRECOMPILED_IDS.add(obj_id)
     for pdata in (profile_rules or {}).values():
         merged = (pdata or {}).get('merged', {}) or {}
         for key in ('keywords_whitelist', 'keywords_blacklist',
@@ -113,8 +123,18 @@ def _compile_pat(pattern):
 
 # ── Config-hint loading ────────────────────────────────────────────────────────
 
+@functools.lru_cache(maxsize=8)
+def _load_hints_from_path(hints_path):
+    """Load and cache subsystem hint JSON by absolute path."""
+    try:
+        with open(hints_path, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
 def _load_hints(cfg):
-    """Load subsystem-keyword -> path-prefix hints from configs/scoring/."""
+    """Resolve the hints file path from *cfg* and return the cached dict."""
     if not cfg:
         return {}
     meta    = cfg.get('_meta', {}) or {}
@@ -125,11 +145,7 @@ def _load_hints(cfg):
     hints_path = os.path.join(tooldir, 'configs', 'scoring', 'subsystem_path_hints.json')
     if not os.path.exists(hints_path):
         return {}
-    try:
-        with open(hints_path, encoding='utf-8') as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    return _load_hints_from_path(os.path.abspath(hints_path))
 
 
 def _get_weights(cfg):
@@ -191,10 +207,6 @@ def extract_stable_hints(commit):
     }
 
 
-def extract_patch_features(subject):
-    """Backward-compatibility alias; prefer extract_stable_hints(commit)."""
-    return extract_stable_hints({'subject': subject})
-
 
 def infer_touched_paths(subject, cfg=None):
     """Guess relevant kernel path prefixes from a commit subject."""
@@ -228,21 +240,6 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     body    = commit.get('body',    '') or ''
     full    = (subject + '\n' + body).lower()
 
-    # ── 0. Early message blacklist pre-filter ─────────────────────────────────
-    for pdata in (profile_rules or {}).values():
-        merged = (pdata or {}).get('merged', {}) or {}
-        for pat in merged.get('keywords_blacklist', []):
-            if _match(pat, subject):
-                result.update({
-                    'score':            0,
-                    'scoring':          {'product': 0, 'security': 0,
-                                         'performance': 0, 'stable': 0,
-                                         'profiles': {}},
-                    'matched_profiles': [],
-                    'product_evidence': [],
-                    'filtered_by_blacklist': True,
-                })
-                return result
 
     # ── 1. Stable / security / performance hints ───────────────────────────────
     hints = commit.get('stable_hints') or extract_stable_hints(commit)
@@ -320,10 +317,22 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     evidence      = sorted(set(evidence))
 
     # ── 3. Profile rule scoring ────────────────────────────────────────────────
+    # Build per-profile blacklist exclusion set: a commit blacklisted by profile A
+    # is excluded only from profile A, not from other profiles.
+    _profile_blacklisted = set()
+    for _pname, _pdata in (profile_rules or {}).items():
+        _merged = (_pdata or {}).get('merged', {}) or {}
+        for _pat in _merged.get('keywords_blacklist', []):
+            if _match(_pat, subject):
+                _profile_blacklisted.add(_pname)
+                break
+
     matched_profiles = []
     profile_scores   = {}
 
     for pname, pdata in (profile_rules or {}).items():
+        if pname in _profile_blacklisted:
+            continue
         merged = (pdata or {}).get('merged', {}) or {}
         rules  = (pdata or {}).get('rules',  {}) or {}
         pmult  = prof_mults.get(pname, 1.0)

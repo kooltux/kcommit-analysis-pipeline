@@ -8,7 +8,7 @@ import json
 import os
 
 from lib.config import load_config
-from lib.profile_rules import compile_rules_for_config, _active_profiles
+from lib.profile_rules import compile_rules_for_config, active_profile_names
 
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import start_stage, finish_stage, fail_stage
@@ -20,7 +20,7 @@ def main():
     args = ap.parse_args()
 
     cfg   = load_config(args.config)
-    work  = cfg.get('project', {}).get('work_dir', './work')
+    work  = cfg['paths']['work_dir']
     cache = os.path.join(work, 'cache')
     os.makedirs(cache, exist_ok=True)
     state_path = os.path.join(work, 'pipeline_state.json')
@@ -42,19 +42,17 @@ def main():
         issues     = []
 
         if not os.path.isdir(os.path.join(config_dir, 'profiles')):
-            issues.append('profiles directory not found: %s'
-                          % os.path.join(config_dir, 'profiles'))
+            issues.append(f'profiles directory not found: {os.path.join(config_dir, "profiles")}')
         if not os.path.isdir(os.path.join(config_dir, 'rules')):
-            issues.append('rules directory not found: %s'
-                          % os.path.join(config_dir, 'rules'))
+            issues.append(f'rules directory not found: {os.path.join(config_dir, "rules")}')
 
-        active_names = _active_profiles(cfg)
+        active_names = active_profile_names(cfg)
         if not active_names:
             issues.append('no active profiles configured (profiles.active is empty)')
         for name in active_names:
             pjson = os.path.join(config_dir, 'profiles', name + '.json')
             if not os.path.exists(pjson):
-                issues.append('profile %r not found at %s' % (name, pjson))
+                issues.append(f'profile {name!r} not found at {pjson}')
 
         if issues:
             for msg in issues:
@@ -73,7 +71,7 @@ def main():
             json.dump(summary, f, indent=2)
             f.write('\n')
 
-        print('prepared rules for %d profiles' % len(compiled))
+        print(f'prepared rules for {len(compiled)} profiles')
         finish_stage(state_path, 'prepare_pipeline', started, status='ok',
                      extra={'profile_count': len(compiled)})
 

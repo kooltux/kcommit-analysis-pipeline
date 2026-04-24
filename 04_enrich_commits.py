@@ -12,7 +12,7 @@ import sys
 from lib.config import load_config
 from lib.config import load_json, save_json
 from lib.scoring import extract_stable_hints, infer_touched_paths
-from lib.validation import validate_inputs
+from lib.validation import validate_config_only as validate_inputs
 from lib.pipeline_runtime import (
     start_stage, finish_stage, fail_stage, update_stage_progress
 )
@@ -24,7 +24,7 @@ def main():
     args = ap.parse_args()
 
     cfg        = load_config(args.config)
-    work       = cfg.get('project', {}).get('work_dir', './work')
+    work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'enrich_commits', 5, 7)
 

@@ -18,7 +18,7 @@ from lib.config import load_config
 from lib.config import save_json
 from lib.kbuild import load_kernel_config_symbols
 from lib.parse_kconfig import parse_kernel_config, scan_kbuild_tree
-from lib.validation import validate_inputs
+from lib.validation import validate_config_only as validate_inputs
 from lib.pipeline_runtime import (
     start_stage, finish_stage, fail_stage, update_stage_progress
 )
@@ -49,7 +49,7 @@ def main():
     args = ap.parse_args()
 
     cfg        = load_config(args.config)
-    work       = cfg.get('project', {}).get('work_dir', './work')
+    work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'collect_build_context', 3, 7)
 

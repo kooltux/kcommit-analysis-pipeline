@@ -15,7 +15,7 @@ import sys
 
 from lib.config import load_config
 from lib.config import save_json
-from lib.validation import validate_inputs
+from lib.validation import validate_config_only as validate_inputs
 from lib.pipeline_runtime import (
     start_stage, finish_stage, fail_stage, update_stage_progress
 )
@@ -33,7 +33,7 @@ def main():
     collect_cfg     = cfg.get('collect', {}) or {}
     max_commits     = int(collect_cfg.get('max_commits', 0) or 0)
     include_parents = bool(collect_cfg.get('include_parents', False))
-    work            = cfg.get('project', {}).get('work_dir', './work')
+    work            = cfg['paths']['work_dir']
     state_path      = os.path.join(work, 'pipeline_state.json')
     started         = start_stage(state_path, 'collect_commits', 2, 7)
 
