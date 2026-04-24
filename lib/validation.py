@@ -10,7 +10,7 @@ v8.0 changes vs v7.19:
   - Profile weight validation: profiles.active weights must be integers 0–100.
   - collect.score_workers validation: must be a non-negative integer (0 = auto).
 
-v9.0 changes vs v8.0:
+v8.1 changes vs v8.0:
   - subprocess.call replaced with subprocess.run.
   - validate_config_only() added: lightweight checks without git subprocess calls.
     Stage scripts 01–06 now call validate_config_only() instead of validate_inputs()
@@ -32,8 +32,6 @@ def validate_inputs(cfg):
     notices  = []
 
     kernel = cfg.get('kernel', {}) or {}
-    inputs = cfg.get('inputs', {}) or {}
-
     # ── Mandatory: kernel source directory ───────────────────────────────────
     source_dir = kernel.get('source_dir')
     if not source_dir:
@@ -63,16 +61,16 @@ def validate_inputs(cfg):
                         f'kernel.{ref_key}={ref_val!r} is not a valid git ref in {source_dir}')
 
     # ── Optional: kernel config file ─────────────────────────────────────────
-    kconfig = inputs.get('kernel_config')
+    kconfig = kernel.get('kernel_config')
     if not kconfig:
         notices.append('notice: inputs.kernel_config not set – '
                        'Kconfig symbol mapping will be skipped')
     elif not os.path.isfile(kconfig):
-        notices.append(f'notice: inputs.kernel_config not found ({kconfig}) – '
+        notices.append(f'notice: kernel.kernel_config not found ({kconfig}) – '
                        'Kconfig symbol mapping will be skipped')
 
     # ── Optional: build directory ─────────────────────────────────────────────
-    build_dir = inputs.get('build_dir')
+    build_dir = kernel.get('build_dir')
     if build_dir and not os.path.isdir(build_dir):
         notices.append(f'notice: inputs.build_dir not found ({build_dir}) – '
                        'artifact scanning will be skipped')
@@ -117,7 +115,6 @@ def validate_config_only(cfg):
     notices  = []
 
     kernel = cfg.get('kernel', {}) or {}
-    inputs = cfg.get('inputs', {}) or {}
 
     source_dir = kernel.get('source_dir')
     if not source_dir:
@@ -130,15 +127,15 @@ def validate_config_only(cfg):
     if not kernel.get('rev_new'):
         problems.append('kernel.rev_new is not configured')
 
-    kconfig = inputs.get('kernel_config')
+    kconfig = kernel.get('kernel_config')
     if not kconfig:
         notices.append('notice: inputs.kernel_config not set – '
                        'Kconfig symbol mapping will be skipped')
     elif not os.path.isfile(kconfig):
-        notices.append(f'notice: inputs.kernel_config not found ({kconfig}) – '
+        notices.append(f'notice: kernel.kernel_config not found ({kconfig}) – '
                        'Kconfig symbol mapping will be skipped')
 
-    build_dir = inputs.get('build_dir')
+    build_dir = kernel.get('build_dir')
     if build_dir and not os.path.isdir(build_dir):
         notices.append(f'notice: inputs.build_dir not found ({build_dir}) – '
                        'artifact scanning will be skipped')

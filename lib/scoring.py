@@ -25,6 +25,7 @@ import functools
 import json
 import os
 import re
+import weakref
 
 # ── Default scoring weight multipliers ────────────────────────────────────────
 _DEFAULT_WEIGHTS = {
@@ -78,7 +79,8 @@ def _match(pattern, text):
 
 # ── Pre-compilation ────────────────────────────────────────────────────────────
 
-_PRECOMPILED_IDS = set()   # set of id(profile_rules) already compiled
+_PRECOMPILED_IDS = weakref.WeakSet()  # compiled profile_rules dicts; WeakSet avoids
+                                       # memory leaks in test suites or long-running processes
 
 
 def precompile_rules(profile_rules):
@@ -93,10 +95,9 @@ def precompile_rules(profile_rules):
     score_commit() uses _match(), which transparently handles both str and
     re.Pattern inputs, so no other code needs to change.
     """
-    obj_id = id(profile_rules)
-    if obj_id in _PRECOMPILED_IDS:
+    if profile_rules in _PRECOMPILED_IDS:
         return
-    _PRECOMPILED_IDS.add(obj_id)
+    _PRECOMPILED_IDS.add(profile_rules)
     for pdata in (profile_rules or {}).values():
         merged = (pdata or {}).get('merged', {}) or {}
         for key in ('keywords_whitelist', 'keywords_blacklist',

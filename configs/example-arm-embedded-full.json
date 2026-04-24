@@ -1,31 +1,40 @@
 {
+  // ─────────────────────────────────────────────────────────────────────────
+  // kcommit-analysis-pipeline 
+  // ─────────────────────────────────────────────────────────────────────────
   "vars": {
+    // WORKSPACE is imported from the calling environment (export WORKSPACE=...)
     "WORKSPACE": "${WORKSPACE}",
     "TOOLDIR": "${TOOLDIR}",
-    "CONFIGDIR": "${CONFIGDIR}"
+    "CONFIGDIR": "${CONFIGDIR}",
+    "kernel_src": "${WORKSPACE}/linux/",
+    "build_dir": "${WORKSPACE}/build",
+    "logs_dir": "${WORKSPACE}/logs"
   },
   "project": {
     "name": "arm-embedded-full",
     "work_dir": "${WORKSPACE}/work"
   },
   "kernel": {
-    "source_dir": "${WORKSPACE}/linux",
+    "source_dir": "${kernel_src}",
     "rev_old": "v4.14.206",
-    "rev_new": "v4.14.336"
+    "rev_new": "v4.14.336",
+    // kernel_config and build_dir are OPTIONAL
+    // When absent, Kconfig symbol mapping and artifact scanning are skipped.
+    "kernel_config": "${build_dir}/.config",
+    "build_dir": "${WORKSPACE}/build"
   },
   "inputs": {
-    "kernel_config": "${WORKSPACE}/linux/.config",
-    "build_dir": "${WORKSPACE}/build",
-    "kernel_build_log": "${WORKSPACE}/logs/kernel_build.log",
-    "yocto_build_log": "${WORKSPACE}/logs/yocto_build.log",
-    "dts_roots": [
-      "${WORKSPACE}/linux/arch/arm/boot/dts"
-    ],
+    "kernel_build_log": "${logs_dir}/kernel_build.log",
+    "yocto_build_log": "${logs_dir}/yocto_build.log",
+    "dts_roots":        ["${kernel_src}/arch/arm/boot/dts"],
     "profiles_dir": "${CONFIGDIR}/profiles",
     "rules_dir": "${CONFIGDIR}/rules",
     "scoring_dir": "${CONFIGDIR}/scoring",
     "templates_dir": "${CONFIGDIR}/templates"
   },
+  // ── Profiles ─────────────────────────────────────────────────────────────
+  // Higher weight = larger contribution to the final score from that profile.
   "profiles": {
     "active": {
       "security_fixes": 100,
@@ -53,7 +62,7 @@
   },
   "templates": {
     "html_summary": true,
-    "report_title": "ARM Embedded – Full Analysis",
+    "report_title": "ARM Embedded - Full Analysis",
     "top_n": 500,
     "summary_css": "${CONFIGDIR}/templates/summary.css"
   }

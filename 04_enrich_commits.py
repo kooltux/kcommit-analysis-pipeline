@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 """Stage 04: Enrich commits with stable hints and touched-path guesses.
-
-v7.18 changes vs v7.17:
-  - Within-stage progress via update_stage_progress (updated ~50 times).
-  - Python 3.6 compatible.
 """
 import argparse
 import os
@@ -26,7 +22,7 @@ def main():
     cfg        = load_config(args.config)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
-    started    = start_stage(state_path, 'enrich_commits', 5, 7)
+    started    = start_stage(state_path, 'enrich_commits', 4, 7)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -52,7 +48,7 @@ def main():
             c['touched_paths_guess'] = infer_touched_paths(
                 c.get('subject', ''), cfg)
             if i % step == 0 or i == total - 1:
-                update_stage_progress(5, 7, (i + 1) / max(total, 1),
+                update_stage_progress(4, 7, (i + 1) / max(total, 1),
                                       'enriching',
                                       n_done=i + 1, n_total=total)
 

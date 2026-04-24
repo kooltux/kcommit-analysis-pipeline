@@ -1,5 +1,9 @@
 """Profile and rule loading for kcommit-analysis-pipeline.
 
+v8.2 changes vs v8.1:
+  - local JSON comment-stripping loader removed; uses config._load_json() instead,
+    which benefits from the improved comment-stripping (line numbers preserved).
+
 v8.0 changes vs v7.19:
   - Dropped from __future__ import print_function and import io (Py2 dead code).
   - io.open() replaced with open(); %-formatting replaced with f-strings.
@@ -7,6 +11,8 @@ v8.0 changes vs v7.19:
 """
 import json
 import os
+
+from lib.config import _load_json as _load_json_config
 
 
 def _read_patterns(path):
@@ -19,17 +25,6 @@ def _read_patterns(path):
             if s and not s.startswith('#'):
                 patterns.append(s)
     return patterns
-
-
-def _load_json_with_comments(path):
-    if not os.path.exists(path):
-        return None
-    with open(path, encoding='utf-8', errors='replace') as f:
-        raw = f.read()
-    lines = [l for l in raw.splitlines()
-             if not l.lstrip().startswith('//') and not l.lstrip().startswith('#')]
-    text = '\n'.join(lines).strip()
-    return json.loads(text) if text else None
 
 
 def active_profile_names(cfg):
@@ -73,7 +68,7 @@ def compile_rules_for_config(cfg, work_dir):
 
     for name in active:
         prof_path = os.path.join(profile_root, f'{name}.json')
-        pdata = _load_json_with_comments(prof_path)
+        pdata = _load_json_config(prof_path)
         if not pdata:
             raise RuntimeError(f'profile {name!r} not found or empty at {prof_path}')
 

@@ -1,19 +1,6 @@
 #!/usr/bin/env python3
 """Top-level pipeline driver for kcommit-analysis-pipeline.
 
-v8.0 changes vs v7.19:
-  - Dropped from __future__ import print_function (Py2 dead code).
-  - Version string read from lib.manifest.VERSION instead of being hardcoded.
-  - --stage and --from are now mutually exclusive; passing both is an error.
-  - STAGE_ORDER list passed to wipe_downstream() for deterministic ordering
-    on fresh workspaces (no stored 'index' fields required).
-  - subprocess.call replaced with subprocess.run (available since Python 3.5).
-
-v7.17 additions:
-  --dry-run     Validate config, print resolved paths and active profiles, exit 0.
-  --from STAGE  Run from the named/numbered stage onwards (wipes downstream cache).
-  --force       Re-run even if the target stage is already 'ok' (wipes downstream).
-
 Usage:
   # Run all stages
   python3 kcommit_pipeline.py --config /path/to/cfg.json
@@ -57,7 +44,8 @@ STAGE_OUTPUTS = {
                                'output/relevant_commits.json',
                                'output/report_stats.json',
                                'output/profile_summary.json',
-                               'output/profile_matrix.csv'],
+                               'output/profile_matrix.csv',
+                               'output/summary.html'],
 }
 
 
@@ -81,8 +69,8 @@ def _resolve_stage(val):
 def _dry_run(cfg, args):
     meta       = cfg.get('_meta', {}) or {}
     work       = cfg['paths']['work_dir']
-    kernel_cfg = cfg.get('inputs', {}).get('kernel_config', 'N/A')
-    build_dir  = cfg.get('inputs', {}).get('build_dir', 'N/A')
+    kernel_cfg = (cfg.get('kernel', {}) or {}).get('kernel_config', 'N/A')
+    build_dir  = (cfg.get('kernel', {}) or {}).get('build_dir', 'N/A')
     source_dir = (cfg.get('kernel', {}) or {}).get('source_dir', 'N/A')
     rev_old    = (cfg.get('kernel', {}) or {}).get('rev_old', 'N/A')
     rev_new    = (cfg.get('kernel', {}) or {}).get('rev_new', 'N/A')

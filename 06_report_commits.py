@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
 """Stage 06: Generate CSV, JSON, and HTML reports from scored commits.
-
-v7.18 changes vs v7.17:
-  - profile_coverage computed and stored in report_stats.json (already present
-    in v7.17); finish_stage extra dict now consistent with what report_stats
-    shows.
-  - CSV updated: uses scoring sub-dict fields (product_score, security_score,
-    performance_score, stable_score) promoted into flat columns; sort key is
-    'score' (unchanged from v7.17).
-  - profile_summary value is now a dict {'count': N, 'total_score': S} instead
-    of a bare integer, giving richer per-profile stats in the HTML report.
-  - Python 3.6 compatible.
 """
 import argparse
 import csv
@@ -20,7 +9,7 @@ from lib.config import load_config
 from lib.config import load_json, save_json
 from lib.validation import validate_config_only as validate_inputs
 from lib.pipeline_runtime import (
-    start_stage, finish_stage, fail_stage, get_pipeline_state
+    start_stage, finish_stage, fail_stage
 )
 from lib.html_report import generate_html_report
 
@@ -44,7 +33,7 @@ def main():
     cfg        = load_config(args.config)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
-    started    = start_stage(state_path, 'report_commits', 7, 7)
+    started    = start_stage(state_path, 'report_commits', 6, 7)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -142,7 +131,6 @@ def main():
             'profile_coverage':                coverage,
             'active_profiles':                 active_profiles,
             'template_options':                tmpl_cfg,
-            'pipeline_state':                  get_pipeline_state(state_path),
         }
         save_json(os.path.join(outdir, 'report_stats.json'), report_stats)
 

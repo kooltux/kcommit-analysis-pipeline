@@ -1,5 +1,11 @@
 """Load JSON config files with ${var} expansion, relative includes, and comment stripping.
 
+v8.2 changes vs v8.1:
+  - _strip_json_comments(): comments now replaced with whitespace/blank lines instead
+    of being removed, so json.JSONDecodeError line numbers match the source file.
+  - Legacy alias block (cfg['inputs']['profiles_dir'] etc.) removed: all callers
+    now use cfg['paths'] directly.
+
 v8.0 changes vs v7.19:
   - Dropped from __future__ import print_function and import io (Py2 dead code).
   - io.open() replaced with open(); %-formatting replaced with f-strings.
@@ -79,13 +85,37 @@ def _expand_node(node, variables):
 
 
 def _strip_json_comments(text):
-    text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
+    """Remove // and # line comments and /* */ block comments from JSON-like text.
+
+    Comment content is replaced with whitespace rather than removed, so that
+    line numbers in json.JSONDecodeError messages refer to the original source
+    file — making errors much easier to locate.
+
+    Strategy:
+      - Line comments (// or # at start of stripped line): replace the entire
+        line content with an empty line (preserving the newline).
+      - Block comments (/* ... */): replace each character inside the comment
+        with a space, except newlines which are kept verbatim.  This preserves
+        both line count and approximate column positions.
+    """
+    # ── 1. Replace /* ... */ block comments ──────────────────────────────────
+    def _blank_block(m):
+        # Keep newlines so line numbers stay intact; replace all other chars.
+        return re.sub(r'[^\n]', ' ', m.group(0))
+
+    text = re.sub(r'/\*.*?\*/', _blank_block, text, flags=re.S)
+
+    # ── 2. Replace // and # line comments ────────────────────────────────────
+    # Only strip whole-line comments (line whose first non-whitespace is // or #).
+    # Inline comments after a value are not valid JSON anyway, so we don't need
+    # to handle them — and touching them would risk corrupting string values.
     cleaned_lines = []
     for line in text.splitlines():
         stripped = line.lstrip()
         if stripped.startswith('//') or stripped.startswith('#'):
-            continue
-        cleaned_lines.append(line)
+            cleaned_lines.append('')          # blank line — preserves line numbers
+        else:
+            cleaned_lines.append(line)
     return '\n'.join(cleaned_lines)
 
 
@@ -165,15 +195,6 @@ def load_config(path, inherited_vars=None, seen=None):
         'templates_dir': templates_dir,
     }
 
-    # Legacy aliases — deprecated, kept for internal libs during this release
-    inputs = expanded.setdefault('inputs', {})
-    inputs.setdefault('profiles_dir',  profiles_dir)
-    inputs.setdefault('rules_dir',     rules_dir)
-    inputs.setdefault('scoring_dir',   scoring_dir)
-    inputs.setdefault('templates_dir', templates_dir)
-    expanded.setdefault('profiles', {}).setdefault('dir', profiles_dir)
-    expanded.setdefault('rules',    {}).setdefault('dir', rules_dir)
-    expanded.setdefault('templates',{}).setdefault('base_dir', templates_dir)
 
     expanded['_meta'] = {
         'config_path': path,

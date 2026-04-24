@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """Stage 00: Prepare compiled rules and validate configuration.
-
-v7.17: fail_stage on error; profiles.active accepts dict or list form.
 """
 import argparse
 import json
@@ -24,7 +22,7 @@ def main():
     cache = os.path.join(work, 'cache')
     os.makedirs(cache, exist_ok=True)
     state_path = os.path.join(work, 'pipeline_state.json')
-    started = start_stage(state_path, 'prepare_pipeline', 1, 7)
+    started = start_stage(state_path, 'prepare_pipeline', 0, 7)
 
     try:
         problems, notices = validate_inputs(cfg)

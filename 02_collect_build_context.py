@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
 """Stage 02: Gather kernel build context (.config, artifacts, logs, Kbuild).
-
-v7.18 changes vs v7.17:
-  - Uses scan_kbuild_tree() for a single os.walk that yields both the
-    kbuild_files list AND the static config_to_paths map.  The map is saved
-    to cache/kbuild_static_map.json so stage 03 can reuse it without a second
-    tree traversal.
-  - Within-stage progress via update_stage_progress at each major operation.
-  - kernel_config and build_dir remain optional (notices only, not errors).
-  - Python 3.6 compatible.
 """
 import argparse
 import os
@@ -51,7 +42,7 @@ def main():
     cfg        = load_config(args.config)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
-    started    = start_stage(state_path, 'collect_build_context', 3, 7)
+    started    = start_stage(state_path, 'collect_build_context', 2, 7)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -67,36 +58,36 @@ def main():
         cache      = os.path.join(work, 'cache')
         os.makedirs(cache, exist_ok=True)
 
-        inputs     = cfg.get('inputs', {}) or {}
-        source_dir = (cfg.get('kernel', {}) or {}).get('source_dir')
+        kernel     = cfg.get('kernel', {}) or {}
+        source_dir = kernel.get('source_dir')
 
-        kconfig_path = inputs.get('kernel_config')
+        kconfig_path = kernel.get('kernel_config')
         if kconfig_path and not os.path.isfile(kconfig_path):
             kconfig_path = None
 
-        build_dir = inputs.get('build_dir')
+        build_dir = kernel.get('build_dir')
         if build_dir and not os.path.isdir(build_dir):
             build_dir = None
 
         # ── 1. Kernel config symbols ─────────────────────────────────────────
-        update_stage_progress(3, 7, 0.10, 'loading kernel config')
+        update_stage_progress(2, 7, 0.10, 'loading kernel config')
         kernel_config = load_kernel_config_symbols(kconfig_path, source_dir)
 
         # ── 2. Parse .config ─────────────────────────────────────────────────
-        update_stage_progress(3, 7, 0.25, 'parsing .config')
+        update_stage_progress(2, 7, 0.25, 'parsing .config')
         kernel_config_parsed = parse_kernel_config(kconfig_path)
 
         # ── 3. Build logs ─────────────────────────────────────────────────────
-        update_stage_progress(3, 7, 0.40, 'reading build logs')
+        update_stage_progress(2, 7, 0.40, 'reading build logs')
         kernel_build_log = _read_lines(inputs.get('kernel_build_log'))
         yocto_build_log  = _read_lines(inputs.get('yocto_build_log'))
 
         # ── 4. Build artifacts ────────────────────────────────────────────────
-        update_stage_progress(3, 7, 0.55, 'scanning build dir')
+        update_stage_progress(2, 7, 0.55, 'scanning build dir')
         build_artifacts = _scan_build_dir(build_dir)
 
         # ── 5. Single os.walk for Kbuild tree ─────────────────────────────────
-        update_stage_progress(3, 7, 0.70, 'walking kbuild tree')
+        update_stage_progress(2, 7, 0.70, 'walking kbuild tree')
         if source_dir and os.path.isdir(source_dir):
             static_config_map, kbuild_files = scan_kbuild_tree(source_dir)
         else:
@@ -107,7 +98,7 @@ def main():
                   static_config_map)
 
         # ── 6. Save context ───────────────────────────────────────────────────
-        update_stage_progress(3, 7, 0.90, 'saving build context')
+        update_stage_progress(2, 7, 0.90, 'saving build context')
         ctx = {
             'kernel_config':        kernel_config,
             'kernel_config_parsed': kernel_config_parsed,

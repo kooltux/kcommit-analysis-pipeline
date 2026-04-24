@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
 """Stage 03: Build product map from config, logs, artifacts, and Kbuild metadata.
-
-v7.18 changes vs v7.17:
-  - Loads cache/kbuild_static_map.json written by stage 02 so that the
-    Makefile/Kbuild tree does NOT need to be walked a second time.  Falls back
-    to scan_makefile_config_map() only when that cache file is absent.
-  - Passes progress_callback into build_history_config_map() so the parallel
-    git-show calls report live progress via update_stage_progress.
-  - Python 3.6 compatible.
 """
 import argparse
 import os
@@ -41,7 +33,7 @@ def main():
     cfg        = load_config(args.config)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
-    started    = start_stage(state_path, 'build_product_map', 4, 7)
+    started    = start_stage(state_path, 'build_product_map', 3, 7)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -74,7 +66,7 @@ def main():
         else:
             base_map = {}
 
-        update_stage_progress(4, 7, 0.20, 'base map ready',
+        update_stage_progress(3, 7, 0.20, 'base map ready',
                               n_done=len(base_map), n_total=len(base_map))
 
         # ── 2. History-based config map (parallel git show) ──────────────────
@@ -84,7 +76,7 @@ def main():
         if source_dir and os.path.isdir(source_dir):
             def _hist_progress(done, total):
                 frac = done / max(total, 1)
-                update_stage_progress(4, 7, 0.20 + 0.70 * frac,
+                update_stage_progress(3, 7, 0.20 + 0.70 * frac,
                                       'history map',
                                       n_done=done, n_total=total)
             try:

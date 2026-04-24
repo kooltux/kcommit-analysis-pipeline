@@ -1,9 +1,4 @@
 {
-  "vars": {
-    "WORKSPACE": "${WORKSPACE}",
-    "TOOLDIR": "${TOOLDIR}",
-    "CONFIGDIR": "${CONFIGDIR}"
-  },
   "project": {
     "name": "arm-embedded-analysis",
     "work_dir": "${WORKSPACE}/work"
@@ -11,11 +6,11 @@
   "kernel": {
     "source_dir": "${WORKSPACE}/linux",
     "rev_old": "v4.14.206",
-    "rev_new": "v4.14.336"
+    "rev_new": "v4.14.336",
+    "kernel_config": "${WORKSPACE}/linux/.config",
+    "build_dir": "${WORKSPACE}/build"
   },
   "inputs": {
-    "kernel_config": "${WORKSPACE}/linux/.config",
-    "build_dir": "${WORKSPACE}/build",
     "kernel_build_log": "${WORKSPACE}/logs/kernel_build.log",
     "yocto_build_log": "${WORKSPACE}/logs/yocto_build.log",
     "dts_roots": [
@@ -33,17 +28,22 @@
       "performance": 60
     }
   },
-  "scoring": {
-    "product": 1.0,
-    "stable": 1.2,
-    "symbol_match": 1.0
-  },
   "collect": {
     "use_numstat": true,
     "use_no_merges": true,
     "use_first_parent": false,
     "max_commits": 0,
     "score_workers": 0
+  },
+  "scoring": {
+    "product": 1.0,
+    "stable": 1.2,
+    "symbol_match": 1.0
+  },
+  "vars": {
+    "WORKSPACE": "${WORKSPACE}",
+    "TOOLDIR": "${TOOLDIR}",
+    "CONFIGDIR": "${CONFIGDIR}"
   },
   "templates": {
     "html_summary": true,

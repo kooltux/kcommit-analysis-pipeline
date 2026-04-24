@@ -1,5 +1,5 @@
 {
-  "version": "v8.1",
+  "version": "v8.2",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for security and performance relevance",
   "library_dir": "lib",
   "template_dir": "configs/templates",
@@ -49,5 +49,8 @@
       "key": "report_commits",
       "script": "06_report_commits.py"
     }
+  ],
+  "tools": [
+    "tools/generate_message_whitelist.py"
   ]
 }
