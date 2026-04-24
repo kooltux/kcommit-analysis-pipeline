@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """Stage 01: Collect commits from the git revision range.
 
-v7.18 changes vs v7.17:
-  - 'parents' field is opt-in: only stored when collect.include_parents = true
     (default false).  Omitting it saves significant space for 200k+ commit
     ranges where parents are not used downstream.
   - Within-stage progress via update_stage_progress, sampled every 5000 commits.
   - Python 3.6 compatible.
 """
-from __future__ import print_function
 import argparse
 import json
 import os
@@ -36,7 +33,7 @@ def main():
     include_parents = bool(collect_cfg.get('include_parents', False))
     work            = cfg.get('project', {}).get('work_dir', './work')
     state_path      = os.path.join(work, 'pipeline_state.json')
-    started         = start_stage(state_path, 'collect_commits', 2, 7)
+    started         = start_stage(state_path, 'collect_commits', 0, 5)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -78,7 +75,7 @@ def main():
             if n % _PROGRESS_INTERVAL == 0:
                 # Total is unknown upfront; show open-ended count
                 frac = min(0.99, n / max(max_commits, n + 1)) if max_commits else 0.5
-                update_stage_progress(2, 7, frac,
+                update_stage_progress(0, 5, frac,
                                       'collecting commits', n_done=n)
 
         sys.stdout.write('\n')

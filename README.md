@@ -1,4 +1,4 @@
-# kcommit-analysis-pipeline v7.19
+# kcommit-analysis-pipeline v7.20
 
 Python 3.6+-compatible, restartable pipeline to analyze Linux kernel commits between two revisions and identify commits relevant to security fixes, security features, and performance improvements.
 
@@ -8,13 +8,11 @@ The pipeline compares two kernel revisions, collects the commit history in betwe
 
 ## Pipeline stages
 
-- `00_prepare_pipeline.py` – validate config, resolve profiles/rules, initialize workspace state.
 - `01_collect_commits.py` – collect commit metadata between two revisions.
-- `02_collect_build_context.py` – collect kernel config, build artifacts, and build-log context.
-- `03_build_product_map.py` – build the product map, including config-to-path evidence.
-- `04_enrich_commits.py` – enrich commits with derived hints and touched-path guesses.
-- `05_score_commits.py` – score commits using profiles, rules, and non-profile bonus evidence.
-- `06_report_commits.py` – generate CSV/JSON reports and the HTML summary.
+- `02_build_product_context.py` – gather build context, scan kbuild tree, and build product map.
+- `03_enrich_commits.py` – enrich commits with derived hints and touched-path guesses.
+- `04_score_commits.py` – score commits using profiles, rules, and non-profile bonus evidence.
+- `05_report_commits.py` – generate CSV/JSON reports and the HTML summary.
 
 Each stage stores intermediate data in the workspace cache directory and can be restarted independently.
 

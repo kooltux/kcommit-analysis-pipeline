@@ -1,13 +1,10 @@
 """Kernel config and Kbuild-style parsing helpers.
 
-v7.18 changes vs v7.17:
-  - scan_kbuild_makefiles() now delegates to parse_kconfig.scan_kbuild_tree()
     instead of performing its own os.walk so that stage 02 callers that need
     both the Makefile list and the config_to_paths mapping only traverse the
     source tree once.
   - Python 3.6 compatible.
 """
-from __future__ import print_function
 import os
 
 from lib.parse_kconfig import scan_kbuild_tree
@@ -48,12 +45,3 @@ def load_kernel_config_symbols(config_path, source_dir=None):
                 symbols.append(line)
     return symbols
 
-
-def scan_kbuild_makefiles(source_dir):
-    """Return sorted list of absolute Makefile/Kbuild paths.
-
-    Delegates to scan_kbuild_tree() to avoid a redundant os.walk when
-    scan_kbuild_tree() results are reused by the caller.
-    """
-    _, kbuild_files = scan_kbuild_tree(source_dir)
-    return kbuild_files

@@ -1,7 +1,5 @@
 """Historical Kbuild/Makefile config-to-paths mapping for kcommit-analysis-pipeline.
 
-v7.18 changes vs v7.17:
-  - Parallel git-show calls via concurrent.futures.ThreadPoolExecutor.
     The old inner loop ran serial subprocess calls (one per rev x makefile).
     For a 15k-makefile kernel with 10 sampled revisions that is 150k
     subprocess calls executed one at a time.  The new implementation fans them
@@ -15,7 +13,6 @@ v7.18 changes vs v7.17:
     is unavailable (Python <3.2, which cannot happen for 3.6+ but is guarded).
   - Python 3.6 compatible (concurrent.futures available since 3.2).
 """
-from __future__ import print_function
 import os
 import re
 

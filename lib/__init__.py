@@ -1,1 +1,1 @@
-# Python 3.6 compatible package marker
+VERSION = 'v7.20'

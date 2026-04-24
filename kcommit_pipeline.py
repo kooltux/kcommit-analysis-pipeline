@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """Top-level pipeline driver for kcommit-analysis-pipeline.
 
-v7.17 additions:
-  --dry-run     Validate config, print resolved paths and active profiles, exit 0.
-  --from STAGE  Run from the named/numbered stage onwards (wipes downstream cache).
-  --force       Re-run even if the target stage is already 'ok' (wipes downstream).
-
 Usage:
   # Run all stages
   python3 kcommit_pipeline.py --config /path/to/cfg.json
@@ -19,32 +14,31 @@ Usage:
   # Dry-run: validate and print resolved config
   python3 kcommit_pipeline.py --config /path/to/cfg.json --dry-run
 """
-from __future__ import print_function
 import argparse
 import os
 import subprocess
 import sys
 
+from lib import VERSION
 from lib.config import load_config
 from lib.validation import validate_inputs
+from lib.profile_rules import compile_rules_for_config
 from lib.pipeline_runtime import (get_pipeline_state, is_stage_done,
                                    wipe_downstream, init_pipeline_state)
 
 STAGES = [
-    (0, '00_prepare_pipeline.py',      'prepare_pipeline'),
-    (1, '01_collect_commits.py',       'collect_commits'),
-    (2, '02_collect_build_context.py', 'collect_build_context'),
-    (3, '03_build_product_map.py',     'build_product_map'),
-    (4, '04_enrich_commits.py',        'enrich_commits'),
-    (5, '05_score_commits.py',         'score_commits'),
-    (6, '06_report_commits.py',        'report_commits'),
+    (0, '01_collect_commits.py',       'collect_commits'),
+    (1, '02_build_product_context.py', 'build_product_context'),
+    (2, '03_enrich_commits.py',         'enrich_commits'),
+    (3, '04_score_commits.py',          'score_commits'),
+    (4, '05_report_commits.py',         'report_commits'),
 ]
 
 STAGE_OUTPUTS = {
-    'prepare_pipeline':       ['cache/compiled_rules.json', 'cache/prepare_summary.json'],
     'collect_commits':        ['cache/commits.json'],
-    'collect_build_context':  ['cache/build_context.json'],
-    'build_product_map':      ['cache/product_map.json'],
+    'build_product_context':  ['cache/build_context.json',
+                               'cache/kbuild_static_map.json',
+                               'cache/product_map.json'],
     'enrich_commits':         ['cache/enriched_commits.json'],
     'score_commits':          ['cache/scored_commits.json'],
     'report_commits':         ['output/relevant_commits.csv',
@@ -59,11 +53,12 @@ def _resolve_stage(val):
     if val is None:
         return None
     try:
-        idx = int(val)
+        # For user-facing numbering 1..5, subtract 1 to get internal 0..4
+        idx = int(val) - 1
         for s in STAGES:
             if s[0] == idx:
                 return s
-        raise SystemExit('unknown stage number: %d' % idx)
+        raise SystemExit('unknown stage number: %d' % (idx + 1))
     except ValueError:
         for s in STAGES:
             if val in (s[1], s[2], s[1].replace('.py', '')):
@@ -82,7 +77,7 @@ def _dry_run(cfg, args):
     profiles   = (cfg.get('profiles', {}) or {}).get('active') or \
                  cfg.get('active_profiles', [])
 
-    print('=== kcommit-analysis-pipeline v7.17 -- DRY RUN ===')
+    print('=== kcommit-analysis-pipeline %s -- DRY RUN ===' % VERSION)
     print('Config    :', args.config)
     print('TOOLDIR   :', (meta.get('vars', {}) or {}).get('TOOLDIR', os.environ.get('TOOLDIR', '?')))
     print('Work dir  :', work)
@@ -110,7 +105,7 @@ def _dry_run(cfg, args):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='kcommit-analysis-pipeline runner v7.17')
+    ap = argparse.ArgumentParser(description='kcommit-analysis-pipeline runner %s' % VERSION)
     ap.add_argument('--config',   required=True,  help='Path to JSON config file')
     ap.add_argument('--stage',    default=None,   help='Run only this stage (number or name)')
     ap.add_argument('--from',     dest='from_',   default=None,
@@ -129,6 +124,17 @@ def main():
 
     if not os.path.exists(state_path):
         init_pipeline_state(state_path)
+
+    # Perform rule compilation and validation before running stages
+    problems, notices = validate_inputs(cfg)
+    if problems:
+        for p in problems:
+            print('CONFIG ERROR:', p)
+        raise SystemExit(1)
+    
+    # Compile rules (this was Stage 00)
+    print('Compiling rules for active profiles...')
+    compile_rules_for_config(cfg, work)
 
     if args.dry_run:
         _dry_run(cfg, args)
@@ -150,12 +156,14 @@ def main():
         run_list = list(STAGES)
 
     for (idx, script, key) in run_list:
+        # Display index as 1-based to the user
+        display_idx = idx + 1
         if not args.force and is_stage_done(state_path, key):
-            print('[stage %d] %s already OK – skipping (use --force to re-run)' % (idx, key))
+            print('[stage %d] %s already OK – skipping (use --force to re-run)' % (display_idx, key))
             continue
 
         script_path = os.path.join(script_dir, script)
-        print('\n[stage %d] running %s ...' % (idx, script))
+        print('\n[stage %d] running %s ...' % (display_idx, script))
         ret = subprocess.call([sys.executable, script_path, '--config', args.config])
         if ret != 0:
             print('\n[stage %d] FAILED (exit %d)' % (idx, ret))

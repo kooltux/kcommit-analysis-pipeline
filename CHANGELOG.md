@@ -1,4 +1,19 @@
-## v7.18
+## v7.20
+
+### Architecture Refactoring (Consolidation)
+- **Merged Stages**: Pipeline simplified from 7 stages (00–06) to 5 stages (01–05).
+  - Former stages 02 (collect build context) and 03 (build product map) merged into `02_build_product_context.py`.
+  - Stage 00 (prepare pipeline) removed; startup validation and rule compilation moved into `kcommit_pipeline.py`.
+- **Repository Hygiene**: Removed 10+ obsolete files including `MANIFEST.json`, dead library modules (`parse_logs.py`, `parse_dts.py`, `rules.py`), and legacy HTML templates.
+- **Strict Config Model**: Reliance on `inputs` directory defaults in `lib/config.py`. Removed all legacy key backfilling shims.
+- **Python Modernization**: Strict Python 3.6+ compatibility; removed `__future__` imports and `io.open` wrappers. Stripped 150+ lines of version history comments from source files.
+
+### Scoring Normalization
+- **Total Score Metric**: Unified ranking around `score_total`. Discarded legacy `candidate_score` and `priority` fields.
+- **Rich Evidence**: Scoring now returns structured machine-readable evidence and breakdown (score_profiles, score_bonus) for better auditability.
+- **Performance**: Keyword/path hints cached globally in `lib/scoring.py` to avoid redundant file I/O during multi-worker scoring.
+
+### v7.18
 
 ### Performance
 - `lib/parse_kconfig.py`: new `scan_kbuild_tree()` performs a single `os.walk`

@@ -1,11 +1,10 @@
 # Load JSON config files with support for relative includes, ${var} expansion,
 # and selected environment-variable fallbacks such as WORKSPACE and TOOLDIR.
-from __future__ import print_function
 import copy
-import io
 import json
 import os
 import re
+from lib.io_utils import load_json_with_comments
 
 VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 
@@ -44,7 +43,7 @@ def _expand_string(text, variables, stack=None):
 
 def _expand_node(node, variables):
     if isinstance(node, dict):
-        return dict((k, _expand_node(v, variables)) for k, v in node.items())
+        return {k: _expand_node(v, variables) for k, v in node.items()}
     if isinstance(node, list):
         return [_expand_node(v, variables) for v in node]
     if isinstance(node, str):
@@ -52,27 +51,9 @@ def _expand_node(node, variables):
     return node
 
 
-def _strip_json_comments(text):
-    text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
-    cleaned_lines = []
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith('//') or stripped.startswith('#'):
-            continue
-        cleaned_lines.append(line)
-    return '\n'.join(cleaned_lines)
-
-
-def _load_json(path):
-    with io.open(path, 'r', encoding='utf-8') as fd:
-        raw = fd.read()
-    raw = _strip_json_comments(raw)
-    return json.loads(raw)
-
-
 def _resolve_relative_paths(node, base_dir):
     if isinstance(node, dict):
-        return dict((k, _resolve_relative_paths(v, base_dir)) for k, v in node.items())
+        return {k: _resolve_relative_paths(v, base_dir) for k, v in node.items()}
     if isinstance(node, list):
         return [_resolve_relative_paths(v, base_dir) for v in node]
     if isinstance(node, str):
@@ -91,7 +72,7 @@ def load_config(path, inherited_vars=None, seen=None):
         raise ValueError('cyclic include detected: %s' % path)
     seen.add(path)
 
-    cfg = _load_json(path)
+    cfg = load_json_with_comments(path)
     config_dir = os.path.dirname(path)
 
     merged = {}
@@ -121,7 +102,15 @@ def load_config(path, inherited_vars=None, seen=None):
     merged['vars'] = vars_map
 
     expanded = _expand_node(merged, vars_map)
-    expanded = _resolve_relative_paths(expanded, config_dir)
+    
+    # Path resolution: inputs/profiles/rules are relative to config_dir.
+    # project/output paths are relative to current working directory.
+    cwd = os.getcwd()
+    for key in list(expanded.keys()):
+        if key in ('project', 'output', 'kernel', 'collect'):
+            expanded[key] = _resolve_relative_paths(expanded[key], cwd)
+        elif key not in ('vars', '_meta'):
+            expanded[key] = _resolve_relative_paths(expanded[key], config_dir)
 
     inputs = expanded.setdefault('inputs', {})
     inputs.setdefault('profiles_dir', os.path.join(config_dir, 'profiles'))
@@ -129,17 +118,14 @@ def load_config(path, inherited_vars=None, seen=None):
     inputs.setdefault('scoring_dir', os.path.join(config_dir, 'scoring'))
     inputs.setdefault('templates_dir', os.path.join(config_dir, 'templates'))
 
-    profiles = expanded.setdefault('profiles', {})
-    profiles.setdefault('dir', inputs['profiles_dir'])
-    rules = expanded.setdefault('rules', {})
-    rules.setdefault('dir', inputs['rules_dir'])
-    templates = expanded.setdefault('templates', {})
-    templates.setdefault('base_dir', inputs['templates_dir'])
+    # Remove legacy keys if still present in loaded config
+    for sec, key in [('profiles', 'dir'), ('rules', 'dir'), ('templates', 'base_dir')]:
+        if sec in expanded:
+            expanded[sec].pop(key, None)
 
     expanded['_meta'] = {
         'config_path': path,
         'config_dir': config_dir,
         'vars': vars_map,
     }
-    expanded['config_dir'] = config_dir
     return expanded

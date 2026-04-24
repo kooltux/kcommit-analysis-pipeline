@@ -1,22 +1,19 @@
 """Profile and rule loading for kcommit-analysis-pipeline.
 
-v7.17 changes vs v7.13:
-  - _active_profiles() now accepts both the legacy LIST form
     ['security_fixes', 'performance'] and the v7.17 DICT form
     {'security_fixes': 100, 'performance': 80}.  The dict form encodes a
     per-profile weight multiplier (0-100) used by scoring.
 """
-from __future__ import print_function
-import io
 import json
 import os
+from lib.io_utils import load_json_with_comments
 
 
 def _read_patterns(path):
     patterns = []
     if not path or not os.path.exists(path):
         return patterns
-    with io.open(path, 'r', encoding='utf-8', errors='replace') as f:
+    with open(path, 'r', encoding='utf-8', errors='replace') as f:
         for line in f:
             s = line.strip()
             if not s or s.startswith('#'):
@@ -25,30 +22,9 @@ def _read_patterns(path):
     return patterns
 
 
-def _load_json_with_comments(path):
-    if not os.path.exists(path):
-        return None
-    with io.open(path, 'r', encoding='utf-8', errors='replace') as f:
-        raw = f.read()
-    lines = []
-    for line in raw.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith('//') or stripped.startswith('#'):
-            continue
-        lines.append(line)
-    text = '\n'.join(lines)
-    if not text.strip():
-        return None
-    return json.loads(text)
-
-
 def _active_profiles(cfg):
-    """Return ordered list of active profile names.
-
-    Accepts both dict form {'name': weight, ...} and list form ['name', ...].
-    """
-    profiles_cfg = cfg.get('profiles', {}) or {}
-    active = profiles_cfg.get('active') or cfg.get('active_profiles') or []
+    """Return ordered list of active profile names from profiles.active."""
+    active = cfg.get('profiles', {}).get('active', [])
     if isinstance(active, dict):
         return list(active.keys())
     return list(active)
@@ -93,7 +69,7 @@ def compile_rules_for_config(cfg, work_dir):
 
     for name in active:
         prof_path = os.path.join(profile_root, name + '.json')
-        pdata = _load_json_with_comments(prof_path)
+        pdata = load_json_with_comments(prof_path)
         if not pdata:
             raise RuntimeError('profile %r not found or empty at %s' % (name, prof_path))
 
@@ -143,7 +119,7 @@ def load_profile_rules(cfg):
     work = cfg.get('project', {}).get('work_dir', './work')
     compiled_path = os.path.join(work, 'cache', 'compiled_rules.json')
     if os.path.exists(compiled_path):
-        with io.open(compiled_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(compiled_path, 'r', encoding='utf-8', errors='replace') as f:
             data = json.load(f)
         return data.get('profiles', {}) or {}
     return compile_rules_for_config(cfg, work)

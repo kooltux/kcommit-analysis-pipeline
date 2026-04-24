@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # Generate rules//message_whitelist.txt from a module-list style input file.
-from __future__ import print_function
 import argparse
 import collections
 import os

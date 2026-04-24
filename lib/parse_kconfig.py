@@ -1,7 +1,5 @@
 """Kernel .config and Kbuild/Makefile parsing helpers.
 
-v7.18 changes vs v7.17:
-  - scan_kbuild_tree(root_dir): new function that walks the source tree ONCE
     and returns both (config_to_paths dict, kbuild_files list) in one pass.
     Previously scan_makefile_config_map() and scan_kbuild_makefiles() each
     performed a full independent os.walk of the kernel source tree (75k files,
@@ -9,8 +7,6 @@ v7.18 changes vs v7.17:
     02 callers that need both results only pay the traversal cost once.
   - Python 3.6 compatible.
 """
-from __future__ import print_function
-import io
 import os
 import re
 
@@ -25,7 +21,7 @@ def parse_kernel_config(path):
     disabled = set()
     if not path or not os.path.exists(path):
         return {'enabled': enabled, 'disabled': list(disabled)}
-    with io.open(path, 'r', encoding='utf-8', errors='ignore') as f:
+    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
         for line in f:
             line = line.strip()
             m = CONFIG_RE.match(line)
@@ -60,7 +56,7 @@ def scan_kbuild_tree(root_dir):
             kbuild_list.append(abs_path)
             rel_dir  = os.path.relpath(dirpath, root_dir)
             try:
-                with io.open(abs_path, 'r', encoding='utf-8', errors='ignore') as f:
+                with open(abs_path, 'r', encoding='utf-8', errors='ignore') as f:
                     for line in f:
                         line = line.strip()
                         if not line or line.startswith('#'):
@@ -85,19 +81,4 @@ def scan_kbuild_tree(root_dir):
             except (IOError, OSError):
                 pass
 
-    config_to_paths = dict((k, sorted(v)) for k, v in mapping.items())
-    return config_to_paths, sorted(kbuild_list)
-
-
-# ── backward-compat wrappers ─────────────────────────────────────────────────
-
-def scan_makefile_config_map(root_dir):
-    """Return config_to_paths dict (calls scan_kbuild_tree internally)."""
-    config_to_paths, _ = scan_kbuild_tree(root_dir)
-    return config_to_paths
-
-
-def scan_kbuild_makefiles_list(root_dir):
-    """Return sorted list of Makefile/Kbuild paths (calls scan_kbuild_tree)."""
-    _, kbuild_files = scan_kbuild_tree(root_dir)
-    return kbuild_files
+    return {k: sorted(v) for k, v in mapping.items()}, sorted(kbuild_list)

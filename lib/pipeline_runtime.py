@@ -1,17 +1,11 @@
 """Pipeline state tracking and progress utilities for kcommit-analysis-pipeline.
 
-v7.18 additions vs v7.17:
-  - fail_stage():         Mark a stage as 'failed' with an optional error message.
-  - get_pipeline_state(): Return the current state dict (safe even if file missing).
-  - is_stage_done():      Return True if stage key already has status 'ok'.
-  - wipe_downstream():    Remove intermediate output files for a stage and all
                           following stages, and reset their status in the state JSON.
   - init_pipeline_state(): Create a fresh empty state JSON.
   - update_stage_progress(): In-place \\r progress bar for inner loops.
   - State dict keyed by stage name (string) instead of a positional list, so
     re-runs of individual stages never create duplicate entries.
 """
-from __future__ import print_function
 import json
 import os
 import sys

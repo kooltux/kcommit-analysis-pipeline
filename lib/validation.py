@@ -1,12 +1,9 @@
 """Input validation for kcommit-analysis-pipeline.
 
-v7.17 changes vs v7.13:
-  - kernel_config and build_dir are now OPTIONAL; missing/non-existent values
     produce notices (printed to stdout) not blocking errors.
   - Returns (errors: list[str], notices: list[str]) instead of raising.
   - modules_file / modules_list keys silently accepted but not required.
 """
-from __future__ import print_function
 import os
 
 

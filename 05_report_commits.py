@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Stage 06: Generate CSV, JSON, and HTML reports from scored commits.
 
-v7.18 changes vs v7.17:
-  - profile_coverage computed and stored in report_stats.json (already present
     in v7.17); finish_stage extra dict now consistent with what report_stats
     shows.
   - CSV updated: uses scoring sub-dict fields (product_score, security_score,
@@ -12,10 +10,8 @@ v7.18 changes vs v7.17:
     of a bare integer, giving richer per-profile stats in the HTML report.
   - Python 3.6 compatible.
 """
-from __future__ import print_function
 import argparse
 import csv
-import io
 import os
 
 from lib.config import load_config
@@ -46,7 +42,7 @@ def main():
     cfg        = load_config(args.config)
     work       = cfg.get('project', {}).get('work_dir', './work')
     state_path = os.path.join(work, 'pipeline_state.json')
-    started    = start_stage(state_path, 'report_commits', 7, 7)
+    started    = start_stage(state_path, 'report_commits', 4, 5)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -65,29 +61,30 @@ def main():
 
         scored = (load_json(os.path.join(cache, 'scored_commits.json'),
                             default=[]) or [])
-        scored = sorted(scored, key=lambda x: x.get('score', 0), reverse=True)
+        scored = sorted(scored, key=lambda x: x.get('score_total', 0), reverse=True)
 
         # ── CSV report ────────────────────────────────────────────────────────
         csv_cols = [
             'commit', 'subject', 'author_name', 'author_time',
-            'score', 'matched_profiles',
-            'product_score', 'security_score', 'performance_score', 'stable_score',
-            'product_evidence',
+            'score_total', 'matched_profiles',
+            'score_product', 'score_security', 'score_performance', 'score_stable',
+            'evidence',
         ]
         csv_path = os.path.join(outdir, 'relevant_commits.csv')
-        with io.open(csv_path, 'w', newline='', encoding='utf-8') as fh:
+        with open(csv_path, 'w', newline='', encoding='utf-8') as fh:
             writer = csv.DictWriter(fh, fieldnames=csv_cols,
                                     extrasaction='ignore')
             writer.writeheader()
             for c in scored:
                 row = dict(c)
                 row['matched_profiles'] = ';'.join(c.get('matched_profiles') or [])
-                row['product_evidence'] = ';'.join(c.get('product_evidence') or [])
-                sc = c.get('scoring', {}) or {}
-                row['product_score']     = sc.get('product', 0)
-                row['security_score']    = sc.get('security', 0)
-                row['performance_score'] = sc.get('performance', 0)
-                row['stable_score']      = sc.get('stable', 0)
+                evidence = c.get('evidence', []) or []
+                row['evidence'] = ';'.join([str(e) for e in evidence])
+                sb = c.get('score_bonus', {}) or {}
+                row['score_product']     = sb.get('product', 0)
+                row['score_security']    = sb.get('security', 0)
+                row['score_performance'] = sb.get('performance', 0)
+                row['score_stable']      = sb.get('stable', 0)
                 writer.writerow(row)
 
         # ── JSON reports ──────────────────────────────────────────────────────
@@ -100,11 +97,11 @@ def main():
                 if p not in profile_summary:
                     profile_summary[p] = {'count': 0, 'total_score': 0}
                 profile_summary[p]['count']       += 1
-                profile_summary[p]['total_score'] += c.get('score', 0) or 0
+                profile_summary[p]['total_score'] += c.get('score_total', 0) or 0
         save_json(os.path.join(outdir, 'profile_summary.json'), profile_summary)
 
         # Profile matrix CSV
-        with io.open(os.path.join(outdir, 'profile_matrix.csv'), 'w',
+        with open(os.path.join(outdir, 'profile_matrix.csv'), 'w',
                      newline='', encoding='utf-8') as fh:
             writer = csv.writer(fh)
             writer.writerow(['commit', 'subject', 'profile', 'score'])
@@ -114,7 +111,7 @@ def main():
                         c.get('commit', ''),
                         c.get('subject', ''),
                         p,
-                        c.get('score', 0),
+                        c.get('score_profiles', {}).get(p, 0),
                     ])
 
         # ── Stats ─────────────────────────────────────────────────────────────
@@ -129,15 +126,15 @@ def main():
             'total_scored_commits':            len(scored),
             'commits_with_security_score':     sum(
                 1 for c in scored
-                if (c.get('scoring', {}) or {}).get('security', 0) > 0),
+                if (c.get('score_bonus', {}) or {}).get('security', 0) > 0),
             'commits_with_performance_score':  sum(
                 1 for c in scored
-                if (c.get('scoring', {}) or {}).get('performance', 0) > 0),
+                if (c.get('score_bonus', {}) or {}).get('performance', 0) > 0),
             'commits_with_stable_score':       sum(
                 1 for c in scored
-                if (c.get('scoring', {}) or {}).get('stable', 0) > 0),
+                if (c.get('score_bonus', {}) or {}).get('stable', 0) > 0),
             'commits_with_product_evidence':   sum(
-                1 for c in scored if c.get('product_evidence')),
+                1 for c in scored if c.get('evidence')),
             'profile_coverage':                coverage,
             'active_profiles':                 active_profiles,
             'template_options':                tmpl_cfg,

@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Stage 05: Score commits using product map, profile rules, and scoring config.
 
-v7.18 changes vs v7.17:
-  - Pool initializer pattern: product_map and profile_rules are pickled ONCE
     per worker at startup via _worker_init(), not once per task.  For large
     product maps this is a significant memory / IPC bandwidth saving.
   - Within-stage progress via update_stage_progress (~80 updates across loop).
@@ -10,7 +8,6 @@ v7.18 changes vs v7.17:
   - Graceful serial fallback if multiprocessing raises any exception.
   - Python 3.6 compatible (Pool initializer available since Python 3.3).
 """
-from __future__ import print_function
 import argparse
 import os
 import sys
@@ -62,7 +59,7 @@ def _score_all(commits, product_map, profile_rules, cfg):
         for i, c in enumerate(commits):
             results.append(score_commit(c, product_map, profile_rules, cfg))
             if i % step == 0 or i == total - 1:
-                update_stage_progress(6, 7, (i + 1) / max(total, 1),
+                update_stage_progress(3, 5, (i + 1) / max(total, 1),
                                       'scoring', n_done=i + 1, n_total=total)
         return results
 
@@ -79,7 +76,7 @@ def _score_all(commits, product_map, profile_rules, cfg):
                     pool.imap(_score_one_global, commits, chunksize=64)):
                 results.append(scored)
                 if i % step == 0 or i == total - 1:
-                    update_stage_progress(6, 7, (i + 1) / max(total, 1),
+                    update_stage_progress(3, 5, (i + 1) / max(total, 1),
                                           'scoring (parallel)',
                                           n_done=i + 1, n_total=total)
         return results
@@ -90,7 +87,7 @@ def _score_all(commits, product_map, profile_rules, cfg):
         for i, c in enumerate(commits):
             results.append(score_commit(c, product_map, profile_rules, cfg))
             if i % step == 0 or i == total - 1:
-                update_stage_progress(6, 7, (i + 1) / max(total, 1),
+                update_stage_progress(3, 5, (i + 1) / max(total, 1),
                                       'scoring (serial fallback)',
                                       n_done=i + 1, n_total=total)
         return results
@@ -104,7 +101,7 @@ def main():
     cfg        = load_config(args.config)
     work       = cfg.get('project', {}).get('work_dir', './work')
     state_path = os.path.join(work, 'pipeline_state.json')
-    started    = start_stage(state_path, 'score_commits', 6, 7)
+    started    = start_stage(state_path, 'score_commits', 3, 5)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -128,7 +125,7 @@ def main():
                                   default={}) or {}
         profile_rules = load_profile_rules(cfg)
 
-        update_stage_progress(6, 7, 0.01, 'ready',
+        update_stage_progress(3, 5, 0.01, 'ready',
                               n_done=0, n_total=len(commits))
 
         scored = _score_all(commits, product_map, profile_rules, cfg)
