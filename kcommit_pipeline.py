@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """Top-level pipeline driver for kcommit-analysis-pipeline.
 
+v8.0 changes vs v7.19:
+  - Dropped from __future__ import print_function (Py2 dead code).
+  - Version string read from lib.manifest.VERSION instead of being hardcoded.
+  - --stage and --from are now mutually exclusive; passing both is an error.
+  - STAGE_ORDER list passed to wipe_downstream() for deterministic ordering
+    on fresh workspaces (no stored 'index' fields required).
+  - subprocess.call replaced with subprocess.run (available since Python 3.5).
+
 v7.17 additions:
   --dry-run     Validate config, print resolved paths and active profiles, exit 0.
   --from STAGE  Run from the named/numbered stage onwards (wipes downstream cache).
@@ -19,13 +27,13 @@ Usage:
   # Dry-run: validate and print resolved config
   python3 kcommit_pipeline.py --config /path/to/cfg.json --dry-run
 """
-from __future__ import print_function
 import argparse
 import os
 import subprocess
 import sys
 
 from lib.config import load_config
+from lib.manifest import VERSION
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import (get_pipeline_state, is_stage_done,
                                    wipe_downstream, init_pipeline_state)
@@ -39,6 +47,9 @@ STAGES = [
     (5, '05_score_commits.py',         'score_commits'),
     (6, '06_report_commits.py',        'report_commits'),
 ]
+
+# Explicit stage ordering for wipe_downstream — deterministic on fresh workspaces.
+STAGE_ORDER = [s[2] for s in STAGES]
 
 STAGE_OUTPUTS = {
     'prepare_pipeline':       ['cache/compiled_rules.json', 'cache/prepare_summary.json'],
@@ -63,12 +74,12 @@ def _resolve_stage(val):
         for s in STAGES:
             if s[0] == idx:
                 return s
-        raise SystemExit('unknown stage number: %d' % idx)
+        raise SystemExit(f'unknown stage number: {idx}')
     except ValueError:
         for s in STAGES:
             if val in (s[1], s[2], s[1].replace('.py', '')):
                 return s
-        raise SystemExit('unknown stage: %s' % val)
+        raise SystemExit(f'unknown stage: {val}')
 
 
 def _dry_run(cfg, args):
@@ -82,18 +93,18 @@ def _dry_run(cfg, args):
     profiles   = (cfg.get('profiles', {}) or {}).get('active') or \
                  cfg.get('active_profiles', [])
 
-    print('=== kcommit-analysis-pipeline v7.17 -- DRY RUN ===')
+    print(f'=== kcommit-analysis-pipeline {VERSION} -- DRY RUN ===')
     print('Config    :', args.config)
     print('TOOLDIR   :', (meta.get('vars', {}) or {}).get('TOOLDIR', os.environ.get('TOOLDIR', '?')))
     print('Work dir  :', work)
     print('Source dir:', source_dir)
-    print('Revision  : %s .. %s' % (rev_old, rev_new))
+    print(f'Revision  : {rev_old} .. {rev_new}')
     print('Kernel cfg:', kernel_cfg)
     print('Build dir :', build_dir)
     if isinstance(profiles, dict):
         print('Profiles  :')
         for pn, pw in profiles.items():
-            print('  %s (weight %s)' % (pn, pw))
+            print(f'  {pn} (weight {pw})')
     else:
         print('Profiles  :', ', '.join(str(p) for p in profiles))
     print('Scoring   :', cfg.get('scoring', {}))
@@ -110,7 +121,8 @@ def _dry_run(cfg, args):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='kcommit-analysis-pipeline runner v7.17')
+    ap = argparse.ArgumentParser(
+        description=f'kcommit-analysis-pipeline runner {VERSION}')
     ap.add_argument('--config',   required=True,  help='Path to JSON config file')
     ap.add_argument('--stage',    default=None,   help='Run only this stage (number or name)')
     ap.add_argument('--from',     dest='from_',   default=None,
@@ -120,6 +132,10 @@ def main():
     ap.add_argument('--dry-run',  action='store_true',
                     help='Validate config and print resolved paths; do not run')
     args = ap.parse_args()
+
+    # --stage and --from are mutually exclusive
+    if args.stage is not None and args.from_ is not None:
+        ap.error('--stage and --from are mutually exclusive')
 
     cfg        = load_config(args.config)
     work       = cfg.get('project', {}).get('work_dir', './work')
@@ -140,29 +156,33 @@ def main():
     if args.stage is not None:
         target   = _resolve_stage(args.stage)
         run_list = [target]
-        if args.force or args.from_:
-            wipe_downstream(state_path, target[2], work, STAGE_OUTPUTS)
+        if args.force:
+            wipe_downstream(state_path, target[2], work, STAGE_OUTPUTS,
+                            stage_order=STAGE_ORDER)
     elif args.from_ is not None:
         from_stage = _resolve_stage(args.from_)
         run_list   = [s for s in STAGES if s[0] >= from_stage[0]]
-        wipe_downstream(state_path, from_stage[2], work, STAGE_OUTPUTS)
+        wipe_downstream(state_path, from_stage[2], work, STAGE_OUTPUTS,
+                        stage_order=STAGE_ORDER)
     else:
         run_list = list(STAGES)
 
     for (idx, script, key) in run_list:
         if not args.force and is_stage_done(state_path, key):
-            print('[stage %d] %s already OK – skipping (use --force to re-run)' % (idx, key))
+            print(f'[stage {idx}] {key} already OK – skipping (use --force to re-run)')
             continue
 
         script_path = os.path.join(script_dir, script)
-        print('\n[stage %d] running %s ...' % (idx, script))
-        ret = subprocess.call([sys.executable, script_path, '--config', args.config])
+        print(f'\n[stage {idx}] running {script} ...')
+        ret = subprocess.run(
+            [sys.executable, script_path, '--config', args.config]
+        ).returncode
         if ret != 0:
-            print('\n[stage %d] FAILED (exit %d)' % (idx, ret))
+            print(f'\n[stage {idx}] FAILED (exit {ret})')
             next_stages = [s for s in STAGES if s[0] > idx]
             if next_stages:
-                print('  re-run hint:  python3 kcommit_pipeline.py '
-                      '--config %s --from %d' % (args.config, idx))
+                print(f'  re-run hint:  python3 kcommit_pipeline.py '
+                      f'--config {args.config} --from {idx}')
             raise SystemExit(ret)
 
     print('\nPipeline completed successfully.')

@@ -1,17 +1,12 @@
 """Pipeline state tracking and progress utilities for kcommit-analysis-pipeline.
 
-v7.18 additions vs v7.17:
-  - fail_stage():         Mark a stage as 'failed' with an optional error message.
-  - get_pipeline_state(): Return the current state dict (safe even if file missing).
-  - is_stage_done():      Return True if stage key already has status 'ok'.
-  - wipe_downstream():    Remove intermediate output files for a stage and all
-                          following stages, and reset their status in the state JSON.
-  - init_pipeline_state(): Create a fresh empty state JSON.
-  - update_stage_progress(): In-place \\r progress bar for inner loops.
-  - State dict keyed by stage name (string) instead of a positional list, so
-    re-runs of individual stages never create duplicate entries.
+v8.0 changes vs v7.19:
+  - Dropped from __future__ import print_function (Py2 dead code).
+  - %-formatting replaced with f-strings; open() replaces io.open().
+  - wipe_downstream(): accepts explicit stage_order list so ordering is
+    deterministic on fresh workspaces (no longer depends on stored 'index'
+    fields in pipeline_state.json).
 """
-from __future__ import print_function
 import json
 import os
 import sys
@@ -22,7 +17,7 @@ def _read_state(path):
     if not path or not os.path.exists(path):
         return {}
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, encoding='utf-8') as f:
             return json.load(f)
     except Exception:
         return {}
@@ -38,7 +33,7 @@ def _write_state(path, state):
 def _progress_bar(done, total, width=20):
     filled = int(width * done / max(total, 1))
     bar    = '#' * filled + '-' * (width - filled)
-    return '[%s] %d/%d' % (bar, done, total)
+    return f'[{bar}] {done}/{total}'
 
 
 def init_pipeline_state(path):
@@ -59,32 +54,23 @@ def is_stage_done(path, key):
 
 def update_stage_progress(index, total, inner_fraction, label,
                           n_done=None, n_total=None):
-    """Print an in-place within-stage progress bar using \\r.
-
-    index/total      : stage position (same values passed to start_stage)
-    inner_fraction   : 0.0-1.0 completion of THIS stage inner loop
-    label            : short description of current work
-    n_done/n_total   : optional numeric counts appended to the line
-    """
+    """Print an in-place within-stage progress bar using \\r."""
     width  = 16
     filled = int(width * max(0.0, min(1.0, inner_fraction)))
     bar    = '#' * filled + '-' * (width - filled)
+    counts = ''
     if n_done is not None and n_total is not None:
-        counts = '  %d/%d' % (n_done, n_total)
+        counts = f'  {n_done}/{n_total}'
     elif n_done is not None:
-        counts = '  %d' % n_done
-    else:
-        counts = ''
-    line = '[%s] %d/%d  %-26s%s' % (bar, index, total, label, counts)
-    sys.stdout.write('\r' + line)
+        counts = f'  {n_done}'
+    sys.stdout.write(f'\r[{bar}] {index}/{total}  {label:<26}{counts}')
     sys.stdout.flush()
 
 
 def start_stage(path, key, index, total):
     """Record stage start; print progress; return start timestamp."""
     state = _read_state(path)
-    if 'stages' not in state:
-        state['stages'] = {}
+    state.setdefault('stages', {})
     started = time.time()
     state['stages'][key] = {
         'status':     'running',
@@ -93,7 +79,7 @@ def start_stage(path, key, index, total):
         'start_time': time.strftime('%Y-%m-%dT%H:%M:%S'),
     }
     _write_state(path, state)
-    print('%s running %-30s' % (_progress_bar(index - 1, total), key))
+    print(f'{_progress_bar(index - 1, total)} running {key:<30}')
     sys.stdout.flush()
     return started
 
@@ -102,8 +88,7 @@ def finish_stage(path, key, started, status='ok', extra=None):
     """Record stage completion; print duration."""
     elapsed = time.time() - started
     state   = _read_state(path)
-    if 'stages' not in state:
-        state['stages'] = {}
+    state.setdefault('stages', {})
     entry = state['stages'].get(key, {})
     entry.update({
         'status':       status,
@@ -114,9 +99,8 @@ def finish_stage(path, key, started, status='ok', extra=None):
         entry.update(extra)
     state['stages'][key] = entry
     _write_state(path, state)
-    print('%s %-30s  %.1fs' % (
-        _progress_bar(entry.get('index', 1), entry.get('total', 1)),
-        key, elapsed))
+    print(f'{_progress_bar(entry.get("index", 1), entry.get("total", 1))} '
+          f'{key:<30}  {elapsed:.1f}s')
     sys.stdout.flush()
 
 
@@ -124,8 +108,7 @@ def fail_stage(path, key, started, error_msg=''):
     """Mark a stage as failed; print error."""
     elapsed = time.time() - started
     state   = _read_state(path)
-    if 'stages' not in state:
-        state['stages'] = {}
+    state.setdefault('stages', {})
     entry = state['stages'].get(key, {})
     entry.update({
         'status':       'failed',
@@ -135,39 +118,49 @@ def fail_stage(path, key, started, error_msg=''):
     })
     state['stages'][key] = entry
     _write_state(path, state)
-    print('FAILED %-30s  %.1fs  %s' % (key, elapsed, error_msg or ''))
+    print(f'FAILED {key:<30}  {elapsed:.1f}s  {error_msg or ""}')
     sys.stdout.flush()
 
 
-def wipe_downstream(path, from_key, work_dir, stage_outputs):
+def wipe_downstream(path, from_key, work_dir, stage_outputs, stage_order=None):
     """Remove intermediate output files for *from_key* and all following stages.
 
-    *stage_outputs* maps stage key → list of paths relative to *work_dir*.
-    Resets their status in the state JSON to None so they can be re-run.
-
-    Stage ordering is inferred from the 'index' field stored in the state, or
-    falls back to the natural dict insertion order of *stage_outputs*.
+    Parameters
+    ----------
+    path          : path to pipeline_state.json
+    from_key      : stage key to start wiping from (inclusive)
+    work_dir      : base directory for relative paths in stage_outputs
+    stage_outputs : dict mapping stage key -> list of relative output paths
+    stage_order   : explicit ordered list of all stage keys (recommended).
+                    When provided, ordering is deterministic regardless of
+                    state file content — critical on fresh workspaces where
+                    no 'index' fields have been written yet.
+                    Falls back to index-field ordering for older state files.
     """
-    state      = _read_state(path)
-    stages_map = state.get('stages', {}) or {}
-    keys_ordered = list(stage_outputs.keys())
+    state        = _read_state(path)
+    stages_state = state.get('stages', {})
 
-    if from_key not in keys_ordered:
-        return  # nothing to wipe
+    if stage_order:
+        ordered_keys = list(stage_order)
+    else:
+        # Legacy fallback: infer order from stored index fields
+        keyed = {}
+        for k, v in stages_state.items():
+            keyed[v.get('index', 999)] = k
+        ordered_keys = [keyed[i] for i in sorted(keyed)]
 
-    from_idx = keys_ordered.index(from_key)
-    to_wipe  = keys_ordered[from_idx:]
+    try:
+        start_idx = ordered_keys.index(from_key)
+    except ValueError:
+        return  # from_key not found — nothing to wipe
 
-    for k in to_wipe:
-        for rel_path in (stage_outputs.get(k) or []):
-            abs_path = os.path.join(work_dir, rel_path)
-            if os.path.exists(abs_path):
-                try:
-                    os.remove(abs_path)
-                    print('  removed %s' % abs_path)
-                except OSError as e:
-                    print('  warning: could not remove %s: %s' % (abs_path, e))
-        if k in stages_map:
-            stages_map[k]['status'] = None
-    state['stages'] = stages_map
+    for key in ordered_keys[start_idx:]:
+        for rel_path in stage_outputs.get(key, []):
+            full = os.path.join(work_dir, rel_path)
+            if os.path.exists(full):
+                os.remove(full)
+        if key in stages_state:
+            stages_state[key]['status'] = None
+
+    state['stages'] = stages_state
     _write_state(path, state)

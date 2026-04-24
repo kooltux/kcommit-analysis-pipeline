@@ -8,14 +8,13 @@ v7.18 changes vs v7.17:
   - Within-stage progress via update_stage_progress, sampled every 5000 commits.
   - Python 3.6 compatible.
 """
-from __future__ import print_function
 import argparse
 import json
 import os
 import sys
 
 from lib.config import load_config
-from lib.io_utils import ensure_dir, save_json
+from lib.config import save_json
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import (
     start_stage, finish_stage, fail_stage, update_stage_progress
@@ -50,7 +49,7 @@ def main():
             raise SystemExit(2)
 
         cache = os.path.join(work, 'cache')
-        ensure_dir(cache)
+        os.makedirs(cache, exist_ok=True)
 
         commits = []
         for rec in iter_git_log_records(cfg):

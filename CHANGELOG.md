@@ -1,3 +1,31 @@
+## v8.0 (2026-04-24)
+
+### Breaking changes
+- Python 2 compatibility shims removed everywhere (`from __future__ import
+  print_function`, `import io`, `io.open()`). Minimum Python is 3.6+.
+- `lib/io_utils.py` deleted; `load_json`/`save_json` moved to `lib/config.py`;
+  `ensure_dir` replaced with `os.makedirs(..., exist_ok=True)` inline.
+- `lib/parse_dts.py` and `lib/parse_logs.py` deleted (unused dead code).
+- `cfg['paths']` canonical namespace added; legacy `cfg['inputs']`,
+  `cfg['profiles']['dir']`, etc. kept as aliases but deprecated.
+- `--stage` and `--from` are now mutually exclusive; passing both is an error.
+
+### New features
+- `lib/manifest.py`: single source of truth for VERSION; version string in
+  kcommit_pipeline.py dry-run and argparse reads MANIFEST.json at runtime.
+- `lib/validation.py`: git-ref validation (rev_old/rev_new verified via
+  `git rev-parse --verify`), scoring multiplier range checks, profile weight
+  0-100 enforcement, score_workers integer/non-negative check.
+- `lib/scoring.py`: `precompile_rules()` compiles all pattern strings to
+  re.Pattern once per worker process, avoiding per-commit recompilation at scale.
+- `06_report_commits.py`: `avg_score` (total_score/count) added to each profile
+  entry in profile_summary.json; HTML report shows Avg score column.
+- `lib/history_map.py`: git-show failures now counted; >5% failure rate raises
+  RuntimeError to fail the stage loudly; <5% prints a stderr warning.
+- `wipe_downstream()`: accepts explicit `stage_order` list for deterministic
+  ordering on fresh workspaces (no longer depends on stored index fields).
+- `subprocess.call` replaced with `subprocess.run` in orchestrator.
+
 ## v7.18
 
 ### Performance

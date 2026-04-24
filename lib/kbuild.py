@@ -7,7 +7,6 @@ v7.18 changes vs v7.17:
     source tree once.
   - Python 3.6 compatible.
 """
-from __future__ import print_function
 import os
 
 from lib.parse_kconfig import scan_kbuild_tree

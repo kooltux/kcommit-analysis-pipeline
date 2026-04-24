@@ -12,14 +12,12 @@ v7.18 changes vs v7.17:
     of a bare integer, giving richer per-profile stats in the HTML report.
   - Python 3.6 compatible.
 """
-from __future__ import print_function
 import argparse
 import csv
-import io
 import os
 
 from lib.config import load_config
-from lib.io_utils import ensure_dir, load_json, save_json
+from lib.config import load_json, save_json
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import (
     start_stage, finish_stage, fail_stage, get_pipeline_state
@@ -61,7 +59,7 @@ def main():
 
         cache  = os.path.join(work, 'cache')
         outdir = os.path.join(work, 'output')
-        ensure_dir(outdir)
+        os.makedirs(outdir, exist_ok=True)
 
         scored = (load_json(os.path.join(cache, 'scored_commits.json'),
                             default=[]) or [])
@@ -75,7 +73,7 @@ def main():
             'product_evidence',
         ]
         csv_path = os.path.join(outdir, 'relevant_commits.csv')
-        with io.open(csv_path, 'w', newline='', encoding='utf-8') as fh:
+        with open(csv_path, 'w', newline='', encoding='utf-8') as fh:
             writer = csv.DictWriter(fh, fieldnames=csv_cols,
                                     extrasaction='ignore')
             writer.writeheader()
@@ -101,10 +99,13 @@ def main():
                     profile_summary[p] = {'count': 0, 'total_score': 0}
                 profile_summary[p]['count']       += 1
                 profile_summary[p]['total_score'] += c.get('score', 0) or 0
+        for _data in profile_summary.values():
+            _cnt = _data['count']
+            _data['avg_score'] = round(_data['total_score'] / _cnt, 1) if _cnt else 0.0
         save_json(os.path.join(outdir, 'profile_summary.json'), profile_summary)
 
         # Profile matrix CSV
-        with io.open(os.path.join(outdir, 'profile_matrix.csv'), 'w',
+        with open(os.path.join(outdir, 'profile_matrix.csv'), 'w',
                      newline='', encoding='utf-8') as fh:
             writer = csv.writer(fh)
             writer.writerow(['commit', 'subject', 'profile', 'score'])

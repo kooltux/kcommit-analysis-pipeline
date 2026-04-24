@@ -1,5 +1,4 @@
 # Rule matching helpers and scoring primitives.
-from __future__ import print_function
 import fnmatch
 import re
 

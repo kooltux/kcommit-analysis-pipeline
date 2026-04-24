@@ -3,14 +3,13 @@
 
 v7.17: fail_stage on error; profiles.active accepts dict or list form.
 """
-from __future__ import print_function
 import argparse
 import json
 import os
 
 from lib.config import load_config
 from lib.profile_rules import compile_rules_for_config, _active_profiles
-from lib.io_utils import ensure_dir
+
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import start_stage, finish_stage, fail_stage
 
@@ -23,7 +22,7 @@ def main():
     cfg   = load_config(args.config)
     work  = cfg.get('project', {}).get('work_dir', './work')
     cache = os.path.join(work, 'cache')
-    ensure_dir(cache)
+    os.makedirs(cache, exist_ok=True)
     state_path = os.path.join(work, 'pipeline_state.json')
     started = start_stage(state_path, 'prepare_pipeline', 1, 7)
 

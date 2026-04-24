@@ -10,14 +10,13 @@ v7.18 changes vs v7.17:
   - Graceful serial fallback if multiprocessing raises any exception.
   - Python 3.6 compatible (Pool initializer available since Python 3.3).
 """
-from __future__ import print_function
 import argparse
 import os
 import sys
 
 from lib.config import load_config
-from lib.io_utils import ensure_dir, load_json, save_json
-from lib.scoring import score_commit
+from lib.config import load_json, save_json
+from lib.scoring import score_commit, precompile_rules
 from lib.profile_rules import load_profile_rules
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import (
@@ -38,6 +37,7 @@ def _worker_init(product_map, profile_rules, cfg):
     _g_product_map   = product_map
     _g_profile_rules = profile_rules
     _g_cfg           = cfg
+    precompile_rules(_g_profile_rules)  # compile patterns once per worker process
 
 
 def _score_one_global(commit):
@@ -118,7 +118,7 @@ def main():
             raise SystemExit(2)
 
         cache = os.path.join(work, 'cache')
-        ensure_dir(cache)
+        os.makedirs(cache, exist_ok=True)
 
         commits = (load_json(os.path.join(cache, 'enriched_commits.json'),
                              default=[]) or

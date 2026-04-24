@@ -10,7 +10,6 @@ v7.18 changes vs v7.17:
   - Report title taken from cfg['templates']['report_title'] when present.
   - Top N commits limit configurable via cfg['templates']['top_n'] (default 100).
 """
-from __future__ import print_function
 import html
 import json
 import os
@@ -177,10 +176,11 @@ def generate_html_report(work_dir, cfg):
     # ── profile summary table (v7.18: richer dict format) ───────────────────────
     if p_summary and isinstance(list(p_summary.values())[0], dict):
         prows = ''.join(
-            '<tr><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+            '<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
                 _esc(pn),
                 pv.get('count', '-'),
                 pv.get('total_score', '-'),
+                pv.get('avg_score', '-'),
             )
             for pn, pv in sorted(
                 p_summary.items(),
@@ -191,7 +191,7 @@ def generate_html_report(work_dir, cfg):
         prof_html = (
             '<h2 style="margin:1.5rem 0 0.5rem;font-size:1rem;">Profile Summary</h2>'
             '<table style="width:auto;margin-bottom:1.5rem">'
-            '<thead><tr><th>Profile</th><th>Commits</th><th>Total score</th></tr></thead>'
+            '<thead><tr><th>Profile</th><th>Commits</th><th>Total score</th><th>Avg score</th></tr></thead>'
             '<tbody>%s</tbody></table>'
         ) % prows
     else:

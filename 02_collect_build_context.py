@@ -10,13 +10,12 @@ v7.18 changes vs v7.17:
   - kernel_config and build_dir remain optional (notices only, not errors).
   - Python 3.6 compatible.
 """
-from __future__ import print_function
 import argparse
 import os
 import sys
 
 from lib.config import load_config
-from lib.io_utils import ensure_dir, save_json
+from lib.config import save_json
 from lib.kbuild import load_kernel_config_symbols
 from lib.parse_kconfig import parse_kernel_config, scan_kbuild_tree
 from lib.validation import validate_inputs
@@ -66,7 +65,7 @@ def main():
             raise SystemExit(2)
 
         cache      = os.path.join(work, 'cache')
-        ensure_dir(cache)
+        os.makedirs(cache, exist_ok=True)
 
         inputs     = cfg.get('inputs', {}) or {}
         source_dir = (cfg.get('kernel', {}) or {}).get('source_dir')

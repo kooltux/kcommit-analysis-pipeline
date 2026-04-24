@@ -5,13 +5,12 @@ v7.18 changes vs v7.17:
   - Within-stage progress via update_stage_progress (updated ~50 times).
   - Python 3.6 compatible.
 """
-from __future__ import print_function
 import argparse
 import os
 import sys
 
 from lib.config import load_config
-from lib.io_utils import ensure_dir, load_json, save_json
+from lib.config import load_json, save_json
 from lib.scoring import extract_stable_hints, infer_touched_paths
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import (
@@ -41,7 +40,7 @@ def main():
             raise SystemExit(2)
 
         cache = os.path.join(work, 'cache')
-        ensure_dir(cache)
+        os.makedirs(cache, exist_ok=True)
 
         commits = load_json(os.path.join(cache, 'commits.json'),
                             default=[]) or []

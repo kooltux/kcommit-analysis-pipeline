@@ -9,13 +9,12 @@ v7.18 changes vs v7.17:
     git-show calls report live progress via update_stage_progress.
   - Python 3.6 compatible.
 """
-from __future__ import print_function
 import argparse
 import os
 import sys
 
 from lib.config import load_config
-from lib.io_utils import ensure_dir, load_json, save_json
+from lib.config import load_json, save_json
 from lib.parse_kconfig import scan_makefile_config_map
 from lib.history_map import build_history_config_map
 from lib.validation import validate_inputs
@@ -56,7 +55,7 @@ def main():
             raise SystemExit(2)
 
         cache = os.path.join(work, 'cache')
-        ensure_dir(cache)
+        os.makedirs(cache, exist_ok=True)
 
         ctx        = load_json(os.path.join(cache, 'build_context.json'),
                                default={}) or {}

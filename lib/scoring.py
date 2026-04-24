@@ -1,5 +1,13 @@
 """Commit scoring helpers for kcommit-analysis-pipeline.
 
+v8.0 changes vs v7.19:
+  - Dropped from __future__ import print_function (Py2 dead code).
+  - %-formatting replaced with f-strings.
+  - precompile_rules(): new public function.  Call once per worker process
+    (e.g. in _worker_init in 05_score_commits.py) to compile all pattern
+    strings into re.Pattern objects, avoiding per-commit recompilation at scale.
+    score_commit() transparently uses pre-compiled patterns when present.
+
 v7.19 scoring model
 ===================
 
@@ -12,7 +20,6 @@ v7.19 scoring model
   symbol-level evidence. It must not duplicate profile or rule weights.
 """
 
-from __future__ import print_function
 import fnmatch
 import json
 import os
@@ -56,6 +63,8 @@ _RE_SYZBOT  = re.compile(r'syzbot', re.I)
 
 def _match(pattern, text):
     """Match a pattern against text; supports 're:', globs, and substrings."""
+    if isinstance(pattern, re.Pattern):
+        return bool(pattern.search(text))
     if pattern.startswith('re:'):
         try:
             return bool(re.search(pattern[3:], text, re.I))
@@ -66,6 +75,42 @@ def _match(pattern, text):
     return pattern.lower() in text.lower()
 
 
+# ── Pre-compilation ────────────────────────────────────────────────────────────
+
+def precompile_rules(profile_rules):
+    """Pre-compile all pattern strings in *profile_rules* to re.Pattern objects.
+
+    Call this once per worker process (in _worker_init) after loading
+    profile_rules.  Mutates the dicts in-place by replacing string pattern
+    lists with compiled-pattern lists under the same keys.
+
+    score_commit() uses _match(), which transparently handles both str and
+    re.Pattern inputs, so no other code needs to change.
+    """
+    for pdata in (profile_rules or {}).values():
+        merged = (pdata or {}).get('merged', {}) or {}
+        for key in ('keywords_whitelist', 'keywords_blacklist',
+                    'path_whitelist', 'path_blacklist',
+                    'commit_whitelist', 'commit_blacklist'):
+            merged[key] = [_compile_pat(p) for p in merged.get(key, [])]
+        for rdata in (pdata.get('rules', {}) or {}).values():
+            for key in ('keywords_whitelist', 'path_whitelist'):
+                rdata[key] = [_compile_pat(p) for p in rdata.get(key, [])]
+
+
+def _compile_pat(pattern):
+    """Compile a single pattern string to re.Pattern (if possible)."""
+    if isinstance(pattern, re.Pattern):
+        return pattern
+    if pattern.startswith('re:'):
+        try:
+            return re.compile(pattern[3:], re.I)
+        except re.error:
+            return pattern
+    # Plain substring / glob — keep as string; _match handles both
+    return pattern
+
+
 # ── Config-hint loading ────────────────────────────────────────────────────────
 
 def _load_hints(cfg):
@@ -73,7 +118,7 @@ def _load_hints(cfg):
     if not cfg:
         return {}
     meta    = cfg.get('_meta', {}) or {}
-    vars_   = (meta.get('vars', {}) or {})
+    vars_   = meta.get('vars', {}) or {}
     tooldir = (vars_.get('TOOLDIR')
                or os.environ.get('TOOLDIR')
                or os.path.abspath(os.path.join(meta.get('config_dir', '.'), '..')))
@@ -81,7 +126,7 @@ def _load_hints(cfg):
     if not os.path.exists(hints_path):
         return {}
     try:
-        with open(hints_path, 'r', encoding='utf-8') as f:
+        with open(hints_path, encoding='utf-8') as f:
             return json.load(f)
     except Exception:
         return {}
@@ -120,17 +165,13 @@ def _profile_multipliers(cfg):
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def extract_stable_hints(commit):
-    """Extract security/performance/stable indicators from the full commit dict.
-
-    Returns a dict with boolean flags:
-        is_stable, is_fix, has_cve, has_syzbot, is_security, is_performance
-    """
+    """Extract security/performance/stable indicators from the full commit dict."""
     subject = commit.get('subject', '') or ''
     body    = commit.get('body',    '') or ''
     full    = subject + '\n' + body
 
-    is_fix    = bool(_RE_FIXES.search(full))
-    has_cve   = bool(_RE_CVE.search(full))
+    is_fix     = bool(_RE_FIXES.search(full))
+    has_cve    = bool(_RE_CVE.search(full))
     has_syzbot = bool(_RE_SYZBOT.search(full))
     has_stable = bool(_RE_STABLE.search(full))
     is_stable  = is_fix or has_cve or has_syzbot or has_stable
@@ -156,12 +197,7 @@ def extract_patch_features(subject):
 
 
 def infer_touched_paths(subject, cfg=None):
-    """Guess relevant kernel path prefixes from a commit subject.
-
-    Loads keyword->path mappings from configs/scoring/subsystem_path_hints.json
-    (resolved via TOOLDIR in cfg) instead of using a hardcoded inline table.
-    Falls back to an empty list when the hints file cannot be loaded.
-    """
+    """Guess relevant kernel path prefixes from a commit subject."""
     hints  = _load_hints(cfg)
     low    = (subject or '').lower()
     result = []
@@ -183,10 +219,10 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         matched_profiles – list of profile names that matched
         product_evidence – list of evidence tags ('config_map:CONFIG_FOO', ...)
     """
-    weights     = _get_weights(cfg)
-    prof_mults  = _profile_multipliers(cfg)
-    result      = dict(commit)
-    evidence    = []
+    weights    = _get_weights(cfg)
+    prof_mults = _profile_multipliers(cfg)
+    result     = dict(commit)
+    evidence   = []
 
     subject = commit.get('subject', '') or ''
     body    = commit.get('body',    '') or ''
@@ -228,7 +264,6 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         stable_score += 20
     if hints.get('is_fix'):
         stable_score += 20
-    # Triple-threat bonus: CVE + Fixes: trailer + Cc: stable → extra confidence
     if hints.get('has_cve') and hints.get('is_fix') and hints.get('has_stable_cc'):
         stable_score += 30
 
@@ -242,7 +277,6 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     build_log_set = set((product_map or {}).get('built_objects_from_log', []) or [])
     artifact_set  = set((product_map or {}).get('built_artifacts_from_dir', []) or [])
 
-    # Strong evidence: actual changed files present in config_to_paths mapping
     matched_syms = set()
     for sym, sym_paths in c2p.items():
         for sp in (sym_paths or []):
@@ -251,19 +285,17 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
                    for cf in commit_files):
                 if sym not in matched_syms:
                     product_score += 20
-                    evidence.append('config_map:%s' % sym)
+                    evidence.append(f'config_map:{sym}')
                     matched_syms.add(sym)
                 break
 
-    # Medium evidence: touched path guesses vs config_dirs
     for tp in touched:
         for cd in config_dirs:
             if cd.startswith(tp) or tp.startswith(cd.rstrip('/')):
                 product_score += 10
-                evidence.append('config_dir:%s' % cd)
+                evidence.append(f'config_dir:{cd}')
                 break
 
-    # Weaker evidence: build log / artifact basename matches
     for tp in touched:
         base = os.path.basename(tp.rstrip('/'))
         if not base:
@@ -271,22 +303,21 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         for line in build_log_set:
             if base in line:
                 product_score += 5
-                evidence.append('build_log:%s' % base)
+                evidence.append(f'build_log:{base}')
                 break
         for art in artifact_set:
             if base in art:
                 product_score += 5
-                evidence.append('artifact:%s' % base)
+                evidence.append(f'artifact:{base}')
                 break
 
-    # Config symbol mentioned in commit text
     for sym in enabled_cfgs:
         if sym.startswith('CONFIG_') and sym[7:].lower() in full:
             product_score += 5
-            evidence.append('config_text:%s' % sym)
+            evidence.append(f'config_text:{sym}')
 
     product_score = min(product_score, 100)
-    evidence = sorted(set(evidence))
+    evidence      = sorted(set(evidence))
 
     # ── 3. Profile rule scoring ────────────────────────────────────────────────
     matched_profiles = []
@@ -297,13 +328,11 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         rules  = (pdata or {}).get('rules',  {}) or {}
         pmult  = prof_mults.get(pname, 1.0)
 
-        # Commit-level blacklist check for this profile
         if any(_match(pat, commit.get('commit', ''))
                for pat in merged.get('commit_blacklist', [])):
             profile_scores[pname] = 0
             continue
 
-        # Commit-level whitelist or keyword/path hits determine 'matched'
         hit = (
             any(_match(pat, commit.get('commit', ''))
                 for pat in merged.get('commit_whitelist', []))
@@ -314,10 +343,9 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
                    for f in commit_files)
         )
 
-        # Per-rule weighted contribution
         per_rule_total = 0
         for rdata in rules.values():
-            rw = rdata.get('weight', 50)
+            rw    = rdata.get('weight', 50)
             r_hit = (
                 any(_match(pat, subject) or _match(pat, body)
                     for pat in rdata.get('keywords_whitelist', []))
@@ -336,7 +364,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
             matched_profiles.append(pname)
 
     # ── 4. Combined score ──────────────────────────────────────────────────────
-    w = weights
+    w        = weights
     combined = int(
         product_score     * w['product']     +
         security_score    * w['security']    +
@@ -345,7 +373,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     ) + sum(profile_scores.values())
 
     result.update({
-        'score': combined,
+        'score':            combined,
         'scoring': {
             'product':     product_score,
             'security':    security_score,
