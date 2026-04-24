@@ -162,15 +162,44 @@ def main():
             print('[stage %d] %s already OK – skipping (use --force to re-run)' % (display_idx, key))
             continue
 
-        script_path = os.path.join(script_dir, script)
-        print('\n[stage %d] running %s ...' % (display_idx, script))
-        ret = subprocess.call([sys.executable, script_path, '--config', args.config])
+        print('\n[stage %d] running %s ...' % (display_idx, key))
+        
+        # Try in-process execution for better performance
+        try:
+            import importlib
+            mod_name = script.replace('.py', '')
+            if script_dir not in sys.path:
+                sys.path.insert(0, script_dir)
+            
+            # Use importlib to reload/import the stage module
+            if mod_name in sys.modules:
+                mod = importlib.reload(sys.modules[mod_name])
+            else:
+                mod = importlib.import_module(mod_name)
+            
+            # The @stage_main decorator in the script will parse sys.argv
+            old_argv = sys.argv
+            sys.argv = [script, '--config', args.config]
+            try:
+                mod.main()
+                ret = 0
+            except SystemExit as e:
+                ret = e.code if isinstance(e.code, int) else (1 if e.code else 0)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                ret = 1
+            finally:
+                sys.argv = old_argv
+                
+        except Exception as e:
+            # Fallback to subprocess if import fails
+            print('  notice: falling back to subprocess for %s: %s' % (script, e))
+            script_path = os.path.join(script_dir, script)
+            ret = subprocess.call([sys.executable, script_path, '--config', args.config])
+
         if ret != 0:
-            print('\n[stage %d] FAILED (exit %d)' % (idx, ret))
-            next_stages = [s for s in STAGES if s[0] > idx]
-            if next_stages:
-                print('  re-run hint:  python3 kcommit_pipeline.py '
-                      '--config %s --from %d' % (args.config, idx))
+            print('\n[stage %d] FAILED (exit %d)' % (display_idx, ret))
             raise SystemExit(ret)
 
     print('\nPipeline completed successfully.')

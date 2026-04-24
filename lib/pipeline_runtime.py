@@ -6,10 +6,67 @@
   - State dict keyed by stage name (string) instead of a positional list, so
     re-runs of individual stages never create duplicate entries.
 """
+import argparse
 import json
 import os
 import sys
 import time
+
+from lib.config import load_config
+from lib.validation import validate_inputs
+
+
+def stage_main(key, index, total):
+    """Decorator to standardize stage script boilerplate.
+
+    Handles:
+    - Argument parsing (--config)
+    - Configuration loading and validation
+    - Stage state management (start_stage, finish_stage, fail_stage)
+    - Global exception catching and traceback printing
+    """
+    def decorator(func):
+        def wrapper():
+            ap = argparse.ArgumentParser()
+            ap.add_argument('--config', required=True)
+            args = ap.parse_args()
+
+            cfg = load_config(args.config)
+            work = cfg.get('project', {}).get('work_dir', './work')
+            state_path = os.path.join(work, 'pipeline_state.json')
+
+            started = start_stage(state_path, key, index, total)
+
+            try:
+                problems, notices = validate_inputs(cfg)
+                for note in notices:
+                    print('  NOTICE:', note)
+                if problems:
+                    for p in problems:
+                        print('  ERROR:', p)
+                    fail_stage(state_path, key, started,
+                               error_msg='; '.join(problems))
+                    sys.exit(2)
+
+                # Execute the actual stage logic
+                # The function should return an 'extra' dict if it has stats
+                extra = func(cfg, work)
+
+                finish_stage(state_path, key, started, status='ok',
+                             extra=extra)
+
+            except SystemExit as e:
+                if e.code != 0:
+                    # Already handled or non-zero exit
+                    raise
+            except Exception as exc:
+                import traceback
+                traceback.print_exc()
+                fail_stage(state_path, key, started, error_msg=str(exc))
+                sys.exit(1)
+
+        return wrapper
+    return decorator
 
 
 def _read_state(path):

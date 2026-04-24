@@ -1,25 +1,14 @@
 #!/usr/bin/env python3
-"""Stage 05: Score commits using product map, profile rules, and scoring config.
+"""Stage 04: Score commits using product map, profile rules, and scoring config.
 
-    per worker at startup via _worker_init(), not once per task.  For large
-    product maps this is a significant memory / IPC bandwidth saving.
-  - Within-stage progress via update_stage_progress (~80 updates across loop).
-  - score_workers defaults to min(4, cpu_count()) when not set in config.
-  - Graceful serial fallback if multiprocessing raises any exception.
-  - Python 3.6 compatible (Pool initializer available since Python 3.3).
 """
-import argparse
 import os
 import sys
 
-from lib.config import load_config
 from lib.io_utils import ensure_dir, load_json, save_json
 from lib.scoring import score_commit
 from lib.profile_rules import load_profile_rules
-from lib.validation import validate_inputs
-from lib.pipeline_runtime import (
-    start_stage, finish_stage, fail_stage, update_stage_progress
-)
+from lib.pipeline_runtime import stage_main, update_stage_progress
 
 
 # ── module-level globals for pool worker initializer ─────────────────────────
@@ -50,101 +39,98 @@ def _score_all(commits, product_map, profile_rules, cfg):
     except Exception:
         default_workers = 1
     workers = int(collect.get('score_workers', default_workers) or default_workers)
-    total   = len(commits)
-    step    = max(1, total // 80)
+    
+    total = len(commits) if isinstance(commits, list) else 0
+    step  = max(1, total // 80) if total else 5000
 
     # ── serial path ───────────────────────────────────────────────────────────
-    if workers <= 1 or total < 100:
-        results = []
+    if workers <= 1:
         for i, c in enumerate(commits):
-            results.append(score_commit(c, product_map, profile_rules, cfg))
-            if i % step == 0 or i == total - 1:
+            yield score_commit(c, product_map, profile_rules, cfg)
+            if total and (i % step == 0 or i == total - 1):
                 update_stage_progress(3, 5, (i + 1) / max(total, 1),
                                       'scoring', n_done=i + 1, n_total=total)
-        return results
+            elif not total and i % 5000 == 0:
+                update_stage_progress(3, 5, 0.5, 'scoring (stream)', n_done=i + 1)
+        return
 
     # ── parallel path with initializer ────────────────────────────────────────
     try:
         from multiprocessing import Pool, cpu_count
-        max_w   = max(1, min(workers, cpu_count()))
-        results = []
+        max_w = max(1, min(workers, cpu_count()))
         with Pool(processes=max_w,
                   initializer=_worker_init,
                   initargs=(product_map, profile_rules, cfg)) as pool:
-            # imap preserves order and allows streaming progress updates
             for i, scored in enumerate(
                     pool.imap(_score_one_global, commits, chunksize=64)):
-                results.append(scored)
-                if i % step == 0 or i == total - 1:
+                yield scored
+                if total and (i % step == 0 or i == total - 1):
                     update_stage_progress(3, 5, (i + 1) / max(total, 1),
                                           'scoring (parallel)',
                                           n_done=i + 1, n_total=total)
-        return results
+                elif not total and i % 5000 == 0:
+                    update_stage_progress(3, 5, 0.5, 'scoring (stream parallel)', n_done=i + 1)
 
-    except Exception:
+    except Exception as e:
+        print('\n  warning: parallel scoring failed: %s' % e)
         # Fallback to serial if anything goes wrong with multiprocessing
-        results = []
         for i, c in enumerate(commits):
-            results.append(score_commit(c, product_map, profile_rules, cfg))
-            if i % step == 0 or i == total - 1:
+            yield score_commit(c, product_map, profile_rules, cfg)
+            if total and (i % step == 0 or i == total - 1):
                 update_stage_progress(3, 5, (i + 1) / max(total, 1),
                                       'scoring (serial fallback)',
                                       n_done=i + 1, n_total=total)
-        return results
+            elif not total and i % 5000 == 0:
+                update_stage_progress(3, 5, 0.5, 'scoring (fallback stream)', n_done=i + 1)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--config', required=True)
-    args = ap.parse_args()
+@stage_main('score_commits', 3, 5)
+def main(cfg, work):
+    cache = os.path.join(work, 'cache')
+    ensure_dir(cache)
 
-    cfg        = load_config(args.config)
-    work       = cfg.get('project', {}).get('work_dir', './work')
-    state_path = os.path.join(work, 'pipeline_state.json')
-    started    = start_stage(state_path, 'score_commits', 3, 5)
+    # Prefer JSONL for massive ranges (200k+), fallback to JSON
+    jsonl_path = os.path.join(cache, 'enriched_commits.jsonl')
+    json_path  = os.path.join(cache, 'enriched_commits.json')
+    if not os.path.exists(jsonl_path) and not os.path.exists(json_path):
+        jsonl_path = os.path.join(cache, 'commits.jsonl')
+        json_path  = os.path.join(cache, 'commits.json')
 
-    try:
-        problems, notices = validate_inputs(cfg)
-        for note in notices:
-            print('  NOTICE:', note)
-        if problems:
-            for p in problems:
-                print('  ERROR:', p)
-            fail_stage(state_path, 'score_commits', started,
-                       error_msg='; '.join(problems))
-            raise SystemExit(2)
+    if os.path.exists(jsonl_path):
+        from lib.io_utils import iter_jsonl
+        commits = iter_jsonl(jsonl_path)
+        total   = 0 # unknown
+    else:
+        commits = load_json(json_path, default=[]) or []
+        total   = len(commits)
 
-        cache = os.path.join(work, 'cache')
-        ensure_dir(cache)
+    product_map   = load_json(os.path.join(cache, 'product_map.json'),
+                              default={}) or {}
+    profile_rules = load_profile_rules(cfg)
 
-        commits = (load_json(os.path.join(cache, 'enriched_commits.json'),
-                             default=[]) or
-                   load_json(os.path.join(cache, 'commits.json'),
-                             default=[]) or [])
-        product_map   = load_json(os.path.join(cache, 'product_map.json'),
-                                  default={}) or {}
-        profile_rules = load_profile_rules(cfg)
+    update_stage_progress(3, 5, 0.01, 'ready',
+                          n_done=0, n_total=total if total else None)
 
-        update_stage_progress(3, 5, 0.01, 'ready',
-                              n_done=0, n_total=len(commits))
+    # _score_all needs an iterable; if we have a list it works, if we have a generator it works.
+    # But _score_all currently calculates 'step' based on 'total'.
+    # I'll update _score_all to handle unknown total.
+    
+    scored_stream = _score_all(commits, product_map, profile_rules, cfg)
 
-        scored = _score_all(commits, product_map, profile_rules, cfg)
+    sys.stdout.write('\n')
+    sys.stdout.flush()
 
-        sys.stdout.write('\n')
-        sys.stdout.flush()
+    from lib.io_utils import save_jsonl
+    stats = {'count': 0}
+    def _count_stream(it):
+        for item in it:
+            stats['count'] += 1
+            yield item
 
-        save_json(os.path.join(cache, 'scored_commits.json'), scored)
-        print('  scored %d commits' % len(scored))
-        finish_stage(state_path, 'score_commits', started, status='ok',
-                     extra={'scored_commit_count': len(scored)})
-
-    except SystemExit:
-        raise
-    except Exception as exc:
-        import traceback
-        traceback.print_exc()
-        fail_stage(state_path, 'score_commits', started, error_msg=str(exc))
-        raise
+    save_jsonl(os.path.join(cache, 'scored_commits.jsonl'), _count_stream(scored_stream))
+    
+    print('  scored %d commits' % stats['count'])
+    return {'scored_commit_count': stats['count']}
 
 
 if __name__ == '__main__':

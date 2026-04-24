@@ -1,3 +1,18 @@
+## v7.21
+
+### Scalability & Performance
+- **Streaming Pipeline**: Transitioned to JSONL (JSON Lines) as the primary intermediate data format. This enables processing of "huge" commit ranges (200k+) with constant memory usage.
+- **Generator-based Stages**: Refactored enrichment and scoring stages to use streaming generators, avoiding massive in-memory list allocations.
+- **In-Process Execution**: Driver now executes stages by direct module import/call, reducing subprocess overhead and improving debuggability.
+
+### Developer Experience
+- **`@stage_main` Decorator**: Centralized argparse, config loading, and state management into a single reusable decorator, reducing script boilerplate by ~50%.
+- **Path Resolution Fix**: Runtime paths (work_dir, source_dir) are now resolved relative to the Current Working Directory (CWD) to prevent misplaced output in the source tree.
+
+### Premium Aesthetics
+- **Neutral High-End Design**: Upgraded HTML report with a high-quality system font stack (San Francisco, Segoe UI, Roboto) and glassmorphism effects.
+- **Dark Mode**: Native CSS media query support for automatic dark mode switching.
+
 ## v7.20
 
 ### Architecture Refactoring (Consolidation)

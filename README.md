@@ -1,4 +1,4 @@
-# kcommit-analysis-pipeline v7.20
+# kcommit-analysis-pipeline v7.21
 
 Python 3.6+-compatible, restartable pipeline to analyze Linux kernel commits between two revisions and identify commits relevant to security fixes, security features, and performance improvements.
 

@@ -1,73 +1,55 @@
 #!/usr/bin/env python3
-"""Stage 04: Enrich commits with stable hints and touched-path guesses.
+"""Stage 03: Enrich commits with stable hints and touched-path guesses.
 
 """
-import argparse
 import os
 import sys
 
-from lib.config import load_config
 from lib.io_utils import ensure_dir, load_json, save_json
 from lib.scoring import extract_stable_hints, infer_touched_paths
-from lib.validation import validate_inputs
-from lib.pipeline_runtime import (
-    start_stage, finish_stage, fail_stage, update_stage_progress
-)
+from lib.pipeline_runtime import stage_main, update_stage_progress
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--config', required=True)
-    args = ap.parse_args()
+@stage_main('enrich_commits', 2, 5)
+def main(cfg, work):
+    cache = os.path.join(work, 'cache')
+    ensure_dir(cache)
 
-    cfg        = load_config(args.config)
-    work       = cfg.get('project', {}).get('work_dir', './work')
-    state_path = os.path.join(work, 'pipeline_state.json')
-    started    = start_stage(state_path, 'enrich_commits', 2, 5)
-
-    try:
-        problems, notices = validate_inputs(cfg)
-        for note in notices:
-            print('  NOTICE:', note)
-        if problems:
-            for p in problems:
-                print('  ERROR:', p)
-            fail_stage(state_path, 'enrich_commits', started,
-                       error_msg='; '.join(problems))
-            raise SystemExit(2)
-
-        cache = os.path.join(work, 'cache')
-        ensure_dir(cache)
-
-        commits = load_json(os.path.join(cache, 'commits.json'),
-                            default=[]) or []
+    # Prefer JSONL for massive ranges (200k+), fallback to JSON
+    jsonl_path = os.path.join(cache, 'commits.jsonl')
+    json_path  = os.path.join(cache, 'commits.json')
+    
+    if os.path.exists(jsonl_path):
+        from lib.io_utils import iter_jsonl
+        commits = iter_jsonl(jsonl_path)
+        # We don't know the total upfront from JSONL without a pre-scan
+        # but iter_git_log_records already knows it if max_commits was set.
+        total = 0 # unknown
+    else:
+        commits = load_json(json_path, default=[]) or []
         total   = len(commits)
-        step    = max(1, total // 50)
 
-        for i, c in enumerate(commits):
+    stats = {'count': 0}
+    def _enrich_stream(it):
+        for i, c in enumerate(it):
             c['stable_hints']        = extract_stable_hints(c)
             c['touched_paths_guess'] = infer_touched_paths(
                 c.get('subject', ''), cfg)
-            if i % step == 0 or i == total - 1:
+            stats['count'] += 1
+            if total and (i % max(1, total // 50) == 0 or i == total - 1):
                 update_stage_progress(2, 5, (i + 1) / max(total, 1),
-                                      'enriching',
-                                      n_done=i + 1, n_total=total)
+                                      'enriching', n_done=i + 1, n_total=total)
+            elif not total and i % 5000 == 0:
+                update_stage_progress(2, 5, 0.5, 'enriching (stream)', n_done=i + 1)
+            yield c
+        if not total:
+            sys.stdout.write('\n')
 
-        sys.stdout.write('\n')
-        sys.stdout.flush()
-
-        save_json(os.path.join(cache, 'enriched_commits.json'), commits)
-        print('  enriched %d commits' % total)
-        finish_stage(state_path, 'enrich_commits', started, status='ok',
-                     extra={'enriched_count': total})
-
-    except SystemExit:
-        raise
-    except Exception as exc:
-        import traceback
-        traceback.print_exc()
-        fail_stage(state_path, 'enrich_commits', started, error_msg=str(exc))
-        raise
+    from lib.io_utils import save_jsonl
+    save_jsonl(os.path.join(cache, 'enriched_commits.jsonl'), _enrich_stream(commits))
+    
+    print('  enriched %d commits' % stats['count'])
+    return {'enriched_count': stats['count']}
 
 
 if __name__ == '__main__':
