@@ -1,5 +1,10 @@
 """Profile and rule loading for kcommit-analysis-pipeline.
 
+v8.3 changes vs v8.2:
+  - _read_patterns(): now supports bash-style inline # comments using
+    regex (^|\\s+)#.*$ — identical convention to JSON config files.
+    A # not preceded by whitespace is kept as part of the pattern.
+
 v8.2 changes vs v8.1:
   - local JSON comment-stripping loader removed; uses config._load_json() instead,
     which benefits from the improved comment-stripping (line numbers preserved).
@@ -11,19 +16,36 @@ v8.0 changes vs v7.19:
 """
 import json
 import os
+import re
 
 from lib.config import _load_json as _load_json_config
 
 
+# Regex for bash-style inline comments in pattern files.
+# Matches a # at column 0 or preceded by whitespace, and everything after it.
+# A # immediately following a non-space character is NOT a comment,
+# so patterns like "CVE-#123" or "re:foo#bar" are safe.
+_PATTERN_COMMENT_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
+
+
 def _read_patterns(path):
+    """Read a pattern file, stripping blank lines and bash-style comments.
+
+    Supported comment forms — regex: (^|\\s+)#.*$
+      # whole-line comment
+      pattern  # inline comment after whitespace
+
+    A # not preceded by whitespace is part of the pattern (e.g. re:foo#bar).
+    """
     if not path or not os.path.exists(path):
         return []
     patterns = []
     with open(path, encoding='utf-8', errors='replace') as f:
         for line in f:
-            s = line.strip()
-            if s and not s.startswith('#'):
-                patterns.append(s)
+            # Strip inline/whole-line # comments, then trim whitespace
+            stripped = _PATTERN_COMMENT_RE.sub('', line).strip()
+            if stripped:
+                patterns.append(stripped)
     return patterns
 
 

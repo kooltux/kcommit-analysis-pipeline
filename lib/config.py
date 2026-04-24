@@ -1,5 +1,11 @@
 """Load JSON config files with ${var} expansion, relative includes, and comment stripping.
 
+v8.3 changes vs v8.2:
+  - _strip_json_comments(): now also supports shell-style inline # comments
+    using regex (^|\\s+)#.*$ — a # preceded by whitespace or at column 0
+    strips the rest of the line, mirroring bash comment behaviour.
+  - configs/example-arm-embedded-default.json removed (superseded by full).
+
 v8.2 changes vs v8.1:
   - _strip_json_comments(): comments now replaced with whitespace/blank lines instead
     of being removed, so json.JSONDecodeError line numbers match the source file.
@@ -84,38 +90,54 @@ def _expand_node(node, variables):
     return node
 
 
+# Regex for shell-style inline hash comments: space/tab (or start-of-line)
+# followed by # and everything after it.  Matches "key": "val"  # comment
+# as well as a line that is purely a comment.
+# Pattern: (^|\s+)#.*$  — same convention as bash comments.
+_INLINE_HASH_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
+
+
 def _strip_json_comments(text):
-    """Remove // and # line comments and /* */ block comments from JSON-like text.
+    """Remove //, /* */, and shell-style # comments from JSON-like text.
 
     Comment content is replaced with whitespace rather than removed, so that
     line numbers in json.JSONDecodeError messages refer to the original source
     file — making errors much easier to locate.
 
-    Strategy:
-      - Line comments (// or # at start of stripped line): replace the entire
-        line content with an empty line (preserving the newline).
-      - Block comments (/* ... */): replace each character inside the comment
-        with a space, except newlines which are kept verbatim.  This preserves
-        both line count and approximate column positions.
+    Supported comment styles:
+      //  whole-line comments  (// at first non-whitespace position)
+      /* … */  block comments  (may span multiple lines)
+      #  shell-style comments  (at start of line OR after whitespace on a line)
+          regex: (^|\\s+)#.*$   — same as bash comment stripping
+
+    The # rule intentionally mirrors bash: a # that is not preceded by
+    whitespace (e.g. inside a string like "#FF0000") is NOT treated as a
+    comment.  This makes the rule safe for JSON string values that contain
+    colour codes, anchors, or fragment identifiers.
     """
     # ── 1. Replace /* ... */ block comments ──────────────────────────────────
     def _blank_block(m):
-        # Keep newlines so line numbers stay intact; replace all other chars.
         return re.sub(r'[^\n]', ' ', m.group(0))
 
     text = re.sub(r'/\*.*?\*/', _blank_block, text, flags=re.S)
 
-    # ── 2. Replace // and # line comments ────────────────────────────────────
-    # Only strip whole-line comments (line whose first non-whitespace is // or #).
-    # Inline comments after a value are not valid JSON anyway, so we don't need
-    # to handle them — and touching them would risk corrupting string values.
+    # ── 2. Process line-by-line for // and # comments ─────────────────────────
     cleaned_lines = []
     for line in text.splitlines():
         stripped = line.lstrip()
-        if stripped.startswith('//') or stripped.startswith('#'):
-            cleaned_lines.append('')          # blank line — preserves line numbers
+        if stripped.startswith('//'):
+            # Whole-line // comment — blank the line, preserve the newline slot
+            cleaned_lines.append('')
         else:
-            cleaned_lines.append(line)
+            # Strip inline # comments: (^|\s+)#.*$
+            # Replace the comment portion with spaces to keep column positions.
+            def _blank_hash(m):
+                # m.group(1) is the leading whitespace (keep it), rest → spaces
+                leading = m.group(1)
+                comment_len = len(m.group(0)) - len(leading)
+                return leading + ' ' * comment_len
+            cleaned = _INLINE_HASH_RE.sub(_blank_hash, line)
+            cleaned_lines.append(cleaned)
     return '\n'.join(cleaned_lines)
 
 

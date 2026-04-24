@@ -1,3 +1,26 @@
+## v8.3 (2026-04-24)
+
+### New Features
+- **REQ-2** JSON config files now support shell-style inline `#` comments using
+  regex `(^|\s+)#.*$` in `_strip_json_comments()`: a `#` at column 0 or
+  preceded by whitespace strips the rest of that line.  A `#` immediately
+  following a non-space character (e.g. `"#FF0000"`, `"http://x.com/p#frag"`)
+  is NOT treated as a comment — making the rule safe for all JSON string values.
+  Line-number preservation (blank/space replacement) is maintained.
+- **REQ-3** Pattern `.txt` rule files now support the same bash-style inline `#`
+  comment convention in `_read_patterns()`.  Text after whitespace + `#` is
+  stripped; a `#` not preceded by whitespace (e.g. `re:foo#bar`) is kept.
+  Whole-line `#` comments continue to work as before.
+- **REQ-4** All 66 `.txt` rule files now open with an exactly 5-line syntax
+  guide documenting the three pattern forms (keyword, glob, `re:REGEX`) and the
+  inline comment convention, replacing the old single-line comment notice.
+
+### Cleanup
+- **REQ-1** `configs/example-arm-embedded-default.json` deleted.  The fully
+  annotated `configs/example-arm-embedded-full.json` is the single reference
+  example; the default config was a strict subset with fewer comments and less
+  documentation value.
+
 ## v8.2 (2026-04-24)
 
 ### Bug Fixes
