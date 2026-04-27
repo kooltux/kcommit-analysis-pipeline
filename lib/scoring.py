@@ -1,5 +1,14 @@
 """Commit scoring helpers for kcommit-analysis-pipeline.
 
+v8.4 changes vs v8.3:
+  - import _load_json_commented from lib.config for _load_hints_from_path.
+  - _DEFAULT_WEIGHTS: added symbol_match (default 1.0) applied to config_map
+    and config_text product evidence components.
+  - _profile_multipliers(): handles list form of profiles.active.
+  - score_commit() first-pass blacklist: commit_blacklist checked in addition
+    to keywords_blacklist so blacklisted SHAs no longer appear in
+    matched_profiles.
+
 v8.0 changes vs v7.19:
   - Dropped from __future__ import print_function (Py2 dead code).
   - %-formatting replaced with f-strings.
@@ -22,6 +31,8 @@ v7.19 scoring model
 
 import fnmatch
 import functools
+
+from lib.config import _load_json as _load_json_commented
 import json
 import os
 import re
@@ -33,6 +44,7 @@ _DEFAULT_WEIGHTS = {
     'security':    1.5,
     'performance': 1.0,
     'stable':      1.2,
+    'symbol_match': 1.0,   # multiplier for Kconfig symbol-based product evidence
 }
 
 # ── Keyword sets ───────────────────────────────────────────────────────────────
@@ -128,8 +140,7 @@ def _compile_pat(pattern):
 def _load_hints_from_path(hints_path):
     """Load and cache subsystem hint JSON by absolute path."""
     try:
-        with open(hints_path, encoding='utf-8') as f:
-            return json.load(f)
+        return _load_json_commented(hints_path) or {}
     except Exception:
         return {}
 
@@ -168,6 +179,9 @@ def _profile_multipliers(cfg):
         return {}
     active = ((cfg.get('profiles', {}) or {}).get('active')
               or cfg.get('active_profiles') or {})
+    if isinstance(active, list):
+        # list form: all named profiles get full weight (multiplier 1.0)
+        return {name: 1.0 for name in active}
     if not isinstance(active, dict):
         return {}
     out = {}
@@ -275,6 +289,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     build_log_set = set((product_map or {}).get('built_objects_from_log', []) or [])
     artifact_set  = set((product_map or {}).get('built_artifacts_from_dir', []) or [])
 
+    sym_mult     = weights.get("symbol_match", 1.0)
     matched_syms = set()
     for sym, sym_paths in c2p.items():
         for sp in (sym_paths or []):
@@ -282,7 +297,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
             if any(cf == sp or (sp_dir and cf.startswith(sp_dir + '/'))
                    for cf in commit_files):
                 if sym not in matched_syms:
-                    product_score += 20
+                    product_score += int(20 * sym_mult)
                     evidence.append(f'config_map:{sym}')
                     matched_syms.add(sym)
                 break
@@ -311,7 +326,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
 
     for sym in enabled_cfgs:
         if sym.startswith('CONFIG_') and sym[7:].lower() in full:
-            product_score += 5
+            product_score += int(5 * sym_mult)
             evidence.append(f'config_text:{sym}')
 
     product_score = min(product_score, 100)
@@ -320,6 +335,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     # ── 3. Profile rule scoring ────────────────────────────────────────────────
     # Build per-profile blacklist exclusion set: a commit blacklisted by profile A
     # is excluded only from profile A, not from other profiles.
+    # First pass: blacklist by keyword OR by SHA.
     _profile_blacklisted = set()
     for _pname, _pdata in (profile_rules or {}).items():
         _merged = (_pdata or {}).get('merged', {}) or {}
@@ -327,6 +343,11 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
             if _match(_pat, subject):
                 _profile_blacklisted.add(_pname)
                 break
+        if _pname not in _profile_blacklisted:
+            for _pat in _merged.get('commit_blacklist', []):
+                if _match(_pat, commit.get('commit', '')):
+                    _profile_blacklisted.add(_pname)
+                    break
 
     matched_profiles = []
     profile_scores   = {}

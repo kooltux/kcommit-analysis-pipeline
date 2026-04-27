@@ -10,6 +10,9 @@ v8.0 changes vs v7.19:
   - Profile weight validation: profiles.active weights must be integers 0–100.
   - collect.score_workers validation: must be a non-negative integer (0 = auto).
 
+v8.4 changes vs v8.3:
+  - validate_inputs(): added history_mapping.mode and sample_step validation.
+
 v8.1 changes vs v8.0:
   - subprocess.call replaced with subprocess.run.
   - validate_config_only() added: lightweight checks without git subprocess calls.
@@ -159,4 +162,16 @@ def validate_config_only(cfg):
         except (TypeError, ValueError):
             problems.append(f'collect.score_workers must be an integer, got {workers!r}')
 
+
+    # ── history_mapping validation ────────────────────────────────────────────
+    hm = cfg.get('history_mapping') or {}
+    hm_mode = hm.get('mode', 'range')
+    if hm_mode not in ('range', 'sampled', 'full', 'disabled'):
+        problems.append(
+            f'history_mapping.mode must be one of range/sampled/full/disabled,'
+            f' got {hm_mode!r}')
+    hm_step = hm.get('sample_step', 1000)
+    if not isinstance(hm_step, int) or hm_step < 1:
+        problems.append(
+            f'history_mapping.sample_step must be a positive integer, got {hm_step!r}')
     return problems, notices

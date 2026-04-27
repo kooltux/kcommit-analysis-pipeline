@@ -1,3 +1,60 @@
+## v8.4
+
+### Critical Bug Fixes
+- **`02_collect_build_context.py`**: fixed a latent `NameError` — `inputs` was
+  referenced but never defined in the function body. `kernel_build_log`,
+  `yocto_build_log`, and `dts_roots` now correctly read from `cfg['kernel']`.
+- **`lib/scoring.py`**: `commit_blacklist` entries now populate
+  `_profile_blacklisted` in the first-pass loop, preventing blacklisted SHAs
+  from appearing in `matched_profiles`.
+- **`lib/scoring.py`**: `_load_hints_from_path()` uses the comment-aware JSON
+  loader — a `//` or `#` comment in `subsystem_path_hints.json` no longer
+  silently discards the entire hints dict.
+
+### JSON Comment Parsing (`lib/config.py`)
+- `INLINE_COMMENT_RE` exported as a public name; `lib/profile_rules.py` now
+  imports it instead of re-defining the identical compiled regex.
+- New `_INLINE_SLASH_RE` strips inline `//` comments when `//` is preceded by
+  whitespace — safe for `://` in URLs (`"http://x.com"` unchanged).
+- `_strip_json_comments()` replaces all comment characters with **spaces**
+  (not empty strings), preserving both line numbers and column positions so
+  `json.JSONDecodeError` reports the exact location in the original source file.
+
+### Scoring (`lib/scoring.py`)
+- `symbol_match` added to `_DEFAULT_WEIGHTS` (default `1.0`) and applied as a
+  multiplier to `config_map` and `config_text` product-evidence components.
+  The `"symbol_match": 1.2` in the example config now has effect.
+- `_profile_multipliers()` handles list form of `profiles.active` — all listed
+  profiles receive multiplier `1.0` instead of silently producing empty results.
+
+### Validation (`lib/validation.py`)
+- `history_mapping.mode` validated against allowed values
+  (`range`/`sampled`/`full`/`disabled`).
+- `history_mapping.sample_step` validated as a positive integer.
+
+### Profile Rules (`lib/profile_rules.py`)
+- `_read_patterns()` emits `warnings.warn` for missing pattern files so that
+  a typo in a profile rule path is immediately visible rather than producing
+  silent zero-coverage scoring.
+
+### Reports
+- `06_report_commits.py`: `profile_matrix.csv` header changed to
+  `commit, subject, profile, total_score, profile_score`; the new
+  `profile_score` column contains the per-profile contribution.
+- `kcommit_pipeline.py`: `output/profile_summary.json` added to
+  `STAGE_OUTPUTS['report_commits']` so `--from 6` correctly wipes it.
+
+### Config Schema
+- `configs/example-arm-embedded-full.json`: `kernel_build_log`,
+  `yocto_build_log`, and `dts_roots` moved from the defunct `inputs` section
+  into `kernel`. The entire `inputs` block is removed.
+- Example config now documents `collect.jsonl`, `collect.include_parents`,
+  and `history_mapping.max_failure_rate`.
+
+### Code Hygiene
+- `01_collect_commits.py`: last two `%`-format strings replaced with f-strings.
+- `lib/html_report.py`: docstring updated to reflect v8.2–v8.4 history.
+
 ## v8.3 (2026-04-24)
 
 ### New Features

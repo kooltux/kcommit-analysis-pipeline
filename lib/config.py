@@ -1,5 +1,15 @@
 """Load JSON config files with ${var} expansion, relative includes, and comment stripping.
 
+v8.4 changes vs v8.3:
+  - INLINE_COMMENT_RE exported as a public name so profile_rules.py can
+    import it rather than re-defining the same compiled regex.
+  - _strip_json_comments(): inline // comments (// preceded by whitespace)
+    now stripped in addition to whole-line // comments — safe because
+    :// in URLs is not preceded by whitespace.
+  - Comment replacement now consistently uses spaces rather than empty
+    strings, preserving both line numbers AND approximate column positions
+    so json.JSONDecodeError reports the exact source location.
+
 v8.3 changes vs v8.2:
   - _strip_json_comments(): now also supports shell-style inline # comments
     using regex (^|\\s+)#.*$ — a # preceded by whitespace or at column 0
@@ -90,54 +100,67 @@ def _expand_node(node, variables):
     return node
 
 
-# Regex for shell-style inline hash comments: space/tab (or start-of-line)
-# followed by # and everything after it.  Matches "key": "val"  # comment
-# as well as a line that is purely a comment.
-# Pattern: (^|\s+)#.*$  — same convention as bash comments.
-_INLINE_HASH_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
+# Shared regex for bash-style inline hash comments.
+# Matches # at column 0 OR preceded by whitespace; exported so other
+# modules (e.g. profile_rules) can import rather than re-define it.
+# Pattern: (^|\s+)#.*$  — same as bash comment stripping.
+INLINE_COMMENT_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
+_INLINE_HASH_RE   = INLINE_COMMENT_RE   # backward-compat alias
+
+
+# Regex for inline // comments: // preceded by whitespace (or start of line).
+# This safely ignores :// in URLs (colon is not whitespace).
+_INLINE_SLASH_RE = re.compile(r'(^|(?<=\s))//.*$', re.MULTILINE)
+
+
+def _blank_comment(m):
+    """Replace a comment match with spaces, preserving the leading whitespace
+    and the total character count so that column positions stay accurate."""
+    leading      = m.group(1)           # the whitespace before the marker
+    comment_len  = len(m.group(0)) - len(leading)
+    return leading + ' ' * comment_len
 
 
 def _strip_json_comments(text):
-    """Remove //, /* */, and shell-style # comments from JSON-like text.
+    """Remove comments from JSON-like text, preserving line AND column positions.
 
-    Comment content is replaced with whitespace rather than removed, so that
-    line numbers in json.JSONDecodeError messages refer to the original source
-    file — making errors much easier to locate.
+    All comment content is replaced with spaces (never removed), so that
+    json.JSONDecodeError line/column numbers refer to the exact location in
+    the original source file.
 
     Supported comment styles:
-      //  whole-line comments  (// at first non-whitespace position)
-      /* … */  block comments  (may span multiple lines)
-      #  shell-style comments  (at start of line OR after whitespace on a line)
-          regex: (^|\\s+)#.*$   — same as bash comment stripping
+      /* … */  block comments (may span multiple lines)
+      //       whole-line OR inline — only when // follows whitespace or is at
+               column 0.  :// in URLs is NOT stripped (colon ≠ whitespace).
+      #        whole-line OR inline — same whitespace rule as bash comments.
+               regex: (^|\\s+)#.*$
 
-    The # rule intentionally mirrors bash: a # that is not preceded by
-    whitespace (e.g. inside a string like "#FF0000") is NOT treated as a
-    comment.  This makes the rule safe for JSON string values that contain
-    colour codes, anchors, or fragment identifiers.
+    Replacement strategy:
+      - Every non-newline character inside a comment → space.
+      - Newlines inside block comments are kept verbatim.
+      - Result has identical line count and near-identical column count as
+        the source, making error messages accurate without any offset mapping.
     """
-    # ── 1. Replace /* ... */ block comments ──────────────────────────────────
+    # ── 1. /* ... */ block comments — replace non-newline chars with spaces ──
     def _blank_block(m):
         return re.sub(r'[^\n]', ' ', m.group(0))
 
     text = re.sub(r'/\*.*?\*/', _blank_block, text, flags=re.S)
 
-    # ── 2. Process line-by-line for // and # comments ─────────────────────────
+    # ── 2. Line-by-line: // whole-line, // inline, # whole-line, # inline ────
     cleaned_lines = []
     for line in text.splitlines():
         stripped = line.lstrip()
         if stripped.startswith('//'):
-            # Whole-line // comment — blank the line, preserve the newline slot
-            cleaned_lines.append('')
+            # Whole-line // comment: replace entire line content with spaces
+            # (keeps the line in place for accurate line-number reporting)
+            cleaned_lines.append(' ' * len(line))
         else:
-            # Strip inline # comments: (^|\s+)#.*$
-            # Replace the comment portion with spaces to keep column positions.
-            def _blank_hash(m):
-                # m.group(1) is the leading whitespace (keep it), rest → spaces
-                leading = m.group(1)
-                comment_len = len(m.group(0)) - len(leading)
-                return leading + ' ' * comment_len
-            cleaned = _INLINE_HASH_RE.sub(_blank_hash, line)
-            cleaned_lines.append(cleaned)
+            # Inline // (only after whitespace — safe for URLs)
+            line = _INLINE_SLASH_RE.sub(_blank_comment, line)
+            # Inline/whole-line # comments (bash-style)
+            line = INLINE_COMMENT_RE.sub(_blank_comment, line)
+            cleaned_lines.append(line)
     return '\n'.join(cleaned_lines)
 
 

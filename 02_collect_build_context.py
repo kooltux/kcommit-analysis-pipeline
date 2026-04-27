@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Stage 02: Gather kernel build context (.config, artifacts, logs, Kbuild).
+
+v8.4 changes vs v8.3:
+  - kernel_build_log, yocto_build_log, and dts_roots are now read from the
+    kernel config section (kernel.kernel_build_log etc.) rather than the
+    defunct inputs section. The inputs variable was never defined in this
+    function — these three reads would have raised NameError at runtime.
 """
+
 import argparse
 import os
 import sys
@@ -79,8 +86,8 @@ def main():
 
         # ── 3. Build logs ─────────────────────────────────────────────────────
         update_stage_progress(2, 7, 0.40, 'reading build logs')
-        kernel_build_log = _read_lines(inputs.get('kernel_build_log'))
-        yocto_build_log  = _read_lines(inputs.get('yocto_build_log'))
+        kernel_build_log = _read_lines(kernel.get('kernel_build_log'))
+        yocto_build_log  = _read_lines(kernel.get('yocto_build_log'))
 
         # ── 4. Build artifacts ────────────────────────────────────────────────
         update_stage_progress(2, 7, 0.55, 'scanning build dir')
@@ -104,7 +111,7 @@ def main():
             'kernel_config_parsed': kernel_config_parsed,
             'kernel_build_log':     kernel_build_log,
             'yocto_build_log':      yocto_build_log,
-            'dts_roots':            inputs.get('dts_roots', []),
+            'dts_roots':            list(kernel.get('dts_roots') or []),
             'build_dir':            build_dir,
             'build_artifacts':      build_artifacts,
             'kbuild_files':         kbuild_files,

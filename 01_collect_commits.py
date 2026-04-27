@@ -47,8 +47,7 @@ def main():
         commits = []
         for rec in iter_git_log_records(cfg):
             if max_commits and len(commits) >= max_commits:
-                print('\n  WARNING: stopping at %d commits (collect.max_commits)'
-                      % max_commits)
+                print(f'\n  WARNING: stopping at {max_commits} commits (collect.max_commits)')
                 break
 
             entry = {
@@ -83,7 +82,7 @@ def main():
                 for rec in commits:
                     f.write(json.dumps(rec, sort_keys=True) + '\n')
 
-        print('  collected %d commits' % len(commits))
+        print(f'  collected {len(commits)} commits')
         finish_stage(state_path, 'collect_commits', started, status='ok',
                      extra={'commit_count': len(commits)})
 

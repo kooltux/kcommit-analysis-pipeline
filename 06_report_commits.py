@@ -97,7 +97,8 @@ def main():
         with open(os.path.join(outdir, 'profile_matrix.csv'), 'w',
                      newline='', encoding='utf-8') as fh:
             writer = csv.writer(fh)
-            writer.writerow(['commit', 'subject', 'profile', 'score'])
+            writer.writerow(['commit', 'subject', 'profile',
+                             'total_score', 'profile_score'])
             for c in scored:
                 for p in (c.get('matched_profiles') or []):
                     writer.writerow([
@@ -105,6 +106,7 @@ def main():
                         c.get('subject', ''),
                         p,
                         c.get('score', 0),
+                        (c.get('scoring', {}) or {}).get('profiles', {}).get(p, 0),
                     ])
 
         # ── Stats ─────────────────────────────────────────────────────────────

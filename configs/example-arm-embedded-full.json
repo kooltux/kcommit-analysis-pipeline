@@ -1,69 +1,90 @@
 {
   // ─────────────────────────────────────────────────────────────────────────
-  // kcommit-analysis-pipeline 
+  // kcommit-analysis-pipeline — ARM embedded full example config (v8.4)
+  //
+  // v8.4 changes vs v8.3:
+  //   - kernel_build_log, yocto_build_log, dts_roots moved from the defunct
+  //     "inputs" section into "kernel". The "inputs" section is removed.
   // ─────────────────────────────────────────────────────────────────────────
+
   "vars": {
-    // WORKSPACE is imported from the calling environment (export WORKSPACE=...)
+    // WORKSPACE and TOOLDIR are imported from the calling environment.
+    // export WORKSPACE=/path/to/ws  TOOLDIR=/path/to/kcommit  CONFIGDIR=...
     "WORKSPACE": "${WORKSPACE}",
-    "TOOLDIR": "${TOOLDIR}",
+    "TOOLDIR":   "${TOOLDIR}",
     "CONFIGDIR": "${CONFIGDIR}",
     "kernel_src": "${WORKSPACE}/linux/",
-    "build_dir": "${WORKSPACE}/build",
-    "logs_dir": "${WORKSPACE}/logs"
+    "build_dir":  "${WORKSPACE}/build",
+    "logs_dir":   "${WORKSPACE}/logs"
   },
+
   "project": {
-    "name": "arm-embedded-full",
+    "name":     "arm-embedded-full",
     "work_dir": "${WORKSPACE}/work"
   },
+
   "kernel": {
     "source_dir": "${kernel_src}",
-    "rev_old": "v4.14.206",
-    "rev_new": "v4.14.336",
-    // kernel_config and build_dir are OPTIONAL
+    "rev_old":    "v4.14.206",
+    "rev_new":    "v4.14.336",
+
+    // kernel_config and build_dir are OPTIONAL.
     // When absent, Kconfig symbol mapping and artifact scanning are skipped.
     "kernel_config": "${build_dir}/.config",
-    "build_dir": "${WORKSPACE}/build"
-  },
-  "inputs": {
+    "build_dir":     "${WORKSPACE}/build",
+
+    // Build inputs — read by stage 02 to gather product evidence.
+    // All three are optional; missing paths are silently skipped.
     "kernel_build_log": "${logs_dir}/kernel_build.log",
-    "yocto_build_log": "${logs_dir}/yocto_build.log",
-    "dts_roots":        ["${kernel_src}/arch/arm/boot/dts"],
-    "profiles_dir": "${CONFIGDIR}/profiles",
-    "rules_dir": "${CONFIGDIR}/rules",
-    "scoring_dir": "${CONFIGDIR}/scoring",
-    "templates_dir": "${CONFIGDIR}/templates"
+    "yocto_build_log":  "${logs_dir}/yocto_build.log",
+    "dts_roots":        ["${kernel_src}/arch/arm/boot/dts"]
   },
-  // ── Profiles ─────────────────────────────────────────────────────────────
-  // Higher weight = larger contribution to the final score from that profile.
+
+  // ── Profiles ──────────────────────────────────────────────────────────────
+  // Higher weight → larger contribution to the final score from that profile.
   "profiles": {
     "active": {
-      "security_fixes": 100,
-      "security_features": 90,
-      "performance": 70
+      "security_fixes":    100,
+      "security_features":  90,
+      "performance":        70
     }
   },
+
+  // ── Scoring multipliers ────────────────────────────────────────────────────
+  // product, security, performance, stable: global multipliers for each
+  //   scoring dimension (see lib/scoring.py _DEFAULT_WEIGHTS).
+  // symbol_match: extra multiplier applied to config_map and config_text
+  //   product-evidence components (Kconfig symbol matches).
   "scoring": {
-    "product": 1.0,
-    "stable": 1.2,
+    "product":      1.0,
+    "stable":       1.2,
     "symbol_match": 1.2
   },
+
+  // ── Commit collection ──────────────────────────────────────────────────────
   "collect": {
-    "use_numstat": true,
-    "use_no_merges": true,
-    "use_first_parent": false,
-    "max_commits": 0,
-    "score_workers": 4,
-    "jsonl": false
+    "use_numstat":       true,   // attach file-change stats (files/insertions/deletions)
+    "use_no_merges":     true,   // pass --no-merges to git log
+    "use_first_parent":  false,  // pass --first-parent to git log
+    "max_commits":       0,      // 0 = no limit
+    "score_workers":     4,      // parallel scoring workers (0 = auto)
+    "jsonl":             false,  // also write commits.jsonl for streaming consumers
+    "include_parents":   false   // attach parent SHAs to each commit dict
   },
+
+  // ── History mapping ────────────────────────────────────────────────────────
   "history_mapping": {
-    "mode": "sampled",
-    "sample_step": 500,
-    "max_commits_per_probe": 3
+    "mode":                  "sampled",  // range | sampled | full | disabled
+    "sample_step":           500,
+    "max_commits_per_probe": 3,
+    "max_failure_rate":      0.05        // fail stage if >5 % of git-show tasks fail
   },
+
+  // ── HTML report options ────────────────────────────────────────────────────
   "templates": {
-    "html_summary": true,
-    "report_title": "ARM Embedded - Full Analysis",
-    "top_n": 500,
-    "summary_css": "${CONFIGDIR}/templates/summary.css"
+    "html_summary":  true,
+    "report_title":  "ARM Embedded - Full Analysis",
+    "top_n":         500,
+    "summary_css":   "${CONFIGDIR}/templates/summary.css"
   }
 }

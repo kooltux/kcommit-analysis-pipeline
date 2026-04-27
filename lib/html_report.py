@@ -1,5 +1,10 @@
 """HTML report generator for kcommit-analysis-pipeline.
 
+v8.4 changes vs v8.3:
+  - Docstring updated to reflect all changes from v8.2 onwards.
+  - Profile Summary table avg_score column rendered (computed in
+    06_report_commits.py since v8.2).
+
 v8.2 changes vs v8.1:
   - Footer now uses VERSION from lib.manifest instead of hardcoded "v7.18".
   - scored_commits.json path fixed: reads from cache/ not output/.

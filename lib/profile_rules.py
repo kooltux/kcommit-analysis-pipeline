@@ -9,6 +9,13 @@ v8.2 changes vs v8.1:
   - local JSON comment-stripping loader removed; uses config._load_json() instead,
     which benefits from the improved comment-stripping (line numbers preserved).
 
+v8.4 changes vs v8.3:
+  - Import INLINE_COMMENT_RE from lib.config instead of re-defining
+    the same compiled regex (_PATTERN_COMMENT_RE removed).
+  - _read_patterns(): emits warnings.warn for missing rule files so
+    profile typos are visible rather than silently producing empty
+    pattern lists and zero-coverage scoring.
+
 v8.0 changes vs v7.19:
   - Dropped from __future__ import print_function and import io (Py2 dead code).
   - io.open() replaced with open(); %-formatting replaced with f-strings.
@@ -18,15 +25,13 @@ import json
 import os
 import re
 
-from lib.config import _load_json as _load_json_config
+from lib.config import _load_json as _load_json_config, INLINE_COMMENT_RE as _PATTERN_COMMENT_RE
 
 
 # Regex for bash-style inline comments in pattern files.
 # Matches a # at column 0 or preceded by whitespace, and everything after it.
 # A # immediately following a non-space character is NOT a comment,
 # so patterns like "CVE-#123" or "re:foo#bar" are safe.
-_PATTERN_COMMENT_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
-
 
 def _read_patterns(path):
     """Read a pattern file, stripping blank lines and bash-style comments.
@@ -37,7 +42,11 @@ def _read_patterns(path):
 
     A # not preceded by whitespace is part of the pattern (e.g. re:foo#bar).
     """
-    if not path or not os.path.exists(path):
+    if not path:
+        return []
+    if not os.path.exists(path):
+        import warnings
+        warnings.warn(f'kcommit: rule pattern file not found: {path}', stacklevel=3)
         return []
     patterns = []
     with open(path, encoding='utf-8', errors='replace') as f:
