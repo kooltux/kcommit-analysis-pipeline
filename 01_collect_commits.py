@@ -14,7 +14,7 @@ from lib.pipeline_runtime import (
 )
 from lib.gitutils import iter_git_log_records
 
-_PROGRESS_INTERVAL = 5000
+_PROGRESS_INTERVAL = 100
 
 
 def main():

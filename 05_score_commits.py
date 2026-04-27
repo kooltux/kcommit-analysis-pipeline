@@ -71,7 +71,7 @@ def _score_all(commits, product_map, profile_rules, cfg):
                 results.append(scored)
                 if i % step == 0 or i == total - 1:
                     update_stage_progress(5, 7, (i + 1) / max(total, 1),
-                                          'scoring (parallel)',
+                                          f'scoring ({max_w} workers)',
                                           n_done=i + 1, n_total=total)
         return results
 
