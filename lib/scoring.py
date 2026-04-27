@@ -1,5 +1,11 @@
 """Commit scoring helpers for kcommit-analysis-pipeline.
 
+v8.4.1 fix:
+  - precompile_rules(): replaced weakref.WeakSet() with a plain set of
+    id() values. Python 3.13 refuses weak references to plain dict objects
+    (TypeError: cannot create weak reference to 'dict' object).
+    weakref import removed.
+
 v8.4 changes vs v8.3:
   - import _load_json_commented from lib.config for _load_hints_from_path.
   - _DEFAULT_WEIGHTS: added symbol_match (default 1.0) applied to config_map
@@ -36,7 +42,6 @@ from lib.config import _load_json as _load_json_commented
 import json
 import os
 import re
-import weakref
 
 # ── Default scoring weight multipliers ────────────────────────────────────────
 _DEFAULT_WEIGHTS = {
@@ -91,8 +96,13 @@ def _match(pattern, text):
 
 # ── Pre-compilation ────────────────────────────────────────────────────────────
 
-_PRECOMPILED_IDS = weakref.WeakSet()  # compiled profile_rules dicts; WeakSet avoids
-                                       # memory leaks in test suites or long-running processes
+# Tracks which profile_rules dicts have already been compiled, keyed by id().
+# WeakSet was used here previously, but plain dict objects do not support
+# weak references in Python 3.13+ (TypeError: cannot create weak reference
+# to 'dict' object).  id()-based tracking is safe: each multiprocessing
+# worker receives its own pickled copy and calls precompile_rules exactly
+# once during _worker_init, so id reuse is not a concern.
+_PRECOMPILED_IDS: set = set()
 
 
 def precompile_rules(profile_rules):
@@ -107,9 +117,9 @@ def precompile_rules(profile_rules):
     score_commit() uses _match(), which transparently handles both str and
     re.Pattern inputs, so no other code needs to change.
     """
-    if profile_rules in _PRECOMPILED_IDS:
+    if id(profile_rules) in _PRECOMPILED_IDS:
         return
-    _PRECOMPILED_IDS.add(profile_rules)
+    _PRECOMPILED_IDS.add(id(profile_rules))
     for pdata in (profile_rules or {}).values():
         merged = (pdata or {}).get('merged', {}) or {}
         for key in ('keywords_whitelist', 'keywords_blacklist',

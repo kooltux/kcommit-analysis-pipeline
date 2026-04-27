@@ -1,3 +1,12 @@
+## v8.4.1
+
+### Bug Fix
+- **`lib/scoring.py`**: `precompile_rules()` raised `TypeError: cannot create
+  weak reference to 'dict' object` on Python 3.13 because `_PRECOMPILED_IDS`
+  was a `weakref.WeakSet()`.  Plain `dict` objects do not support weak
+  references in Python 3.13+.  Fixed by replacing `WeakSet` with a plain
+  `set` of `id()` values.  The `import weakref` statement is removed.
+
 ## v8.4
 
 ### Critical Bug Fixes
