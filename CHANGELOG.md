@@ -1,3 +1,50 @@
+## v8.5.1 — 2026-04-28
+
+### Changed
+- **`lib/spreadsheet.py`**: `write_xlsx()` rewritten with stdlib `zipfile`
+  and string XML only — no `openpyxl` dependency.  The `xls_output` config
+  flag continues to work exactly as before; nothing changes for users.
+- Produces a valid OOXML workbook (Excel 2007+, LibreOffice Calc, Google
+  Sheets) with bold header row, 3 sheets, numeric cell types.
+- `06_report_commits.py`: removed `try/ImportError` guard around XLSX call
+  since the function is now always available.
+
+### Removed
+- `openpyxl` is no longer needed.  Remove it from any requirements file or
+  virtual environment if it was only pulled in for this pipeline.
+
+## v8.5 — 2026-04-27
+
+### New features
+- **XLSX/ODS export** (`lib/spreadsheet.py`): controlled by
+  `templates.xls_output` / `templates.ods_output` config flags.
+  XLSX requires `openpyxl`; ODS uses stdlib only.
+- **Rank column**: first column in every output (1 = highest score).
+- **HTML per-column filter row**: type `>200` in Score, `security` in
+  Profiles, etc.; filter updates live.
+- **HTML global search box** + "Showing X of Y commits" counter.
+- **HTML column sort**: click any header → ASC → DESC → reset.
+- **`reports.min_score` threshold**: commits below threshold excluded
+  from all outputs (CSV, JSON, HTML, XLSX, ODS, summaries).
+- **Progress ETA + rate** in `update_stage_progress()` (elapsed,
+  N/s, ETA h:mm:ss); throttled to 0.5 s per stage.
+- **`--stage` / `--from` conflict guard** in `kcommit_pipeline.py`.
+
+### Bug fixes
+- `wipe_downstream()`: explicit `stage_order` list prevents wrong
+  ordering on fresh workspaces.
+- `05_score_commits.py`: removed `min(4, cpu_count())` worker cap;
+  `score_workers=0` now means "use all CPUs".
+- `01_collect_commits.py`: progress `frac=0.0` when total unknown
+  (was misleading `0.5`); passes `n_total` when known for ETA.
+- `lib/html_report.py`: `avg_score` rendered in Profile Summary.
+- Version now sourced from `MANIFEST.json` via `lib.manifest.VERSION`.
+
+### Removed (no backward compatibility)
+- `from __future__ import print_function` removed everywhere.
+- `%`-string formatting replaced with f-strings.
+- `io.open()` wrappers replaced with builtin `open()`.
+
 ## v8.4.1
 
 ### Bug Fix

@@ -68,9 +68,13 @@ def main():
             n = len(commits)
             if n % _PROGRESS_INTERVAL == 0:
                 # Total is unknown upfront; show open-ended count
-                frac = min(0.99, n / max(max_commits, n + 1)) if max_commits else 0.5
-                update_stage_progress(1, 7, frac,
-                                      'collecting commits', n_done=n)
+                if max_commits:
+                    frac = min(0.99, n / max_commits)
+                    update_stage_progress(1, 7, frac, 'collecting commits',
+                                          n_done=n, n_total=max_commits)
+                else:
+                    update_stage_progress(1, 7, 0.0, 'collecting commits',
+                                          n_done=n)
 
         sys.stdout.write('\n')
         sys.stdout.flush()

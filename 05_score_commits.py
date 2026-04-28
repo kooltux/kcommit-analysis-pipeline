@@ -39,11 +39,12 @@ def _score_one_global(commit):
 def _score_all(commits, product_map, profile_rules, cfg):
     collect = cfg.get('collect', {}) or {}
     try:
-        from multiprocessing import cpu_count as _cpu
-        default_workers = min(4, _cpu())
+        import os as _os
+        default_workers = _os.cpu_count() or 1
     except Exception:
         default_workers = 1
-    workers = int(collect.get('score_workers', default_workers) or default_workers)
+    configured = collect.get('score_workers', 0)
+    workers = int(configured or 0) if int(configured or 0) > 0 else default_workers
     total   = len(commits)
     step    = max(1, total // 80)
 

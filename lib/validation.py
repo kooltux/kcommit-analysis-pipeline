@@ -104,6 +104,25 @@ def validate_inputs(cfg):
             problems.append(
                 f'collect.score_workers must be an integer, got {workers!r}')
 
+
+    # ── reports.min_score ─────────────────────────────────────────────────────
+    min_score = (cfg.get('reports', {}) or {}).get('min_score')
+    if min_score is not None:
+        try:
+            if float(min_score) < 0:
+                problems.append(
+                    f'reports.min_score must be >= 0, got {min_score!r}')
+        except (TypeError, ValueError):
+            problems.append(
+                f'reports.min_score must be a number, got {min_score!r}')
+
+    # ── templates output format flags ─────────────────────────────────────────
+    for _flag in ('csv_output', 'html_summary', 'xls_output', 'ods_output'):
+        _val = (cfg.get('templates', {}) or {}).get(_flag)
+        if _val is not None and not isinstance(_val, bool):
+            problems.append(
+                f'templates.{_flag} must be true or false, got {_val!r}')
+
     return problems, notices
 
 
