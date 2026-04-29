@@ -1,12 +1,19 @@
 """HTML report generator for kcommit-analysis-pipeline.
 
-v8.5:
-  - Rank column (_rank, set by stage 06 after sorting+threshold).
-  - Per-column filter row: input under each header, numeric ops >/</>=/<=/!=.
-  - Global search box; "Showing X of Y" live counter.
-  - Column sort: click header to cycle ASC -> DESC -> reset.
-  - avg_score rendered in Profile Summary table.
-  - f-strings throughout; open() replaces io.open().
+v8.6 changes vs v8.5:
+  - Analysis date injected into <title> and page header subtitle.
+  - Full visual redesign: Satoshi font (Fontshare CDN), gradient header,
+    card hover shadows, dark/light mode toggle (persisted in localStorage).
+  - Score columns redesigned: Security/Performance/Product/Stable direct-score
+    columns removed (those dimensions no longer contribute to the score in v8.6).
+    Replaced by a single Flags column showing CVE / Fix / Stable / Perf badges
+    derived from commit['scoring']['meta'].
+  - 4-band score badge colouring: critical (>=300), high (>=150), medium (>=50),
+    low (<50) — replacing the old 2-band sh/sm/sl scheme.
+  - Profile tags styled with teal accent; badges visually distinct from tags.
+  - Stat cards show filter stats (total scored, filtered, kept) when available.
+  - CSS override path key renamed from 'summary_css' to 'css_override';
+    'summary_css' still accepted as a fallback for backward compatibility.
 """
 import html as _html
 import json
@@ -18,135 +25,300 @@ from lib.manifest import VERSION
 
 
 _CSS = """
-:root{--bg:#f7f6f2;--surf:#fff;--pri:#01696f;--mut:#6b7280;
-      --bdr:#e5e7eb;--txt:#1a1a1a;--fi:#f0f9f9}
+@import url('https://api.fontshare.com/v2/css?f[]=satoshi@400,500,600,700&display=swap');
+
+:root {
+  --bg:      #f7f6f2; --surf:   #ffffff; --surf2:  #f1f0ec; --surf3: #e8e6e1;
+  --pri:     #01696f; --pri-d:  #0a4e53; --pri-hi: rgba(1,105,111,.09);
+  --txt:     #1a1a1a; --mut:    #6b7280; --faint:  #9ca3af;
+  --bdr:     rgba(0,0,0,.09); --bdr2: rgba(0,0,0,.05);
+  --shd-sm:  0 1px 3px rgba(0,0,0,.07),0 1px 2px rgba(0,0,0,.04);
+  --shd-md:  0 4px 14px rgba(0,0,0,.09),0 2px 4px rgba(0,0,0,.05);
+  --shd-lg:  0 12px 32px rgba(0,0,0,.11),0 4px 8px rgba(0,0,0,.05);
+  --r:       .6rem;  --r-sm: .35rem;  --r-lg: 1rem;
+  --c-crit: #dc2626; --c-high: #d97706; --c-med: #b45309; --c-low: #6b7280;
+  --trans:   180ms cubic-bezier(.16,1,.3,1);
+}
+[data-theme=dark] {
+  --bg:#171614; --surf:#1c1b19; --surf2:#242320; --surf3:#2c2a27;
+  --pri:#4f98a3; --pri-d:#1a626b; --pri-hi:rgba(79,152,163,.1);
+  --txt:#d4d3d0; --mut:#7a7977; --faint:#4a4946;
+  --bdr:rgba(255,255,255,.08); --bdr2:rgba(255,255,255,.04);
+  --shd-sm:0 1px 3px rgba(0,0,0,.3); --shd-md:0 4px 14px rgba(0,0,0,.4);
+  --shd-lg:0 12px 32px rgba(0,0,0,.5);
+  --c-crit:#f87171; --c-high:#fbbf24; --c-med:#f59e0b; --c-low:#9ca3af;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);
-     color:var(--txt);font-size:14px}
-header{background:var(--pri);color:#fff;padding:.9rem 2rem;
-       display:flex;align-items:center;gap:1rem}
-header h1{font-size:1.15rem;font-weight:600}
-.wrap{max-width:1600px;margin:0 auto;padding:1.5rem 2rem}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));
-       gap:1rem;margin-bottom:1.5rem}
-.card{background:var(--surf);border:1px solid var(--bdr);border-radius:8px;
-      padding:1rem;text-align:center}
-.card .v{font-size:1.9rem;font-weight:700;color:var(--pri)}
-.card .l{font-size:.72rem;color:var(--mut);margin-top:3px}
-.cov{background:var(--surf);border:1px solid var(--bdr);border-radius:8px;
-     padding:1rem;margin-bottom:1.5rem}
-.cov h2{font-size:.85rem;margin-bottom:.5rem}
-.cov dl{display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem}
-.cov dt{font-size:.72rem;color:var(--mut)} .cov dd{font-weight:600}
-.sbar{display:flex;align-items:center;gap:.6rem;margin-bottom:.4rem}
-.sbar input{flex:1;max-width:360px;padding:.3rem .6rem;
-  border:1px solid var(--bdr);border-radius:6px;font-size:.8rem}
-.sbar input:focus{outline:2px solid var(--pri);outline-offset:1px}
-#fstat{font-size:.72rem;color:var(--mut)}
-.tscroll{overflow-x:auto;margin-bottom:1.5rem}
-table{width:100%;border-collapse:collapse;background:var(--surf);
-      border:1px solid var(--bdr);border-radius:8px;overflow:hidden}
-th{background:#f1f5f9;padding:.4rem .55rem;text-align:left;
-   font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
-th.sort{cursor:pointer;user-select:none} th.sort:hover{background:#e2e8f0}
-th .sa{margin-left:3px;opacity:.3;font-size:.68rem}
-th.asc .sa,th.desc .sa{opacity:1}
-tr.fr th{background:var(--fi);padding:.2rem .35rem}
-tr.fr input{width:100%;padding:.18rem .35rem;border:1px solid #cbd5e1;
-  border-radius:4px;font-size:.7rem;font-family:inherit}
-tr.fr input:focus{outline:2px solid var(--pri)}
-tr.fr input:not(:placeholder-shown){border-color:var(--pri)}
-td{padding:.35rem .55rem;border-top:1px solid var(--bdr);
-   font-size:.78rem;vertical-align:top}
-tr.dr:hover{background:#f8fafc} tr.dr.hi{display:none}
-.rk{color:var(--mut);font-size:.7rem;text-align:right;
-    padding-right:.6rem;min-width:2.2rem}
-.sh{color:#059669;font-weight:700} .sm{color:#d97706;font-weight:600}
-.sl{color:var(--mut)}
-.pt{display:inline-block;background:#e0f2fe;color:#0369a1;
-    border-radius:4px;padding:1px 5px;font-size:.66rem;margin:1px}
-h2.sec{font-size:.95rem;margin:1.5rem 0 .5rem}
-footer{text-align:center;padding:1.2rem;color:var(--mut);font-size:.72rem}
+html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
+body{font-family:'Satoshi','Segoe UI',system-ui,sans-serif;
+     background:var(--bg);color:var(--txt);font-size:14px;line-height:1.55}
+/* ── Header ── */
+header{
+  background:linear-gradient(135deg,var(--pri-d) 0%,var(--pri) 55%,#029a82 100%);
+  color:#fff;padding:1.1rem 2rem;
+  display:flex;align-items:center;justify-content:space-between;gap:1rem;
+  box-shadow:0 2px 14px rgba(1,105,111,.35)
+}
+.hdr-left{display:flex;align-items:center;gap:.85rem}
+.hdr-logo{flex-shrink:0;opacity:.92}
+.hdr-title h1{font-size:1.1rem;font-weight:700;letter-spacing:-.01em;line-height:1.2}
+.hdr-title .sub{font-size:.74rem;opacity:.72;margin-top:2px}
+#themetgl{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);
+  border-radius:var(--r-sm);padding:.28rem .55rem;color:#fff;cursor:pointer;
+  font-size:.75rem;font-family:inherit;transition:background var(--trans)}
+#themetgl:hover{background:rgba(255,255,255,.28)}
+/* ── Layout ── */
+.wrap{max-width:1640px;margin:0 auto;padding:1.4rem 2rem}
+/* ── KPI Cards ── */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));
+       gap:.8rem;margin-bottom:1.4rem}
+.card{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);
+      padding:.9rem 1rem;box-shadow:var(--shd-sm);
+      transition:box-shadow var(--trans),transform var(--trans)}
+.card:hover{box-shadow:var(--shd-md);transform:translateY(-2px)}
+.card .v{font-size:1.85rem;font-weight:700;color:var(--pri);line-height:1.1;
+         font-variant-numeric:tabular-nums}
+.card .l{font-size:.68rem;color:var(--mut);margin-top:.3rem;font-weight:500;
+         text-transform:uppercase;letter-spacing:.05em}
+/* ── Coverage panel ── */
+.cov{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);
+     padding:.85rem 1.1rem;margin-bottom:1.2rem;box-shadow:var(--shd-sm)}
+.cov h2{font-size:.72rem;font-weight:600;text-transform:uppercase;
+        letter-spacing:.07em;color:var(--mut);margin-bottom:.55rem}
+.cov dl{display:flex;gap:2rem;flex-wrap:wrap}
+.cov dt{font-size:.7rem;color:var(--mut);margin-bottom:.1rem}
+.cov dd{font-weight:700;font-size:.95rem;color:var(--txt);
+        font-variant-numeric:tabular-nums}
+/* ── Search bar ── */
+.sbar{display:flex;align-items:center;gap:.6rem;margin-bottom:.45rem;flex-wrap:wrap}
+.sbar input{flex:1;min-width:180px;max-width:360px;padding:.32rem .65rem;
+  border:1px solid var(--bdr);border-radius:var(--r-sm);font-size:.8rem;
+  background:var(--surf);color:var(--txt);font-family:inherit;
+  transition:border-color var(--trans),box-shadow var(--trans)}
+.sbar input:focus{outline:none;border-color:var(--pri);
+  box-shadow:0 0 0 3px var(--pri-hi)}
+#fstat{font-size:.7rem;color:var(--mut);margin-left:auto}
+/* ── Table ── */
+.tscroll{overflow-x:auto;border-radius:var(--r);box-shadow:var(--shd-sm);
+         margin-bottom:1.5rem}
+table{width:100%;border-collapse:collapse;background:var(--surf)}
+thead{position:sticky;top:0;z-index:10}
+th{background:var(--surf2);padding:.42rem .55rem;text-align:left;
+   font-size:.67rem;font-weight:600;text-transform:uppercase;
+   letter-spacing:.055em;white-space:nowrap;border-bottom:1px solid var(--bdr);
+   color:var(--mut)}
+th.sort{cursor:pointer;user-select:none;transition:background var(--trans),color var(--trans)}
+th.sort:hover{background:var(--pri-hi);color:var(--pri)}
+th .sa{margin-left:3px;opacity:.28;font-size:.64rem;transition:opacity .15s}
+th.asc .sa,th.desc .sa{opacity:1;color:var(--pri)}
+tr.fr th{background:var(--surf2);padding:.22rem .38rem;top:auto}
+tr.fr input{width:100%;padding:.18rem .34rem;
+  border:1px solid var(--bdr2);border-radius:var(--r-sm);
+  font-size:.68rem;font-family:inherit;background:var(--surf);color:var(--txt);
+  transition:border-color var(--trans)}
+tr.fr input:focus{outline:none;border-color:var(--pri)}
+tr.fr input:not(:placeholder-shown){border-color:var(--pri);background:var(--pri-hi)}
+td{padding:.38rem .55rem;border-top:1px solid var(--bdr2);
+   font-size:.77rem;vertical-align:top}
+tr.dr:hover td{background:var(--pri-hi)}
+tr.dr.hi{display:none}
+.rk{color:var(--faint);font-size:.68rem;text-align:right;
+    min-width:2rem;font-variant-numeric:tabular-nums}
+/* ── Score badges ── */
+.sbadge{display:inline-flex;align-items:center;justify-content:center;
+  min-width:2.8rem;padding:.15rem .45rem;border-radius:var(--r-sm);
+  font-weight:700;font-size:.74rem;font-variant-numeric:tabular-nums;
+  letter-spacing:.01em}
+.sc{background:rgba(220,38,38,.1);  color:var(--c-crit)}
+.sh{background:rgba(217,119,6,.1);  color:var(--c-high)}
+.sm{background:rgba(180,83,9,.1);   color:var(--c-med)}
+.sl{background:rgba(107,114,128,.1);color:var(--c-low)}
+/* ── Inline flags (CVE / Fix / Stable / Perf) ── */
+.flag{display:inline-flex;align-items:center;padding:.08rem .36rem;
+  border-radius:var(--r-sm);font-size:.63rem;font-weight:600;margin:.1rem .1rem 0 0;
+  border:1px solid transparent;white-space:nowrap}
+.flag-cve{background:rgba(220,38,38,.08);color:#dc2626;
+          border-color:rgba(220,38,38,.2)}
+.flag-fix{background:rgba(3,105,161,.08);color:#0369a1;
+          border-color:rgba(3,105,161,.18)}
+.flag-stb{background:rgba(5,150,105,.08);color:#059669;
+          border-color:rgba(5,150,105,.18)}
+.flag-perf{background:rgba(124,58,237,.08);color:#7c3aed;
+           border-color:rgba(124,58,237,.18)}
+/* ── Profile tags ── */
+.pt{display:inline-block;background:var(--pri-hi);color:var(--pri);
+    border-radius:var(--r-sm);padding:.1rem .38rem;font-size:.64rem;
+    margin:.1rem .1rem 0 0;font-weight:500;
+    border:1px solid rgba(1,105,111,.15)}
+/* ── Section headings ── */
+h2.sec{font-size:.88rem;font-weight:600;margin:1.4rem 0 .55rem;
+       color:var(--txt);display:flex;align-items:center;gap:.5rem}
+h2.sec::after{content:'';flex:1;height:1px;background:var(--bdr)}
+/* ── Profile summary table ── */
+.ptbl{width:auto;border-collapse:collapse;background:var(--surf);
+  border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden;
+  box-shadow:var(--shd-sm);margin-bottom:1.5rem}
+.ptbl th{background:var(--surf2);padding:.45rem .7rem;font-size:.68rem;
+  font-weight:600;text-transform:uppercase;letter-spacing:.055em;color:var(--mut)}
+.ptbl td{padding:.45rem .7rem;border-top:1px solid var(--bdr2);font-size:.8rem;
+         font-variant-numeric:tabular-nums}
+.ptbl tr:hover td{background:var(--pri-hi)}
+/* ── Footer ── */
+footer{text-align:center;padding:1.3rem;color:var(--faint);font-size:.69rem;
+  border-top:1px solid var(--bdr);margin-top:.5rem}
+/* ── Responsive ── */
+@media(max-width:640px){
+  .wrap{padding:1rem .75rem}
+  .cards{grid-template-columns:repeat(2,1fr)}
+  header{padding:.9rem 1rem}
+}
 """
 
 _JS = r"""
 (function(){
   'use strict';
-  var tbl=document.getElementById('ctbl');
-  if(!tbl) return;
-  var tb=tbl.querySelector('tbody');
-  var fi=[].slice.call(tbl.querySelectorAll('tr.fr input[data-col]'));
-  var gi=document.getElementById('gsearch');
-  var st=document.getElementById('fstat');
-  var rows=[].slice.call(tb.querySelectorAll('tr.dr'));
-  var sc=-1,sd=0;
-  function nm(t,f){
-    var v=parseFloat(t); if(isNaN(v)) return t.includes(f);
-    var m=f.match(/^([><=!]{1,2})\s*(-?\d+(?:\.\d+)?)$/);
-    if(!m) return t.includes(f);
-    var n=parseFloat(m[2]),op=m[1];
-    if(op==='>') return v>n; if(op==='>=') return v>=n;
-    if(op==='<') return v<n; if(op==='<=') return v<=n;
-    if(op==='!='||op==='<>') return v!==n; return v===n;
+
+  /* ── Dark/light toggle ───────────────────────────────────────────────── */
+  var root = document.documentElement;
+  var tgl  = document.getElementById('themetgl');
+  var stored;
+  try { stored = localStorage.getItem('kc-theme'); } catch(e) {}
+  var dark = stored ? stored === 'dark'
+                    : matchMedia('(prefers-color-scheme:dark)').matches;
+  function applyTheme(d) {
+    dark = d;
+    root.setAttribute('data-theme', d ? 'dark' : 'light');
+    if (tgl) tgl.textContent = d ? '\u2600 Light' : '\u25d0 Dark';
+    try { localStorage.setItem('kc-theme', d ? 'dark' : 'light'); } catch(e) {}
   }
-  function go(){
-    var gv=gi?gi.value.trim().toLowerCase():'',vis=0;
-    rows.forEach(function(r){
-      var cs=[].slice.call(r.querySelectorAll('td'));
-      var ok=fi.every(function(inp){
-        var v=inp.value.trim().toLowerCase(); if(!v) return true;
-        var c=cs[+inp.dataset.col]; if(!c) return true;
-        var t=c.textContent.trim().toLowerCase();
-        return inp.dataset.num?nm(t,v):t.includes(v);
-      })&&(!gv||cs.some(function(c){return c.textContent.toLowerCase().includes(gv);}));
-      r.classList.toggle('hi',!ok); if(ok) vis++;
+  applyTheme(dark);
+  if (tgl) tgl.addEventListener('click', function(){ applyTheme(!dark); });
+
+  /* ── Table filter + sort ─────────────────────────────────────────────── */
+  var tbl = document.getElementById('ctbl');
+  if (!tbl) return;
+  var tb   = tbl.querySelector('tbody');
+  var fi   = [].slice.call(tbl.querySelectorAll('tr.fr input[data-col]'));
+  var gi   = document.getElementById('gsearch');
+  var st   = document.getElementById('fstat');
+  var rows = [].slice.call(tb.querySelectorAll('tr.dr'));
+  var sc   = -1, sd = 0;
+
+  function nm(t, f) {
+    var v = parseFloat(t); if (isNaN(v)) return t.includes(f);
+    var m = f.match(/^([><=!]{1,2})\s*(-?\d+(?:\.\d+)?)$/);
+    if (!m) return t.includes(f);
+    var n = parseFloat(m[2]), op = m[1];
+    if (op==='>') return v>n; if (op==='>=') return v>=n;
+    if (op==='<') return v<n; if (op==='<=') return v<=n;
+    if (op==='!='||op==='<>') return v!==n; return v===n;
+  }
+
+  function go() {
+    var gv = gi ? gi.value.trim().toLowerCase() : '', vis = 0;
+    rows.forEach(function(r) {
+      var cs = [].slice.call(r.querySelectorAll('td'));
+      var ok = fi.every(function(inp) {
+        var v = inp.value.trim().toLowerCase(); if (!v) return true;
+        var c = cs[+inp.dataset.col]; if (!c) return true;
+        var t = c.textContent.trim().toLowerCase();
+        return inp.dataset.num ? nm(t,v) : t.includes(v);
+      }) && (!gv || cs.some(function(c){
+        return c.textContent.toLowerCase().includes(gv);
+      }));
+      r.classList.toggle('hi', !ok); if (ok) vis++;
     });
-    if(st) st.textContent='Showing '+vis+' of '+rows.length+' commit'+(rows.length!==1?'s':'');
+    if (st) st.textContent = 'Showing ' + vis + ' of ' + rows.length +
+                             ' commit' + (rows.length !== 1 ? 's' : '');
   }
-  function sortBy(ci,num){
-    if(sc===ci){sd=sd===1?-1:sd===-1?0:1;}else{sc=ci;sd=1;}
-    var ths=[].slice.call(tbl.querySelectorAll('thead tr:first-child th'));
-    ths.forEach(function(h){h.classList.remove('asc','desc');});
-    if(sd!==0){var h=ths[ci];if(h)h.classList.add(sd===1?'asc':'desc');}
-    if(sd===0){go();return;}
+
+  function sortBy(ci, num) {
+    if (sc === ci) { sd = sd===1 ? -1 : sd===-1 ? 0 : 1; }
+    else           { sc = ci; sd = 1; }
+    var ths = [].slice.call(tbl.querySelectorAll('thead tr:first-child th'));
+    ths.forEach(function(h){ h.classList.remove('asc','desc'); });
+    if (sd !== 0) {
+      var h = ths[ci]; if (h) h.classList.add(sd===1 ? 'asc' : 'desc');
+    }
+    if (sd === 0) { go(); return; }
     rows.slice().sort(function(a,b){
-      var ta=((a.querySelectorAll('td')[ci])||{textContent:''}).textContent.trim();
-      var tb2=((b.querySelectorAll('td')[ci])||{textContent:''}).textContent.trim();
-      var cmp=num?(parseFloat(ta)||0)-(parseFloat(tb2)||0):ta.localeCompare(tb2);
-      return sd*cmp;
-    }).forEach(function(r){tb.appendChild(r);});
+      var ta = ((a.querySelectorAll('td')[ci])||{textContent:''}).textContent.trim();
+      var tb2= ((b.querySelectorAll('td')[ci])||{textContent:''}).textContent.trim();
+      var cmp= num ? (parseFloat(ta)||0)-(parseFloat(tb2)||0) : ta.localeCompare(tb2);
+      return sd * cmp;
+    }).forEach(function(r){ tb.appendChild(r); });
     go();
   }
-  fi.forEach(function(i){i.addEventListener('input',go);});
-  if(gi) gi.addEventListener('input',go);
+
+  fi.forEach(function(i){ i.addEventListener('input', go); });
+  if (gi) gi.addEventListener('input', go);
   [].slice.call(tbl.querySelectorAll('thead tr:first-child th.sort')).forEach(function(th){
-    var ci=+th.dataset.col, num=th.dataset.num==='1';
-    th.addEventListener('click',function(){sortBy(ci,num);});
+    var ci = +th.dataset.col, num = th.dataset.num === '1';
+    th.addEventListener('click', function(){ sortBy(ci, num); });
   });
   go();
 })();
 """
 
+_LOGO_SVG = (
+    '<svg class="hdr-logo" width="34" height="34" viewBox="0 0 34 34" '
+    'fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+    '<rect width="34" height="34" rx="7" fill="rgba(255,255,255,.15)"/>'
+    '<path d="M7 17 L13 11 L13 23 Z" fill="white" opacity=".95"/>'
+    '<path d="M15 9.5 L27 9.5 L27 12.5 L15 12.5 Z" fill="white"/>'
+    '<path d="M15 15.5 L23 15.5 L23 18.5 L15 18.5 Z" fill="white" opacity=".72"/>'
+    '<path d="M15 21.5 L25 21.5 L25 24.5 L15 24.5 Z" fill="white" opacity=".48"/>'
+    '</svg>'
+)
 
-def _e(s): return _html.escape(str(s or ''))
-def _sc(v): return 'sh' if v >= 200 else 'sm' if v >= 80 else 'sl'
+
+def _e(s):
+    return _html.escape(str(s or ''))
+
+
+def _sc(v):
+    """Return CSS class for score badge based on 4-band threshold."""
+    if v >= 300: return 'sc'   # critical
+    if v >= 150: return 'sh'   # high
+    if v >= 50:  return 'sm'   # medium
+    return 'sl'                 # low
+
+
+def _flags(commit):
+    """Build inline flag badges from scoring.meta (CVE / Fix / Stable / Perf)."""
+    meta = (commit.get('scoring', {}) or {}).get('meta', {}) or {}
+    # Also check old-style stable_hints for backward compat
+    hints = commit.get('stable_hints', {}) or {}
+    parts = []
+    has_cve  = meta.get('has_cve')    or hints.get('has_cve')
+    is_fix   = meta.get('is_fix')     or hints.get('is_fix')
+    is_stb   = meta.get('is_stable')  or hints.get('is_stable')
+    is_perf  = meta.get('is_performance') or hints.get('is_performance')
+    is_sec   = meta.get('is_security')    or hints.get('is_security')
+    if has_cve:
+        parts.append('<span class="flag flag-cve">CVE</span>')
+    if is_fix:
+        parts.append('<span class="flag flag-fix">Fix</span>')
+    elif is_stb:
+        parts.append('<span class="flag flag-stb">Stable</span>')
+    if is_perf:
+        parts.append('<span class="flag flag-perf">Perf</span>')
+    return ''.join(parts)
+
 
 # col: (label, numeric, sortable)
 _COLS = [
-    ('#',           False, False),
-    ('SHA',         False, True),
-    ('Subject',     False, True),
-    ('Score',       True,  True),
-    ('Security',    True,  True),
-    ('Performance', True,  True),
-    ('Product',     True,  True),
-    ('Stable',      True,  True),
-    ('Profiles',    False, True),
+    ('#',        False, False),
+    ('SHA',      False, True),
+    ('Subject',  False, True),
+    ('Score',    True,  True),
+    ('Flags',    False, False),
+    ('Profiles', False, True),
 ]
 
 
 def generate_html_report(work_dir, cfg):
-    outdir = os.path.join(work_dir, 'output')
+    outdir    = os.path.join(work_dir, 'output')
     scored    = load_json(os.path.join(outdir, 'relevant_commits.json'), default=[]) or []
     stats     = load_json(os.path.join(outdir, 'report_stats.json'),    default={}) or {}
     p_summary = load_json(os.path.join(outdir, 'profile_summary.json'), default={}) or {}
@@ -154,13 +326,13 @@ def generate_html_report(work_dir, cfg):
     tmpl   = cfg.get('templates', {}) or {}
     top_n  = int(tmpl.get('top_n', 100) or 100)
     title  = _e(tmpl.get('report_title', 'kcommit Analysis Report'))
-    ts     = time.strftime('%Y-%m-%d %H:%M:%S')
+    ts     = time.strftime('%Y-%m-%d %H:%M')
     cov    = stats.get('profile_coverage', {}) or {}
     thr    = stats.get('min_score_threshold', 0) or 0
 
-    # ── CSS override ──────────────────────────────────────────────────────────
+    # ── CSS override (accepts both 'css_override' and legacy 'summary_css') ──
     css_extra = ''
-    css_path  = tmpl.get('summary_css')
+    css_path  = tmpl.get('css_override') or tmpl.get('summary_css')
     if css_path:
         meta = cfg.get('_meta', {}) or {}
         if not os.path.isabs(css_path):
@@ -169,13 +341,18 @@ def generate_html_report(work_dir, cfg):
             with open(css_path, encoding='utf-8') as f:
                 css_extra = f.read()
 
-    # ── stat cards ────────────────────────────────────────────────────────────
+    # ── KPI stat cards ────────────────────────────────────────────────────────
+    filter_stats = stats.get('filter_stats', {}) or {}
     card_defs = [
-        ('Total commits',      stats.get('total_scored_commits', len(scored))),
-        ('Security scored',    stats.get('commits_with_security_score', 0)),
-        ('Performance scored', stats.get('commits_with_performance_score', 0)),
-        ('Stable fixes',       stats.get('commits_with_stable_score', 0)),
-        ('Product evidence',   stats.get('commits_with_product_evidence', 0)),
+        ('Commits scored',    stats.get('total_scored_commits', len(scored))),
+    ]
+    if filter_stats.get('dropped', 0):
+        card_defs.append(('Pre-filtered out', filter_stats['dropped']))
+        card_defs.append(('Kept for scoring', filter_stats.get('kept', '-')))
+    card_defs += [
+        ('Profile matches',  stats.get('commits_with_profile_score',
+                             stats.get('commits_with_security_score', 0))),
+        ('Product evidence', stats.get('commits_with_product_evidence', 0)),
     ]
     if thr:
         card_defs.append((f'Min score \u2265{int(thr)}', len(scored)))
@@ -184,48 +361,52 @@ def generate_html_report(work_dir, cfg):
         f'<div class="l">{_e(lb)}</div></div>'
         for lb, v in card_defs)
 
+    # ── Profile coverage panel ────────────────────────────────────────────────
     cov_html = (
         '<div class="cov"><h2>Profile Coverage</h2><dl>'
-        f'<dt>Zero profiles</dt><dd>{cov.get("commits_matched_zero_profiles","-")}</dd>'
-        f'<dt>One profile</dt><dd>{cov.get("commits_matched_one_profile","-")}</dd>'
-        f'<dt>Multiple profiles</dt><dd>{cov.get("commits_matched_multiple_profiles","-")}</dd>'
+        f'<dt>Zero profiles</dt>'
+        f'<dd>{cov.get("commits_matched_zero_profiles", "-")}</dd>'
+        f'<dt>One profile</dt>'
+        f'<dd>{cov.get("commits_matched_one_profile", "-")}</dd>'
+        f'<dt>Multiple profiles</dt>'
+        f'<dd>{cov.get("commits_matched_multiple_profiles", "-")}</dd>'
         '</dl></div>')
 
-    # ── header + filter rows ──────────────────────────────────────────────────
+    # ── Table header + filter rows ────────────────────────────────────────────
     def th(lbl, ci, num, srt):
         n = ' data-num="1"' if num else ''
-        s = f' class="sort" data-col="{ci}"{n}' if srt else ''
+        s = f' class="sort" data-col="{ci}"{n}' if srt else f' data-col="{ci}"'
         a = '<i class="sa">\u21c5</i>' if srt else ''
         return f'<th{s}>{_e(lbl)}{a}</th>'
 
     def fi(ci, num):
-        ph = '&gt;N / &lt;N' if num else 'filter\u2026'
-        n  = ' data-num="1"' if num else ''
+        if num:
+            ph = '&gt;N / &lt;N'
+        else:
+            ph = 'filter\u2026'
+        n = ' data-num="1"' if num else ''
         return f'<th><input data-col="{ci}"{n} placeholder="{ph}"></th>'
 
-    hrow = ''.join(th(lb,i,nu,so) for i,(lb,nu,so) in enumerate(_COLS))
-    frow = ''.join(fi(i, nu)       for i,(_,nu,__)  in enumerate(_COLS))
+    hrow = ''.join(th(lb, i, nu, so) for i, (lb, nu, so) in enumerate(_COLS))
+    frow = ''.join(fi(i, nu)          for i, (_, nu, __)  in enumerate(_COLS))
 
-    # ── data rows ─────────────────────────────────────────────────────────────
+    # ── Data rows ─────────────────────────────────────────────────────────────
     display = min(top_n, len(scored))
     drows   = []
     for c in scored[:display]:
-        sc  = c.get('scoring', {}) or {}
-        scv = int(c.get('score', 0) or 0)
-        sha = _e((c.get('commit') or '')[:12])
-        sbj = _e(c.get('subject', ''))
-        pts = ''.join(f'<span class="pt">{_e(p)}</span>'
-                      for p in (c.get('matched_profiles') or []))
+        scv  = int(c.get('score', 0) or 0)
+        sha  = _e((c.get('commit') or '')[:12])
+        sbj  = _e(c.get('subject', ''))
+        pts  = ''.join(f'<span class="pt">{_e(p)}</span>'
+                       for p in (c.get('matched_profiles') or []))
+        flgs = _flags(c)
         drows.append(
             f'<tr class="dr">'
             f'<td class="rk">{c.get("_rank","")}</td>'
             f'<td><code>{sha}</code></td>'
             f'<td>{sbj}</td>'
-            f'<td class="{_sc(scv)}">{scv}</td>'
-            f'<td>{sc.get("security",0) or 0}</td>'
-            f'<td>{sc.get("performance",0) or 0}</td>'
-            f'<td>{sc.get("product",0) or 0}</td>'
-            f'<td>{sc.get("stable",0) or 0}</td>'
+            f'<td><span class="sbadge {_sc(scv)}">{scv}</span></td>'
+            f'<td>{flgs}</td>'
             f'<td>{pts}</td></tr>')
 
     table = (
@@ -236,39 +417,50 @@ def generate_html_report(work_dir, cfg):
     sbar = (
         '<div class="sbar">'
         '<input id="gsearch" type="search" placeholder="Search all columns\u2026">'
-        '<span id="fstat"></span></div>')
+        f'<span id="fstat">Showing {display} of {len(scored)} commits</span>'
+        '</div>')
 
-    # ── profile summary table ─────────────────────────────────────────────────
+    # ── Profile summary table ─────────────────────────────────────────────────
     if p_summary and isinstance(next(iter(p_summary.values()), None), dict):
         prows = ''.join(
             f'<tr><td>{_e(pn)}</td>'
-            f'<td>{pv.get("count","-")}</td>'
-            f'<td>{pv.get("total_score","-")}</td>'
-            f'<td>{pv.get("avg_score","-")}</td></tr>'
+            f'<td>{pv.get("count", "-")}</td>'
+            f'<td>{pv.get("total_score", "-")}</td>'
+            f'<td>{pv.get("avg_score", "-")}</td></tr>'
             for pn, pv in sorted(p_summary.items(),
                                   key=lambda kv: kv[1].get('count', 0),
                                   reverse=True))
         prof = (
             '<h2 class="sec">Profile Summary</h2>'
-            '<table style="width:auto;margin-bottom:1.5rem">'
+            '<table class="ptbl">'
             '<thead><tr><th>Profile</th><th>Commits</th>'
             '<th>Total score</th><th>Avg score</th></tr></thead>'
             f'<tbody>{prows}</tbody></table>')
     else:
         prof = (
             '<h2 class="sec">Profile Summary</h2>'
-            f'<pre style="background:#f1f5f9;padding:1rem;border-radius:8px;'
+            f'<pre style="background:var(--surf2);padding:1rem;border-radius:var(--r);'
             f'font-size:.72rem;overflow-x:auto">'
             f'{_e(json.dumps(p_summary, indent=2))}</pre>')
 
+    # ── Full page ─────────────────────────────────────────────────────────────
     page = (
-        f'<!doctype html><html lang="en"><head>'
+        f'<!doctype html><html lang="en" data-theme="light"><head>'
         f'<meta charset="utf-8">'
         f'<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f'<title>{title}</title>'
+        f'<title>{title} \u2014 {ts}</title>'
         f'<style>{_CSS}{css_extra}</style></head><body>'
-        f'<header><h1>{title}</h1>'
-        f'<span style="margin-left:auto;font-size:.78rem;opacity:.8">{ts}</span></header>'
+        # Header
+        f'<header>'
+        f'<div class="hdr-left">'
+        f'{_LOGO_SVG}'
+        f'<div class="hdr-title"><h1>{title}</h1>'
+        f'<div class="sub">Analysis date: {ts}'
+        f' &middot; kcommit-analysis-pipeline {VERSION}</div></div>'
+        f'</div>'
+        f'<button id="themetgl" aria-label="Toggle colour scheme">\u25d0 Dark</button>'
+        f'</header>'
+        # Body
         f'<div class="wrap">'
         f'<div class="cards">{cards}</div>'
         f'{cov_html}'

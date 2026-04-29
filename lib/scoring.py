@@ -1,58 +1,42 @@
+# v8.6: scoring exclusively through profiles/rules.
+# security/stable/product hints are metadata only — they do NOT add to score.
+
 """Commit scoring helpers for kcommit-analysis-pipeline.
 
-v8.4.1 fix:
-  - precompile_rules(): replaced weakref.WeakSet() with a plain set of
-    id() values. Python 3.13 refuses weak references to plain dict objects
-    (TypeError: cannot create weak reference to 'dict' object).
-    weakref import removed.
+v8.6 changes vs v8.5.1:
+  - SCORING IS EXCLUSIVELY THROUGH PROFILES AND RULES.
+    security_score, performance_score, stable_score and product_score no
+    longer contribute to the combined score.  They are computed as metadata
+    (stored under commit['scoring']['meta']) and surfaced in the HTML report
+    for information only.
+  - _DEFAULT_WEIGHTS and _get_weights() removed: they controlled the four
+    direct-score dimensions that no longer exist.  The 'scoring' config
+    section is now reserved for future non-profile extensions.
+  - symbol_match weight removed from scoring (was applied to product evidence
+    score which is now metadata-only).
+  - score_commit() combined score = sum of per-profile rule scores only.
+  - Path-based filtering delegated upstream to stage 04 (filter_commits).
+    score_commit() no longer needs to replicate blacklist logic.
+  - extract_stable_hints() and infer_touched_paths() unchanged (still used
+    by stage 04 for enrichment and by the HTML report for badges).
 
-v8.4 changes vs v8.3:
-  - import _load_json_commented from lib.config for _load_hints_from_path.
-  - _DEFAULT_WEIGHTS: added symbol_match (default 1.0) applied to config_map
-    and config_text product evidence components.
-  - _profile_multipliers(): handles list form of profiles.active.
-  - score_commit() first-pass blacklist: commit_blacklist checked in addition
-    to keywords_blacklist so blacklisted SHAs no longer appear in
-    matched_profiles.
-
-v8.0 changes vs v7.19:
-  - Dropped from __future__ import print_function (Py2 dead code).
-  - %-formatting replaced with f-strings.
-  - precompile_rules(): new public function.  Call once per worker process
-    (e.g. in _worker_init in 05_score_commits.py) to compile all pattern
-    strings into re.Pattern objects, avoiding per-commit recompilation at scale.
-    score_commit() transparently uses pre-compiled patterns when present.
-
-v7.19 scoring model
-===================
-
-- Profiles carry thematic weights via profiles.active.
-- Rules carry local weights inside each profile/rule set.
-- A commit may match multiple rules inside multiple profiles; all positive
-  matches contribute additively.
-- The global config 'scoring' section is reserved for extra non-profile
-  bonuses only, such as product evidence, stable/fix hints, and future
-  symbol-level evidence. It must not duplicate profile or rule weights.
+v8.4.1 fix (preserved):
+  - precompile_rules(): plain set of id() values instead of weakref.WeakSet()
+    (Python 3.13 refuses weak references to plain dict objects).
 """
-
 import fnmatch
 import functools
-
-from lib.config import _load_json as _load_json_commented
-import json
 import os
 import re
 
-# ── Default scoring weight multipliers ────────────────────────────────────────
-_DEFAULT_WEIGHTS = {
-    'product':     1.0,
-    'security':    1.5,
-    'performance': 1.0,
-    'stable':      1.2,
-    'symbol_match': 1.0,   # multiplier for Kconfig symbol-based product evidence
-}
+from lib.config import _load_json as _load_json_commented
 
-# ── Keyword sets ───────────────────────────────────────────────────────────────
+# ── Stable/fix/CVE trailer patterns ───────────────────────────────────────────
+_RE_STABLE  = re.compile(r'cc\s*:.*stable', re.I)
+_RE_FIXES   = re.compile(r'^fixes\s*:\s+[0-9a-f]{6,}', re.I | re.MULTILINE)
+_RE_CVE     = re.compile(r'CVE-\d{4}-\d{4,}', re.I)
+_RE_SYZBOT  = re.compile(r'syzbot', re.I)
+
 _SECURITY_KEYWORDS = {
     'cve', 'vulnerability', 'exploit', 'overflow', 'uaf', 'use-after-free',
     'oob', 'out-of-bounds', 'privilege escalation', 'sandbox', 'seccomp',
@@ -71,17 +55,17 @@ _PERFORMANCE_KEYWORDS = {
     'faster', 'slow', 'cpu usage', 'memory pressure',
 }
 
-# ── Stable/fix trailer patterns ───────────────────────────────────────────────
-_RE_STABLE  = re.compile(r'cc\s*:.*stable', re.I)
-_RE_FIXES   = re.compile(r'^fixes\s*:\s+[0-9a-f]{6,}', re.I | re.MULTILINE)
-_RE_CVE     = re.compile(r'CVE-\d{4}-\d{4,}', re.I)
-_RE_SYZBOT  = re.compile(r'syzbot', re.I)
-
 
 # ── Pattern matching ───────────────────────────────────────────────────────────
 
 def _match(pattern, text):
-    """Match a pattern against text; supports 're:', globs, and substrings."""
+    """Match *pattern* against *text*.
+
+    Modes:
+      re:<expr>   – compiled regex search (case-insensitive)
+      glob        – fnmatch (*, ?, [...])
+      plain       – case-insensitive substring
+    """
     if isinstance(pattern, re.Pattern):
         return bool(pattern.search(text))
     if pattern.startswith('re:'):
@@ -94,28 +78,16 @@ def _match(pattern, text):
     return pattern.lower() in text.lower()
 
 
-# ── Pre-compilation ────────────────────────────────────────────────────────────
+# ── Rule pre-compilation ───────────────────────────────────────────────────────
 
-# Tracks which profile_rules dicts have already been compiled, keyed by id().
-# WeakSet was used here previously, but plain dict objects do not support
-# weak references in Python 3.13+ (TypeError: cannot create weak reference
-# to 'dict' object).  id()-based tracking is safe: each multiprocessing
-# worker receives its own pickled copy and calls precompile_rules exactly
-# once during _worker_init, so id reuse is not a concern.
 _PRECOMPILED_IDS: set = set()
 
 
 def precompile_rules(profile_rules):
-    """Pre-compile all pattern strings in *profile_rules* to re.Pattern objects.
+    """Compile all pattern strings in *profile_rules* to re.Pattern objects.
 
-    Call this once per worker process (in _worker_init) after loading
-    profile_rules.  Mutates the dicts in-place by replacing string pattern
-    lists with compiled-pattern lists under the same keys.
-
-    Idempotent: calling a second time on the same dict object is a no-op.
-
-    score_commit() uses _match(), which transparently handles both str and
-    re.Pattern inputs, so no other code needs to change.
+    Idempotent: repeated calls on the same dict object are cheap (id check).
+    Uses a plain set of id() values; weakref not used (Python 3.13 compat).
     """
     if id(profile_rules) in _PRECOMPILED_IDS:
         return
@@ -132,7 +104,6 @@ def precompile_rules(profile_rules):
 
 
 def _compile_pat(pattern):
-    """Compile a single pattern string to re.Pattern (if possible)."""
     if isinstance(pattern, re.Pattern):
         return pattern
     if pattern.startswith('re:'):
@@ -140,15 +111,13 @@ def _compile_pat(pattern):
             return re.compile(pattern[3:], re.I)
         except re.error:
             return pattern
-    # Plain substring / glob — keep as string; _match handles both
     return pattern
 
 
-# ── Config-hint loading ────────────────────────────────────────────────────────
+# ── Hints / path helpers ───────────────────────────────────────────────────────
 
 @functools.lru_cache(maxsize=8)
 def _load_hints_from_path(hints_path):
-    """Load and cache subsystem hint JSON by absolute path."""
     try:
         return _load_json_commented(hints_path) or {}
     except Exception:
@@ -156,7 +125,6 @@ def _load_hints_from_path(hints_path):
 
 
 def _load_hints(cfg):
-    """Resolve the hints file path from *cfg* and return the cached dict."""
     if not cfg:
         return {}
     meta    = cfg.get('_meta', {}) or {}
@@ -170,27 +138,13 @@ def _load_hints(cfg):
     return _load_hints_from_path(os.path.abspath(hints_path))
 
 
-def _get_weights(cfg):
-    """Merge default scoring weights with any cfg['scoring'] overrides."""
-    w = dict(_DEFAULT_WEIGHTS)
-    if cfg:
-        for k, v in (cfg.get('scoring', {}) or {}).items():
-            if k in w:
-                try:
-                    w[k] = float(v)
-                except (TypeError, ValueError):
-                    pass
-    return w
-
-
 def _profile_multipliers(cfg):
-    """Return per-profile weight multipliers from cfg['profiles']['active'] dict."""
+    """Return {profile_name: float multiplier} from profiles.active config."""
     if not cfg:
         return {}
     active = ((cfg.get('profiles', {}) or {}).get('active')
               or cfg.get('active_profiles') or {})
     if isinstance(active, list):
-        # list form: all named profiles get full weight (multiplier 1.0)
         return {name: 1.0 for name in active}
     if not isinstance(active, dict):
         return {}
@@ -206,100 +160,83 @@ def _profile_multipliers(cfg):
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def extract_stable_hints(commit):
-    """Extract security/performance/stable indicators from the full commit dict."""
-    subject = commit.get('subject', '') or ''
-    body    = commit.get('body',    '') or ''
-    full    = subject + '\n' + body
+    """Extract security/performance/stable metadata from a commit.
 
+    Returns a dict of boolean flags.  These are informational metadata only
+    and do NOT contribute to the score in v8.6+.
+    """
+    subject    = commit.get('subject', '') or ''
+    body       = commit.get('body',    '') or ''
+    full       = subject + '\n' + body
     is_fix     = bool(_RE_FIXES.search(full))
     has_cve    = bool(_RE_CVE.search(full))
     has_syzbot = bool(_RE_SYZBOT.search(full))
     has_stable = bool(_RE_STABLE.search(full))
-    is_stable  = is_fix or has_cve or has_syzbot or has_stable
-
-    low = full.lower()
-    is_security    = any(k in low for k in _SECURITY_KEYWORDS)
-    is_performance = any(k in low for k in _PERFORMANCE_KEYWORDS)
-
+    low        = full.lower()
     return {
-        'is_stable':      is_stable,
+        'is_stable':      is_fix or has_cve or has_syzbot or has_stable,
         'is_fix':         is_fix,
         'has_cve':        has_cve,
         'has_syzbot':     has_syzbot,
         'has_stable_cc':  has_stable,
-        'is_security':    is_security,
-        'is_performance': is_performance,
+        'is_security':    any(k in low for k in _SECURITY_KEYWORDS),
+        'is_performance': any(k in low for k in _PERFORMANCE_KEYWORDS),
     }
 
 
-
 def infer_touched_paths(subject, cfg=None):
-    """Guess relevant kernel path prefixes from a commit subject."""
+    """Guess relevant kernel path prefixes from a commit subject.
+
+    Uses subsystem_path_hints.json from the scoring directory.
+    """
     hints  = _load_hints(cfg)
     low    = (subject or '').lower()
     result = []
     for keyword, paths in hints.items():
         if keyword.lower() in low:
-            if isinstance(paths, list):
-                result.extend(paths)
-            else:
-                result.append(str(paths))
+            result.extend(paths if isinstance(paths, list) else [str(paths)])
     return sorted(set(result))
 
 
 def score_commit(commit, product_map, profile_rules, cfg=None):
-    """Score a single commit for product/security/performance/stable relevance.
+    """Score a single commit.
+
+    v8.6: score = sum of per-profile rule scores ONLY.
+
+    security_score, performance_score, stable_score and product_score are
+    computed and stored in commit['scoring']['meta'] for reporting/display
+    purposes but DO NOT add to the combined score.
+
+    Path-based filtering (blacklisted paths / no product-map coverage) is
+    handled upstream by stage 04 (filter_commits); score_commit() does not
+    need to replicate it.
 
     Returns a shallow copy of *commit* augmented with:
-        score            – combined weighted integer score
-        scoring          – dict: product, security, performance, stable, profiles
-        matched_profiles – list of profile names that matched
-        product_evidence – list of evidence tags ('config_map:CONFIG_FOO', ...)
+        score            – combined integer score (profile rules only)
+        scoring          – {profiles: {name: int}, meta: {…}}
+        matched_profiles – list of profile names that contributed score > 0
+        product_evidence – list of evidence tags (informational)
     """
-    weights    = _get_weights(cfg)
-    prof_mults = _profile_multipliers(cfg)
-    result     = dict(commit)
-    evidence   = []
+    prof_mults   = _profile_multipliers(cfg)
+    result       = dict(commit)
+    evidence     = []
 
-    subject = commit.get('subject', '') or ''
-    body    = commit.get('body',    '') or ''
-    full    = (subject + '\n' + body).lower()
+    subject      = commit.get('subject', '') or ''
+    body         = commit.get('body',    '') or ''
+    full_lower   = (subject + '\n' + body).lower()
+    commit_files = set(commit.get('files', []) or [])
 
-
-    # ── 1. Stable / security / performance hints ───────────────────────────────
+    # ── Metadata hints (informational only, not scored) ────────────────────────
     hints = commit.get('stable_hints') or extract_stable_hints(commit)
 
-    security_score    = 0
-    performance_score = 0
-    stable_score      = 0
-
-    if hints.get('is_security'):
-        security_score += 40
-    if hints.get('has_cve'):
-        security_score += 30
-    if hints.get('has_syzbot'):
-        security_score += 20
-    if hints.get('is_performance'):
-        performance_score += 40
-
-    if hints.get('is_stable'):
-        stable_score += 20
-    if hints.get('is_fix'):
-        stable_score += 20
-    if hints.get('has_cve') and hints.get('is_fix') and hints.get('has_stable_cc'):
-        stable_score += 30
-
-    # ── 2. Product score ───────────────────────────────────────────────────────
-    product_score = 0
+    # ── Product evidence collection (informational only, not scored) ───────────
     c2p           = (product_map or {}).get('config_to_paths', {}) or {}
-    commit_files  = set(commit.get('files', []) or [])
-    config_dirs   = list((product_map or {}).get('config_dirs', []) or [])
     touched       = set(commit.get('touched_paths_guess', []) or [])
     enabled_cfgs  = set((product_map or {}).get('enabled_configs', []) or [])
+    config_dirs   = list((product_map or {}).get('config_dirs', []) or [])
     build_log_set = set((product_map or {}).get('built_objects_from_log', []) or [])
     artifact_set  = set((product_map or {}).get('built_artifacts_from_dir', []) or [])
 
-    sym_mult     = weights.get("symbol_match", 1.0)
     matched_syms = set()
     for sym, sym_paths in c2p.items():
         for sp in (sym_paths or []):
@@ -307,45 +244,33 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
             if any(cf == sp or (sp_dir and cf.startswith(sp_dir + '/'))
                    for cf in commit_files):
                 if sym not in matched_syms:
-                    product_score += int(20 * sym_mult)
                     evidence.append(f'config_map:{sym}')
                     matched_syms.add(sym)
                 break
-
     for tp in touched:
         for cd in config_dirs:
             if cd.startswith(tp) or tp.startswith(cd.rstrip('/')):
-                product_score += 10
                 evidence.append(f'config_dir:{cd}')
                 break
-
     for tp in touched:
         base = os.path.basename(tp.rstrip('/'))
         if not base:
             continue
         for line in build_log_set:
             if base in line:
-                product_score += 5
                 evidence.append(f'build_log:{base}')
                 break
         for art in artifact_set:
             if base in art:
-                product_score += 5
                 evidence.append(f'artifact:{base}')
                 break
-
     for sym in enabled_cfgs:
-        if sym.startswith('CONFIG_') and sym[7:].lower() in full:
-            product_score += int(5 * sym_mult)
+        if sym.startswith('CONFIG_') and sym[7:].lower() in full_lower:
             evidence.append(f'config_text:{sym}')
+    evidence = sorted(set(evidence))
 
-    product_score = min(product_score, 100)
-    evidence      = sorted(set(evidence))
-
-    # ── 3. Profile rule scoring ────────────────────────────────────────────────
-    # Build per-profile blacklist exclusion set: a commit blacklisted by profile A
-    # is excluded only from profile A, not from other profiles.
-    # First pass: blacklist by keyword OR by SHA.
+    # ── Profile rule scoring — SOLE source of score points ────────────────────
+    # First pass: build per-profile blacklist exclusion set.
     _profile_blacklisted = set()
     for _pname, _pdata in (profile_rules or {}).items():
         _merged = (_pdata or {}).get('merged', {}) or {}
@@ -364,6 +289,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
 
     for pname, pdata in (profile_rules or {}).items():
         if pname in _profile_blacklisted:
+            profile_scores[pname] = 0
             continue
         merged = (pdata or {}).get('merged', {}) or {}
         rules  = (pdata or {}).get('rules',  {}) or {}
@@ -374,7 +300,8 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
             profile_scores[pname] = 0
             continue
 
-        hit = (
+        # Profile-level whitelist hit (used to flag 'matched' status)
+        profile_hit = (
             any(_match(pat, commit.get('commit', ''))
                 for pat in merged.get('commit_whitelist', []))
             or any(_match(pat, subject) or _match(pat, body)
@@ -384,6 +311,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
                    for f in commit_files)
         )
 
+        # Rule scoring: sum rule weights for all matching rules, cap at 100
         per_rule_total = 0
         for rdata in rules.values():
             rw    = rdata.get('weight', 50)
@@ -401,26 +329,26 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         final = int(per_rule_total * pmult)
         profile_scores[pname] = final
 
-        if hit or final > 0:
+        if profile_hit or final > 0:
             matched_profiles.append(pname)
 
-    # ── 4. Combined score ──────────────────────────────────────────────────────
-    w        = weights
-    combined = int(
-        product_score     * w['product']     +
-        security_score    * w['security']    +
-        performance_score * w['performance'] +
-        stable_score      * w['stable']
-    ) + sum(profile_scores.values())
+    # ── Combined score: profile contributions ONLY ─────────────────────────────
+    combined = sum(profile_scores.values())
 
     result.update({
         'score':            combined,
         'scoring': {
-            'product':     product_score,
-            'security':    security_score,
-            'performance': performance_score,
-            'stable':      stable_score,
-            'profiles':    profile_scores,
+            'profiles': profile_scores,
+            # Metadata — informational only, not part of the score
+            'meta': {
+                'has_cve':        hints.get('has_cve',        False),
+                'has_syzbot':     hints.get('has_syzbot',     False),
+                'is_fix':         hints.get('is_fix',         False),
+                'is_stable':      hints.get('is_stable',      False),
+                'is_security':    hints.get('is_security',    False),
+                'is_performance': hints.get('is_performance', False),
+                'evidence_count': len(evidence),
+            },
         },
         'matched_profiles': matched_profiles,
         'product_evidence': evidence,

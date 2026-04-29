@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Stage 05: Score commits using product map, profile rules, and scoring config.
 """
+import json
 import argparse
 import os
 import sys
@@ -92,9 +93,14 @@ def _score_all(commits, product_map, profile_rules, cfg):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--config', required=True)
+    ap.add_argument('--override', default=None, metavar='JSON',
+                    help='Deep-merge JSON into config (forwarded from kcommit_pipeline)')
     args = ap.parse_args()
 
-    cfg        = load_config(args.config)
+    cfg = load_config(args.config)
+    if args.override:
+        from kcommit_pipeline import apply_override
+        apply_override(cfg, args.override)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'score_commits', 5, 7)
@@ -113,7 +119,11 @@ def main():
         cache = os.path.join(work, 'cache')
         os.makedirs(cache, exist_ok=True)
 
-        commits = (load_json(os.path.join(cache, 'enriched_commits.json'),
+        # v8.6: read filtered_commits.json (stage 04 output) first;
+        # fall back to enriched_commits.json then commits.json for compatibility.
+        commits = (load_json(os.path.join(cache, 'filtered_commits.json'),
+                             default=[]) or
+                   load_json(os.path.join(cache, 'enriched_commits.json'),
                              default=[]) or
                    load_json(os.path.join(cache, 'commits.json'),
                              default=[]) or [])

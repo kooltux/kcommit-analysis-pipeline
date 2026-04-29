@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Stage 03: Build product map from config, logs, artifacts, and Kbuild metadata.
 """
+import json
 import argparse
 import os
 import sys
@@ -28,9 +29,14 @@ def _derive_config_dirs(config_to_paths):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--config', required=True)
+    ap.add_argument('--override', default=None, metavar='JSON',
+                    help='Deep-merge JSON into config (forwarded from kcommit_pipeline)')
     args = ap.parse_args()
 
-    cfg        = load_config(args.config)
+    cfg = load_config(args.config)
+    if args.override:
+        from kcommit_pipeline import apply_override
+        apply_override(cfg, args.override)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'build_product_map', 3, 7)

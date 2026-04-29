@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Stage 01: Collect commits from the git revision range.
 """
+import json
 import argparse
 import json
 import os
@@ -20,9 +21,14 @@ _PROGRESS_INTERVAL = 100
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--config', required=True)
+    ap.add_argument('--override', default=None, metavar='JSON',
+                    help='Deep-merge JSON into config (forwarded from kcommit_pipeline)')
     args = ap.parse_args()
 
-    cfg             = load_config(args.config)
+    cfg = load_config(args.config)
+    if args.override:
+        from kcommit_pipeline import apply_override
+        apply_override(cfg, args.override)
     collect_cfg     = cfg.get('collect', {}) or {}
     max_commits     = int(collect_cfg.get('max_commits', 0) or 0)
     include_parents = bool(collect_cfg.get('include_parents', False))

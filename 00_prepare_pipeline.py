@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Stage 00: Prepare compiled rules and validate configuration.
 """
+import json
 import argparse
 import json
 import os
@@ -15,9 +16,14 @@ from lib.pipeline_runtime import start_stage, finish_stage, fail_stage
 def main():
     ap = argparse.ArgumentParser(description='Prepare compiled rules and validate configuration')
     ap.add_argument('--config', required=True)
+    ap.add_argument('--override', default=None, metavar='JSON',
+                    help='Deep-merge JSON into config (forwarded from kcommit_pipeline)')
     args = ap.parse_args()
 
-    cfg   = load_config(args.config)
+    cfg = load_config(args.config)
+    if args.override:
+        from kcommit_pipeline import apply_override
+        apply_override(cfg, args.override)
     work  = cfg['paths']['work_dir']
     cache = os.path.join(work, 'cache')
     os.makedirs(cache, exist_ok=True)

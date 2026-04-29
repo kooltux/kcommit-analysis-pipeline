@@ -1,90 +1,171 @@
 {
   // ─────────────────────────────────────────────────────────────────────────
-  // kcommit-analysis-pipeline — ARM embedded full example config (v8.4)
+  // kcommit-analysis-pipeline — ARM embedded full example config (v8.6)
   //
-  // v8.4 changes vs v8.3:
-  //   - kernel_build_log, yocto_build_log, dts_roots moved from the defunct
-  //     "inputs" section into "kernel". The "inputs" section is removed.
+  // v8.6 changes vs v8.4:
+  //   - "filter" section added (new stage 04: filter_commits).
+  //   - "scoring" section: direct multipliers (product/security/performance/
+  //     stable/symbol_match) removed — scoring is now exclusively through
+  //     profiles and rules.  The section is kept for future extensions.
+  //   - "templates.css_override" replaces deprecated "templates.summary_css"
+  //     (old key still accepted for backward compatibility).
+  //   - "collect.score_workers" documented.
+  //
+  // Variable expansion: ${VAR} is expanded in all string values.
+  // Available variables:
+  //   WORKSPACE  – external workspace root (from shell environment)
+  //   TOOLDIR    – pipeline repository root (auto-set by the loader)
+  //   CONFIGDIR  – directory containing this config file (auto-set)
+  //   CWD        – current working directory
   // ─────────────────────────────────────────────────────────────────────────
 
   "vars": {
-    // WORKSPACE and TOOLDIR are imported from the calling environment.
+    // Import environment variables used in this file.
     // export WORKSPACE=/path/to/ws  TOOLDIR=/path/to/kcommit  CONFIGDIR=...
     "WORKSPACE": "${WORKSPACE}",
     "TOOLDIR":   "${TOOLDIR}",
     "CONFIGDIR": "${CONFIGDIR}",
-    "kernel_src": "${WORKSPACE}/linux/",
+    // User-defined shorthand variables for readability.
+    "kernel_src": "${WORKSPACE}/linux",
     "build_dir":  "${WORKSPACE}/build",
     "logs_dir":   "${WORKSPACE}/logs"
   },
 
   "project": {
     "name":     "arm-embedded-full",
+    // work_dir: where cache/ and output/ sub-directories are created.
     "work_dir": "${WORKSPACE}/work"
   },
 
+  // ── Kernel source and build inputs ────────────────────────────────────────
   "kernel": {
+    // Mandatory: path to the Linux kernel git repository.
     "source_dir": "${kernel_src}",
+
+    // Mandatory: revision range to analyse (inclusive git refs).
     "rev_old":    "v4.14.206",
     "rev_new":    "v4.14.336",
 
-    // kernel_config and build_dir are OPTIONAL.
-    // When absent, Kconfig symbol mapping and artifact scanning are skipped.
+    // Optional: .config file used for Kconfig-symbol-to-path mapping.
+    // When absent, symbol mapping is skipped (no product-map CONFIG_ entries).
     "kernel_config": "${build_dir}/.config",
-    "build_dir":     "${WORKSPACE}/build",
 
-    // Build inputs — read by stage 02 to gather product evidence.
-    // All three are optional; missing paths are silently skipped.
+    // Optional: kernel build output directory for compiled-artifact scanning.
+    "build_dir":     "${build_dir}",
+
+    // Optional build logs — all three are optional; missing paths are skipped.
+    // kernel_build_log: output of   make V=1 2>&1 | tee kernel_build.log
+    // yocto_build_log:  output of a Yocto/OE bitbake run
     "kernel_build_log": "${logs_dir}/kernel_build.log",
     "yocto_build_log":  "${logs_dir}/yocto_build.log",
-    "dts_roots":        ["${kernel_src}/arch/arm/boot/dts"]
+
+    // Optional: Device Tree Source root directories for product subsystem hints.
+    "dts_roots": ["${kernel_src}/arch/arm/boot/dts"]
   },
 
   // ── Profiles ──────────────────────────────────────────────────────────────
-  // Higher weight → larger contribution to the final score from that profile.
+  // profiles.active: map of profile-name → weight (0–100).
+  // The weight scales the profile's rule contributions:
+  //   100 = full contribution (multiplier 1.0)
+  //    50 = half  contribution (multiplier 0.5)
+  //     0 = profile disabled
+  // List form also accepted: ["security_fixes", "performance"]
   "profiles": {
     "active": {
       "security_fixes":    100,
       "security_features":  90,
       "performance":        70
     }
+    // Optional: override the default profiles directory.
+    // Default: <CONFIGDIR>/profiles
+    // "profiles_dir": "${CONFIGDIR}/profiles"
   },
 
-  // ── Scoring multipliers ────────────────────────────────────────────────────
-  // product, security, performance, stable: global multipliers for each
-  //   scoring dimension (see lib/scoring.py _DEFAULT_WEIGHTS).
-  // symbol_match: extra multiplier applied to config_map and config_text
-  //   product-evidence components (Kconfig symbol matches).
-  "scoring": {
-    "product":      1.0,
-    "stable":       1.2,
-    "symbol_match": 1.2
+  // ── Rules ─────────────────────────────────────────────────────────────────
+  // Optional: override the default rules directory.
+  // Default: <CONFIGDIR>/rules
+  // Each sub-directory of rules_dir is one rule set; every rule set
+  // may contain: keywords_whitelist.txt, keywords_blacklist.txt,
+  //              path_whitelist.txt, path_blacklist.txt,
+  //              commit_whitelist.txt, commit_blacklist.txt
+  // "rules": { "rules_dir": "${CONFIGDIR}/rules" },
+
+  // ── Pre-scoring filter (stage 04) ─────────────────────────────────────────
+  // Commits that cannot possibly receive a non-zero score are dropped before
+  // scoring runs, keeping the output focused and scoring fast.
+  "filter": {
+    // enabled: set false to disable path/product filtering.
+    // Rule 1 (SHA commit_blacklist) remains active even when enabled=false.
+    "enabled": true,
+
+    // path_blacklist_global: drop commits where EVERY touched file matches
+    // the merged path_blacklist across all active profiles.
+    // Example: a commit that only touches Documentation/ would be dropped
+    // if Documentation/** is in a profile's path_blacklist.
+    "path_blacklist_global": true,
+
+    // require_product_map: drop commits with zero product-map path coverage.
+    // Aggressive option — only enable when the product map is comprehensive.
+    // Default: false (opt-in).
+    "require_product_map": false
   },
 
-  // ── Commit collection ──────────────────────────────────────────────────────
+  // ── Scoring ───────────────────────────────────────────────────────────────
+  // v8.6: scoring is exclusively through profiles and rules.
+  // Direct score dimensions (product/security/performance/stable/symbol_match)
+  // have been removed.  This section is reserved for future extensions.
+  "scoring": {},
+
+  // ── Commit collection (stage 01) ──────────────────────────────────────────
   "collect": {
-    "use_numstat":       true,   // attach file-change stats (files/insertions/deletions)
-    "use_no_merges":     true,   // pass --no-merges to git log
-    "use_first_parent":  false,  // pass --first-parent to git log
-    "max_commits":       0,      // 0 = no limit
-    "score_workers":     4,      // parallel scoring workers (0 = auto)
-    "jsonl":             false,  // also write commits.jsonl for streaming consumers
-    "include_parents":   false   // attach parent SHAs to each commit dict
+    // use_numstat: attach per-file change stats (insertions/deletions).
+    "use_numstat":       true,
+    // use_no_merges: pass --no-merges to git log (recommended).
+    "use_no_merges":     true,
+    // use_first_parent: pass --first-parent to git log.
+    "use_first_parent":  false,
+    // max_commits: cap on commits collected (0 = no limit).
+    "max_commits":       0,
+    // score_workers: parallel scoring workers in stage 05 (0 = all CPUs).
+    "score_workers":     4,
+    // jsonl: also write commits.jsonl for streaming consumers.
+    "jsonl":             false,
+    // include_parents: attach parent SHA list to each commit dict.
+    "include_parents":   false
   },
 
-  // ── History mapping ────────────────────────────────────────────────────────
+  // ── History mapping (stage 03) ────────────────────────────────────────────
+  // Controls how the config-symbol → source-file history map is built.
   "history_mapping": {
-    "mode":                  "sampled",  // range | sampled | full | disabled
+    // mode: range | sampled | full | disabled
+    //   range    – walk commits between rev_old..rev_new (recommended)
+    //   sampled  – sample every sample_step commits
+    //   full     – walk the entire git log (slow)
+    //   disabled – skip history mapping entirely
+    "mode":                  "sampled",
+    // sample_step: used when mode = "sampled"
     "sample_step":           500,
     "max_commits_per_probe": 3,
-    "max_failure_rate":      0.05        // fail stage if >5 % of git-show tasks fail
+    // max_failure_rate: abort stage if git-show failure rate exceeds this fraction.
+    "max_failure_rate":      0.05
   },
 
-  // ── HTML report options ────────────────────────────────────────────────────
+  // ── HTML report and output options ────────────────────────────────────────
   "templates": {
+    // html_summary: generate output/summary.html.
     "html_summary":  true,
+    // report_title: shown in HTML <title> and page header (analysis date appended).
     "report_title":  "ARM Embedded - Full Analysis",
+    // top_n: maximum commits to display in the HTML table (sorted by score desc).
     "top_n":         500,
-    "summary_css":   "${CONFIGDIR}/templates/summary.css"
+    // css_override: path to a custom CSS file appended after the built-in styles.
+    // Relative paths resolve from CONFIGDIR.
+    "css_override":  "",
+    // csv_output: generate output/relevant_commits.csv.
+    "csv_output":    true,
+    // xls_output: generate output/relevant_commits.xlsx (stdlib zipfile, no deps).
+    "xls_output":    false,
+    // ods_output: generate output/relevant_commits.ods.
+    "ods_output":    false
   }
 }

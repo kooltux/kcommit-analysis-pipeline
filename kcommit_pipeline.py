@@ -8,13 +8,18 @@ Usage:
   # Run a single stage
   python3 kcommit_pipeline.py --config /path/to/cfg.json --stage 4
 
-  # Re-run from stage 3 onwards
-  python3 kcommit_pipeline.py --config /path/to/cfg.json --from 3
+  # Re-run from stage 4 onwards
+  python3 kcommit_pipeline.py --config /path/to/cfg.json --from 4
+
+  # Override config values at runtime (deep-merged into loaded config)
+  python3 kcommit_pipeline.py --config /path/to/cfg.json \\
+      --override '{"kernel":{"rev_old":"v4.14.111"}}'
 
   # Dry-run: validate and print resolved config
   python3 kcommit_pipeline.py --config /path/to/cfg.json --dry-run
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -38,7 +43,7 @@ STAGE_OUTPUTS = {
     'collect_commits':        ['cache/commits.json'],
     'collect_build_context':  ['cache/build_context.json', 'cache/kbuild_static_map.json'],
     'build_product_map':      ['cache/product_map.json'],
-    'enrich_commits':         ['cache/enriched_commits.json'],
+    'filter_commits':         ['cache/filtered_commits.json'],
     'score_commits':          ['cache/scored_commits.json'],
     'report_commits':         ['output/relevant_commits.csv',
                                'output/relevant_commits.json',
@@ -48,6 +53,45 @@ STAGE_OUTPUTS = {
                                'output/summary.html'],
 }
 
+
+# ── Public helpers — importable by stage scripts ───────────────────────────────
+
+def deep_merge(base, patch):
+    """Recursively merge *patch* into *base* in-place. Returns *base*.
+
+    Scalar/list values in *patch* overwrite *base*; dict values are merged
+    recursively so that sibling keys are preserved.
+
+    Example:
+        base  = {"kernel": {"rev_old": "v4.14.1", "rev_new": "v4.14.200"}}
+        patch = {"kernel": {"rev_old": "v4.14.111"}}
+        →       {"kernel": {"rev_old": "v4.14.111", "rev_new": "v4.14.200"}}
+    """
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            deep_merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
+def apply_override(cfg, override_json):
+    """Parse *override_json* string and deep-merge into *cfg*.
+
+    Raises SystemExit with a clear message on JSON parse errors or if the
+    top-level value is not a JSON object.
+    """
+    try:
+        patch = json.loads(override_json)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f'--override: invalid JSON: {exc}') from exc
+    if not isinstance(patch, dict):
+        raise SystemExit('--override: top-level JSON value must be an object {}')
+    deep_merge(cfg, patch)
+    return cfg
+
+
+# ── Internal helpers ───────────────────────────────────────────────────────────
 
 def _resolve_stage(val):
     """Return (index, script, key) for a stage given name, script, or int."""
@@ -69,28 +113,28 @@ def _resolve_stage(val):
 def _dry_run(cfg, args):
     meta       = cfg.get('_meta', {}) or {}
     work       = cfg['paths']['work_dir']
-    kernel_cfg = (cfg.get('kernel', {}) or {}).get('kernel_config', 'N/A')
-    build_dir  = (cfg.get('kernel', {}) or {}).get('build_dir', 'N/A')
-    source_dir = (cfg.get('kernel', {}) or {}).get('source_dir', 'N/A')
-    rev_old    = (cfg.get('kernel', {}) or {}).get('rev_old', 'N/A')
-    rev_new    = (cfg.get('kernel', {}) or {}).get('rev_new', 'N/A')
+    kernel     = cfg.get('kernel', {}) or {}
     profiles   = (cfg.get('profiles', {}) or {}).get('active') or \
                  cfg.get('active_profiles', [])
+    filter_cfg = cfg.get('filter', {}) or {}
 
     print(f'=== kcommit-analysis-pipeline {VERSION} -- DRY RUN ===')
     print('Config    :', args.config)
+    if args.override:
+        print('Override  :', args.override)
     print('TOOLDIR   :', (meta.get('vars', {}) or {}).get('TOOLDIR', os.environ.get('TOOLDIR', '?')))
     print('Work dir  :', work)
-    print('Source dir:', source_dir)
-    print(f'Revision  : {rev_old} .. {rev_new}')
-    print('Kernel cfg:', kernel_cfg)
-    print('Build dir :', build_dir)
+    print('Source dir:', kernel.get('source_dir', 'N/A'))
+    print(f'Revision  : {kernel.get("rev_old","N/A")} .. {kernel.get("rev_new","N/A")}')
+    print('Kernel cfg:', kernel.get('kernel_config', 'N/A'))
+    print('Build dir :', kernel.get('build_dir', 'N/A'))
     if isinstance(profiles, dict):
         print('Profiles  :')
         for pn, pw in profiles.items():
             print(f'  {pn} (weight {pw})')
     else:
         print('Profiles  :', ', '.join(str(p) for p in profiles))
+    print('Filter    :', filter_cfg)
     print('Scoring   :', cfg.get('scoring', {}))
     print('Collect   :', cfg.get('collect', {}))
 
@@ -104,6 +148,17 @@ def _dry_run(cfg, args):
     print('Configuration looks OK.')
 
 
+def _deep_merge(base, patch):
+    """Recursively merge *patch* into *base* (in-place). Returns *base*."""
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=f'kcommit-analysis-pipeline runner {VERSION}')
@@ -115,13 +170,20 @@ def main():
                     help='Re-run stage even if already OK (implies --from)')
     ap.add_argument('--dry-run',  action='store_true',
                     help='Validate config and print resolved paths; do not run')
+    ap.add_argument('--override', default=None, metavar='JSON',
+                    help='Deep-merge a JSON object into the loaded config at runtime. '
+                         'Nested keys are merged recursively; scalars are replaced. '
+                         "Example: --override '{\"kernel\":{\"rev_old\":\"v4.14.111\"}}'")
     args = ap.parse_args()
 
     # --stage and --from are mutually exclusive
     if args.stage is not None and args.from_ is not None:
         ap.error('--stage and --from are mutually exclusive')
 
-    cfg        = load_config(args.config)
+    cfg = load_config(args.config)
+    if args.override:
+        apply_override(cfg, args.override)
+
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     os.makedirs(os.path.join(work, 'cache'),  exist_ok=True)
@@ -134,7 +196,9 @@ def main():
         _dry_run(cfg, args)
         raise SystemExit(0)
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir       = os.path.dirname(os.path.abspath(__file__))
+    # Forward --override to every stage script so the override is consistent
+    extra_stage_args = ['--override', args.override] if args.override else []
 
     # Determine which stages to run
     if args.stage is not None:
@@ -159,7 +223,7 @@ def main():
         script_path = os.path.join(script_dir, script)
         print(f'\n[stage {idx}] running {script} ...')
         ret = subprocess.run(
-            [sys.executable, script_path, '--config', args.config]
+            [sys.executable, script_path, '--config', args.config] + extra_stage_args
         ).returncode
         if ret != 0:
             print(f'\n[stage {idx}] FAILED (exit {ret})')
