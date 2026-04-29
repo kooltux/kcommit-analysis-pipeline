@@ -110,6 +110,26 @@ def _resolve_stage(val):
         raise SystemExit(f'unknown stage: {val}')
 
 
+def _list_stages(cfg, state_path):
+    """Print stage index, key, script, and status from pipeline_state.json."""
+    import json as _j
+    state  = {}
+    if os.path.exists(state_path):
+        try:
+            state = _j.load(open(state_path)).get('stages', {})
+        except Exception:
+            pass
+    print(f"{'#':<3}  {'Key':<30}  {'Script':<36}  {'Status':<10}  Duration")
+    print("-" * 95)
+    for (idx, script, key) in STAGES:
+        s    = state.get(key, {})
+        st   = s.get('status', 'pending')
+        dur  = f"{s['duration_sec']:.1f}s" if 'duration_sec' in s else ''
+        mark = {'ok': '✓', 'failed': '✗', 'running': '…'}.get(st, ' ')
+        print(f"{mark}{idx:<3}  {key:<30}  {script:<36}  {st:<10}  {dur}")
+    print()
+
+
 def _dry_run(cfg, args):
     meta       = cfg.get('_meta', {}) or {}
     work       = cfg['paths']['work_dir']
@@ -168,8 +188,10 @@ def main():
                     help='Run from this stage onwards (wipes downstream cache)')
     ap.add_argument('--force',    action='store_true',
                     help='Re-run stage even if already OK (implies --from)')
-    ap.add_argument('--dry-run',  action='store_true',
+    ap.add_argument('--dry-run',   action='store_true',
                     help='Validate config and print resolved paths; do not run')
+    ap.add_argument('--list-stages', action='store_true',
+                    help='List pipeline stages with their status and exit')
     ap.add_argument('--override', default=None, metavar='JSON',
                     help='Deep-merge a JSON object into the loaded config at runtime. '
                          'Nested keys are merged recursively; scalars are replaced. '
@@ -191,6 +213,12 @@ def main():
 
     if not os.path.exists(state_path):
         init_pipeline_state(state_path)
+
+    if args.list_stages:
+        work       = cfg['paths']['work_dir']
+        state_path = os.path.join(work, 'pipeline_state.json')
+        _list_stages(cfg, state_path)
+        raise SystemExit(0)
 
     if args.dry_run:
         _dry_run(cfg, args)

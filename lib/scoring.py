@@ -231,7 +231,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
 
     # ── Product evidence collection (informational only, not scored) ───────────
     c2p           = (product_map or {}).get('config_to_paths', {}) or {}
-    touched       = set(commit.get('touched_paths_guess', []) or [])
+    touched       = set(commit.get('touched_paths_guess') or [])
     enabled_cfgs  = set((product_map or {}).get('enabled_configs', []) or [])
     config_dirs   = list((product_map or {}).get('config_dirs', []) or [])
     build_log_set = set((product_map or {}).get('built_objects_from_log', []) or [])

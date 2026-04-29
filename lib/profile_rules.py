@@ -1,5 +1,12 @@
 """Profile and rule loading for kcommit-analysis-pipeline.
 
+v8.7 changes vs v8.6:
+  - Per-profile per-rule weight override: rules value can be a dict
+    {"weight": N, "keywords_whitelist_extra": [...], "path_whitelist_extra": [...]}
+    instead of a plain integer.  Plain integers still accepted.
+  - load_profile_rules() warns when compiled_rules.json is absent.
+
+
 v8.3 changes vs v8.2:
   - _read_patterns(): now supports bash-style inline # comments using
     regex (^|\\s+)#.*$ — identical convention to JSON config files.
@@ -110,21 +117,39 @@ def compile_rules_for_config(cfg, work_dir):
         merged_accum = {key: set() for key in RULE_SCHEMA}
         per_rule     = {}
 
-        for rname, weight in rules_cfg.items():
+        for rname, rule_spec in rules_cfg.items():
             rdir = os.path.join(rule_root, rname)
             if not os.path.isdir(rdir):
                 raise RuntimeError(
                     f'rule folder {rname!r} for profile {name!r} not found under {rule_root}')
-            try:
-                w = int(weight)
-            except (TypeError, ValueError):
-                raise RuntimeError(
-                    f'rule weight for {rname!r} in profile {name!r} must be an integer, '
-                    f'got {weight!r}')
+
+            # v8.7: rule_spec may be a plain int OR a dict with 'weight' + optional extras.
+            # Dict form: {"weight": 70, "keywords_whitelist_extra": ["pat1"], ...}
+            if isinstance(rule_spec, dict):
+                try:
+                    w = int(rule_spec.get('weight', 50))
+                except (TypeError, ValueError):
+                    raise RuntimeError(
+                        f'rule weight for {rname!r} in profile {name!r} must be an integer')
+                extras = {k: v for k, v in rule_spec.items() if k != 'weight'}
+            else:
+                try:
+                    w = int(rule_spec)
+                except (TypeError, ValueError):
+                    raise RuntimeError(
+                        f'rule weight for {rname!r} in profile {name!r} must be an integer, '
+                        f'got {rule_spec!r}')
+                extras = {}
 
             rule_data = {'weight': w}
             for key, fname in RULE_SCHEMA.items():
-                pats = _read_patterns(os.path.join(rdir, fname))
+                pats = list(_read_patterns(os.path.join(rdir, fname)))
+                # v8.7: merge per-profile extra patterns (keywords_whitelist_extra, etc.)
+                extra_key = key + '_extra'
+                if extra_key in extras:
+                    extra_pats = extras[extra_key]
+                    if isinstance(extra_pats, list):
+                        pats = pats + [str(p) for p in extra_pats]
                 rule_data[key] = pats
                 merged_accum[key].update(pats)
             per_rule[rname] = rule_data
@@ -143,10 +168,20 @@ def compile_rules_for_config(cfg, work_dir):
 
 
 def load_profile_rules(cfg):
-    """Load compiled rules from cache, recompiling if necessary."""
+    """Load compiled rules from cache, recompiling if necessary.
+
+    v8.7: emits a warning when compiled_rules.json is absent and a
+    recompile is triggered implicitly (e.g. --from 5 without --from 0).
+    """
     work       = cfg['paths']['work_dir']
     cache_path = os.path.join(work, 'cache', 'compiled_rules.json')
     if not os.path.exists(cache_path):
+        import warnings
+        warnings.warn(
+            f'kcommit: compiled_rules.json not found at {cache_path} — '
+            'recompiling rules now. Run stage 0 (prepare_pipeline) explicitly '
+            'to avoid this warning.',
+            stacklevel=2)
         return compile_rules_for_config(cfg, work)
     with open(cache_path, encoding='utf-8') as f:
         return json.load(f)

@@ -88,24 +88,33 @@ def main():
         # ── CSV ───────────────────────────────────────────────────────────────
         csv_path = None
         if want_csv:
-            cols = ['rank', 'commit', 'subject', 'author_name', 'author_time',
-                    'score', 'matched_profiles',
-                    'product_score', 'security_score',
-                    'performance_score', 'stable_score', 'product_evidence']
+            # v8.7: stale dimension columns removed; flags + per-profile scores added
+            active_profs = list(((cfg.get('profiles', {}) or {}).get('active')
+                                  or cfg.get('active_profiles') or {}) or [])
+            cols = (['rank', 'commit', 'subject', 'author_name', 'author_time',
+                     'score', 'matched_profiles', 'flags', 'product_evidence']
+                    + [f'score_{p}' for p in active_profs])
             csv_path = os.path.join(outdir, 'relevant_commits.csv')
             with open(csv_path, 'w', newline='', encoding='utf-8') as fh:
                 w = csv.DictWriter(fh, fieldnames=cols, extrasaction='ignore')
                 w.writeheader()
                 for c in scored:
                     row = dict(c)
-                    row['rank']              = c.get('_rank', '')
-                    row['matched_profiles']  = ';'.join(c.get('matched_profiles') or [])
-                    row['product_evidence']  = ';'.join(c.get('product_evidence') or [])
-                    sc                       = c.get('scoring', {}) or {}
-                    row['product_score']     = sc.get('product', 0)
-                    row['security_score']    = sc.get('security', 0)
-                    row['performance_score'] = sc.get('performance', 0)
-                    row['stable_score']      = sc.get('stable', 0)
+                    row['rank']             = c.get('_rank', '')
+                    row['matched_profiles'] = ';'.join(c.get('matched_profiles') or [])
+                    row['product_evidence'] = ';'.join(c.get('product_evidence') or [])
+                    # flags: comma-separated set of active metadata signals
+                    meta = (c.get('scoring_meta') or c.get('scoring', {}).get('meta') or {})
+                    flag_parts = []
+                    if meta.get('has_cve'):        flag_parts.append('cve')
+                    if meta.get('is_fix'):         flag_parts.append('fix')
+                    if meta.get('is_stable'):      flag_parts.append('stable')
+                    if meta.get('is_performance'): flag_parts.append('perf')
+                    row['flags'] = ','.join(flag_parts)
+                    # per-profile score columns
+                    prof_scores = (c.get('scoring', {}) or {}).get('profiles', {}) or {}
+                    for p in active_profs:
+                        row[f'score_{p}'] = prof_scores.get(p, 0)
                     w.writerow(row)
             print(f'  CSV:  {csv_path}')
 
@@ -137,21 +146,30 @@ def main():
                         (c.get('scoring', {}) or {}).get('profiles', {}).get(p, 0)])
 
         coverage = _coverage(scored)
+        # v8.7: flag counts from scoring_meta; filter_stats from pipeline state
+        def _flag_count(flag):
+            return sum(1 for c in scored
+                       if (c.get('scoring_meta') or c.get('scoring',{}).get('meta') or {}).get(flag))
+        filter_stats = {}
+        try:
+            import json as _j
+            _ps = _j.load(open(state_path))
+            filter_stats = _ps.get('stages', {}).get('filter_commits', {})
+        except Exception:
+            pass
         report_stats = {
-            'total_scored_commits':           len(scored),
-            'min_score_threshold':            min_score,
-            'commits_with_security_score':    sum(
-                1 for c in scored if (c.get('scoring',{}) or {}).get('security',0) > 0),
-            'commits_with_performance_score': sum(
-                1 for c in scored if (c.get('scoring',{}) or {}).get('performance',0) > 0),
-            'commits_with_stable_score':      sum(
-                1 for c in scored if (c.get('scoring',{}) or {}).get('stable',0) > 0),
-            'commits_with_product_evidence':  sum(
-                1 for c in scored if c.get('product_evidence')),
-            'profile_coverage':   coverage,
-            'active_profiles':    list(((cfg.get('profiles',{}) or {}).get('active')
-                                        or cfg.get('active_profiles') or {})),
-            'template_options':   tmpl_cfg,
+            'total_scored_commits':          len(scored),
+            'min_score_threshold':           min_score,
+            'commits_with_cve':              _flag_count('has_cve'),
+            'commits_with_fix':              _flag_count('is_fix'),
+            'commits_with_stable':           _flag_count('is_stable'),
+            'commits_with_perf':             _flag_count('is_performance'),
+            'commits_with_product_evidence': sum(1 for c in scored if c.get('product_evidence')),
+            'profile_coverage':              coverage,
+            'active_profiles':               list(((cfg.get('profiles',{}) or {}).get('active')
+                                                   or cfg.get('active_profiles') or {})),
+            'template_options':              tmpl_cfg,
+            'filter_stats':                  filter_stats,
         }
         save_json(os.path.join(outdir, 'report_stats.json'), report_stats)
 

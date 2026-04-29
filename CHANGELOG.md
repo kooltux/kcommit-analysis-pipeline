@@ -1,5 +1,59 @@
 # Changelog
 
+## v8.7.0 — 2026-04-29
+
+### Bug fixes
+
+- **CSV output** (`06_report_commits.py`): removed stale `security_score`,
+  `performance_score`, `stable_score`, `product_score` columns (keys absent
+  from v8.6+ scoring output). Replaced with `flags` column (comma-separated:
+  `cve,fix,stable,perf`) and per-profile score columns (`score_<profile>`).
+- **`report_stats.json`**: replaced always-zero `commits_with_security_score`
+  etc. with `commits_with_cve`, `commits_with_fix`, `commits_with_stable`,
+  `commits_with_perf` derived from `scoring_meta`. Added `filter_stats` block
+  from stage 04 pipeline state.
+- **`lib/scoring.py`**: safe `touched_paths_guess` access — no longer raises
+  `KeyError` when enrichment was skipped (e.g. `--from 5`).
+- **Profile summary HTML** (`lib/html_report.py`): stale `<pre>` JSON fallback
+  removed; profile summary is always rendered as a styled table sorted by
+  total score descending.
+
+### New features
+
+- **Per-profile per-rule weight override** (`lib/profile_rules.py`): rule
+  entries in profile JSON now accept a dict form in addition to plain integers:
+  ```json
+  "rules": {
+    "security_general": {
+      "weight": 70,
+      "keywords_whitelist_extra": ["my_subsystem_vuln"]
+    },
+    "security_cve_bugs": 100
+  }
+  ```
+  `*_extra` keys (`keywords_whitelist_extra`, `path_whitelist_extra`, etc.) are
+  merged with patterns read from the shared rule folder, enabling per-profile
+  customisation without duplicating the folder. Plain integer weights unchanged.
+
+- **`--list-stages`** (`kcommit_pipeline.py`): prints stage index, key, script,
+  status (pending / running / ok / failed), and duration then exits.
+  ```
+  python3 kcommit_pipeline.py --config cfg.json --list-stages
+  ```
+
+- **`filter` section validation** (`lib/validation.py`): unknown keys in
+  `filter` produce a notice; non-boolean values for `enabled`,
+  `path_blacklist_global`, `require_product_map` are errors caught at stage 0.
+
+- **Filter KPI card** (`lib/html_report.py`): "Pre-filtered out" and
+  "Kept for scoring" KPI cards appear when stage 04 dropped any commits.
+
+- **`load_profile_rules()` recompile warning** (`lib/profile_rules.py`): emits
+  `warnings.warn` when `compiled_rules.json` is absent and rules are silently
+  recompiled, making `--from 5` misuse visible.
+
+---
+
 ## v8.6.0 — 2026-04-29
 
 ### Breaking changes

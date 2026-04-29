@@ -327,7 +327,8 @@ def generate_html_report(work_dir, cfg):
     top_n  = int(tmpl.get('top_n', 100) or 100)
     title  = _e(tmpl.get('report_title', 'kcommit Analysis Report'))
     ts     = time.strftime('%Y-%m-%d %H:%M')
-    cov    = stats.get('profile_coverage', {}) or {}
+    cov          = stats.get('profile_coverage', {}) or {}
+    filter_stats = stats.get('filter_stats', {}) or {}
     thr    = stats.get('min_score_threshold', 0) or 0
 
     # ── CSS override (accepts both 'css_override' and legacy 'summary_css') ──
@@ -428,7 +429,7 @@ def generate_html_report(work_dir, cfg):
             f'<td>{pv.get("total_score", "-")}</td>'
             f'<td>{pv.get("avg_score", "-")}</td></tr>'
             for pn, pv in sorted(p_summary.items(),
-                                  key=lambda kv: kv[1].get('count', 0),
+                                  key=lambda kv: kv[1].get('total_score', 0),
                                   reverse=True))
         prof = (
             '<h2 class="sec">Profile Summary</h2>'
@@ -437,11 +438,7 @@ def generate_html_report(work_dir, cfg):
             '<th>Total score</th><th>Avg score</th></tr></thead>'
             f'<tbody>{prows}</tbody></table>')
     else:
-        prof = (
-            '<h2 class="sec">Profile Summary</h2>'
-            f'<pre style="background:var(--surf2);padding:1rem;border-radius:var(--r);'
-            f'font-size:.72rem;overflow-x:auto">'
-            f'{_e(json.dumps(p_summary, indent=2))}</pre>')
+        prof = ''   # no profile summary available
 
     # ── Full page ─────────────────────────────────────────────────────────────
     page = (

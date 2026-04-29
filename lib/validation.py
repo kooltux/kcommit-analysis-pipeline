@@ -23,6 +23,36 @@ import os
 import subprocess
 
 
+
+def _validate_filter(cfg, problems, notices):
+    """v8.7: validate the optional filter config section."""
+    f = cfg.get('filter')
+    if f is None:
+        return  # section absent is fine — all defaults apply
+    if not isinstance(f, dict):
+        problems.append('"filter" must be a JSON object')
+        return
+    known = {'enabled', 'path_blacklist_global',
+             'require_kconfig_coverage',
+             'require_product_map'}  # require_product_map kept for compat warning
+    for k in f:
+        if k not in known:
+            notices.append(
+                f'filter.{k!r} is not a recognised key '
+                f'(known: {", ".join(sorted(known))})')
+    for bool_key in ('enabled', 'path_blacklist_global',
+                     'require_kconfig_coverage'):
+        if bool_key in f and not isinstance(f[bool_key], bool):
+            problems.append(
+                f'filter.{bool_key} must be true or false, '
+                f'got {f[bool_key]!r}')
+    # require_product_map deprecated in v8.8 (replaced by require_kconfig_coverage)
+    if 'require_product_map' in (f or {}):
+        notices.append(
+            'filter.require_product_map is deprecated since v8.8; '
+            'use filter.require_kconfig_coverage instead')
+
+
 def validate_inputs(cfg):
     """Validate mandatory and optional inputs.
 
@@ -123,6 +153,8 @@ def validate_inputs(cfg):
             problems.append(
                 f'templates.{_flag} must be true or false, got {_val!r}')
 
+    _validate_filter(cfg, problems, notices)
+
     return problems, notices
 
 
@@ -193,4 +225,5 @@ def validate_config_only(cfg):
     if not isinstance(hm_step, int) or hm_step < 1:
         problems.append(
             f'history_mapping.sample_step must be a positive integer, got {hm_step!r}')
+    _validate_filter(cfg, problems, notices)
     return problems, notices
