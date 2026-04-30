@@ -104,11 +104,6 @@
     // if Documentation/** is in a profile's path_blacklist.
     "path_blacklist_global": true,
 
-    // require_product_map: drop commits with zero product-map path coverage.
-    // Aggressive option — only enable when the product map is comprehensive.
-    // Default: false (opt-in).
-    "require_product_map": false,
-
     // require_kconfig_coverage: drop commits where no touched file is reachable
     // from any Kconfig symbol enabled in the kernel .config.
     //   null  = auto (enabled automatically when kbuild_static_map is available)
@@ -134,7 +129,7 @@
     // max_commits: cap on commits collected (0 = no limit).
     "max_commits":       0,
     // score_workers: parallel scoring workers in stage 05 (0 = all CPUs).
-    "score_workers":     4,
+    "score_workers":     0,
     // jsonl: also write commits.jsonl for streaming consumers.
     "jsonl":             false,
     // include_parents: attach parent SHA list to each commit dict.
@@ -164,15 +159,15 @@
     // report_title: shown in HTML <title> and page header (analysis date appended).
     "report_title":  "ARM Embedded - Full Analysis",
     // top_n: maximum commits to display in the HTML table (sorted by score desc).
-    "top_n":         500,
+    "top_n":         5000,
     // css_override: path to a custom CSS file appended after the built-in styles.
     // Relative paths resolve from CONFIGDIR.
     "css_override":  "",
     // csv_output: generate output/relevant_commits.csv.
     "csv_output":    true,
     // xls_output: generate output/relevant_commits.xlsx (stdlib zipfile, no deps).
-    "xls_output":    false,
+    "xls_output":    true,
     // ods_output: generate output/relevant_commits.ods.
-    "ods_output":    false
+    "ods_output":    true
   }
 }
