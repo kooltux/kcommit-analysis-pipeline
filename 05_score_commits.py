@@ -119,14 +119,8 @@ def main():
         cache = os.path.join(work, 'cache')
         os.makedirs(cache, exist_ok=True)
 
-        # v8.6: read filtered_commits.json (stage 04 output) first;
-        # fall back to enriched_commits.json then commits.json for compatibility.
-        commits = (load_json(os.path.join(cache, 'filtered_commits.json'),
-                             default=[]) or
-                   load_json(os.path.join(cache, 'enriched_commits.json'),
-                             default=[]) or
-                   load_json(os.path.join(cache, 'commits.json'),
-                             default=[]) or [])
+        # Stage 04 always produces filtered_commits.json.
+        commits = load_json(os.path.join(cache, 'filtered_commits.json'), default=[]) or []
         product_map   = load_json(os.path.join(cache, 'product_map.json'),
                                   default={}) or {}
         profile_rules = load_profile_rules(cfg)

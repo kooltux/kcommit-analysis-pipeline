@@ -3,7 +3,6 @@
 """
 import json
 import argparse
-import json
 import os
 
 from lib.config import load_config

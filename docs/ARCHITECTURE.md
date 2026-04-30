@@ -19,7 +19,7 @@
   Map Kconfig symbols → source paths using .config + build context
   → cache/product_map.json
 
-04_filter_commits.py                 ← NEW in v8.6 (replaces 04_enrich_commits.py)
+04_filter_commits.py                 ← NEW in v8.11 (replaces 04_enrich_commits.py)
   1. Enrich each commit with stable_hints + touched_paths_guess
   2. Drop commits that cannot possibly score:
        Rule 1: SHA in any profile's commit_blacklist
@@ -41,7 +41,7 @@
   → output/summary.html
 ```
 
-## Scoring model (v8.6)
+## Scoring model (v8.11)
 
 **Score = sum of per-profile rule contributions only.**
 

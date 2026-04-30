@@ -49,7 +49,7 @@ def _validate_filter(cfg, problems, notices):
     # require_product_map deprecated in v8.8 (replaced by require_kconfig_coverage)
     if 'require_product_map' in (f or {}):
         notices.append(
-            'filter.require_product_map is deprecated since v8.8; '
+            'filter.require_product_map is deprecated since v8.11; '
             'use filter.require_kconfig_coverage instead')
 
 

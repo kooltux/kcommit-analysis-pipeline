@@ -1,11 +1,11 @@
 """HTML report generator for kcommit-analysis-pipeline.
 
-v8.6 changes vs v8.5:
+v8.11 changes vs v8.10:
   - Analysis date injected into <title> and page header subtitle.
   - Full visual redesign: Satoshi font (Fontshare CDN), gradient header,
     card hover shadows, dark/light mode toggle (persisted in localStorage).
   - Score columns redesigned: Security/Performance/Product/Stable direct-score
-    columns removed (those dimensions no longer contribute to the score in v8.6).
+    columns removed (those dimensions no longer contribute to the score in v8.11).
     Replaced by a single Flags column showing CVE / Fix / Stable / Perf badges
     derived from commit['scoring']['meta'].
   - 4-band score badge colouring: critical (>=300), high (>=150), medium (>=50),
@@ -239,6 +239,18 @@ def _flags(commit):
     )
 
 
+
+
+# Table column definitions: (label, is_numeric, is_sortable)
+# Order must match the cells emitted in the data-rows loop below.
+_COLS = [
+    ('#',        True,  True),   # rank
+    ('Commit',   False, False),  # SHA
+    ('Subject',  False, True),   # subject
+    ('Score',    True,  True),   # score badge
+    ('Flags',    False, False),  # CVE/Fix/Stable/Syzbot badges
+    ('Profiles', False, False),  # matched profile tags
+]
 
 def generate_html_report(work_dir, cfg):
     outdir    = os.path.join(work_dir, 'output')

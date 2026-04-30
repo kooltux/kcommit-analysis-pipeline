@@ -30,7 +30,7 @@ Stage 06 generates all output files under `<work_dir>/output/`.
 | `product_evidence` | Evidence tags from product-map matching (informational) |
 | `<profile>_score` | Per-profile score contribution (one column per active profile) |
 
-### v8.6 column removals
+### v8.11 column removals
 
 The following columns from v8.4/v8.5 have been **removed**:
 - `security_score` — was a direct keyword-based bonus, now informational metadata only

@@ -68,7 +68,7 @@ The weight scales each profile's rule contributions (100 = full, 0 = disabled).
 Profiles are loaded from `<CONFIGDIR>/profiles/` by default.
 Override with `"profiles_dir": "/path/to/profiles"`.
 
-### `filter` *(v8.6)*
+### `filter` *(v8.11)*
 
 Controls the pre-scoring filter in stage 04. All keys are optional.
 
@@ -107,7 +107,7 @@ See `docs/ARCHITECTURE.md → Pre-scoring filter` for rule details.
 }
 ```
 
-### `scoring` *(v8.6)*
+### `scoring` *(v8.11)*
 
 This section is reserved for future non-profile scoring extensions.
 The previous v8.4/v8.5 multipliers (`product`, `security`, `performance`,

@@ -1,9 +1,9 @@
-# v8.6: scoring exclusively through profiles/rules.
+# v8.11: scoring exclusively through profiles/rules.
 # security/stable/product hints are metadata only — they do NOT add to score.
 
 """Commit scoring helpers for kcommit-analysis-pipeline.
 
-v8.6 changes vs v8.5.1:
+v8.11 changes vs v8.10:
   - SCORING IS EXCLUSIVELY THROUGH PROFILES AND RULES.
     security_score, performance_score, stable_score and product_score no
     longer contribute to the combined score.  They are computed as metadata
@@ -191,11 +191,11 @@ def infer_touched_paths(subject, cfg=None):
 def score_commit(commit, product_map, profile_rules, cfg=None):
     """Score a single commit.
 
-    v8.6: score = sum of per-profile rule scores ONLY.
+    v8.11: score = sum of per-profile rule scores ONLY.
 
-    security_score, performance_score, stable_score and product_score are
-    computed and stored in commit['scoring']['meta'] for reporting/display
-    purposes but DO NOT add to the combined score.
+    Kernel annotation metadata (CVE, Fixes:, stable cc, syzbot) is extracted
+    via extract_commit_meta() and stored in commit['meta'] for display.
+    It does NOT contribute to the score.
 
     Path-based filtering (blacklisted paths / no product-map coverage) is
     handled upstream by stage 04 (filter_commits); score_commit() does not
@@ -207,6 +207,10 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         matched_profiles – list of profile names that contributed score > 0
         product_evidence – list of evidence tags (informational)
     """
+    # Auto-compile patterns if the caller skipped precompile_rules().
+    if profile_rules and id(profile_rules) not in _PRECOMPILED_IDS:
+        precompile_rules(profile_rules)
+
     prof_mults   = _profile_multipliers(cfg)
     result       = dict(commit)
     evidence     = []

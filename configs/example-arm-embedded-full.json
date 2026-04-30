@@ -1,8 +1,8 @@
 {
   // ─────────────────────────────────────────────────────────────────────────
-  // kcommit-analysis-pipeline — ARM embedded full example config (v8.6)
+  // kcommit-analysis-pipeline — ARM embedded full example config (v8.11)
   //
-  // v8.6 changes vs v8.4:
+  // v8.11 changes vs v8.10:
   //   - "filter" section added (new stage 04: filter_commits).
   //   - "scoring" section: direct multipliers (product/security/performance/
   //     stable/symbol_match) removed — scoring is now exclusively through
@@ -107,11 +107,18 @@
     // require_product_map: drop commits with zero product-map path coverage.
     // Aggressive option — only enable when the product map is comprehensive.
     // Default: false (opt-in).
-    "require_product_map": false
+    "require_product_map": false,
+
+    // require_kconfig_coverage: drop commits where no touched file is reachable
+    // from any Kconfig symbol enabled in the kernel .config.
+    //   null  = auto (enabled automatically when kbuild_static_map is available)
+    //   true  = always enforce (pipeline fails if kbuild_static_map is missing)
+    //   false = disabled
+    "require_kconfig_coverage": null
   },
 
   // ── Scoring ───────────────────────────────────────────────────────────────
-  // v8.6: scoring is exclusively through profiles and rules.
+  // v8.11: scoring is exclusively through profiles and rules.
   // Direct score dimensions (product/security/performance/stable/symbol_match)
   // have been removed.  This section is reserved for future extensions.
   "scoring": {},

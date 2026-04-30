@@ -1,5 +1,29 @@
 # Changelog
 
+## v8.11.0 — 2026-04-30
+
+### Fixed
+- `lib/html_report.py`: `_COLS` was undefined at module level causing a
+  `NameError` whenever the HTML report was generated.  Defined as a
+  module-level constant (6 columns: `#`, `Commit`, `Subject`, `Score`,
+  `Flags`, `Profiles`) immediately before `generate_html_report()`.
+
+### Changed
+- `MANIFEST.json`: version corrected to `v8.11.0` (was stuck at `v8.9.0`
+  since the v8.10 commit cycle); `template_dir` key removed.
+- `configs/templates/`: directory deleted — `base.html`, `report_summary.html`,
+  `summary.css` were unused since `lib/html_report.py` became self-contained
+  in v8.6.
+- `05_score_commits.py`: removed dead fallback chain
+  (`enriched_commits.json` → `commits.json`); stage 04 always produces
+  `filtered_commits.json` so no fallback is needed.
+- `lib/scoring.py`: `score_commit()` now auto-calls `precompile_rules()` when
+  the caller has not pre-compiled patterns (guards via `_PRECOMPILED_IDS`).
+  Stale docstring updated (no more `security_score`/`performance_score` fields).
+- `configs/example-arm-embedded-full.json`: `filter.require_kconfig_coverage`
+  option added and documented (`null` = auto, `true` = enforce, `false` = off).
+- `00_prepare_pipeline.py`: removed duplicate `import json`.
+
 ## v8.7.0 — 2026-04-29
 
 ### Bug fixes
