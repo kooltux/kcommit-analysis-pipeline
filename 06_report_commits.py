@@ -103,14 +103,12 @@ def main():
                     row['rank']             = c.get('_rank', '')
                     row['matched_profiles'] = ';'.join(c.get('matched_profiles') or [])
                     row['product_evidence'] = ';'.join(c.get('product_evidence') or [])
-                    # flags: comma-separated set of active metadata signals
-                    meta = (c.get('scoring_meta') or c.get('scoring', {}).get('meta') or {})
-                    flag_parts = []
-                    if meta.get('has_cve'):        flag_parts.append('cve')
-                    if meta.get('is_fix'):         flag_parts.append('fix')
-                    if meta.get('is_stable'):      flag_parts.append('stable')
-                    if meta.get('is_performance'): flag_parts.append('perf')
-                    row['flags'] = ','.join(flag_parts)
+                    # flags: all True boolean keys in commit['meta'] -- fully generic
+                    _cmeta = (c.get('meta')
+                              or (c.get('scoring') or {}).get('meta')
+                              or {})
+                    row['flags'] = ','.join(
+                        k for k, v in sorted(_cmeta.items()) if v is True)
                     # per-profile score columns
                     prof_scores = (c.get('scoring', {}) or {}).get('profiles', {}) or {}
                     for p in active_profs:
@@ -146,10 +144,22 @@ def main():
                         (c.get('scoring', {}) or {}).get('profiles', {}).get(p, 0)])
 
         coverage = _coverage(scored)
-        # v8.7: flag counts from scoring_meta; filter_stats from pipeline state
-        def _flag_count(flag):
-            return sum(1 for c in scored
-                       if (c.get('scoring_meta') or c.get('scoring',{}).get('meta') or {}).get(flag))
+        # Generic meta-flag counts (all True boolean keys across all commits)
+        meta_flag_counts = {}
+        for _c in scored:
+            _m = (_c.get('meta')
+                  or (_c.get('scoring') or {}).get('meta')
+                  or {})
+            for _k, _v in _m.items():
+                if _v is True:
+                    meta_flag_counts[_k] = meta_flag_counts.get(_k, 0) + 1
+
+        # Per-profile match counts (one entry per active profile)
+        per_profile_counts = {}
+        for _c in scored:
+            for _p in (_c.get('matched_profiles') or []):
+                per_profile_counts[_p] = per_profile_counts.get(_p, 0) + 1
+
         filter_stats = {}
         try:
             import json as _j
@@ -160,14 +170,15 @@ def main():
         report_stats = {
             'total_scored_commits':          len(scored),
             'min_score_threshold':           min_score,
-            'commits_with_cve':              _flag_count('has_cve'),
-            'commits_with_fix':              _flag_count('is_fix'),
-            'commits_with_stable':           _flag_count('is_stable'),
-            'commits_with_perf':             _flag_count('is_performance'),
-            'commits_with_product_evidence': sum(1 for c in scored if c.get('product_evidence')),
+            'meta_flag_counts':              meta_flag_counts,
+            'per_profile_counts':            per_profile_counts,
+            'commits_with_profile_score':    sum(1 for c in scored
+                                                  if c.get('matched_profiles')),
+            'commits_with_product_evidence': sum(1 for c in scored
+                                                  if c.get('product_evidence')),
             'profile_coverage':              coverage,
-            'active_profiles':               list(((cfg.get('profiles',{}) or {}).get('active')
-                                                   or cfg.get('active_profiles') or {})),
+            'active_profiles':               list(((cfg.get('profiles', {}) or {})
+                                                    .get('active') or {})),
             'template_options':              tmpl_cfg,
             'filter_stats':                  filter_stats,
         }

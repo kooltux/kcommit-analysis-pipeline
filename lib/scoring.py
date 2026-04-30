@@ -37,23 +37,7 @@ _RE_FIXES   = re.compile(r'^fixes\s*:\s+[0-9a-f]{6,}', re.I | re.MULTILINE)
 _RE_CVE     = re.compile(r'CVE-\d{4}-\d{4,}', re.I)
 _RE_SYZBOT  = re.compile(r'syzbot', re.I)
 
-_SECURITY_KEYWORDS = {
-    'cve', 'vulnerability', 'exploit', 'overflow', 'uaf', 'use-after-free',
-    'oob', 'out-of-bounds', 'privilege escalation', 'sandbox', 'seccomp',
-    'smack', 'selinux', 'apparmor', 'tomoyo', 'capabilities',
-    'hardening', 'mitigation', 'attack', 'injection', 'bypass', 'disclosure',
-    'crypto', 'encryption', 'authentication', 'authorization', 'race condition',
-    'double free', 'heap spray', 'stack overflow', 'integer overflow',
-}
 
-_PERFORMANCE_KEYWORDS = {
-    'performance', 'latency', 'throughput', 'bandwidth', 'optimize',
-    'optimization', 'speedup', 'bottleneck', 'cache', 'preempt',
-    'scheduler', 'cpufreq', 'power management', 'sleep', 'idle',
-    'lock contention', 'spinlock', 'rcu', 'hugepage', 'numa',
-    'jitter', 'overhead', 'profiling', 'benchmark', 'regression',
-    'faster', 'slow', 'cpu usage', 'memory pressure',
-}
 
 
 # ── Pattern matching ───────────────────────────────────────────────────────────
@@ -159,29 +143,35 @@ def _profile_multipliers(cfg):
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def extract_stable_hints(commit):
-    """Extract security/performance/stable metadata from a commit.
+def extract_commit_meta(commit):
+    """Linux kernel commit annotation flags (informational metadata only).
 
-    Returns a dict of boolean flags.  These are informational metadata only
-    and do NOT contribute to the score in v8.6+.
+    Structural/format-level properties defined by Linux kernel commit
+    conventions.  Do NOT contribute to scoring -- profiles and rules are
+    the sole source of score points.
+
+    Returned keys (all boolean):
+      is_fix        -- commit has a Fixes: tag pointing at a prior commit
+      has_cve       -- commit references a CVE identifier
+      has_syzbot    -- commit references a syzbot bug report
+      has_stable_cc -- commit has a Cc: stable trailer (backport candidate)
+
+    Analysis categories (security, performance ...) are intentionally
+    absent: those are the responsibility of profiles and rules.
     """
-    subject    = commit.get('subject', '') or ''
-    body       = commit.get('body',    '') or ''
-    full       = subject + '\n' + body
-    is_fix     = bool(_RE_FIXES.search(full))
-    has_cve    = bool(_RE_CVE.search(full))
-    has_syzbot = bool(_RE_SYZBOT.search(full))
-    has_stable = bool(_RE_STABLE.search(full))
-    low        = full.lower()
+    subject = commit.get('subject', '') or ''
+    body    = commit.get('body',    '') or ''
+    full    = subject + '\n' + body
     return {
-        'is_stable':      is_fix or has_cve or has_syzbot or has_stable,
-        'is_fix':         is_fix,
-        'has_cve':        has_cve,
-        'has_syzbot':     has_syzbot,
-        'has_stable_cc':  has_stable,
-        'is_security':    any(k in low for k in _SECURITY_KEYWORDS),
-        'is_performance': any(k in low for k in _PERFORMANCE_KEYWORDS),
+        'is_fix':        bool(_RE_FIXES.search(full)),
+        'has_cve':       bool(_RE_CVE.search(full)),
+        'has_syzbot':    bool(_RE_SYZBOT.search(full)),
+        'has_stable_cc': bool(_RE_STABLE.search(full)),
     }
+
+
+# Backward-compatibility alias -- existing callers continue to work
+extract_stable_hints = extract_commit_meta
 
 
 def infer_touched_paths(subject, cfg=None):
@@ -227,7 +217,9 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     commit_files = set(commit.get('files', []) or [])
 
     # ── Metadata hints (informational only, not scored) ────────────────────────
-    hints = commit.get('stable_hints') or extract_stable_hints(commit)
+    hints = (commit.get('meta')
+             or commit.get('stable_hints')
+             or extract_commit_meta(commit))
 
     # ── Product evidence collection (informational only, not scored) ───────────
     c2p           = (product_map or {}).get('config_to_paths', {}) or {}
@@ -339,17 +331,10 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         'score':            combined,
         'scoring': {
             'profiles': profile_scores,
-            # Metadata — informational only, not part of the score
-            'meta': {
-                'has_cve':        hints.get('has_cve',        False),
-                'has_syzbot':     hints.get('has_syzbot',     False),
-                'is_fix':         hints.get('is_fix',         False),
-                'is_stable':      hints.get('is_stable',      False),
-                'is_security':    hints.get('is_security',    False),
-                'is_performance': hints.get('is_performance', False),
-                'evidence_count': len(evidence),
-            },
         },
+        # Kernel annotation flags at top-level commit['meta']
+        # for direct access in CSV/HTML without traversing scoring{}.
+        'meta': {k: v for k, v in hints.items() if v is True},
         'matched_profiles': matched_profiles,
         'product_evidence': evidence,
     })

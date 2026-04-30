@@ -352,7 +352,7 @@ def main():
     args = ap.parse_args()
 
     from lib.config           import load_config, load_json, save_json
-    from lib.scoring          import extract_stable_hints, infer_touched_paths, precompile_rules
+    from lib.scoring          import extract_commit_meta, infer_touched_paths, precompile_rules
     from lib.profile_rules    import load_profile_rules
     from lib.validation       import validate_config_only as validate_inputs
     from lib.pipeline_runtime import (start_stage, finish_stage,
@@ -388,7 +388,7 @@ def main():
         total = len(commits)
         step  = max(1, total // 50)
         for i, c in enumerate(commits):
-            c['stable_hints']        = extract_stable_hints(c)
+            c['meta']                = extract_commit_meta(c)
             c['touched_paths_guess'] = infer_touched_paths(c.get('subject',''), cfg)
             if i % step == 0 or i == total - 1:
                 update_stage_progress(4, 7, 0.4 * (i + 1) / max(total, 1),

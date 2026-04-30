@@ -52,99 +52,18 @@ _CSS = """
 html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
 body{font-family:'Satoshi','Segoe UI',system-ui,sans-serif;
      background:var(--bg);color:var(--txt);font-size:14px;line-height:1.55}
-/* ── Header ── */
-header{
-  background:linear-gradient(135deg,var(--pri-d) 0%,var(--pri) 55%,#029a82 100%);
-  color:#fff;padding:1.1rem 2rem;
-  display:flex;align-items:center;justify-content:space-between;gap:1rem;
-  box-shadow:0 2px 14px rgba(1,105,111,.35)
-}
-.hdr-left{display:flex;align-items:center;gap:.85rem}
-.hdr-logo{flex-shrink:0;opacity:.92}
-.hdr-title h1{font-size:1.1rem;font-weight:700;letter-spacing:-.01em;line-height:1.2}
-.hdr-title .sub{font-size:.74rem;opacity:.72;margin-top:2px}
-#themetgl{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);
-  border-radius:var(--r-sm);padding:.28rem .55rem;color:#fff;cursor:pointer;
-  font-size:.75rem;font-family:inherit;transition:background var(--trans)}
-#themetgl:hover{background:rgba(255,255,255,.28)}
-/* ── Layout ── */
-.wrap{max-width:1640px;margin:0 auto;padding:1.4rem 2rem}
-/* ── KPI Cards ── */
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));
-       gap:.8rem;margin-bottom:1.4rem}
-.card{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);
-      padding:.9rem 1rem;box-shadow:var(--shd-sm);
-      transition:box-shadow var(--trans),transform var(--trans)}
-.card:hover{box-shadow:var(--shd-md);transform:translateY(-2px)}
-.card .v{font-size:1.85rem;font-weight:700;color:var(--pri);line-height:1.1;
-         font-variant-numeric:tabular-nums}
-.card .l{font-size:.68rem;color:var(--mut);margin-top:.3rem;font-weight:500;
-         text-transform:uppercase;letter-spacing:.05em}
-/* ── Coverage panel ── */
-.cov{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);
-     padding:.85rem 1.1rem;margin-bottom:1.2rem;box-shadow:var(--shd-sm)}
-.cov h2{font-size:.72rem;font-weight:600;text-transform:uppercase;
-        letter-spacing:.07em;color:var(--mut);margin-bottom:.55rem}
-.cov dl{display:flex;gap:2rem;flex-wrap:wrap}
-.cov dt{font-size:.7rem;color:var(--mut);margin-bottom:.1rem}
-.cov dd{font-weight:700;font-size:.95rem;color:var(--txt);
-        font-variant-numeric:tabular-nums}
-/* ── Search bar ── */
-.sbar{display:flex;align-items:center;gap:.6rem;margin-bottom:.45rem;flex-wrap:wrap}
-.sbar input{flex:1;min-width:180px;max-width:360px;padding:.32rem .65rem;
-  border:1px solid var(--bdr);border-radius:var(--r-sm);font-size:.8rem;
-  background:var(--surf);color:var(--txt);font-family:inherit;
-  transition:border-color var(--trans),box-shadow var(--trans)}
-.sbar input:focus{outline:none;border-color:var(--pri);
-  box-shadow:0 0 0 3px var(--pri-hi)}
-#fstat{font-size:.7rem;color:var(--mut);margin-left:auto}
-/* ── Table ── */
-.tscroll{overflow-x:auto;border-radius:var(--r);box-shadow:var(--shd-sm);
-         margin-bottom:1.5rem}
-table{width:100%;border-collapse:collapse;background:var(--surf)}
-thead{position:sticky;top:0;z-index:10}
-th{background:var(--surf2);padding:.42rem .55rem;text-align:left;
-   font-size:.67rem;font-weight:600;text-transform:uppercase;
-   letter-spacing:.055em;white-space:nowrap;border-bottom:1px solid var(--bdr);
-   color:var(--mut)}
-th.sort{cursor:pointer;user-select:none;transition:background var(--trans),color var(--trans)}
-th.sort:hover{background:var(--pri-hi);color:var(--pri)}
-th .sa{margin-left:3px;opacity:.28;font-size:.64rem;transition:opacity .15s}
-th.asc .sa,th.desc .sa{opacity:1;color:var(--pri)}
-tr.fr th{background:var(--surf2);padding:.22rem .38rem;top:auto}
-tr.fr input{width:100%;padding:.18rem .34rem;
-  border:1px solid var(--bdr2);border-radius:var(--r-sm);
-  font-size:.68rem;font-family:inherit;background:var(--surf);color:var(--txt);
-  transition:border-color var(--trans)}
-tr.fr input:focus{outline:none;border-color:var(--pri)}
-tr.fr input:not(:placeholder-shown){border-color:var(--pri);background:var(--pri-hi)}
-td{padding:.38rem .55rem;border-top:1px solid var(--bdr2);
-   font-size:.77rem;vertical-align:top}
-tr.dr:hover td{background:var(--pri-hi)}
-tr.dr.hi{display:none}
-.rk{color:var(--faint);font-size:.68rem;text-align:right;
-    min-width:2rem;font-variant-numeric:tabular-nums}
-/* ── Score badges ── */
-.sbadge{display:inline-flex;align-items:center;justify-content:center;
-  min-width:2.8rem;padding:.15rem .45rem;border-radius:var(--r-sm);
-  font-weight:700;font-size:.74rem;font-variant-numeric:tabular-nums;
-  letter-spacing:.01em}
-.sc{background:rgba(220,38,38,.1);  color:var(--c-crit)}
-.sh{background:rgba(217,119,6,.1);  color:var(--c-high)}
-.sm{background:rgba(180,83,9,.1);   color:var(--c-med)}
-.sl{background:rgba(107,114,128,.1);color:var(--c-low)}
-/* ── Inline flags (CVE / Fix / Stable / Perf) ── */
+/* -- Inline flags (kernel commit annotations: CVE / Fix / Stable / Syzbot) -- */
 .flag{display:inline-flex;align-items:center;padding:.08rem .36rem;
-  border-radius:var(--r-sm);font-size:.63rem;font-weight:600;margin:.1rem .1rem 0 0;
-  border:1px solid transparent;white-space:nowrap}
+  border-radius:var(--r-sm);font-size:.63rem;font-weight:700;
+  letter-spacing:.04em;margin:.1rem .1rem 0 0;white-space:nowrap}
 .flag-cve{background:rgba(220,38,38,.08);color:#dc2626;
-          border-color:rgba(220,38,38,.2)}
+          border:1px solid rgba(220,38,38,.2)}
 .flag-fix{background:rgba(3,105,161,.08);color:#0369a1;
-          border-color:rgba(3,105,161,.18)}
+          border:1px solid rgba(3,105,161,.2)}
 .flag-stb{background:rgba(5,150,105,.08);color:#059669;
-          border-color:rgba(5,150,105,.18)}
-.flag-perf{background:rgba(124,58,237,.08);color:#7c3aed;
-           border-color:rgba(124,58,237,.18)}
+          border:1px solid rgba(5,150,105,.2)}
+.flag-syb{background:rgba(161,87,5,.08);color:#a15705;
+          border:1px solid rgba(161,87,5,.2)}/* .flag-perf removed: performance is an analysis category -- use profile tags */
 /* ── Profile tags ── */
 .pt{display:inline-block;background:var(--pri-hi);color:var(--pri);
     border-radius:var(--r-sm);padding:.1rem .38rem;font-size:.64rem;
@@ -284,37 +203,41 @@ def _sc(v):
     return 'sl'                 # low
 
 
-def _flags(commit):
-    """Build inline flag badges from scoring.meta (CVE / Fix / Stable / Perf)."""
-    meta = (commit.get('scoring', {}) or {}).get('meta', {}) or {}
-    # Also check old-style stable_hints for backward compat
-    hints = commit.get('stable_hints', {}) or {}
-    parts = []
-    has_cve  = meta.get('has_cve')    or hints.get('has_cve')
-    is_fix   = meta.get('is_fix')     or hints.get('is_fix')
-    is_stb   = meta.get('is_stable')  or hints.get('is_stable')
-    is_perf  = meta.get('is_performance') or hints.get('is_performance')
-    is_sec   = meta.get('is_security')    or hints.get('is_security')
-    if has_cve:
-        parts.append('<span class="flag flag-cve">CVE</span>')
-    if is_fix:
-        parts.append('<span class="flag flag-fix">Fix</span>')
-    elif is_stb:
-        parts.append('<span class="flag flag-stb">Stable</span>')
-    if is_perf:
-        parts.append('<span class="flag flag-perf">Perf</span>')
-    return ''.join(parts)
-
-
-# col: (label, numeric, sortable)
-_COLS = [
-    ('#',        False, False),
-    ('SHA',      False, True),
-    ('Subject',  False, True),
-    ('Score',    True,  True),
-    ('Flags',    False, False),
-    ('Profiles', False, True),
+# Controls which commit meta keys get a badge and how they look.
+# Extend this list to add new kernel annotation badges without
+# touching any other report code.
+_FLAG_DEFS = [
+    ('has_cve',       'CVE',    'flag-cve'),
+    ('is_fix',        'Fix',    'flag-fix'),
+    ('has_stable_cc', 'Stable', 'flag-stb'),
+    ('has_syzbot',    'Syzbot', 'flag-syb'),
 ]
+
+# Human-readable labels for meta-flag KPI cards.
+_META_CARD_LABELS = [
+    ('has_cve',       'CVE references'),
+    ('is_fix',        'Fixes: tags'),
+    ('has_stable_cc', 'Stable CC'),
+    ('has_syzbot',    'Syzbot'),
+]
+
+
+def _flags(commit):
+    """Build inline flag badges from commit['meta'] (kernel annotations only).
+
+    Analysis categories (security, performance) are shown via profile tags,
+    not here.  Add entries to _FLAG_DEFS to expose additional meta keys.
+    """
+    meta = (commit.get('meta')
+            or (commit.get('scoring') or {}).get('meta')
+            or commit.get('stable_hints')   # backward compat
+            or {})
+    return ''.join(
+        f'<span class="flag {cls}">{label}</span>'
+        for key, label, cls in _FLAG_DEFS
+        if meta.get(key)
+    )
+
 
 
 def generate_html_report(work_dir, cfg):
@@ -342,19 +265,21 @@ def generate_html_report(work_dir, cfg):
             with open(css_path, encoding='utf-8') as f:
                 css_extra = f.read()
 
-    # ── KPI stat cards ────────────────────────────────────────────────────────
-    filter_stats = stats.get('filter_stats', {}) or {}
+    # ── KPI stat cards (fully dynamic -- no hardcoded category names) ─────
     card_defs = [
-        ('Commits scored',    stats.get('total_scored_commits', len(scored))),
+        ('Commits scored', stats.get('total_scored_commits', len(scored))),
     ]
     if filter_stats.get('dropped', 0):
         card_defs.append(('Pre-filtered out', filter_stats['dropped']))
         card_defs.append(('Kept for scoring', filter_stats.get('kept', '-')))
-    card_defs += [
-        ('Profile matches',  stats.get('commits_with_profile_score',
-                             stats.get('commits_with_security_score', 0))),
-        ('Product evidence', stats.get('commits_with_product_evidence', 0)),
-    ]
+    # One card per active profile (profile names come from data, not code)
+    for pname, cnt in sorted((stats.get('per_profile_counts') or {}).items()):
+        card_defs.append((pname.replace('_', ' ').title(), cnt))
+    # Kernel annotation counts (Linux commit convention detections)
+    _mf = stats.get('meta_flag_counts') or {}
+    for _flag, _label in _META_CARD_LABELS:
+        if _mf.get(_flag):
+            card_defs.append((_label, _mf[_flag]))
     if thr:
         card_defs.append((f'Min score \u2265{int(thr)}', len(scored)))
     cards = ''.join(
