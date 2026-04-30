@@ -1,4 +1,4 @@
-# kcommit-analysis-pipeline v8.11
+# kcommit-analysis-pipeline v9.0
 
 Python 3.6+-compatible, restartable pipeline to analyze Linux kernel commits
 between two revisions and identify commits relevant to security fixes, security
@@ -72,7 +72,7 @@ across all stages when running the full pipeline or a single stage directly.
 --override '{"profiles":{"active":{"security_fixes":100,"performance":30}}}'
 ```
 
-## Scoring model (v8.11)
+## Scoring model (v9.0)
 
 Scoring is **exclusively through profiles and rules**. There are no direct
 score contributions from security keywords, stable hints, CVE detection, or

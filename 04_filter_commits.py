@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage 04: Enrich and filter commits before scoring.
 
-v8.11: Complete 3-level whitelist/blacklist hierarchy.
+v9.0: Complete 3-level whitelist/blacklist hierarchy.
 
 ═══════════════════════════════════════════════════════════════
   FILTER DECISION HIERARCHY  (higher level wins over lower)

@@ -1,6 +1,6 @@
 # Changelog
 
-## v8.11.0 — 2026-04-30
+## v9.0.0 — 2026-04-30
 
 ### Fixed
 - `lib/html_report.py`: `_COLS` was undefined at module level causing a
@@ -9,7 +9,7 @@
   `Flags`, `Profiles`) immediately before `generate_html_report()`.
 
 ### Changed
-- `MANIFEST.json`: version corrected to `v8.11.0` (was stuck at `v8.9.0`
+- `MANIFEST.json`: version corrected to `v9.0.0` (was stuck at `v8.9.0`
   since the v8.10 commit cycle); `template_dir` key removed.
 - `configs/templates/`: directory deleted — `base.html`, `report_summary.html`,
   `summary.css` were unused since `lib/html_report.py` became self-contained

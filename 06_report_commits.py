@@ -69,7 +69,7 @@ def main():
         # ── threshold ─────────────────────────────────────────────────────────
         tmpl_cfg    = cfg.get('templates', {}) or {}
         reports_cfg = cfg.get('reports', {}) or {}
-        min_score   = float(reports_cfg.get('min_score', 0) or 0)
+        min_score   = float(reports_cfg.get('min_score', 1) or 0)
         if min_score > 0:
             before = len(scored)
             scored = [c for c in scored if (c.get('score', 0) or 0) >= min_score]

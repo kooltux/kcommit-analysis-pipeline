@@ -248,3 +248,38 @@ def load_config(path, inherited_vars=None, seen=None):
     }
     expanded['config_dir'] = config_dir
     return expanded
+
+
+def deep_merge(base, patch):
+    """Recursively merge *patch* dict into *base* in-place. Returns base."""
+    if not isinstance(base, dict) or not isinstance(patch, dict):
+        return patch
+    for k, v in patch.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            deep_merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
+def apply_override(cfg, override_json):
+    """Parse *override_json* string and deep-merge into *cfg*.
+    Raises SystemExit on parse error or non-object input.
+    """
+    import json as _json
+    try:
+        patch = _json.loads(override_json)
+    except _json.JSONDecodeError as exc:
+        raise SystemExit('--override invalid JSON: %s' % exc)
+    if not isinstance(patch, dict):
+        raise SystemExit('--override top-level JSON value must be an object')
+    return deep_merge(cfg, patch)
+
+
+# Backward-compatible camelCase aliases used by older callers
+def deepmerge(base, patch):
+    return deep_merge(base, patch)
+
+
+def applyoverride(cfg, override_json):
+    return apply_override(cfg, override_json)

@@ -24,7 +24,7 @@ import os
 import subprocess
 import sys
 
-from lib.config import load_config
+from lib.config import load_config, deep_merge, apply_override
 from lib.manifest import VERSION, load_manifest
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import (is_stage_done,
@@ -56,58 +56,6 @@ STAGE_OUTPUTS = {
 
 # ── Public helpers — importable by stage scripts ───────────────────────────────
 
-def deep_merge(base, patch):
-    """Recursively merge *patch* into *base* in-place. Returns *base*.
-
-    Scalar/list values in *patch* overwrite *base*; dict values are merged
-    recursively so that sibling keys are preserved.
-
-    Example:
-        base  = {"kernel": {"rev_old": "v4.14.1", "rev_new": "v4.14.200"}}
-        patch = {"kernel": {"rev_old": "v4.14.111"}}
-        →       {"kernel": {"rev_old": "v4.14.111", "rev_new": "v4.14.200"}}
-    """
-    for k, v in patch.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            deep_merge(base[k], v)
-        else:
-            base[k] = v
-    return base
-
-
-def apply_override(cfg, override_json):
-    """Parse *override_json* string and deep-merge into *cfg*.
-
-    Raises SystemExit with a clear message on JSON parse errors or if the
-    top-level value is not a JSON object.
-    """
-    try:
-        patch = json.loads(override_json)
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f'--override: invalid JSON: {exc}') from exc
-    if not isinstance(patch, dict):
-        raise SystemExit('--override: top-level JSON value must be an object {}')
-    deep_merge(cfg, patch)
-    return cfg
-
-
-# ── Internal helpers ───────────────────────────────────────────────────────────
-
-def _resolve_stage(val):
-    """Return (index, script, key) for a stage given name, script, or int."""
-    if val is None:
-        return None
-    try:
-        idx = int(val)
-        for s in STAGES:
-            if s[0] == idx:
-                return s
-        raise SystemExit(f'unknown stage number: {idx}')
-    except ValueError:
-        for s in STAGES:
-            if val in (s[1], s[2], s[1].replace('.py', '')):
-                return s
-        raise SystemExit(f'unknown stage: {val}')
 
 
 def _list_stages(cfg, state_path):

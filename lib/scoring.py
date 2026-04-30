@@ -24,7 +24,6 @@ v8.4.1 fix (preserved):
   - precompile_rules(): plain set of id() values instead of weakref.WeakSet()
     (Python 3.13 refuses weak references to plain dict objects).
 """
-import fnmatch
 import functools
 import os
 import re
