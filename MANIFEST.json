@@ -1,5 +1,5 @@
 {
-  "version": "v8.8.0",
+  "version": "v8.9.0",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for security and performance relevance",
   "library_dir": "lib",
   "template_dir": "configs/templates",

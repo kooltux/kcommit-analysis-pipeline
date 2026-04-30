@@ -1,58 +1,83 @@
 #!/usr/bin/env python3
 """Stage 04: Enrich and filter commits before scoring.
 
-v8.8: Kconfig-coverage filter completely rewritten.
+v8.9: Complete 3-level whitelist/blacklist hierarchy.
 
-Filter rules (applied in order, each commit tested against all rules):
+═══════════════════════════════════════════════════════════════
+  FILTER DECISION HIERARCHY  (higher level wins over lower)
+═══════════════════════════════════════════════════════════════
 
-  Rule 1  — SHA blacklist
-      Always active.  Any commit whose SHA matches a profile commit_blacklist
-      entry is dropped.
+  Level 3 — Absolute (SHA-based)
+  ─────────────────────────────────────────────────────────────
+  commit_whitelist  SHA ∈ list  →  FORCE-KEEP
+                    Beats everything including commit_blacklist.
 
-  Rule 2  — Path blacklist (profile-merged)
-      Active when filter.path_blacklist_global = true (default).
-      Drops commits where EVERY touched file matches the merged path_blacklist
-      of all active profiles.
+  commit_blacklist  SHA ∈ list  →  FORCE-DROP
+                    Beaten only by commit_whitelist.
 
-  Rule 3  — Kconfig-coverage  ← REWRITTEN in v8.8
-      Active when:
-        a) filter.require_kconfig_coverage = true  (default when compiled_files
-           is non-empty, i.e. both config_to_paths AND enabled_configs are
-           present in the product map)
-        b) The compiled_files set is non-empty after intersecting
-           config_to_paths keys with enabled CONFIG symbols.
+  Level 2 — Path-based (file paths touched by the commit)
+  ─────────────────────────────────────────────────────────────
+  path_blacklist    ALL touched files match  →  DROP
+                    Beaten by: commit_whitelist.
+                    Beats: path_whitelist, build_artifact, Kconfig,
+                           keywords_whitelist, keywords_blacklist.
 
-      A commit is DROPPED (score = 0) when NONE of its touched files passes
-      any of these coverage tests:
+  path_whitelist    ANY touched file matches  →  KEEP
+                    Beaten by: commit_blacklist, path_blacklist(all).
+                    Beats: Kconfig drop, keywords_blacklist.
 
-        C1. Source (.c/.cpp) file appears in compiled_files
-            (the exact set of .c paths belonging to enabled CONFIG symbols).
+  Level 2½ — Build context (derived from actual build)
+  ─────────────────────────────────────────────────────────────
+  build_artifact    ANY touched file stem found in build_dir .o/.ko
+                    files OR in build-log  →  KEEP
+                    Beaten by: commit_blacklist, path_blacklist(all).
+                    Beats: Kconfig drop, keywords_blacklist.
+                    Rationale: if the file is actually compiled in
+                    the current build, the commit is always relevant.
 
-        C2. Stem of a touched file appears in artifact_stems
-            (stems of .o/.ko files found in the build directory).
+  Kconfig-coverage  NO touched file maps to an enabled CONFIG symbol
+                    AND NOT path_whitelist AND NOT build_artifact
+                    → DROP (unless keywords_whitelist saves it)
+                    Auto-enabled when product_map data is available.
 
-        C3. Basename stem of a touched file appears in log_basenames
-            (basenames of .o files extracted from the build log).
+  Level 1 — Keyword-based (commit subject + body text)
+  ─────────────────────────────────────────────────────────────
+  keywords_whitelist  ANY keyword matches text  →  KEEP
+                      Beaten by: commit_blacklist, path_blacklist(all).
+                      Beats: Kconfig drop (saves commit from it),
+                             keywords_blacklist.
 
-        C4. Touched file's directory is in compiled_dirs
-            (directories that contain at least one compiled source file).
-            This handles headers, ASM, DTS and other non-.c files in a
-            directory that is compiled.
+  keywords_blacklist  ANY keyword matches text  →  DROP
+                      Beaten by: commit_whitelist, path_whitelist,
+                                 build_artifact, keywords_whitelist.
 
-        C5. Touched file is a build-system file (Makefile, Kbuild, Kconfig,
-            *.mk, Makefile.*).  Build-system files always pass — they affect
-            what gets compiled and are always relevant.
+  Level 0 — Default
+  ─────────────────────────────────────────────────────────────
+  No rule fired  →  KEEP  (let scoring decide relevance)
 
-      The old 'require_product_map' option is replaced by
-      'require_kconfig_coverage' which is smarter and correct by default.
+═══════════════════════════════════════════════════════════════
+  DECISION FLOW (pseudo-code)
+═══════════════════════════════════════════════════════════════
 
-Config section (all keys optional):
+  if sha ∈ commit_whitelist               → KEEP  (L3, absolute)
+  if sha ∈ commit_blacklist               → DROP  (L3, absolute)
+  if all(f ∈ path_blacklist)              → DROP  (L2a)
+  if any(f ∈ path_whitelist)             → KEEP  (L2b)
+  if any(f has build-artifact evidence)  → KEEP  (L2½)
+  if kconfig_data AND NOT any_covered:
+      if NOT any(kw ∈ kw_whitelist):     → DROP  (Kconfig)
+      # else: keywords_whitelist saves it; fall through
+  if any(kw ∈ keywords_whitelist)        → KEEP  (L1a)
+  if any(kw ∈ keywords_blacklist)        → DROP  (L1b)
+  → KEEP                                          (L0 default)
+
+═══════════════════════════════════════════════════════════════
+
+Config section (all optional):
   "filter": {
-    "enabled":               true,   // false disables rules 2+3 (rule 1 always on)
-    "path_blacklist_global": true,   // rule 2: merged profile path_blacklist
-    "require_kconfig_coverage": null // rule 3: null = auto (on when data available)
-                                     //          true  = always enforce
-                                     //          false = disable
+    "enabled":                  true,  // false = skip L2/L2½/L1 (L3 always on)
+    "path_blacklist_global":    true,  // L2a: merged path_blacklist from profiles
+    "require_kconfig_coverage": null   // L2½: null=auto, true=force, false=disable
   }
 
 Reads:   cache/commits.json
@@ -67,9 +92,8 @@ import re
 import sys
 
 
-# ── Build-system file patterns (always pass coverage check) ──────────────────
+# ── Build-system file patterns (always pass Kconfig coverage, C5) ─────────────
 _BUILD_SYS_NAMES = frozenset({'Makefile', 'Kbuild', 'Kconfig'})
-_BUILD_SYS_EXTS  = frozenset({'.mk'})
 
 def _is_build_system_file(path):
     base = os.path.basename(path)
@@ -78,10 +102,10 @@ def _is_build_system_file(path):
     if base.startswith('Makefile.') or base.startswith('Kconfig.'):
         return True
     _, ext = os.path.splitext(base)
-    return ext in _BUILD_SYS_EXTS
+    return ext in ('.mk',)
 
 
-# ── Import helper (avoid top-level side-effects from kcommit_pipeline) ────────
+# ── Import helper ─────────────────────────────────────────────────────────────
 def _import_override():
     import importlib.util as _ilu
     spec = _ilu.spec_from_file_location(
@@ -95,6 +119,7 @@ def _import_override():
 
 # ── Pattern matching ──────────────────────────────────────────────────────────
 def _match(pattern, text):
+    """Match pattern against text. Supports re:/glob/substring modes."""
     if isinstance(pattern, re.Pattern):
         return bool(pattern.search(text))
     if pattern.startswith('re:'):
@@ -107,28 +132,68 @@ def _match(pattern, text):
     return pattern.lower() in text.lower()
 
 
-# ── Blacklist extraction ──────────────────────────────────────────────────────
-def _build_global_blacklists(profile_rules):
-    """Merge path_blacklist and commit_blacklist from all active profiles."""
-    path_bl   = []
-    commit_bl = []
+def _any_matches(patterns, text):
+    """Return True if any pattern matches text."""
+    return any(_match(p, text) for p in patterns)
+
+
+def _any_file_matches(patterns, files):
+    """Return True if ANY file matches ANY pattern (OR semantics)."""
+    return any(_match(p, f) for p in patterns for f in files)
+
+
+def _all_files_match(patterns, files):
+    """Return True if ALL files match at least one pattern (AND over files)."""
+    return bool(files) and all(
+        any(_match(p, f) for p in patterns)
+        for f in files)
+
+
+# ── List extraction from merged profile data ─────────────────────────────────
+def _build_merged_lists(profile_rules):
+    """Merge all 6 list types from every active profile's merged data.
+
+    Returns a dict with keys:
+      commit_wl, commit_bl, path_wl, path_bl, kw_wl, kw_bl
+    """
+    out = {k: [] for k in ('commit_wl','commit_bl',
+                            'path_wl','path_bl',
+                            'kw_wl','kw_bl')}
+    MAP = {
+        'commit_whitelist':   'commit_wl',
+        'commit_blacklist':   'commit_bl',
+        'path_whitelist':     'path_wl',
+        'path_blacklist':     'path_bl',
+        'keywords_whitelist': 'kw_wl',
+        'keywords_blacklist': 'kw_bl',
+    }
     for pdata in (profile_rules or {}).values():
         merged = (pdata or {}).get('merged', {}) or {}
-        path_bl.extend(merged.get('path_blacklist', []))
-        commit_bl.extend(merged.get('commit_blacklist', []))
-    return list(set(path_bl)), list(set(commit_bl))
+        for src_key, dst_key in MAP.items():
+            out[dst_key].extend(merged.get(src_key, []))
+    # Deduplicate preserving order
+    for k in out:
+        seen = set()
+        dedup = []
+        for p in out[k]:
+            pk = p.pattern if isinstance(p, re.Pattern) else p
+            if pk not in seen:
+                seen.add(pk)
+                dedup.append(p)
+        out[k] = dedup
+    return out
 
 
-# ── Compiled-file sets (core of Rule 3) ──────────────────────────────────────
+# ── Compiled-file sets (build context) ───────────────────────────────────────
 def _build_compiled_sets(product_map):
     """Derive coverage sets from the product map.
 
-    Returns a dict with:
-      compiled_files  — set of .c paths belonging to ENABLED CONFIG symbols
-      compiled_dirs   — set of directories that contain a compiled_file
-      artifact_stems  — set of path stems (no extension) from build_dir .o/.ko
-      log_basenames   — set of basename stems from build-log .o lines
-      available       — True when compiled_files is non-empty (data is usable)
+    Returns a dict:
+      compiled_files  — .c paths belonging to ENABLED CONFIG symbols
+      compiled_dirs   — directories of compiled_files (for header/ASM/DTS)
+      artifact_stems  — path stems of .o/.ko in build_dir (C2: strong signal)
+      log_basenames   — basename stems from build-log .o lines (C3: weaker)
+      available       — True when compiled_files is non-empty
     """
     empty = dict(compiled_files=set(), compiled_dirs=set(),
                  artifact_stems=set(), log_basenames=set(), available=False)
@@ -138,9 +203,7 @@ def _build_compiled_sets(product_map):
     c2p         = product_map.get('config_to_paths', {}) or {}
     enabled_raw = product_map.get('enabled_configs',  []) or []
 
-    # Build enabled_set: keep only CONFIG symbols with value =y or =m
-    # load_kernel_config_symbols() returns strings like 'CONFIG_FOO=y'
-    # We must NOT include symbols that are =n, =2, or any other value.
+    # Strip "=y" / "=m" suffix; skip disabled (=n) and non-tristate values
     enabled_set = set()
     for s in enabled_raw:
         if '=' in s:
@@ -148,28 +211,26 @@ def _build_compiled_sets(product_map):
             if val.strip() in ('y', 'm'):
                 enabled_set.add(sym)
         else:
-            # bare symbol (no = sign) — assume enabled
-            enabled_set.add(s)
+            enabled_set.add(s)   # bare symbol — assume enabled
 
-    # compiled_files: only .c paths belonging to enabled CONFIG symbols
     compiled_files = set()
     for sym, paths in c2p.items():
         if sym in enabled_set:
             compiled_files.update(paths)
 
     if not compiled_files:
-        return empty   # no usable data → rule auto-disables
+        return empty
 
     compiled_dirs = {os.path.dirname(f) for f in compiled_files}
-    compiled_dirs.discard('')   # normalise root-level files
+    compiled_dirs.discard('')
 
-    # artifact_stems: from _scan_build_dir() — full relative paths like "mm/slab.o"
+    # artifact_stems: build_dir scan gives full relative paths e.g. "mm/slab.o"
     artifact_stems = set()
     for p in (product_map.get('built_artifacts_from_dir', []) or []):
         stem, _ = os.path.splitext(p)
         artifact_stems.add(stem)
 
-    # log_basenames: only basenames stored by _extract_log_objects()
+    # log_basenames: only basenames stored e.g. "slab.o" → "slab"
     log_basenames = set()
     for p in (product_map.get('built_objects_from_log', []) or []):
         bn = os.path.basename(p)
@@ -183,69 +244,104 @@ def _build_compiled_sets(product_map):
                 available=True)
 
 
-def _file_is_covered(f, cs):
-    """Return True if file *f* has coverage evidence in compiled sets *cs*."""
-    # C5: build-system file — always covered
-    if _is_build_system_file(f):
-        return True
+def _file_has_artifact(f, cs):
+    """C2+C3: direct build evidence — file stem in build-dir artifacts or log.
 
+    This is the *strong* build signal (actual .o files found).
+    Used for the build_artifact KEEP decision at level 2½.
+    """
     stem, _ = os.path.splitext(f)
-    bn_stem  = os.path.splitext(os.path.basename(f))[0]
-    fdir     = os.path.dirname(f)
-
-    # C1: exact compiled_files match (handles .c and also .h with same stem)
-    if f in cs['compiled_files']:
-        return True
-
-    # C2: stem matches a build-dir artifact (handles .c, .S, .cpp → .o)
     if stem in cs['artifact_stems']:
         return True
+    bn_stem, _ = os.path.splitext(os.path.basename(f))
+    return bn_stem in cs['log_basenames']
 
-    # C3: basename stem in build-log (less precise — only use as tiebreaker)
-    if bn_stem in cs['log_basenames']:
+
+def _file_is_kconfig_covered(f, cs):
+    """C1+C4+C5: Kconfig/directory coverage.
+
+    C1 — exact match in compiled_files (CONFIG-enabled .c path)
+    C4 — file lives in a directory that has compiled sources
+         (handles .h headers, .S ASM, .dts DTS in the same directory)
+    C5 — build-system file (Makefile/Kbuild/Kconfig always pass)
+    """
+    if f in cs['compiled_files']:
         return True
-
-    # C4: file lives in a directory that has compiled source files
-    #     Handles headers (.h), ASM (.S), DTS (.dts/.dtsi), README in same dir
+    fdir = os.path.dirname(f)
     if fdir and fdir in cs['compiled_dirs']:
         return True
+    return _is_build_system_file(f)
 
-    return False
 
+# ── Core decision function ────────────────────────────────────────────────────
+def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
+    """Apply the 3-level hierarchy and return (action, reason).
 
-# ── Per-commit filter decision ────────────────────────────────────────────────
-def _is_filtered(commit, path_bl, commit_bl, compiled_sets, filter_cfg,
-                 kconfig_enabled):
-    """Return (filtered: bool, reason: str).
-
-    filtered=True  → drop commit (score treated as 0, removed from pipeline).
+    action: 'keep' | 'drop'
+    reason: short label for statistics and debug output.
     """
     sha   = commit.get('commit', '') or ''
     files = list(commit.get('files', []) or [])
+    text  = (commit.get('subject', '') or '') + '\n' + (commit.get('body', '') or '')
 
-    # ── Rule 1: SHA blacklist (always active) ─────────────────────────────────
-    for pat in commit_bl:
-        if _match(pat, sha):
-            return True, f'commit_blacklist:{sha[:12]}'
+    commit_wl = lists['commit_wl']
+    commit_bl = lists['commit_bl']
+    path_wl   = lists['path_wl']
+    path_bl   = lists['path_bl']
+    kw_wl     = lists['kw_wl']
+    kw_bl     = lists['kw_bl']
 
+    # ── Level 3: Absolute SHA overrides ──────────────────────────────────────
+    if commit_wl and any(_match(p, sha) for p in commit_wl):
+        return 'keep', 'commit_whitelist'
+
+    if commit_bl and any(_match(p, sha) for p in commit_bl):
+        return 'drop', 'commit_blacklist'
+
+    # ── filter.enabled=false: skip L2/L2½/L1 (only L3 was active above) ─────
     if not filter_cfg.get('enabled', True):
-        return False, ''
+        return 'keep', 'filter_disabled'
 
-    # ── Rule 2: all touched files are path-blacklisted ────────────────────────
-    if path_bl and files and filter_cfg.get('path_blacklist_global', True):
-        if all(any(_match(pat, f) for pat in path_bl) for f in files):
-            return True, 'all_paths_blacklisted'
+    # ── Level 2a: All touched files are path-blacklisted ─────────────────────
+    if path_bl and filter_cfg.get('path_blacklist_global', True):
+        if _all_files_match(path_bl, files):
+            return 'drop', 'all_paths_blacklisted'
 
-    # ── Rule 3: Kconfig-coverage ──────────────────────────────────────────────
-    # Default: auto (on when compiled_files set is non-empty)
-    kc_cfg = filter_cfg.get('require_kconfig_coverage', None)
-    use_kconfig = kconfig_enabled if kc_cfg is None else bool(kc_cfg)
+    # ── Level 2b: Any touched file is path-whitelisted ───────────────────────
+    if path_wl and _any_file_matches(path_wl, files):
+        return 'keep', 'path_whitelist'
 
-    if use_kconfig and files and compiled_sets.get('available'):
-        if not any(_file_is_covered(f, compiled_sets) for f in files):
-            return True, 'no_kconfig_coverage'
+    # ── Level 2½: Build artifact evidence ────────────────────────────────────
+    # Direct build evidence (actual .o files): beats Kconfig drop + kw_blacklist
+    if compiled_sets.get('available') and files:
+        if any(_file_has_artifact(f, compiled_sets) for f in files):
+            return 'keep', 'build_artifact'
 
-    return False, ''
+    # ── Kconfig coverage ─────────────────────────────────────────────────────
+    kc_cfg  = filter_cfg.get('require_kconfig_coverage', None)
+    use_kc  = kconfig_enabled if kc_cfg is None else bool(kc_cfg)
+
+    if use_kc and compiled_sets.get('available') and files:
+        kconfig_covered = any(_file_is_kconfig_covered(f, compiled_sets)
+                              for f in files)
+        if not kconfig_covered:
+            # Last rescue: keywords_whitelist can save a Kconfig-uncovered commit
+            # (e.g. a CVE fix in a disabled driver still worth tracking)
+            if kw_wl and _any_matches(kw_wl, text):
+                pass   # fall through — keywords_whitelist saves it
+            else:
+                return 'drop', 'no_kconfig_coverage'
+
+    # ── Level 1a: Keywords whitelist ─────────────────────────────────────────
+    if kw_wl and _any_matches(kw_wl, text):
+        return 'keep', 'keywords_whitelist'
+
+    # ── Level 1b: Keywords blacklist ─────────────────────────────────────────
+    if kw_bl and _any_matches(kw_bl, text):
+        return 'drop', 'keywords_blacklist'
+
+    # ── Level 0: Default ─────────────────────────────────────────────────────
+    return 'keep', 'default'
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -293,7 +389,7 @@ def main():
         step  = max(1, total // 50)
         for i, c in enumerate(commits):
             c['stable_hints']        = extract_stable_hints(c)
-            c['touched_paths_guess'] = infer_touched_paths(c.get('subject', ''), cfg)
+            c['touched_paths_guess'] = infer_touched_paths(c.get('subject',''), cfg)
             if i % step == 0 or i == total - 1:
                 update_stage_progress(4, 7, 0.4 * (i + 1) / max(total, 1),
                                       'enriching', n_done=i + 1, n_total=total)
@@ -302,36 +398,32 @@ def main():
         # ── Build filter data structures ──────────────────────────────────────
         profile_rules  = load_profile_rules(cfg)
         precompile_rules(profile_rules)
-        path_bl, commit_bl = _build_global_blacklists(profile_rules)
-        compiled_sets      = _build_compiled_sets(product_map)
-        kconfig_enabled    = compiled_sets.get('available', False)
+        lists          = _build_merged_lists(profile_rules)
+        compiled_sets  = _build_compiled_sets(product_map)
+        kconfig_enabled = compiled_sets.get('available', False)
 
-        print(f'  compiled_files: {len(compiled_sets["compiled_files"])} '
-              f'| compiled_dirs: {len(compiled_sets["compiled_dirs"])} '
-              f'| artifact_stems: {len(compiled_sets["artifact_stems"])} '
-              f'| log_basenames: {len(compiled_sets["log_basenames"])}')
-        if not kconfig_enabled:
-            print('  NOTE: Kconfig-coverage check inactive '
-                  '(no enabled_configs / config_to_paths available)')
+        # Report coverage data
+        print(f'  compiled_files  : {len(compiled_sets["compiled_files"])}')
+        print(f'  compiled_dirs   : {len(compiled_sets["compiled_dirs"])}')
+        print(f'  artifact_stems  : {len(compiled_sets["artifact_stems"])}')
+        print(f'  log_basenames   : {len(compiled_sets["log_basenames"])}')
+        print(f'  commit_wl       : {len(lists["commit_wl"])} patterns')
+        print(f'  commit_bl       : {len(lists["commit_bl"])} patterns')
+        print(f'  path_wl         : {len(lists["path_wl"])} patterns')
+        print(f'  path_bl         : {len(lists["path_bl"])} patterns')
+        print(f'  keywords_wl     : {len(lists["kw_wl"])} patterns')
+        print(f'  keywords_bl     : {len(lists["kw_bl"])} patterns')
+        print(f'  kconfig_active  : {kconfig_enabled}')
 
-        # Fast-path: nothing to filter
-        if (not filter_cfg.get('enabled', True) and not commit_bl
-                and not kconfig_enabled):
-            save_json(os.path.join(cache, 'filtered_commits.json'), commits)
-            print(f'  filter disabled – {total} commits passed through')
-            finish_stage(state_path, 'filter_commits', started, status='ok',
-                         extra={'total': total, 'kept': total, 'dropped': 0,
-                                'enriched': total})
-            return
-
+        # ── Apply filter ──────────────────────────────────────────────────────
         kept    = []
         dropped = 0
         reasons = {}
 
         for i, c in enumerate(commits):
-            filtered, reason = _is_filtered(
-                c, path_bl, commit_bl, compiled_sets, filter_cfg, kconfig_enabled)
-            if filtered:
+            action, reason = filter_decision(
+                c, lists, compiled_sets, filter_cfg, kconfig_enabled)
+            if action == 'drop':
                 dropped += 1
                 reasons[reason] = reasons.get(reason, 0) + 1
             else:
