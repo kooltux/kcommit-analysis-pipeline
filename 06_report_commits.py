@@ -18,7 +18,10 @@ import argparse, csv, os
 
 from lib.config          import load_config, load_json, save_json
 from lib.validation      import validate_config_only as validate_inputs
-from lib.pipeline_runtime import start_stage, finish_stage, fail_stage
+from lib.pipeline_runtime import (
+    start_stage, finish_stage, fail_stage,
+    print_stage_input, print_stage_output,
+)
 from lib.html_report     import generate_html_report
 
 
@@ -47,6 +50,8 @@ def main():
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'report_commits', 6, 7)
+    _t0_stage = __import__('time').time()
+    print_stage_input('report input', scored)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -217,6 +222,8 @@ def main():
                 print(f'  WARNING: ODS failed: {e}')
 
         print(f'  reports done in {outdir}  ({len(scored)} commits)')
+        print_stage_output('report outputs', len(scored),
+            elapsed=__import__('time').time()-_t0_stage)
         finish_stage(state_path, 'report_commits', started, status='ok',
                      extra={
                          'reported_commit_count': len(scored),

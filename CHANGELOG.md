@@ -1,3 +1,40 @@
+## v9.2.0
+
+### Bug fixes
+- `lib/scoring.py`: `_match()` called `fnmatch.fnmatch()` but `fnmatch` was
+  never imported — `NameError: name 'fnmatch' is not defined` at runtime.
+  Fixed by removing the internal `_match()` / `_compile_pat()` / `precompile_rules()`
+  duplicates from `scoring.py` and delegating exclusively to `lib.patterns`.
+
+### Pattern matching — new semantics (v9.2)
+- **keyword** (no unescaped glob metacharacters): now matches whole words only
+  (`\b` boundaries, case-insensitive).  Previously any substring matched.
+  Glob chars can be escaped with `\` to use them as literals (`\*`, `\?`, `\[`).
+- **glob** (`*` `?` `[` unescaped): now matched case-insensitively.
+  Previously `fnmatch` was case-sensitive on Linux.
+- **`re:EXPR`**: case-**sensitive** by default (was case-insensitive before).
+  Use `re:(?i)EXPR` to opt into case-insensitive matching.
+
+### Rules files cleanup
+- All 5 repeated header comment lines removed from every `*list.txt` file.
+- 54 files that were comment-only (no actual patterns) deleted.
+- New `configs/rules/README` consolidates all format documentation, including
+  the new v9.2 pattern semantics, file naming convention, and filter hierarchy.
+
+### Configuration cleanup
+- Removed empty `"scoring": {}` section from example config
+  (dead since v8.11 when scoring was made profile-only).
+
+### Per-stage statistics
+- Each stage (01–06) now prints to stdout:
+  - **Before**: `┌ input [label]: N records` — count of records from previous stage
+  - **After**: `└ output [label]: kept=N dropped=M (P% kept) [Xs]` with per-reason
+    breakdown for stage 04 (filter) and score distribution for stage 05.
+
+### Removed
+- `lib/scoring.py`: internal `_match()`, `_compile_pat()`, `precompile_rules()` —
+  all replaced by `lib.patterns` equivalents (single source of truth).
+
 ## v9.1.0
 
 ### Bug fixes

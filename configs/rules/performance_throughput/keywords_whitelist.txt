@@ -1,8 +1,3 @@
-# Pattern syntax — one pattern per line:
-#   keyword    plain substring match (case-insensitive)   e.g. overflow
-#   glob       wildcard: * = anything, ? = one char       e.g. CVE-*
-#   re:REGEX   regular expression (re: prefix required)   e.g. re:(?i)cve-\d+
-# Inline comments: text after whitespace + # is stripped  e.g. pattern  # note
 throughput
 bandwidth
 QPS

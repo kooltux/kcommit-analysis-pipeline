@@ -28,6 +28,8 @@ import functools
 import os
 import re
 
+from lib.patterns import match as _pat_match, precompile_rules
+
 from lib.config import _load_json as _load_json_commented
 
 # ── Stable/fix/CVE trailer patterns ───────────────────────────────────────────
@@ -40,62 +42,6 @@ _RE_SYZBOT  = re.compile(r'syzbot', re.I)
 
 
 # ── Pattern matching ───────────────────────────────────────────────────────────
-
-def _match(pattern, text):
-    """Match *pattern* against *text*.
-
-    Modes:
-      re:<expr>   – compiled regex search (case-insensitive)
-      glob        – fnmatch (*, ?, [...])
-      plain       – case-insensitive substring
-    """
-    if isinstance(pattern, re.Pattern):
-        return bool(pattern.search(text))
-    if pattern.startswith('re:'):
-        try:
-            return bool(re.search(pattern[3:], text, re.I))
-        except re.error:
-            return False
-    if any(c in pattern for c in ('*', '?', '[')):
-        return fnmatch.fnmatch(text, pattern)
-    return pattern.lower() in text.lower()
-
-
-# ── Rule pre-compilation ───────────────────────────────────────────────────────
-
-_PRECOMPILED_IDS: set = set()
-
-
-def precompile_rules(profile_rules):
-    """Compile all pattern strings in *profile_rules* to re.Pattern objects.
-
-    Idempotent: repeated calls on the same dict object are cheap (id check).
-    Uses a plain set of id() values; weakref not used (Python 3.13 compat).
-    """
-    if id(profile_rules) in _PRECOMPILED_IDS:
-        return
-    _PRECOMPILED_IDS.add(id(profile_rules))
-    for pdata in (profile_rules or {}).values():
-        merged = (pdata or {}).get('merged', {}) or {}
-        for key in ('keywords_whitelist', 'keywords_blacklist',
-                    'path_whitelist', 'path_blacklist',
-                    'commit_whitelist', 'commit_blacklist'):
-            merged[key] = [_compile_pat(p) for p in merged.get(key, [])]
-        for rdata in (pdata.get('rules', {}) or {}).values():
-            for key in ('keywords_whitelist', 'path_whitelist'):
-                rdata[key] = [_compile_pat(p) for p in rdata.get(key, [])]
-
-
-def _compile_pat(pattern):
-    if isinstance(pattern, re.Pattern):
-        return pattern
-    if pattern.startswith('re:'):
-        try:
-            return re.compile(pattern[3:], re.I)
-        except re.error:
-            return pattern
-    return pattern
-
 
 # ── Hints / path helpers ───────────────────────────────────────────────────────
 
@@ -206,8 +152,8 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         matched_profiles – list of profile names that contributed score > 0
         product_evidence – list of evidence tags (informational)
     """
-    # Auto-compile patterns if the caller skipped precompile_rules().
-    if profile_rules and id(profile_rules) not in _PRECOMPILED_IDS:
+    # Ensure patterns are compiled (idempotent)
+    if profile_rules:
         precompile_rules(profile_rules)
 
     prof_mults   = _profile_multipliers(cfg)
@@ -270,12 +216,12 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     for _pname, _pdata in (profile_rules or {}).items():
         _merged = (_pdata or {}).get('merged', {}) or {}
         for _pat in _merged.get('keywords_blacklist', []):
-            if _match(_pat, subject):
+            if _pat_match(_pat, subject):
                 _profile_blacklisted.add(_pname)
                 break
         if _pname not in _profile_blacklisted:
             for _pat in _merged.get('commit_blacklist', []):
-                if _match(_pat, commit.get('commit', '')):
+                if _pat_match(_pat, commit.get('commit', '')):
                     _profile_blacklisted.add(_pname)
                     break
 
@@ -290,18 +236,18 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         rules  = (pdata or {}).get('rules',  {}) or {}
         pmult  = prof_mults.get(pname, 1.0)
 
-        if any(_match(pat, commit.get('commit', ''))
+        if any(_pat_match(pat, commit.get('commit', ''))
                for pat in merged.get('commit_blacklist', [])):
             profile_scores[pname] = 0
             continue
 
         # Profile-level whitelist hit (used to flag 'matched' status)
         profile_hit = (
-            any(_match(pat, commit.get('commit', ''))
+            any(_pat_match(pat, commit.get('commit', ''))
                 for pat in merged.get('commit_whitelist', []))
-            or any(_match(pat, subject) or _match(pat, body)
+            or any(_pat_match(pat, subject) or _pat_match(pat, body)
                    for pat in merged.get('keywords_whitelist', []))
-            or any(_match(pat, f)
+            or any(_pat_match(pat, f)
                    for pat in merged.get('path_whitelist', [])
                    for f in commit_files)
         )
@@ -311,9 +257,9 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         for rdata in rules.values():
             rw    = rdata.get('weight', 50)
             r_hit = (
-                any(_match(pat, subject) or _match(pat, body)
+                any(_pat_match(pat, subject) or _pat_match(pat, body)
                     for pat in rdata.get('keywords_whitelist', []))
-                or any(_match(pat, f)
+                or any(_pat_match(pat, f)
                        for pat in rdata.get('path_whitelist', [])
                        for f in commit_files)
             )

@@ -1,5 +1,5 @@
 {
-  "version": "v9.1.0",
+  "version": "v9.2.0",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for security and performance relevance",
   "library_dir": "lib",
   "scoring_dir": "configs/scoring",

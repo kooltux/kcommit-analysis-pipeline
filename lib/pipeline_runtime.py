@@ -145,3 +145,39 @@ def wipe_downstream(path, from_key, work_dir, stage_outputs, stage_order=None):
             ss[key]["status"] = None
     state["stages"] = ss
     _write(path, state)
+
+
+def print_stage_input(label, data):
+    """Print a brief summary of the data fed into a stage.
+
+    *data* may be a list (records) or a dict (map).
+    Call this at the start of a stage, before processing.
+    """
+    if isinstance(data, list):
+        print(f"  ┌ input  [{label}]: {len(data):,} records")
+    elif isinstance(data, dict):
+        print(f"  ┌ input  [{label}]: {len(data):,} entries")
+    else:
+        print(f"  ┌ input  [{label}]: {data!r}")
+    sys.stdout.flush()
+
+
+def print_stage_output(label, kept, dropped=None, reasons=None, elapsed=None):
+    """Print a summary of what a stage produced.
+
+    Args:
+        label   – stage name / output description
+        kept    – number of records kept / produced
+        dropped – number of records dropped (optional)
+        reasons – dict {reason_str: count} breakdown (optional)
+        elapsed – wall-clock seconds (optional)
+    """
+    total = kept + (dropped or 0)
+    pct   = f"  ({kept/total:.0%} kept)" if total else ""
+    t     = f"  [{elapsed:.1f}s]" if elapsed is not None else ""
+    drop_s = f"  dropped={dropped:,}" if dropped is not None else ""
+    print(f"  └ output [{label}]: kept={kept:,}{drop_s}{pct}{t}")
+    if reasons:
+        for reason, count in sorted(reasons.items(), key=lambda x: -x[1]):
+            print(f"      {reason:<40} {count:>6,}")
+    sys.stdout.flush()

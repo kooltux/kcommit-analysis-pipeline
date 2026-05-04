@@ -1,0 +1,40 @@
+# Pattern file format — kcommit-analysis-pipeline rules
+# ======================================================
+#
+# Each *list.txt file contains one pattern per line.
+# Empty lines and lines starting with # are ignored.
+# Inline comments: text after whitespace + '#' is stripped  e.g. pattern  # note
+#
+# Pattern types (auto-detected from the line content):
+#
+#   keyword    Plain word or phrase, NO unescaped glob metacharacters.
+#              Match is case-insensitive and whole-word (\b boundaries).
+#              Examples:  overflow       use-after-free
+#              Glob metacharacters can be escaped with backslash to use
+#              them literally:  CVE-\*  matches the literal string "CVE-*"
+#
+#   glob       Pattern containing unescaped  *  ?  or  [...]  metacharacters.
+#              Match is case-insensitive fnmatch against the full string.
+#              Examples:  CVE-*          drivers/net/*    *.ko
+#
+#   re:EXPR    Regular expression prefixed with 're:'.
+#              Match is case-SENSITIVE by default.
+#              Use  re:(?i)EXPR  for a case-insensitive regex.
+#              Examples:  re:CVE-\d{4}-\d{4,}
+#                         re:(?i)buffer.overflow
+#
+# File naming convention:
+#   keywords_whitelist.txt   — commit subject/body keyword KEEP rules
+#   keywords_blacklist.txt   — commit subject/body keyword DROP rules
+#   path_whitelist.txt       — touched file path KEEP rules
+#   path_blacklist.txt       — touched file path DROP rules
+#   commit_whitelist.txt     — SHA-based absolute KEEP rules
+#   commit_blacklist.txt     — SHA-based absolute DROP rules
+#
+# Filter decision hierarchy (higher wins):
+#   L3 commit_whitelist  > commit_blacklist  (SHA, absolute)
+#   L2 path_blacklist(all files match) > path_whitelist(any file matches)
+#   L2½ build_artifact coverage
+#   L1½ Kconfig coverage (require_kconfig_coverage)
+#   L1 keywords_whitelist > keywords_blacklist
+#   L0 default: KEEP

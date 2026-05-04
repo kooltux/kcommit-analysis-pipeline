@@ -56,6 +56,8 @@ def main():
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'collect_build_context', 2, 7)
+    _t0_stage = __import__('time').time()
+    print_stage_input('build context', cfg.get('kernel',{}).get('build_dir','(none)'))
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -128,6 +130,8 @@ def main():
         sys.stdout.flush()
 
         print('  build context captured')
+        print_stage_output('build context entries', len(product_map),
+            elapsed=__import__('time').time()-_t0_stage)
         finish_stage(state_path, 'collect_build_context', started, status='ok',
                      extra={
                          'build_artifact_count': len(build_artifacts),

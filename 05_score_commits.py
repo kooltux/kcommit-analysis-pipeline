@@ -104,6 +104,8 @@ def main():
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'score_commits', 5, 7)
+    _t0_stage = __import__('time').time()
+    print_stage_input('score input', commits)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -135,6 +137,11 @@ def main():
 
         save_json(os.path.join(cache, 'scored_commits.json'), scored)
         print('  scored %d commits' % len(scored))
+        _pos_05 = sum(1 for c in scored if c.get('score', 0) > 0)
+        _neg_05 = len(scored) - _pos_05
+        print_stage_output('scored commits', len(scored),
+            reasons={'score>0': _pos_05, 'score=0': _neg_05},
+            elapsed=__import__('time').time()-_t0_stage)
         finish_stage(state_path, 'score_commits', started, status='ok',
                      extra={'scored_commit_count': len(scored)})
 

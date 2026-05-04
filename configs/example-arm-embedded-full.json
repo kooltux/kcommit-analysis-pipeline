@@ -2,15 +2,6 @@
   // ─────────────────────────────────────────────────────────────────────────
   // kcommit-analysis-pipeline — ARM embedded full example config (v8.11)
   //
-  // v8.11 changes vs v8.10:
-  //   - "filter" section added (new stage 04: filter_commits).
-  //   - "scoring" section: direct multipliers (product/security/performance/
-  //     stable/symbol_match) removed — scoring is now exclusively through
-  //     profiles and rules.  The section is kept for future extensions.
-  //   - "templates.css_override" replaces deprecated "templates.summary_css"
-  //     (old key still accepted for backward compatibility).
-  //   - "collect.score_workers" documented.
-  //
   // Variable expansion: ${VAR} is expanded in all string values.
   // Available variables:
   //   WORKSPACE  – external workspace root (from shell environment)
@@ -90,9 +81,7 @@
   //              commit_whitelist.txt, commit_blacklist.txt
   // "rules": { "rules_dir": "${CONFIGDIR}/rules" },
 
-  // ── Pre-scoring filter (stage 04) ─────────────────────────────────────────
   // Commits that cannot possibly receive a non-zero score are dropped before
-  // scoring runs, keeping the output focused and scoring fast.
   "filter": {
     // enabled: set false to disable path/product filtering.
     // Rule 1 (SHA commit_blacklist) remains active even when enabled=false.
@@ -111,12 +100,6 @@
     //   false = disabled
     "require_kconfig_coverage": null
   },
-
-  // ── Scoring ───────────────────────────────────────────────────────────────
-  // v8.11: scoring is exclusively through profiles and rules.
-  // Direct score dimensions (product/security/performance/stable/symbol_match)
-  // have been removed.  This section is reserved for future extensions.
-  "scoring": {},
 
   // ── Commit collection (stage 01) ──────────────────────────────────────────
   "collect": {

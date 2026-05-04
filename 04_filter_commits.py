@@ -365,6 +365,8 @@ def main():
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'filter_commits', 4, 7)
+    _t0_stage = __import__('time').time()
+    print_stage_input('filter input', commits)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -441,6 +443,14 @@ def main():
             for r, n in sorted(reasons.items(), key=lambda x: -x[1]):
                 print(f'    {r}: {n}')
 
+        _kept_04    = [r for r in results if r.get('filter_decision') != 'drop']
+        _dropped_04 = [r for r in results if r.get('filter_decision') == 'drop']
+        _reasons_04 = {}
+        [_reasons_04.__setitem__(r.get('filter_reason','?'),
+            _reasons_04.get(r.get('filter_reason','?'), 0) + 1) for r in _dropped_04]
+        print_stage_output('filtered commits', len(_kept_04),
+            dropped=len(_dropped_04), reasons=_reasons_04,
+            elapsed=__import__('time').time()-_t0_stage)
         finish_stage(state_path, 'filter_commits', started, status='ok',
                      extra={'total': total, 'kept': len(kept),
                             'dropped': dropped, 'reasons': reasons,

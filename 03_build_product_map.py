@@ -40,6 +40,8 @@ def main():
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'build_product_map', 3, 7)
+    _t0_stage = __import__('time').time()
+    print_stage_input('product map', 'from build context')
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -127,6 +129,9 @@ def main():
 
         print('  product map built: %d config symbols, %d config dirs'
               % (len(config_to_paths), len(product_map['config_dirs'])))
+        print_stage_output('product map symbols',
+            len((product_map or {}).get('config_to_paths', {})),
+            elapsed=__import__('time').time()-_t0_stage)
         finish_stage(state_path, 'build_product_map', started, status='ok',
                      extra={
                          'log_object_count':    len(product_map['built_objects_from_log']),
