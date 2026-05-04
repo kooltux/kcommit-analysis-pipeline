@@ -1,3 +1,17 @@
-# Python 3.6 compatible package marker
+from lib.manifest import (  # noqa: F401
+    load_manifest,
+    VERSION,
+    NSTAGES,
+    TEMPLATE_DIR,
+    PIPELINE_STAGES,
+    MANIFEST,
+)
 
-from lib.manifest import load_manifest, VERSION, NSTAGES, TEMPLATE_DIR, PIPELINE_STAGES  # noqa: F401
+__all__ = [
+    'load_manifest',
+    'VERSION',
+    'NSTAGES',
+    'TEMPLATE_DIR',
+    'PIPELINE_STAGES',
+    'MANIFEST',
+]

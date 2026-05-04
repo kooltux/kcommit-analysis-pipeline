@@ -3,7 +3,7 @@ import os
 import time
 from lib.config import load_config, apply_override
 
-def runstage(stage_key, index, run_func):
+def runstage(stage_key, run_func):
     ap = argparse.ArgumentParser()
     ap.add_argument('--config', required=True)
     ap.add_argument('--override', default=None, metavar='JSON')

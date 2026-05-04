@@ -1,3 +1,28 @@
+## v9.1.0
+
+### Bug fixes
+- `filter.require_kconfig_coverage`: validator now correctly accepts `null` as
+  the documented "auto" state (`null`=auto-detect, `true`=force, `false`=disable).
+  Previously the strict bool check raised _"must be true or false, got None"_
+  whenever the config contained `"require_kconfig_coverage": null` (the default
+  in the shipped example config).  The runtime in `04_filter_commits.py` already
+  handled `None` correctly; only the validator was wrong.
+
+### Removed
+- `filter.require_product_map`: deprecated since v8.11 and removed in v9.1.
+  Use `filter.require_kconfig_coverage` instead.  Any config still using this
+  key will get an "unrecognised key" notice.
+
+### Improvements
+- `lib/validation.py`: extracted `_validate_common()` helper to eliminate ~60
+  lines of copy-paste duplication between `validate_inputs()` and
+  `validate_config_only()`.
+- `lib/validation.py`: updated module docstring to reflect v9.0 and v9.1 changes.
+- `lib/stagerunner.py`: removed unused `index` parameter from `runstage()`.
+- `lib/__init__.py`: added explicit `__all__` list.
+- `lib/html_report.py`: template files now cached at module level instead of
+  being re-opened on every `generate_html_report()` call.
+
 # Changelog
 
 ## v9.0.0 — 2026-04-30
