@@ -1,8 +1,32 @@
 """Profile and rule loading for kcommit-analysis-pipeline.
 
-Pattern files (*list.txt) within a rule directory are optional individually;
-at least one must be non-empty per rule or a RuntimeError is raised.
-A missing file emits a debug log (not a warning).
+v8.7 changes vs v8.6:
+  - Per-profile per-rule weight override: rules value can be a dict
+    {"weight": N, "keywords_whitelist_extra": [...], "path_whitelist_extra": [...]}
+    instead of a plain integer.  Plain integers still accepted.
+  - load_profile_rules() warns when compiled_rules.json is absent.
+
+
+v8.3 changes vs v8.2:
+  - _read_patterns(): now supports bash-style inline # comments using
+    regex (^|\\s+)#.*$ — identical convention to JSON config files.
+    A # not preceded by whitespace is kept as part of the pattern.
+
+v8.2 changes vs v8.1:
+  - local JSON comment-stripping loader removed; uses config._load_json() instead,
+    which benefits from the improved comment-stripping (line numbers preserved).
+
+v8.4 changes vs v8.3:
+  - Import INLINE_COMMENT_RE from lib.config instead of re-defining
+    the same compiled regex (_PATTERN_COMMENT_RE removed).
+  - _read_patterns(): emits logging.debug for missing rule files so
+    profile typos are visible rather than silently producing empty
+    pattern lists and zero-coverage scoring.
+
+v8.0 changes vs v7.19:
+  - Dropped from __future__ import print_function and import io (Py2 dead code).
+  - io.open() replaced with open(); %-formatting replaced with f-strings.
+  - No functional changes.
 """
 import json
 import logging

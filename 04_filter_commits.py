@@ -85,6 +85,7 @@ Reads:   cache/commits.json
          cache/compiled_rules.json  (via load_profile_rules)
 Writes:  cache/filtered_commits.json
 """
+import logging
 import argparse
 import fnmatch
 import os
@@ -448,61 +449,67 @@ def main():
         sys.stdout.flush()
 
         save_json(os.path.join(cache, 'filtered_commits.json'), kept)
-        # ── Filtered commits output files ─────────────────────────────────────
-        # Reuses the same templates config flags as stage 06 (relevant_commits).
-        _tmpl_cfg  = (cfg.get('templates') or {})
-        _want_csv  = _tmpl_cfg.get('csv_output',  False)
-        _want_html = _tmpl_cfg.get('html_summary', False)
-        _want_xlsx = _tmpl_cfg.get('xls_output',  False)
-        _want_ods  = _tmpl_cfg.get('ods_output',  False)
-        _rep_dir   = cfg.get('paths', {}).get('output_dir') or outdir
+        _tmpl = (cfg.get('templates') or {})
+        _odir = cfg.get('paths', {}).get('output_dir') or outdir
+        os.makedirs(_odir, exist_ok=True)
 
-        if _want_csv:
+        # ── Always write dropped_commits JSON to output/ ──────────────────
+        _jp = os.path.join(_odir, 'filtered_commits.json')
+        with open(_jp, 'w', encoding='utf-8') as _jf:
+            json.dump(dropped_commits, _jf, indent=2, default=str)
+        print(f'  filtered JSON: {_jp}')
+
+        if _tmpl.get('csv_output', False):
             import csv as _csv
-            _csv_path = os.path.join(_rep_dir, 'filtered_commits.csv')
-            with open(_csv_path, 'w', newline='', encoding='utf-8') as _fh:
+            from lib.spreadsheet import COMMIT_COLS
+            _cp = os.path.join(_odir, 'filtered_commits.csv')
+            with open(_cp, 'w', newline='', encoding='utf-8') as _fh:
                 _w = _csv.writer(_fh)
-                _w.writerow(['sha', 'subject', 'author', 'date', 'reason'])
+                _w.writerow(list(COMMIT_COLS) + ['Filter reason'])
                 for _c in dropped_commits:
+                    _sc = _c.get('scoring', {}) or {}
                     _w.writerow([
+                        _c.get('_rank', ''),
                         (_c.get('commit') or '')[:12],
                         _c.get('subject', ''),
                         _c.get('author_name', ''),
                         _c.get('author_time', ''),
+                        _c.get('score', 0) or 0,
+                        _sc.get('security', 0) or 0,
+                        _sc.get('performance', 0) or 0,
+                        _sc.get('product', 0) or 0,
+                        _sc.get('stable', 0) or 0,
+                        '; '.join(_c.get('matched_profiles') or []),
+                        '; '.join(_c.get('product_evidence') or []),
                         _c.get('_filter_reason', ''),
                     ])
-            print(f'  filtered CSV:  {_csv_path}')
-
-        if _want_html:
+            print(f'  filtered CSV:  {_cp}')
+        if _tmpl.get('html_summary', False):
             try:
                 from lib.html_report import generate_html_report
-                _html_path = os.path.join(_rep_dir, 'filtered_commits.html')
-                generate_html_report(
-                    dropped_commits, {}, {}, _html_path,
-                    title=_tmpl_cfg.get('report_title',
-                                        'kcommit Analysis Report') + ' — Filtered')
-                print(f'  filtered HTML: {_html_path}')
+                _hp = os.path.join(_odir, 'filtered_commits.html')
+                generate_html_report(dropped_commits, {}, {}, _hp,
+                    title=_tmpl.get('report_title', 'kcommit Analysis Report') + ' — Filtered',
+                    is_filtered=True)
+                print(f'  filtered HTML: {_hp}')
             except Exception as _e:
                 logging.warning('filtered HTML failed: %s', _e)
-
-        if _want_xlsx:
+        if _tmpl.get('xls_output', False):
             try:
                 from lib.spreadsheet import write_xlsx
-                _xlsx_path = os.path.join(_rep_dir, 'filtered_commits.xlsx')
-                write_xlsx(_xlsx_path, dropped_commits, {})
-                print(f'  filtered XLSX: {_xlsx_path}')
+                _xp = os.path.join(_odir, 'filtered_commits.xlsx')
+                write_xlsx(_xp, dropped_commits, {})
+                print(f'  filtered XLSX: {_xp}')
             except Exception as _e:
                 logging.warning('filtered XLSX failed: %s', _e)
-
-        if _want_ods:
+        if _tmpl.get('ods_output', False):
             try:
                 from lib.spreadsheet import write_ods
-                _ods_path = os.path.join(_rep_dir, 'filtered_commits.ods')
-                write_ods(_ods_path, dropped_commits, {})
-                print(f'  filtered ODS:  {_ods_path}')
+                _op = os.path.join(_odir, 'filtered_commits.ods')
+                write_ods(_op, dropped_commits, {})
+                print(f'  filtered ODS:  {_op}')
             except Exception as _e:
                 logging.warning('filtered ODS failed: %s', _e)
-
 
         print_stage_output('filtered commits', len(kept),
             dropped=dropped, reasons=reasons,

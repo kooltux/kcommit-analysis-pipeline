@@ -1,40 +1,33 @@
-## v9.6.0
-
-### Features
-
-- **Logging** (`lib/logsetup.py`) — new `setup_logging(verbose)` function shared
-  by all stages; ANSI colour output per level (cyan/green/yellow/red/magenta)
-  when writing to a TTY; `VERBOSE` module-level global retained for future use.
-- **`-v` / `--verbose`** — added to all stage scripts and `kcommit_pipeline.py`;
-  `-v` sets INFO, `-vv` sets DEBUG.
-- **Filtered commits output** (`04_filter_commits.py`) — when `csv_output`,
-  `html_summary`, `xls_output`, or `ods_output` is enabled in `templates`
-  config, matching output files are now also written for the **dropped**
-  commits (`filtered_commits.csv/html/xlsx/ods`); reuses the same flags as
-  `relevant_commits` in stage 06 — no new config keys.
-- **`_filter_reason`** field attached to each dropped commit for traceability.
+## v9.7.0
 
 ### Bug fixes
+- **Colored log output** (`lib/logsetup.py`): `_ColorFormatter` now correctly
+  passes `fmt` and `datefmt` into `super().__init__()` so ANSI color codes are
+  always emitted. Color is no longer gated behind a TTY check.
+- **Column consistency**: all output formats (HTML, CSV, XLSX, ODS) now use the
+  same 12-column schema defined by `COMMIT_COLS` in `lib/spreadsheet.py`.
+  Filtered-commit CSV adds a `Filter reason` column. Previously HTML had only 5
+  columns and filtered CSV had a different ad-hoc 5-column layout.
 
-- **`lib/profile_rules.py`** — missing `*list.txt` files are now a
-  `logging.debug()` message (files are optional); a rule directory with **no
-  non-empty pattern files** raises `RuntimeError` immediately (previously
-  produced silent zero-coverage scoring); `warnings.warn` calls replaced with
-  `logging.debug` / `logging.warning`.
-- **`lib/spreadsheet.py` XLSX** — removed spurious `mimetype` entry (an ODF
-  concept that corrupted Excel/LibreOffice XLSX parsing); `[Content_Types].xml`
-  is now the correct first entry in the ZIP.
-- **`lib/spreadsheet.py` ODS** — `office:value-type="float"` and
-  `office:value=` attributes now set correctly on all numeric cells (previously
-  all cells were treated as strings by LibreOffice); document root MIME type
-  in `manifest.xml` fixed to `application/vnd.oasis.opendocument.spreadsheet`.
-- **`00_prepare_pipeline.py` / `kcommit_pipeline.py`** — `print('ERROR: ...')`
-  and `print('WARNING: ...')` replaced with `logging.error()` /
-  `logging.warning()`; progress `print()` lines retained as-is.
+### New outputs
+- `output/filtered_commits.json` — dropped commits written by stage 04 whenever
+  any output format is enabled (previously missing entirely).
+- `output/profile_matrix.json` — written by stage 06 alongside
+  `profile_matrix.csv` (previously missing).
 
-### Housekeeping
-
-- `lib/profile_rules.py` — stale v8.x changelog blocks removed from docstring.
+### HTML report (`lib/html_report.py` + `configs/templates/`)
+- **High-tech dark theme** (`summary.css`, 411 lines): dark `#0d1117` background,
+  neon `#00d4aa` accent, sticky table headers, score pills (green/amber/red),
+  profile chips, slide-in commit-detail panel.
+- **Section order fixed**: Run Stats → Profile Summary → Commits table.
+  Previously commits appeared first.
+- **Autofilter** (`summary.js`): per-column live filter inputs below each header
+  row; "Clear all" button resets all filters at once.
+- **Column sort**: click any column header to sort ascending/descending.
+- **SHA commit detail panel**: clicking a SHA opens a slide-in panel that
+  fetches `output/<sha12>.json` relative to the HTML file. Shows subject,
+  author, date, score breakdown, product evidence and commit body. Falls back
+  gracefully when the JSON file is absent. No full-JSON embed in HTML.
 
 ## v9.3.0
 

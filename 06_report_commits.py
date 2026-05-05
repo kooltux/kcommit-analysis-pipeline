@@ -141,6 +141,7 @@ def main():
             d['avg_score'] = round(d['total_score'] / c_, 1) if c_ else 0.0
         save_json(os.path.join(outdir, 'profile_summary.json'), profile_summary)
 
+        _matrix_rows = []
         with open(os.path.join(outdir, 'profile_matrix.csv'), 'w',
                   newline='', encoding='utf-8') as fh:
             w = csv.writer(fh)
@@ -148,10 +149,16 @@ def main():
                         'total_score', 'profile_score'])
             for c in scored:
                 for p in (c.get('matched_profiles') or []):
-                    w.writerow([
+                    row = [
                         c.get('_rank', ''), c.get('commit', ''),
                         c.get('subject', ''), p, c.get('score', 0),
-                        (c.get('scoring', {}) or {}).get('profiles', {}).get(p, 0)])
+                        (c.get('scoring', {}) or {}).get('profiles', {}).get(p, 0)]
+                    w.writerow(row)
+                    _matrix_rows.append({
+                        'rank': row[0], 'commit': row[1], 'subject': row[2],
+                        'profile': row[3], 'total_score': row[4],
+                        'profile_score': row[5]})
+        save_json(os.path.join(outdir, 'profile_matrix.json'), _matrix_rows)
 
         coverage = _coverage(scored)
         # Generic meta-flag counts (all True boolean keys across all commits)
