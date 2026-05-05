@@ -1,9 +1,10 @@
-syscall
-syscalls
-sys_enter
-sys_exit
 seccomp
 ptrace
 userfaultfd
-io_uring
-io uring
+re:(?i)(?:syscall|sys_)\w+
+re:(?i)io[\s_-]uring
+re:(?i)ioctl\w*
+re:(?i)device|driver|uvc|hid|drm|usb|net|wireless|wifi|bluetooth|input|block|fs|netfilter|bpf
+re:(?i)copy\s*from\s*user|copy\s*to\s*user|get_user|put_user
+re:(?i)user\s+ptr|user\s+pointer|user\s+buffer
+re:(?i)sanitiz(?:e|ed|ing)|validate|validity|sanity\s+check

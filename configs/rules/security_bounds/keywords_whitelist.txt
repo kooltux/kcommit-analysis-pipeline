@@ -1,9 +1,7 @@
-bounds check
-boundary check
-index check
-array index
-range check
-off-by-one
-off by one
-OOB read
-OOB write
+re:(?i)(?:len|length|size|count|nbytes|lenp|countp).*?(?:check|validate|validity)
+re:(?i)check.{,10}len\w*
+re:(?i)bounds?|limits?|clamp(ed)?
+re:(?i)(?:index|array index|range).*check
+re:(?i)min|max|boundary|boundary\s+check
+re:(?i)off[\s-]by[\s-]one
+re:(?i)OOB(?:\s+(?:read|write))

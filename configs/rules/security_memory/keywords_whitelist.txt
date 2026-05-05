@@ -1,9 +1,11 @@
-use-after-free
-UAF
-double free
-heap overflow
-stack overflow
-buffer overflow
-out-of-bounds
-out of bounds
 dangling pointer
+re:(?i)buffer\s+overflow|buffer\s+overrun|bof
+re:(?i)stack\s+overflow|stack\s+corruption
+re:(?i)heap\s+overflow|heap\s+corruption
+re:(?i)overflow|overrun|overwrite
+re:(?i)use\s+after\s+free|uaf|use\s+after\s+free
+re:(?i)double\s+free|double\s+free
+re:(?i)null\s+pointer|deref(?:null|NULL)|dereference\s+of\s+null
+re:(?i)oom|out\s+of\s+memory|allocation\s+failure
+re:(?i)addr\s+calculat|address\s+calculation
+re:(?i)out\s+of\s+bounds?|oob

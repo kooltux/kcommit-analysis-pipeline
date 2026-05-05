@@ -1,17 +1,12 @@
-authentication
-authorization
-privilege escalation
-priv esc
-credentials
-passwd
-password
 acl
 access control
-capable(
-cap_capable
-capability
-capabilities
-uid
-gid
-fsuid
-fsgid
+re:(?i)cap(?:ability|s)?
+re:(?i)cred(?:ential)?s?
+re:(?i)priv(?:ilege)?(:?\s+esc(?:alation)?)?
+re:(?i)pass(?:wd|word)
+re:(?i)(?:u|eu|su|g|eg|sg|fsu|fsg)id
+re:(?i)permissions?|perm|mode|umask|fs\s+mode
+re:(?i)auth(?:entication)?|authz|authorization
+re:(?i)rbac|dac|mac|selinux|smack|apparmor|lsm
+re:(?i)security\s+module|lsm|security\s+hook
+re:(?i)sysctl|capable|capable_of
