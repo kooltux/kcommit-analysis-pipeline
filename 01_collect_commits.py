@@ -6,6 +6,7 @@ import argparse
 import os
 import time
 import sys
+from lib.logsetup import setup_logging
 
 from lib.config import load_config
 from lib.config import save_json
@@ -21,10 +22,13 @@ _PROGRESS_INTERVAL = 100
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('-v', '--verbose', action='count', default=0,
+                    help='Verbosity: -v INFO, -vv DEBUG')
     ap.add_argument('--config', required=True)
     ap.add_argument('--override', default=None, metavar='JSON',
                     help='Deep-merge JSON into config (forwarded from kcommit_pipeline)')
     args = ap.parse_args()
+    setup_logging(args.verbose)
 
     cfg = load_config(args.config)
     if args.override:

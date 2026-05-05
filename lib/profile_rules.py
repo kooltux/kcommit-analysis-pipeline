@@ -1,34 +1,11 @@
 """Profile and rule loading for kcommit-analysis-pipeline.
 
-v8.7 changes vs v8.6:
-  - Per-profile per-rule weight override: rules value can be a dict
-    {"weight": N, "keywords_whitelist_extra": [...], "path_whitelist_extra": [...]}
-    instead of a plain integer.  Plain integers still accepted.
-  - load_profile_rules() warns when compiled_rules.json is absent.
-
-
-v8.3 changes vs v8.2:
-  - _read_patterns(): now supports bash-style inline # comments using
-    regex (^|\\s+)#.*$ — identical convention to JSON config files.
-    A # not preceded by whitespace is kept as part of the pattern.
-
-v8.2 changes vs v8.1:
-  - local JSON comment-stripping loader removed; uses config._load_json() instead,
-    which benefits from the improved comment-stripping (line numbers preserved).
-
-v8.4 changes vs v8.3:
-  - Import INLINE_COMMENT_RE from lib.config instead of re-defining
-    the same compiled regex (_PATTERN_COMMENT_RE removed).
-  - _read_patterns(): emits warnings.warn for missing rule files so
-    profile typos are visible rather than silently producing empty
-    pattern lists and zero-coverage scoring.
-
-v8.0 changes vs v7.19:
-  - Dropped from __future__ import print_function and import io (Py2 dead code).
-  - io.open() replaced with open(); %-formatting replaced with f-strings.
-  - No functional changes.
+Pattern files (*list.txt) within a rule directory are optional individually;
+at least one must be non-empty per rule or a RuntimeError is raised.
+A missing file emits a debug log (not a warning).
 """
 import json
+import logging
 import os
 import re
 
@@ -52,8 +29,7 @@ def _read_patterns(path):
     if not path:
         return []
     if not os.path.exists(path):
-        import warnings
-        warnings.warn(f'kcommit: rule pattern file not found: {path}', stacklevel=3)
+        logging.debug('kcommit: rule pattern file not found (optional): %s', path)
         return []
     patterns = []
     with open(path, encoding='utf-8', errors='replace') as f:
@@ -153,6 +129,10 @@ def compile_rules_for_config(cfg, work_dir):
                 rule_data[key] = pats
                 merged_accum[key].update(pats)
             per_rule[rname] = rule_data
+            if not any(rule_data[k] for k in RULE_SCHEMA):
+                raise RuntimeError(
+                    f'rule {rname!r} in profile {name!r} has no pattern files '
+                    f'under {rdir} — at least one *list.txt must be non-empty')
 
         profiles_rules[name] = {
             'merged': {k: sorted(v) for k, v in merged_accum.items()},
@@ -176,12 +156,10 @@ def load_profile_rules(cfg):
     work       = cfg['paths']['work_dir']
     cache_path = os.path.join(work, 'cache', 'compiled_rules.json')
     if not os.path.exists(cache_path):
-        import warnings
-        warnings.warn(
-            f'kcommit: compiled_rules.json not found at {cache_path} — '
+        logging.warning(
+            'kcommit: compiled_rules.json not found at %s — '
             'recompiling rules now. Run stage 0 (prepare_pipeline) explicitly '
-            'to avoid this warning.',
-            stacklevel=2)
+            'to avoid this warning.', cache_path)
         return compile_rules_for_config(cfg, work)
     with open(cache_path, encoding='utf-8') as f:
         return json.load(f)

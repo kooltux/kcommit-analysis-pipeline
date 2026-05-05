@@ -18,11 +18,13 @@ Usage:
   # Dry-run: validate and print resolved config
   python3 kcommit_pipeline.py --config /path/to/cfg.json --dry-run
 """
+import logging
 import argparse
 import json
 import os
 import subprocess
 import sys
+from lib.logsetup import setup_logging
 
 from lib.config import load_config, deep_merge, apply_override
 from lib.manifest import VERSION, load_manifest
@@ -111,7 +113,7 @@ def _dry_run(cfg, args):
         print('NOTICE:', n)
     if problems:
         for p in problems:
-            print('ERROR:', p)
+            logging.error('%s', p)
         raise SystemExit(1)
     print('Configuration looks OK.')
 
@@ -130,6 +132,8 @@ def _deep_merge(base, patch):
 def main():
     ap = argparse.ArgumentParser(
         description=f'kcommit-analysis-pipeline runner {VERSION}')
+    ap.add_argument('-v', '--verbose', action='count', default=0,
+                    help='Verbosity: -v INFO, -vv DEBUG')
     ap.add_argument('--config',   required=True,  help='Path to JSON config file')
     ap.add_argument('--stage',    default=None,   help='Run only this stage (number or name)')
     ap.add_argument('--from',     dest='from_',   default=None,
@@ -145,6 +149,7 @@ def main():
                          'Nested keys are merged recursively; scalars are replaced. '
                          "Example: --override '{\"kernel\":{\"rev_old\":\"v4.14.111\"}}'")
     args = ap.parse_args()
+    setup_logging(args.verbose)
 
     # --stage and --from are mutually exclusive
     if args.stage is not None and args.from_ is not None:

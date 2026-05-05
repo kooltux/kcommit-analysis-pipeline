@@ -1,37 +1,40 @@
-## v9.5.0
+## v9.6.0
 
-### Bug fix
+### Features
 
-- **Stage 06** (`06_report_commits.py`) — `WARNING: HTML failed:
-  generate_html_report() missing 2 required positional arguments:
-  'report_stats' and 'output_path'`.  The call was
-  `generate_html_report(work, cfg)` which passed the wrong variables and
-  omitted two required positional arguments.  Fixed to:
-  `generate_html_report(scored, profile_summary, report_stats, html_path,
-  title=...)` matching the actual function signature in `lib/html_report.py`.
+- **Logging** (`lib/logsetup.py`) — new `setup_logging(verbose)` function shared
+  by all stages; ANSI colour output per level (cyan/green/yellow/red/magenta)
+  when writing to a TTY; `VERBOSE` module-level global retained for future use.
+- **`-v` / `--verbose`** — added to all stage scripts and `kcommit_pipeline.py`;
+  `-v` sets INFO, `-vv` sets DEBUG.
+- **Filtered commits output** (`04_filter_commits.py`) — when `csv_output`,
+  `html_summary`, `xls_output`, or `ods_output` is enabled in `templates`
+  config, matching output files are now also written for the **dropped**
+  commits (`filtered_commits.csv/html/xlsx/ods`); reuses the same flags as
+  `relevant_commits` in stage 06 — no new config keys.
+- **`_filter_reason`** field attached to each dropped commit for traceability.
 
-### Config
+### Bug fixes
 
-- `configs/example-arm-embedded-full.json` — removed stale v8.11 changelog
-  block (lines 5–11); removed orphaned scoring-section notice (lines 111–112);
-  restored `score_workers` comment; updated header version tag to v9.5.
+- **`lib/profile_rules.py`** — missing `*list.txt` files are now a
+  `logging.debug()` message (files are optional); a rule directory with **no
+  non-empty pattern files** raises `RuntimeError` immediately (previously
+  produced silent zero-coverage scoring); `warnings.warn` calls replaced with
+  `logging.debug` / `logging.warning`.
+- **`lib/spreadsheet.py` XLSX** — removed spurious `mimetype` entry (an ODF
+  concept that corrupted Excel/LibreOffice XLSX parsing); `[Content_Types].xml`
+  is now the correct first entry in the ZIP.
+- **`lib/spreadsheet.py` ODS** — `office:value-type="float"` and
+  `office:value=` attributes now set correctly on all numeric cells (previously
+  all cells were treated as strings by LibreOffice); document root MIME type
+  in `manifest.xml` fixed to `application/vnd.oasis.opendocument.spreadsheet`.
+- **`00_prepare_pipeline.py` / `kcommit_pipeline.py`** — `print('ERROR: ...')`
+  and `print('WARNING: ...')` replaced with `logging.error()` /
+  `logging.warning()`; progress `print()` lines retained as-is.
 
 ### Housekeeping
 
-- `lib/pipeline_runtime.py` — `print_stage_output`: added `reasons = reasons
-  or {}` guard to normalise `None` vs `{}` callers consistently.
-- `CHANGELOG.md` — merged duplicate v9.3.0 entries left from version rename.
-
-## v9.4.0
-
-### Bug fix
-
-- **Stage 02** (`02_collect_build_context.py`) — `NameError: name 'product_map'
-  is not defined` in `print_stage_output()`. The stats injector used
-  `len(product_map)` as the output count, but `product_map` is not a variable
-  in stage 02 (it is produced by stage 03). Fixed to use `len(build_artifacts)`
-  with a `kbuild_files` reason breakdown, which correctly reflects what stage 02
-  actually produces.
+- `lib/profile_rules.py` — stale v8.x changelog blocks removed from docstring.
 
 ## v9.3.0
 

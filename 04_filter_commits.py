@@ -95,6 +95,7 @@ from lib.pipeline_runtime import (
     start_stage, finish_stage, fail_stage, update_stage_progress,
     print_stage_input, print_stage_output
 )
+from lib.logsetup import setup_logging
 
 
 # ── Build-system file patterns (always pass Kconfig coverage, C5) ─────────────
@@ -352,9 +353,12 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('-v', '--verbose', action='count', default=0,
+                    help='Verbosity: -v INFO, -vv DEBUG')
     ap.add_argument('--config',   required=True)
     ap.add_argument('--override', default=None, metavar='JSON')
     args = ap.parse_args()
+    setup_logging(args.verbose)
 
     from lib.config           import load_config, load_json, save_json
     from lib.scoring          import extract_commit_meta, infer_touched_paths, precompile_rules
@@ -421,9 +425,10 @@ def main():
         print(f'  kconfig_active  : {kconfig_enabled}')
 
         # ── Apply filter ──────────────────────────────────────────────────────
-        kept    = []
-        dropped = 0
-        reasons = {}
+        kept            = []
+        dropped_commits = []
+        dropped         = 0
+        reasons         = {}
 
         for i, c in enumerate(commits):
             action, reason = filter_decision(
@@ -431,6 +436,8 @@ def main():
             if action == 'drop':
                 dropped += 1
                 reasons[reason] = reasons.get(reason, 0) + 1
+                c['_filter_reason'] = reason
+                dropped_commits.append(c)
             else:
                 kept.append(c)
             if i % step == 0 or i == total - 1:
@@ -441,6 +448,61 @@ def main():
         sys.stdout.flush()
 
         save_json(os.path.join(cache, 'filtered_commits.json'), kept)
+        # ── Filtered commits output files ─────────────────────────────────────
+        # Reuses the same templates config flags as stage 06 (relevant_commits).
+        _tmpl_cfg  = (cfg.get('templates') or {})
+        _want_csv  = _tmpl_cfg.get('csv_output',  False)
+        _want_html = _tmpl_cfg.get('html_summary', False)
+        _want_xlsx = _tmpl_cfg.get('xls_output',  False)
+        _want_ods  = _tmpl_cfg.get('ods_output',  False)
+        _rep_dir   = cfg.get('paths', {}).get('output_dir') or outdir
+
+        if _want_csv:
+            import csv as _csv
+            _csv_path = os.path.join(_rep_dir, 'filtered_commits.csv')
+            with open(_csv_path, 'w', newline='', encoding='utf-8') as _fh:
+                _w = _csv.writer(_fh)
+                _w.writerow(['sha', 'subject', 'author', 'date', 'reason'])
+                for _c in dropped_commits:
+                    _w.writerow([
+                        (_c.get('commit') or '')[:12],
+                        _c.get('subject', ''),
+                        _c.get('author_name', ''),
+                        _c.get('author_time', ''),
+                        _c.get('_filter_reason', ''),
+                    ])
+            print(f'  filtered CSV:  {_csv_path}')
+
+        if _want_html:
+            try:
+                from lib.html_report import generate_html_report
+                _html_path = os.path.join(_rep_dir, 'filtered_commits.html')
+                generate_html_report(
+                    dropped_commits, {}, {}, _html_path,
+                    title=_tmpl_cfg.get('report_title',
+                                        'kcommit Analysis Report') + ' — Filtered')
+                print(f'  filtered HTML: {_html_path}')
+            except Exception as _e:
+                logging.warning('filtered HTML failed: %s', _e)
+
+        if _want_xlsx:
+            try:
+                from lib.spreadsheet import write_xlsx
+                _xlsx_path = os.path.join(_rep_dir, 'filtered_commits.xlsx')
+                write_xlsx(_xlsx_path, dropped_commits, {})
+                print(f'  filtered XLSX: {_xlsx_path}')
+            except Exception as _e:
+                logging.warning('filtered XLSX failed: %s', _e)
+
+        if _want_ods:
+            try:
+                from lib.spreadsheet import write_ods
+                _ods_path = os.path.join(_rep_dir, 'filtered_commits.ods')
+                write_ods(_ods_path, dropped_commits, {})
+                print(f'  filtered ODS:  {_ods_path}')
+            except Exception as _e:
+                logging.warning('filtered ODS failed: %s', _e)
+
 
         print_stage_output('filtered commits', len(kept),
             dropped=dropped, reasons=reasons,

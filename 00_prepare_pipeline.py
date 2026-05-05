@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Stage 00: Prepare compiled rules and validate configuration.
 """
+import logging
 import json
 import argparse
 import os
+from lib.logsetup import setup_logging
 
 from lib.config import load_config
 from lib.profile_rules import compile_rules_for_config, active_profile_names
@@ -14,10 +16,13 @@ from lib.pipeline_runtime import start_stage, finish_stage, fail_stage
 
 def main():
     ap = argparse.ArgumentParser(description='Prepare compiled rules and validate configuration')
+    ap.add_argument('-v', '--verbose', action='count', default=0,
+                    help='Verbosity: -v INFO, -vv DEBUG')
     ap.add_argument('--config', required=True)
     ap.add_argument('--override', default=None, metavar='JSON',
                     help='Deep-merge JSON into config (forwarded from kcommit_pipeline)')
     args = ap.parse_args()
+    setup_logging(args.verbose)
 
     cfg = load_config(args.config)
     if args.override:
@@ -35,7 +40,7 @@ def main():
             print(note)
         if problems:
             for p in problems:
-                print('ERROR:', p)
+                logging.error('%s', p)
             fail_stage(state_path, 'prepare_pipeline', started,
                        error_msg='; '.join(problems))
             raise SystemExit(2)
@@ -59,7 +64,7 @@ def main():
 
         if issues:
             for msg in issues:
-                print('CONFIG ERROR:', msg)
+                logging.error('%s', msg)
             fail_stage(state_path, 'prepare_pipeline', started,
                        error_msg='; '.join(issues))
             raise SystemExit(2)

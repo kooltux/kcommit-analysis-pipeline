@@ -1,4 +1,5 @@
 import time
+from lib.logsetup import setup_logging
 #!/usr/bin/env python3
 """Stage 06: Generate reports from scored commits.
 
@@ -39,10 +40,13 @@ def _coverage(scored):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('-v', '--verbose', action='count', default=0,
+                    help='Verbosity: -v INFO, -vv DEBUG')
     ap.add_argument('--config', required=True)
     ap.add_argument('--override', default=None, metavar='JSON',
                     help='Deep-merge JSON into config (forwarded from kcommit_pipeline)')
     args = ap.parse_args()
+    setup_logging(args.verbose)
 
     cfg = load_config(args.config)
     if args.override:
