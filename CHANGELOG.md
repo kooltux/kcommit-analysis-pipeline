@@ -1,3 +1,14 @@
+## v9.4.0
+
+### Bug fix
+
+- **Stage 02** (`02_collect_build_context.py`) — `NameError: name 'product_map'
+  is not defined` in `print_stage_output()`. The stats injector used
+  `len(product_map)` as the output count, but `product_map` is not a variable
+  in stage 02 (it is produced by stage 03). Fixed to use `len(build_artifacts)`
+  with a `kbuild_files` reason breakdown, which correctly reflects what stage 02
+  actually produces.
+
 ## v9.3.0
 
 ### Bug fixes

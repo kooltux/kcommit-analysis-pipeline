@@ -132,7 +132,8 @@ def main():
         sys.stdout.flush()
 
         print('  build context captured')
-        print_stage_output('build context entries', len(product_map),
+        print_stage_output('build context entries', len(build_artifacts),
+            reasons={'kbuild_files': len(kbuild_files)},
             elapsed=time.time()-_t0_stage)
         finish_stage(state_path, 'collect_build_context', started, status='ok',
                      extra={
