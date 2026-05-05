@@ -1,6 +1,6 @@
 {
   // ─────────────────────────────────────────────────────────────────────────
-  // kcommit-analysis-pipeline — ARM embedded full example config (v8.11)
+  // kcommit-analysis-pipeline — ARM embedded full example config (v9.5)
   //
   // Variable expansion: ${VAR} is expanded in all string values.
   // Available variables:
@@ -111,7 +111,7 @@
     "use_first_parent":  false,
     // max_commits: cap on commits collected (0 = no limit).
     "max_commits":       0,
-    // score_workers: parallel scoring workers in stage 05 (0 = all CPUs).
+    // score_workers: parallel workers for scoring (0 = auto-detect).
     "score_workers":     0,
     // jsonl: also write commits.jsonl for streaming consumers.
     "jsonl":             false,

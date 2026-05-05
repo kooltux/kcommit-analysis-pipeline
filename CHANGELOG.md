@@ -1,3 +1,27 @@
+## v9.5.0
+
+### Bug fix
+
+- **Stage 06** (`06_report_commits.py`) — `WARNING: HTML failed:
+  generate_html_report() missing 2 required positional arguments:
+  'report_stats' and 'output_path'`.  The call was
+  `generate_html_report(work, cfg)` which passed the wrong variables and
+  omitted two required positional arguments.  Fixed to:
+  `generate_html_report(scored, profile_summary, report_stats, html_path,
+  title=...)` matching the actual function signature in `lib/html_report.py`.
+
+### Config
+
+- `configs/example-arm-embedded-full.json` — removed stale v8.11 changelog
+  block (lines 5–11); removed orphaned scoring-section notice (lines 111–112);
+  restored `score_workers` comment; updated header version tag to v9.5.
+
+### Housekeeping
+
+- `lib/pipeline_runtime.py` — `print_stage_output`: added `reasons = reasons
+  or {}` guard to normalise `None` vs `{}` callers consistently.
+- `CHANGELOG.md` — merged duplicate v9.3.0 entries left from version rename.
+
 ## v9.4.0
 
 ### Bug fix

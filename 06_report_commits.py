@@ -194,7 +194,11 @@ def main():
         html_path = None
         if want_html:
             try:
-                html_path = generate_html_report(work, cfg)
+                html_path = os.path.join(outdir, 'summary.html')
+                generate_html_report(
+                    scored, profile_summary, report_stats, html_path,
+                    title=tmpl_cfg.get('report_title',
+                                       'kcommit Analysis Report'))
                 print(f'  HTML: {html_path}')
             except Exception as e:
                 print(f'  WARNING: HTML failed: {e}')

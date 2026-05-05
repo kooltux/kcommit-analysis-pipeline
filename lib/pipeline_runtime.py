@@ -172,6 +172,7 @@ def print_stage_output(label, kept, dropped=None, reasons=None, elapsed=None):
         reasons – dict {reason_str: count} breakdown (optional)
         elapsed – wall-clock seconds (optional)
     """
+    reasons = reasons or {}
     total = kept + (dropped or 0)
     pct   = f"  ({kept/total:.0%} kept)" if total else ""
     t     = f"  [{elapsed:.1f}s]" if elapsed is not None else ""
