@@ -90,6 +90,11 @@ import fnmatch
 import os
 import re
 import sys
+import time
+from lib.pipeline_runtime import (
+    start_stage, finish_stage, fail_stage, update_stage_progress,
+    print_stage_input, print_stage_output
+)
 
 
 # ── Build-system file patterns (always pass Kconfig coverage, C5) ─────────────
@@ -355,8 +360,6 @@ def main():
     from lib.scoring          import extract_commit_meta, infer_touched_paths, precompile_rules
     from lib.profile_rules    import load_profile_rules
     from lib.validation       import validate_config_only as validate_inputs
-    from lib.pipeline_runtime import (start_stage, finish_stage,
-                                      fail_stage, update_stage_progress)
 
     cfg = load_config(args.config)
     if args.override:
@@ -365,8 +368,6 @@ def main():
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'filter_commits', 4, 7)
-    _t0_stage = __import__('time').time()
-    print_stage_input('filter input', commits)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -383,6 +384,8 @@ def main():
         filter_cfg = cfg.get('filter', {}) or {}
 
         commits     = load_json(os.path.join(cache, 'commits.json'), default=[]) or []
+        _t0_stage = time.time()
+        print_stage_input('filter input', commits)
         product_map = load_json(os.path.join(cache, 'product_map.json'), default={}) or {}
 
         # ── Enrichment ────────────────────────────────────────────────────────
@@ -438,19 +441,10 @@ def main():
         sys.stdout.flush()
 
         save_json(os.path.join(cache, 'filtered_commits.json'), kept)
-        print(f'  filter: {total} total → {len(kept)} kept, {dropped} dropped')
-        if reasons:
-            for r, n in sorted(reasons.items(), key=lambda x: -x[1]):
-                print(f'    {r}: {n}')
 
-        _kept_04    = [r for r in results if r.get('filter_decision') != 'drop']
-        _dropped_04 = [r for r in results if r.get('filter_decision') == 'drop']
-        _reasons_04 = {}
-        [_reasons_04.__setitem__(r.get('filter_reason','?'),
-            _reasons_04.get(r.get('filter_reason','?'), 0) + 1) for r in _dropped_04]
-        print_stage_output('filtered commits', len(_kept_04),
-            dropped=len(_dropped_04), reasons=_reasons_04,
-            elapsed=__import__('time').time()-_t0_stage)
+        print_stage_output('filtered commits', len(kept),
+            dropped=dropped, reasons=reasons,
+            elapsed=time.time()-_t0_stage)
         finish_stage(state_path, 'filter_commits', started, status='ok',
                      extra={'total': total, 'kept': len(kept),
                             'dropped': dropped, 'reasons': reasons,

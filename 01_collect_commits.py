@@ -4,13 +4,15 @@
 import json
 import argparse
 import os
+import time
 import sys
 
 from lib.config import load_config
 from lib.config import save_json
 from lib.validation import validate_config_only as validate_inputs
 from lib.pipeline_runtime import (
-    start_stage, finish_stage, fail_stage, update_stage_progress
+    start_stage, finish_stage, fail_stage, update_stage_progress,
+    print_stage_input, print_stage_output
 )
 from lib.gitutils import iter_git_log_records
 
@@ -34,7 +36,7 @@ def main():
     work            = cfg['paths']['work_dir']
     state_path      = os.path.join(work, 'pipeline_state.json')
     started         = start_stage(state_path, 'collect_commits', 1, 7)
-    _t0_stage = __import__('time').time()
+    _t0_stage = time.time()
     print_stage_input('git log', (cfg.get('kernel',{}) or {}).get('rev_old','') + '..' + (cfg.get('kernel',{}) or {}).get('rev_new',''))
 
     try:
@@ -95,7 +97,7 @@ def main():
 
         print(f'  collected {len(commits)} commits')
         print_stage_output('commits collected', len(commits),
-            elapsed=__import__('time').time()-_t0_stage)
+            elapsed=time.time()-_t0_stage)
         finish_stage(state_path, 'collect_commits', started, status='ok',
                      extra={'commit_count': len(commits)})
 

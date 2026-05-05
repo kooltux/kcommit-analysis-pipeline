@@ -1,3 +1,22 @@
+## v9.3.0
+
+### Bug fixes
+
+- **Stage 04** — `from lib.pipeline_runtime import (...)` was located inside
+  `main()` (indented, lazy import) instead of at module level alongside all
+  other lib imports.  Moved to module level so the names are always available
+  on import, consistent with stages 01–03, 05–06.
+
+- **Stage 04** — filter result summary was printed twice: once by an explicit
+  `print(f'  filter: {total} → …')` + reasons loop, and once by the new
+  `print_stage_output()` call added in v9.2.  Removed the redundant manual
+  block; `print_stage_output()` is the single source of truth.
+
+### Housekeeping
+
+- `lib/patterns.py` — updated module docstring version tag from "v9.2" to
+  "v9.4" to reflect current semantics.
+
 ## v9.2.0
 
 ### Bug fixes

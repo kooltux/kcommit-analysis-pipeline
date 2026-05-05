@@ -1,3 +1,4 @@
+import time
 #!/usr/bin/env python3
 """Stage 06: Generate reports from scored commits.
 
@@ -50,8 +51,6 @@ def main():
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'report_commits', 6, 7)
-    _t0_stage = __import__('time').time()
-    print_stage_input('report input', scored)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -70,6 +69,8 @@ def main():
         scored = (load_json(os.path.join(cache, 'scored_commits.json'),
                             default=[]) or [])
         scored = sorted(scored, key=lambda x: x.get('score', 0), reverse=True)
+        _t0_stage = time.time()
+        print_stage_input('report input', scored)
 
         # ── threshold ─────────────────────────────────────────────────────────
         tmpl_cfg    = cfg.get('templates', {}) or {}
@@ -223,7 +224,7 @@ def main():
 
         print(f'  reports done in {outdir}  ({len(scored)} commits)')
         print_stage_output('report outputs', len(scored),
-            elapsed=__import__('time').time()-_t0_stage)
+            elapsed=time.time()-_t0_stage)
         finish_stage(state_path, 'report_commits', started, status='ok',
                      extra={
                          'reported_commit_count': len(scored),

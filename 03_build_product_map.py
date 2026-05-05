@@ -4,6 +4,7 @@
 import json
 import argparse
 import os
+import time
 import sys
 
 from lib.config import load_config
@@ -12,7 +13,8 @@ from lib.parse_kconfig import scan_makefile_config_map
 from lib.history_map import build_history_config_map
 from lib.validation import validate_config_only as validate_inputs
 from lib.pipeline_runtime import (
-    start_stage, finish_stage, fail_stage, update_stage_progress
+    start_stage, finish_stage, fail_stage, update_stage_progress,
+    print_stage_input, print_stage_output
 )
 
 
@@ -40,7 +42,7 @@ def main():
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'build_product_map', 3, 7)
-    _t0_stage = __import__('time').time()
+    _t0_stage = time.time()
     print_stage_input('product map', 'from build context')
 
     try:
@@ -131,7 +133,7 @@ def main():
               % (len(config_to_paths), len(product_map['config_dirs'])))
         print_stage_output('product map symbols',
             len((product_map or {}).get('config_to_paths', {})),
-            elapsed=__import__('time').time()-_t0_stage)
+            elapsed=time.time()-_t0_stage)
         finish_stage(state_path, 'build_product_map', started, status='ok',
                      extra={
                          'log_object_count':    len(product_map['built_objects_from_log']),

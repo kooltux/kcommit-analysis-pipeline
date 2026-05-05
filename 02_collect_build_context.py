@@ -11,6 +11,7 @@ v8.4 changes vs v8.3:
 import json
 import argparse
 import os
+import time
 import sys
 
 from lib.config import load_config
@@ -19,7 +20,8 @@ from lib.kbuild import load_kernel_config_symbols
 from lib.parse_kconfig import parse_kernel_config, scan_kbuild_tree
 from lib.validation import validate_config_only as validate_inputs
 from lib.pipeline_runtime import (
-    start_stage, finish_stage, fail_stage, update_stage_progress
+    start_stage, finish_stage, fail_stage, update_stage_progress,
+    print_stage_input, print_stage_output
 )
 
 
@@ -56,7 +58,7 @@ def main():
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'collect_build_context', 2, 7)
-    _t0_stage = __import__('time').time()
+    _t0_stage = time.time()
     print_stage_input('build context', cfg.get('kernel',{}).get('build_dir','(none)'))
 
     try:
@@ -131,7 +133,7 @@ def main():
 
         print('  build context captured')
         print_stage_output('build context entries', len(product_map),
-            elapsed=__import__('time').time()-_t0_stage)
+            elapsed=time.time()-_t0_stage)
         finish_stage(state_path, 'collect_build_context', started, status='ok',
                      extra={
                          'build_artifact_count': len(build_artifacts),

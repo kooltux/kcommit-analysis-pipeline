@@ -1,6 +1,6 @@
 """Pattern matching primitives for kcommit-analysis-pipeline.
 
-v9.2 semantics:
+v9.3 semantics:
   keyword  (no glob metacharacters, or glob-chars escaped with backslash)
              → case-insensitive whole-word match (\\b boundaries).
              Backslash-escaped glob chars (\\*, \\?, \\[) are treated as

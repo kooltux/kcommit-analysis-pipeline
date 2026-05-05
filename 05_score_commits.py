@@ -4,6 +4,7 @@
 import json
 import argparse
 import os
+import time
 import sys
 
 from lib.config import load_config
@@ -12,7 +13,8 @@ from lib.scoring import score_commit, precompile_rules
 from lib.profile_rules import load_profile_rules
 from lib.validation import validate_config_only as validate_inputs
 from lib.pipeline_runtime import (
-    start_stage, finish_stage, fail_stage, update_stage_progress
+    start_stage, finish_stage, fail_stage, update_stage_progress,
+    print_stage_input, print_stage_output
 )
 
 
@@ -104,8 +106,6 @@ def main():
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     started    = start_stage(state_path, 'score_commits', 5, 7)
-    _t0_stage = __import__('time').time()
-    print_stage_input('score input', commits)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -123,6 +123,8 @@ def main():
 
         # Stage 04 always produces filtered_commits.json.
         commits = load_json(os.path.join(cache, 'filtered_commits.json'), default=[]) or []
+        _t0_stage = time.time()
+        print_stage_input('score input', commits)
         product_map   = load_json(os.path.join(cache, 'product_map.json'),
                                   default={}) or {}
         profile_rules = load_profile_rules(cfg)
@@ -141,7 +143,7 @@ def main():
         _neg_05 = len(scored) - _pos_05
         print_stage_output('scored commits', len(scored),
             reasons={'score>0': _pos_05, 'score=0': _neg_05},
-            elapsed=__import__('time').time()-_t0_stage)
+            elapsed=time.time()-_t0_stage)
         finish_stage(state_path, 'score_commits', started, status='ok',
                      extra={'scored_commit_count': len(scored)})
 
