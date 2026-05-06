@@ -56,3 +56,44 @@ def scan_kbuild_makefiles(source_dir):
     """
     _, kbuild_files = scan_kbuild_tree(source_dir)
     return kbuild_files
+
+
+# ── Subsystem path inference (moved from lib/scoring.py in v9.12) ─────────────
+
+import functools as _functools
+
+@_functools.lru_cache(maxsize=8)
+def _load_hints_from_path(hints_path):
+    """Load subsystem_path_hints.json (cached by path)."""
+    try:
+        import json as _json
+        with open(hints_path, encoding='utf-8') as _f:
+            return _json.load(_f)
+    except Exception:
+        return {}
+
+
+def infer_touched_paths(subject, cfg=None):
+    """Guess relevant kernel path prefixes from a commit subject line.
+
+    Uses configs/scoring/subsystem_path_hints.json.
+    Returns a sorted, deduplicated list of path prefix strings.
+    """
+    import os as _os
+    if not cfg:
+        return []
+    meta     = cfg.get('_meta', {}) or {}
+    vars_    = meta.get('vars', {}) or {}
+    tooldir  = (vars_.get('TOOLDIR')
+                or _os.environ.get('TOOLDIR')
+                or _os.path.abspath(_os.path.join(meta.get('config_dir', '.'), '..')))
+    hints_path = _os.path.join(tooldir, 'configs', 'scoring', 'subsystem_path_hints.json')
+    if not _os.path.exists(hints_path):
+        return []
+    hints = _load_hints_from_path(_os.path.abspath(hints_path))
+    low   = (subject or '').lower()
+    result = []
+    for keyword, paths in hints.items():
+        if keyword.lower() in low:
+            result.extend(paths if isinstance(paths, list) else [str(paths)])
+    return sorted(set(result))

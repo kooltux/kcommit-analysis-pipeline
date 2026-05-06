@@ -1,3 +1,133 @@
+## v9.12.0
+
+### Improvements
+
+- **Stage renaming** (landed as v9.10.1 patch)
+  Stage 4 renamed from `filter_commits` / `04_filter_commits.py` to
+  `prefilter_commits` / `04_prefilter_commits.py`.
+  Stage 6 renamed from `select_commits` / `06_select_commits.py` to
+  `postfilter_commits` / `06_postfilter_commits.py`.
+  All references updated in `MANIFEST.json`, `pipeline_state.json` tracking
+  calls, `STAGE_OUTPUTS`, and `STAGE_ORDER`.
+
+- **Proposal 4 — lightweight config schema** (`lib/config.py`)
+  `CONFIG_SCHEMA` introduced as a plain dict-of-dicts: the single source of
+  truth for all config key types. `_PATH_KEYS` is now derived from the schema
+  at module load time — no longer a hand-maintained static set.
+  Schema drives type validation in `lib/validation.py`, replacing scattered
+  manual `isinstance` checks.
+
+- **Proposal 10 — `profiles.active` empty = hard error** (`lib/validation.py`)
+  Empty or absent `profiles.active` is now a blocking error (was a notice).
+  On Python ≥ 3.11 `_emit_schema_errors()` builds an
+  `ExceptionGroup('config schema violations', [...])` for callers that prefer
+  structured exception handling via `except*`; on Python 3.6–3.10 the public
+  `(problems, notices)` API is unchanged.
+
+- **Topic A — `lib/gitutils.py`: modernised subprocess + latent key bug fix**
+  `run_git()` uses `subprocess.run(capture_output=True, text=True)` on
+  Python ≥ 3.7; `Popen`+`communicate()` retained as the Python 3.6 fallback
+  (detected via `_PY37 = sys.version_info >= (3, 7)` at import time).
+  `parse_pretty_block()` replaced the `startswith` chain with
+  `str.partition('=')`. Latent bug fixed: `collect.use_no_merges` and
+  `use_first_parent` are now accepted as transparent fallbacks for the
+  canonical keys `no_merges` / `first_parent`.
+
+- **Topic B — `lib/scoring.py`: dead alias removed**
+  `extract_stable_hints = extract_commit_meta` backward-compatibility alias
+  deleted.
+
+- **Topic C — `lib/scoring.py`: `_collect_product_evidence()` extracted**
+  Product-evidence collection (config map, build log, artifact, config text
+  hits) extracted from `score_commit()` into a dedicated
+  `_collect_product_evidence(commit, product_map)` function.
+  `score_commit()` is now focused on scoring logic only.
+
+- **Topic D — `lib/patterns.py`: `_PRECOMPILED_IDS` id-reuse hazard fixed**
+  Module-level `set` of `id()` values removed entirely. `precompile_rules()`
+  now sets `profile_rules['__compiled__'] = True` as a sentinel key — eliminates
+  the silent skip caused when Python reused a memory address for a dead dict.
+
+- **Topic E — `lib/pipeline_runtime.py`: progress bar routed to stderr**
+  `update_stage_progress()` now writes to `sys.stderr` and returns immediately
+  when stderr is not a TTY (`_STDERR_IS_TTY` evaluated once at import time).
+  `start_stage()`, `finish_stage()`, `fail_stage()`, `print_stage_input()`,
+  and `print_stage_output()` all write to stderr via a shared `_eprint()`
+  helper. Prevents bar characters from corrupting `--progress-json` stdout
+  streams and redirected log files.
+
+- **Topic F — `MANIFEST.json` + `lib/manifest.py`: stage outputs in manifest**
+  The `STAGE_OUTPUTS` dict previously hardcoded in `kcommit_pipeline.py` is
+  now declared as an `"outputs"` list per stage entry in `MANIFEST.json`.
+  `lib/manifest.py` derives `STAGE_OUTPUTS` from the manifest at load time.
+  Adding or renaming a stage output now requires a single edit in one file.
+
+- **Topic G — `lib/html_report.py`: `lru_cache` replaces manual cache dict**
+  `_TEMPLATE_CACHE = {}` module-level dict removed. `_get_template()` is now
+  decorated with `@functools.lru_cache(maxsize=None)` — same performance,
+  trivially clearable with `_get_template.cache_clear()`.
+
+- **Topic H — `lib/validation.py` + `lib/config.py`: unused `scoring` section removed**
+  The `scoring` top-level config section had no defined keys and no pipeline
+  consumer. Its `CONFIG_SCHEMA` entry and the numeric validation loop in
+  `_validate_common()` have been removed. A user-authored `"scoring"` key is
+  now silently ignored, consistent with other unrecognised top-level sections.
+
+- **Topic I — Python version branching documented**
+  Python 3.6 (Ubuntu 18 LTS) remains the minimum supported floor. Improved
+  APIs activate automatically: `subprocess.run` with `capture_output` on
+  ≥ 3.7; `ExceptionGroup` for structured validation errors on ≥ 3.11.
+  Documented in `docs/OVERVIEW.md` under *Runtime requirements*.
+
+## v9.11.0
+
+### New features
+
+- **Profile-driven architecture**: all scoring is now exclusively through
+  profiles and rules. The legacy `security`, `performance`, `stable`, and
+  `product` fixed categories have been fully removed from the scoring engine,
+  config schema, and documentation. Profile names are user-defined; the
+  built-in examples (`security_fixes`, `security_features`, `performance`)
+  remain as reference configs only.
+
+- **`compile_rules_for_config()` rewrite** (`lib/profile_rules.py`):
+  rules are now compiled once per run into a deduplicated on-disk schema
+  (`cache/00_compiled_rules.json`) and loaded back via
+  `load_profile_rules()`. The new schema is a flat dict keyed by profile
+  name with `merged` (union of all rule files) and `rules` (per-rule
+  weights) sub-keys.
+
+- **Stage 04 pre-filter** (`lib/stages/prefilter.py`):
+  heuristic gating before scoring — path blacklist, author filter, and
+  global keyword blacklist — extracted into a dedicated stage module.
+
+- **Stage 06 post-filter** (`lib/stages/postfilter.py`):
+  score-threshold gating after scoring, applying `filter.min_score`.
+  Low-score commits are tagged and merged into the filtered output for
+  traceability.
+
+- **`reports.outputs` list** (`lib/config.py`):
+  `reports.outputs` list introduced as the forward-looking replacement for
+  the `templates.*` boolean flags. Both are recognised in v9.11; the
+  `templates.*` flags are deprecated.
+
+- **`update_stage_progress()` in collect stage** (`lib/stages/collect.py`):
+  real-time progress reporting added to the commit collection loop.
+
+- **`compile_rules_for_config()` takes `work_dir`** (`lib/profile_rules.py`):
+  `work_dir` positional argument added; `lib/stages/prepare.py` updated
+  accordingly.
+
+- **`filter.min_score` added to CONFIG_SCHEMA** (`lib/config.py`):
+  `filter.min_score` is now a recognised key; validation no longer emits a
+  spurious NOTICE for it.
+
+### Bug fixes
+
+- `profiles.active` empty or absent is now a hard validation error.
+- `rules_dirs` and `profiles_dirs` existence is validated before the
+  pipeline starts.
+
 ## v9.10.0
 
 ### New features

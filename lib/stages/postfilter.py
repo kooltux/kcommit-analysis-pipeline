@@ -4,8 +4,18 @@ from lib.config import load_json, save_json
 
 
 def _get_threshold(cfg):
+    """Return the min_score threshold.
+
+    Canonical key: reports.min_score
+    Legacy fallback: filter.min_score (deprecated — use reports.min_score)
+    """
+    reports = cfg.get('reports', {}) or {}
+    legacy  = cfg.get('filter',  {}) or {}
+    raw = (reports.get('min_score')
+           if reports.get('min_score') is not None
+           else legacy.get('min_score', 0))
     try:
-        return float((cfg.get('filter', {}) or {}).get('min_score', 0) or 0)
+        return float(raw or 0)
     except (TypeError, ValueError):
         return 0.0
 

@@ -10,6 +10,7 @@ v9.9 changes:
     needed); rendered as a plain <table class="kc-table"> to avoid the
     filter-row overlapping regular rows.
 """
+import functools
 import json
 import os
 import time
@@ -17,19 +18,16 @@ import time
 from lib.manifest    import VERSION, TEMPLATE_DIR
 from lib.spreadsheet import COMMIT_COLS, SUMMARY_COLS, MATRIX_COLS
 
-_TEMPLATE_CACHE = {}
 
-
+@functools.lru_cache(maxsize=None)
 def _get_template(name, default=''):
-    if name not in _TEMPLATE_CACHE:
-        root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-        path = os.path.join(root, TEMPLATE_DIR, name)
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                _TEMPLATE_CACHE[name] = f.read()
-        except Exception:
-            _TEMPLATE_CACHE[name] = default
-    return _TEMPLATE_CACHE[name]
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    path = os.path.join(root, TEMPLATE_DIR, name)
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception:
+        return default
 
 
 def _logo():

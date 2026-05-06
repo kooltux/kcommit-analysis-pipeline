@@ -14,12 +14,12 @@ def run(cfg, cache):
             print(f'  ERROR:  {p}')
         raise SystemExit(2)
 
-    compiled = compile_rules_for_config(cfg)
+    compiled = compile_rules_for_config(cfg, work_dir=cache)
     save_json(os.path.join(cache, '00_compiled_rules.json'), compiled)
 
     names   = active_profile_names(cfg)
     summary = {
-        'active_profiles': names,
+        'profiles': names,
         'rule_counts': {
             pname: len((compiled.get(pname) or {}).get('rules', {}))
             for pname in names

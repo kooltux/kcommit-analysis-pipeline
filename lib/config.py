@@ -1,16 +1,4 @@
-"""Load JSON config files with ${var} expansion, relative includes, and comment stripping.
-
-v9.8 changes:
-  - deep_merge() was defined twice; second shadowed first. Canonical single
-    definition kept; camelCase alias deepmerge() retained for compatibility.
-  - _resolve_relative_paths() was over-eager: it absolutised any string
-    containing '/' or starting with '.', corrupting git refs, regex patterns,
-    and URL fragments. Now operates on an explicit allowlist of path-typed keys.
-  - apply_override() moved to module level and exported directly; stage scripts
-    no longer need to import it from kcommit_pipeline.
-  - load_config(): profiles_dirs and rules_dirs lists resolved and stored in
-    cfg['paths'] alongside the legacy single-dir keys.
-"""
+"""Load JSON config files with ${var} expansion, relative includes, and comment stripping."""
 import copy
 import json
 import os
@@ -18,14 +6,100 @@ import re
 
 VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 
-# Keys whose string values should be treated as filesystem paths and resolved
-# relative to the config file's directory.
-_PATH_KEYS = frozenset({
-    'source_dir', 'build_dir', 'work_dir', 'cache_dir', 'output_dir',
-    'kernel_config', 'kernel_build_log', 'yocto_build_log',
-    'profiles_dir', 'rules_dir', 'scoring_dir', 'templates_dir',
-    'css_override',
-})
+# ── Lightweight config schema ─────────────────────────────────────────────────
+#
+# Each entry describes one key that may appear anywhere in the config tree.
+# "path"  → string (or list of strings) resolved relative to config_dir.
+# "bool"  → must be True/False (not 0/1).
+# "int"   → must be an integer.
+# "float" → must be a number.
+# "str"   → must be a string.
+# "list"  → must be a list.
+# "dict"  → must be a dict.
+#
+# Path resolution is the only behaviour driven by this schema at load time.
+# Type validation is consumed by lib/validation.py.
+
+CONFIG_SCHEMA = {
+    # kernel section
+    'kernel': {
+        '__type__': 'dict',
+        'source_dir':       {'type': 'path',   'required': True},
+        'rev_old':          {'type': 'str',    'required': True},
+        'rev_new':          {'type': 'str',    'required': True},
+        'kernel_config':    {'type': 'path'},
+        'build_dir':        {'type': 'path'},
+        'kernel_build_log': {'type': 'path'},
+        'yocto_build_log':  {'type': 'path'},
+        'dts_roots':        {'type': 'path',   'list': True},
+    },
+    # paths section (built by load_config, not user-authored)
+    'paths': {
+        '__type__': 'dict',
+        'work_dir':      {'type': 'path'},
+        'cache_dir':     {'type': 'path'},
+        'output_dir':    {'type': 'path'},
+        'profiles_dirs': {'type': 'path', 'list': True},
+        'rules_dirs':    {'type': 'path', 'list': True},
+        'scoring_dir':   {'type': 'path'},
+        'templates_dir': {'type': 'path'},
+        'css_override':  {'type': 'path'},
+    },
+    # profiles section
+    'profiles': {
+        '__type__': 'dict',
+        'active':        {'type': 'dict'},
+        'profiles_dirs': {'type': 'path', 'list': True},
+    },
+    # rules section
+    'rules': {
+        '__type__': 'dict',
+        'rules_dirs': {'type': 'path', 'list': True},
+    },
+    # filter section
+    'filter': {
+        '__type__': 'dict',
+        'enabled':                  {'type': 'bool'},
+        'path_blacklist_global':    {'type': 'bool'},
+        'require_kconfig_coverage': {'type': 'bool'},
+    },
+    # collect section
+    'collect': {
+        '__type__': 'dict',
+        'use_numstat':    {'type': 'bool'},
+        'no_merges':      {'type': 'bool'},
+        'first_parent':   {'type': 'bool'},
+        'score_workers':  {'type': 'int'},
+    },
+    # reports section
+    'reports': {
+        '__type__': 'dict',
+        'outputs':   {'type': 'list'},
+        'min_score': {'type': 'float'},
+    },
+    # history_mapping section
+    'history_mapping': {
+        '__type__': 'dict',
+        'mode':        {'type': 'str'},
+        'sample_step': {'type': 'int'},
+        'enabled':     {'type': 'bool'},
+    },
+    # project section
+    'project': {
+        '__type__': 'dict',
+        'work_dir': {'type': 'path'},
+    },
+}
+
+# Flat set of all keys that are path-typed, derived from the schema.
+# Used by _resolve_known_paths() — single source of truth.
+_PATH_KEYS = frozenset(
+    key
+    for section in CONFIG_SCHEMA.values()
+    for key, spec in section.items()
+    if key != '__type__' and spec.get('type') == 'path'
+)
+
 
 # ── JSON helpers ──────────────────────────────────────────────────────────────
 
@@ -59,11 +133,6 @@ def deep_merge(base, patch):
     return base
 
 
-# Backward-compatible camelCase alias
-def deepmerge(base, patch):
-    return deep_merge(base, patch)
-
-
 # ── Variable expansion ────────────────────────────────────────────────────────
 
 def _expand_string(text, variables, stack=None):
@@ -73,9 +142,10 @@ def _expand_string(text, variables, stack=None):
     def repl(match):
         name = match.group(1)
         if name in stack:
-            raise ValueError(f"cyclic variable reference: {' -> '.join(stack + [name])}")
+            raise ValueError('cyclic variable reference: {}'.format(
+                ' -> '.join(stack + [name])))
         if name not in variables:
-            raise KeyError(f'undefined variable: {name}')
+            raise KeyError('undefined variable: {}'.format(name))
         value = variables[name]
         if not isinstance(value, str):
             value = str(value)
@@ -101,14 +171,8 @@ def _expand_node(node, variables):
 
 # ── Comment stripping ─────────────────────────────────────────────────────────
 
-# Shared regex for bash-style inline hash comments.
-# Matches # at column 0 OR preceded by whitespace; exported so other
-# modules (e.g. profile_rules) can import rather than re-define it.
 INLINE_COMMENT_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
-_INLINE_HASH_RE   = INLINE_COMMENT_RE   # backward-compat alias
-
-# Regex for inline // comments: // preceded by whitespace (or start of line).
-_INLINE_SLASH_RE = re.compile(r'(^|(?<=\s))//.*$', re.MULTILINE)
+_INLINE_SLASH_RE  = re.compile(r'(^|(?<=\s))//.*$', re.MULTILINE)
 
 
 def _blank_comment(m):
@@ -118,14 +182,7 @@ def _blank_comment(m):
 
 
 def _strip_json_comments(text):
-    """Remove comments from JSON-like text, preserving line AND column positions.
-
-    Supported comment styles:
-      /* … */  block comments (may span multiple lines)
-      //       whole-line OR inline — only when // follows whitespace or is at
-               column 0.  :// in URLs is NOT stripped (colon ≠ whitespace).
-      #        whole-line OR inline — same whitespace rule as bash comments.
-    """
+    """Remove /* */, // and # comments from JSON-like text, preserving positions."""
     def _blank_block(m):
         return re.sub(r'[^\n]', ' ', m.group(0))
 
@@ -150,33 +207,35 @@ def _load_json(path):
     return json.loads(raw)
 
 
-# ── Path resolution (allowlist-based) ────────────────────────────────────────
+# ── Path resolution (schema-driven) ──────────────────────────────────────────
 
 def _resolve_path(value, base_dir):
-    """Resolve *value* as a path relative to *base_dir* if it looks like one.
+    """Resolve *value* as a path relative to *base_dir*.
 
-    Only called for keys in _PATH_KEYS.  Absolute paths, URLs, and ${VAR}
-    references are returned unchanged.
+    Absolute paths, URLs, ${VAR} references, and empty strings are returned
+    unchanged. Called only for keys whose schema entry has type='path'.
     """
     if not isinstance(value, str):
         return value
-    if '://' in value or value.startswith('${') or value.startswith('/') or value.startswith('~'):
-        return value
-    if value == '':
+    if not value or '://' in value or value.startswith('${') \
+            or value.startswith('/') or value.startswith('~'):
         return value
     return os.path.normpath(os.path.join(base_dir, value))
 
 
 def _resolve_known_paths(node, base_dir):
-    """Walk a config dict and resolve only known path-typed keys."""
+    """Walk a config dict and resolve path-typed keys (driven by _PATH_KEYS).
+
+    _PATH_KEYS is derived from CONFIG_SCHEMA, so adding a new path-typed key
+    to the schema automatically enables resolution here — no separate edit needed.
+    """
     if isinstance(node, dict):
         out = {}
         for k, v in node.items():
             if k in _PATH_KEYS:
-                if isinstance(v, list):
-                    out[k] = [_resolve_path(item, base_dir) for item in v]
-                else:
-                    out[k] = _resolve_path(v, base_dir)
+                out[k] = ([_resolve_path(i, base_dir) for i in v]
+                          if isinstance(v, list)
+                          else _resolve_path(v, base_dir))
             else:
                 out[k] = _resolve_known_paths(v, base_dir)
         return out
@@ -192,7 +251,7 @@ def load_config(path, inherited_vars=None, seen=None):
     if seen is None:
         seen = set()
     if path in seen:
-        raise ValueError(f'cyclic include detected: {path}')
+        raise ValueError('cyclic include detected: {}'.format(path))
     seen.add(path)
 
     cfg = _load_json(path)
@@ -229,45 +288,31 @@ def load_config(path, inherited_vars=None, seen=None):
     work = (os.path.normpath(os.path.join(config_dir, work_raw))
             if not os.path.isabs(work_raw) else work_raw)
 
-    # Single-dir defaults (backward compat)
-    profiles_dir  = os.path.join(config_dir, 'profiles')
-    rules_dir     = os.path.join(config_dir, 'rules')
     scoring_dir   = os.path.join(config_dir, 'scoring')
     templates_dir = os.path.join(config_dir, 'templates')
 
-    # Multi-dir support: profiles.profiles_dirs / rules.rules_dirs
-    # If a list is provided, use it; otherwise wrap the single dir in a list.
     _profiles_cfg = expanded.get('profiles', {}) or {}
     _rules_cfg    = expanded.get('rules', {}) or {}
 
-    if 'profiles_dirs' in _profiles_cfg:
-        raw = _profiles_cfg['profiles_dirs']
-        profiles_dirs = [r if os.path.isabs(r) else os.path.normpath(os.path.join(config_dir, r))
-                         for r in (raw if isinstance(raw, list) else [raw])]
-    elif 'profiles_dir' in _profiles_cfg:
-        d = _profiles_cfg['profiles_dir']
-        profiles_dirs = [d if os.path.isabs(d) else os.path.normpath(os.path.join(config_dir, d))]
-    else:
-        profiles_dirs = [profiles_dir]
+    def _resolve_dir_list(cfg_section, key_plural, default_dir):
+        raw = cfg_section.get(key_plural)
+        if raw:
+            entries = raw if isinstance(raw, list) else [raw]
+            return [r if os.path.isabs(r) else os.path.normpath(os.path.join(config_dir, r))
+                    for r in entries]
+        return [default_dir]
 
-    if 'rules_dirs' in _rules_cfg:
-        raw = _rules_cfg['rules_dirs']
-        rules_dirs = [r if os.path.isabs(r) else os.path.normpath(os.path.join(config_dir, r))
-                      for r in (raw if isinstance(raw, list) else [raw])]
-    elif 'rules_dir' in _rules_cfg:
-        d = _rules_cfg['rules_dir']
-        rules_dirs = [d if os.path.isabs(d) else os.path.normpath(os.path.join(config_dir, d))]
-    else:
-        rules_dirs = [rules_dir]
+    profiles_dirs = _resolve_dir_list(_profiles_cfg, 'profiles_dirs',
+                                      os.path.join(config_dir, 'profiles'))
+    rules_dirs    = _resolve_dir_list(_rules_cfg, 'rules_dirs',
+                                      os.path.join(config_dir, 'rules'))
 
     expanded['paths'] = {
         'work_dir':      work,
         'cache_dir':     os.path.join(work, 'cache'),
         'output_dir':    os.path.join(work, 'output'),
-        'profiles_dir':  profiles_dirs[0],   # primary (legacy callers)
-        'profiles_dirs': profiles_dirs,       # full list (new callers)
-        'rules_dir':     rules_dirs[0],       # primary (legacy callers)
-        'rules_dirs':    rules_dirs,          # full list (new callers)
+        'profiles_dirs': profiles_dirs,
+        'rules_dirs':    rules_dirs,
         'scoring_dir':   scoring_dir,
         'templates_dir': templates_dir,
     }
@@ -287,17 +332,11 @@ def apply_override(cfg, override_json):
     """Parse *override_json* string and deep-merge into *cfg*.
 
     Raises SystemExit on parse error or non-object input.
-    Importable directly from lib.config — no need to import from kcommit_pipeline.
     """
     try:
         patch = json.loads(override_json)
     except json.JSONDecodeError as exc:
-        raise SystemExit(f'--override invalid JSON: {exc}')
+        raise SystemExit('--override invalid JSON: {}'.format(exc))
     if not isinstance(patch, dict):
         raise SystemExit('--override top-level JSON value must be an object')
     return deep_merge(cfg, patch)
-
-
-# Backward-compatible camelCase alias
-def applyoverride(cfg, override_json):
-    return apply_override(cfg, override_json)

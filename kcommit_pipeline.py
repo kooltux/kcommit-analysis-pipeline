@@ -32,7 +32,7 @@ import time
 
 from lib.logsetup import setup_logging
 from lib.config import load_config, deep_merge, apply_override
-from lib.manifest import VERSION, load_manifest
+from lib.manifest import VERSION, load_manifest, STAGE_OUTPUTS
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import (is_stage_done, wipe_downstream,
                                    init_pipeline_state)
@@ -41,21 +41,6 @@ _manifest   = load_manifest()
 STAGES      = [(s['index'], s['script'], s['key'])
                for s in _manifest['pipeline_stages']]
 STAGE_ORDER = [s[2] for s in STAGES]
-STAGE_OUTPUTS = {
-    'prepare_pipeline':      ['cache/00_compiled_rules.json', 'cache/00_prepare_summary.json'],
-    'collect_commits':       ['cache/01_commits.json'],
-    'collect_build_context': ['cache/02_build_context.json', 'cache/02_kbuild_static_map.json'],
-    'build_product_map':     ['cache/03_product_map.json'],
-    'prefilter_commits':     ['cache/04_filtered_commits.json'],
-    'score_commits':         ['cache/05_scored_commits.json'],
-    'postfilter_commits':    ['cache/06_relevant_commits.json'],
-    'report_commits':        ['output/relevant_commits.csv',
-                              'output/06_relevant_commits.json',
-                              'output/report_stats.json',
-                              'output/profile_summary.json',
-                              'output/profile_matrix.csv',
-                              'output/summary.html'],
-}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -214,8 +199,7 @@ def cmd_validate(args):
     work     = cfg['paths']['work_dir']
     kernel   = cfg.get('kernel', {}) or {}
     filt     = cfg.get('filter', {}) or {}
-    profiles = (cfg.get('profiles', {}) or {}).get('active') or \
-               cfg.get('active_profiles', [])
+    profiles = (cfg.get('profiles', {}) or {}).get('active') or []
 
     print(f'=== kcommit-analysis-pipeline {VERSION} — validate ===')
     print(f'Config   : {args.config}')

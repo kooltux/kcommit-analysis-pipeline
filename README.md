@@ -1,186 +1,122 @@
-# kcommit-analysis-pipeline v9.0
+# kcommit-analysis-pipeline
 
-Python 3.6+-compatible, restartable pipeline to analyze Linux kernel commits
-between two revisions and identify commits relevant to security fixes, security
-features, and performance improvements.
+A restartable pipeline to analyse Linux kernel commits between two revisions
+and identify those relevant to a given embedded product, scored exclusively
+through configurable profile/rule sets.
 
 ## What it does
 
-The pipeline compares two kernel revisions, collects the commit history in
-between, gathers product-specific build context (Kconfig, build logs, DTS),
-maps enabled Kconfig symbols to effective source paths, **pre-filters
-irrelevant commits before scoring**, scores the remaining commits exclusively
-through configurable profile/rule sets, and generates CSV, JSON, and HTML
-reports for manual review.
+The pipeline compares two kernel revisions, collects the commit history,
+gathers product-specific build context (Kconfig, build logs, DTS), maps
+enabled Kconfig symbols to source paths, pre-filters irrelevant commits, scores
+the remainder through profiles and rules, and generates HTML, CSV, XLSX, and
+ODS reports for manual review.
 
 ## Pipeline stages
 
 | # | Key | Script | Purpose |
 |---|-----|--------|---------|
-| 0 | `prepare_pipeline`      | `00_prepare_pipeline.py`      | Validate config, compile profiles/rules, init workspace |
-| 1 | `collect_commits`       | `01_collect_commits.py`       | Collect commit metadata between the two revisions |
-| 2 | `collect_build_context` | `02_collect_build_context.py` | Collect kernel .config, build artifacts, build logs |
-| 3 | `build_product_map`     | `03_build_product_map.py`     | Map Kconfig symbols → source paths |
-| 4 | `filter_commits`        | `04_filter_commits.py`        | Drop commits that cannot possibly score (path blacklists, product-map) |
-| 5 | `score_commits`         | `05_score_commits.py`         | Score commits via profiles and rules only |
-| 6 | `report_commits`        | `06_report_commits.py`        | Generate CSV / JSON / HTML / XLSX / ODS reports |
+| 0 | `prepare_pipeline`      | `00_prepare_pipeline.py`      | Validate config, compile profiles/rules |
+| 1 | `collect_commits`       | `01_collect_commits.py`       | Collect commit metadata from `git log` |
+| 2 | `collect_build_context` | `02_collect_build_context.py` | Collect kernel `.config`, build artifacts, logs |
+| 3 | `build_product_map`     | `03_build_product_map.py`     | Map `CONFIG_*` symbols → source paths |
+| 4 | `prefilter_commits`     | `04_prefilter_commits.py`     | Drop commits that cannot possibly score |
+| 5 | `score_commits`         | `05_score_commits.py`         | Score commits via active profiles and rules |
+| 6 | `postfilter_commits`    | `06_postfilter_commits.py`    | Drop commits below score threshold |
+| 7 | `report_commits`        | `07_report_commits.py`        | Generate CSV / JSON / HTML / XLSX / ODS reports |
 
-Each stage stores intermediate data in `<work_dir>/cache/` and can be
+Intermediate data is stored in `<work_dir>/cache/` and each stage can be
 restarted independently.
 
 ## Running the pipeline
 
 ```bash
 # Run all stages
-python3 kcommit_pipeline.py --config /path/to/cfg.json
+python3 kcommit_pipeline.py run --config /path/to/cfg.json
 
 # Run a single stage
-python3 kcommit_pipeline.py --config /path/to/cfg.json --stage filter_commits
+python3 kcommit_pipeline.py run --config /path/to/cfg.json --stage 5
 
 # Re-run from stage 4 onwards (wipes downstream cache)
-python3 kcommit_pipeline.py --config /path/to/cfg.json --from 4
+python3 kcommit_pipeline.py run --config /path/to/cfg.json --from 4
+
+# Resume: skip already-completed stages
+python3 kcommit_pipeline.py run --config /path/to/cfg.json --resume
+
+# Validate config without running
+python3 kcommit_pipeline.py validate --config /path/to/cfg.json
+
+# Show stage completion status
+python3 kcommit_pipeline.py status --config /path/to/cfg.json
+
+# Re-generate reports from cached scored data
+python3 kcommit_pipeline.py report --config /path/to/cfg.json --format html --format xlsx
+
+# Inspect filtered-out commits
+python3 kcommit_pipeline.py dropped --config /path/to/cfg.json --reason prefilter
 
 # Override config values at runtime (deep-merged into loaded config)
-python3 kcommit_pipeline.py --config /path/to/cfg.json \
-    --override '{"kernel":{"rev_old":"v4.14.111"}}'
+python3 kcommit_pipeline.py run --config /path/to/cfg.json \
+    --override '{"kernel":{"rev_old":"v6.1.1"}}'
 
-# Dry-run: validate config and print resolved values without running
-python3 kcommit_pipeline.py --config /path/to/cfg.json --dry-run
+# Machine-readable progress events (one JSON line per stage)
+python3 kcommit_pipeline.py run --config /path/to/cfg.json --progress-json
 ```
 
-## `--override` option
+## Scoring model
 
-`--override` accepts a JSON object that is **deep-merged** into the loaded
-config after all `${VAR}` expansion. Nested keys are merged recursively;
-scalar values and lists are replaced. Sibling keys not present in the patch
-are preserved.
-
-The override is forwarded to every stage script, so the effect is consistent
-across all stages when running the full pipeline or a single stage directly.
-
-```bash
-# Change the revision range
---override '{"kernel":{"rev_old":"v4.14.111","rev_new":"v4.14.200"}}'
-
-# Disable the pre-scoring filter
---override '{"filter":{"enabled":false}}'
-
-# Lower the reporting threshold
---override '{"templates":{"top_n":200}}'
-
-# Change active profile weights
---override '{"profiles":{"active":{"security_fixes":100,"performance":30}}}'
-```
-
-## Scoring model (v9.0)
-
-Scoring is **exclusively through profiles and rules**. There are no direct
-score contributions from security keywords, stable hints, CVE detection, or
-product-map evidence. Those signals are computed and stored as metadata
-(visible in the HTML report as flag badges and in the JSON output under
-`scoring.meta`) but do **not** add to the score.
-
-The only way to influence scoring is through:
-- **Profile weights** (`profiles.active`) — scale each profile's contribution.
-- **Rule weights** (per rule-set directory, `weight` key) — score individual rule hits.
-- **Blacklists / whitelists** in rule sets — control which commits and paths match.
-
-### Scoring flow
+Scoring is **exclusively through profiles and rules**. Kernel annotation
+metadata (CVE, Fixes, Stable, Syzbot) is extracted and displayed as badges
+in the HTML report but does **not** add to the score.
 
 ```
-commit
-  │
-  ├─ profile_blacklist / commit_blacklist → score = 0, skip profile
-  │
-  ├─ for each active profile:
-  │    per_rule_total = sum(rule.weight for matching rules), capped at 100
-  │    profile_score  = int(per_rule_total × profile_weight / 100)
-  │
-  └─ combined score = Σ profile_scores
+for each active profile P with weight W (0–100):
+    rule_sum  = sum(rule.weight for matching rules), capped at 100
+    score[P]  = int(rule_sum × W / 100)
+
+total_score = Σ score[P]
 ```
 
-### Pre-scoring filter (stage 04)
+The only way to influence scoring is through **profile weights**
+(`profiles.active`) and **rule weights** in each rule-set directory.
 
-Before scoring, stage 04 drops commits that are structurally irrelevant:
+## Pre-scoring filter (stage 04)
 
-1. **SHA blacklist** — commit SHA matches any profile's `commit_blacklist`.
-2. **All paths blacklisted** — every file touched matches the merged
-   `path_blacklist` from all active profiles (`filter.path_blacklist_global`).
-3. **No product-map coverage** — no touched file appears in the compiled
-   product map (`filter.require_product_map`, opt-in, default `false`).
+Before scoring, stage 04 drops structurally irrelevant commits in priority order:
 
-Filtered commits are written to `cache/filtered_commits.json`. Stage 05
-reads this file (falls back to `enriched_commits.json` → `commits.json`).
+1. SHA in `commit_whitelist` → **FORCE-KEEP**
+2. SHA in `commit_blacklist` → **FORCE-DROP**
+3. ALL touched files in `path_blacklist` → **DROP**
+4. ANY touched file in `path_whitelist` → **KEEP**
+5. Kconfig/build-artifact coverage check (optional) → **DROP** if uncovered
+6. ANY keyword in `keywords_whitelist` → **KEEP**
+7. ANY keyword in `keywords_blacklist` → **DROP**
+8. Default → **KEEP**
 
 ## Configuration
 
-Configuration files are JSON with `//` and `#` comment support.
+See `docs/CONFIGURATION.md` for the full reference.
 
-### Variable expansion
-
-`${VAR}` is expanded in all string values:
-
-| Variable    | Value |
-|-------------|-------|
-| `WORKSPACE` | External workspace root (from shell environment) |
-| `TOOLDIR`   | Pipeline repository root (auto-set by config loader) |
-| `CONFIGDIR` | Directory of the current config file (auto-set) |
-| `CWD`       | Current working directory |
-
-### Directory layout
-
-```
-your-product-config/
-├── config.json                  ← copy & customize example-arm-embedded-full.json
-├── profiles/
-│   ├── security_fixes.json
-│   ├── security_features.json
-│   └── performance.json
-├── rules/
-│   ├── security_general/
-│   │   ├── keywords_whitelist.txt
-│   │   ├── keywords_blacklist.txt
-│   │   ├── path_whitelist.txt
-│   │   ├── path_blacklist.txt
-│   │   ├── commit_whitelist.txt
-│   │   └── commit_blacklist.txt
-│   └── …
-└── scoring/
-    └── subsystem_path_hints.json
-```
-
-### Profile format
+Key sections:
 
 ```json
 {
-  "name": "security_fixes",
-  "description": "Kernel security fixes — CVE, UAF, OOB, privilege escalation",
-  "rules": ["security_cve_bugs", "security_bounds", "security_memory",
-            "security_general", "security_auth_caps", "security_crypto_time",
-            "security_syscalls"]
+  "kernel":  { "source_dir": "…", "rev_old": "v6.1", "rev_new": "v6.6" },
+  "profiles": {
+    "active": {
+      "my_profile_a": 100,
+      "my_profile_b": 70
+    }
+  },
+  "filter":  { "enabled": true, "min_score": 10 }
 }
 ```
 
-### Rule-set structure
+## Profiles and rules
 
-Each sub-directory under `rules_dir` is one rule set. The directory name is
-the rule key. Each rule set may contain any of:
-
-| File | Effect |
-|------|--------|
-| `keywords_whitelist.txt` | Lines matched against commit subject + body; hit adds `weight` |
-| `keywords_blacklist.txt` | Lines matched against subject; hit excludes commit from this profile |
-| `path_whitelist.txt`     | Lines matched against touched file paths; hit adds `weight` |
-| `path_blacklist.txt`     | Lines matched against touched file paths; if ALL files match, commit is filtered (stage 04) |
-| `commit_whitelist.txt`   | Exact or glob SHA matches; hit adds `weight` |
-| `commit_blacklist.txt`   | Exact or glob SHA matches; hit excludes commit from this profile |
-
-Pattern syntax per line:
-- `re:<expr>` — case-insensitive regex
-- `*`, `?`, `[…]` — fnmatch glob
-- plain text — case-insensitive substring
-
-Rule weight is set in the profile JSON under `rules[name].weight` (default 50).
+Profiles and rules live in directories referenced by `profiles.profiles_dirs`
+and `rules.rules_dirs` (defaulting to `<CONFIGDIR>/profiles/` and
+`<CONFIGDIR>/rules/`). See `docs/PROFILES_AND_RULES.md` for the full format.
 
 ## Outputs
 
@@ -188,21 +124,20 @@ Rule weight is set in the profile JSON under `rules[name].weight` (default 50).
 |------|-------------|
 | `output/relevant_commits.csv`  | Ranked commits above the score threshold |
 | `output/relevant_commits.json` | Same data as JSON |
-| `output/profile_summary.json`  | Per-profile commit count, total score, avg score |
+| `output/summary.html`          | Interactive HTML report (filters, sort, dark mode, CSV export) |
+| `output/profile_summary.json`  | Per-profile commit count and average score |
 | `output/profile_matrix.csv`    | Per-commit × per-profile score breakdown |
 | `output/report_stats.json`     | Pipeline run statistics |
-| `output/summary.html`          | Interactive HTML report (filters, sort, dark mode, score badges) |
 
-Optional: `relevant_commits.xlsx` / `relevant_commits.ods`
-(enable with `templates.xls_output` / `templates.ods_output`).
-
-## Example config
-
-`configs/example-arm-embedded-full.json` — fully annotated ARM Linux
-`v4.14.206..v4.14.336` example with all available options documented.
+Optional: `.xlsx` / `.ods` (enable with `templates.xls_output` / `templates.ods_output`).
 
 ## Requirements
 
-- Python 3.6+
+- Python 3.8+
 - `git` on `PATH`
-- No third-party Python packages required (stdlib only)
+- `openpyxl` for XLSX output (`pip install openpyxl`)
+
+## Example config
+
+`configs/example-arm-embedded-full.json` — fully annotated example with all
+available options documented.

@@ -13,7 +13,6 @@ v9.3 semantics:
 import fnmatch
 import re
 
-_PRECOMPILED_IDS: set = set()
 
 # Characters that trigger glob mode when unescaped
 _GLOB_CHARS = frozenset('*?[')
@@ -119,9 +118,12 @@ def precompile_rules(profile_rules):
 
     Idempotent: repeated calls on the same dict object are no-ops (id check).
     """
-    if id(profile_rules) in _PRECOMPILED_IDS:
+    # Sentinel key avoids re-compiling the same dict.
+    # Using a sentinel avoids the id()-reuse hazard of a
+    # module-level set (Python may reuse addresses of dead objects).
+    if profile_rules.get('__compiled__'):
         return profile_rules
-    _PRECOMPILED_IDS.add(id(profile_rules))
+    profile_rules['__compiled__'] = True
     keys = ('keywords_whitelist', 'keywords_blacklist',
             'path_whitelist', 'path_blacklist',
             'commit_whitelist', 'commit_blacklist')

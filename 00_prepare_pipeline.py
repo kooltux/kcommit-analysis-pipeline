@@ -26,7 +26,7 @@ def main():
     try:
         summary = stage_run(cfg, cache)
         finish_stage(state, 'prepare_pipeline', t, status='ok',
-                     extra={'profile_count': len(summary['active_profiles'])})
+                     extra={'profile_count': len(summary['profiles'])})
     except SystemExit:
         fail_stage(state, 'prepare_pipeline', t, error_msg='validation failed'); raise
     except Exception as exc:

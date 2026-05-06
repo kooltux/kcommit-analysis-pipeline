@@ -1,10 +1,9 @@
 # kcommit-analysis-pipeline — Overview
 
-`kcommit-analysis-pipeline` analyses a range of Linux kernel commits and
-identifies those relevant to a given embedded product. It combines build
-context (which kernel symbols are enabled), profile-based rule matching, and
-a multi-level filter hierarchy to produce a ranked, scored output in HTML,
-CSV, XLSX, and ODS formats.
+Analyses a range of Linux kernel commits and identifies those relevant to a
+given embedded product. Build context (enabled kernel symbols), profile-based
+rule matching, and a multi-level filter hierarchy produce a ranked, scored
+output in HTML, CSV, XLSX, and ODS formats.
 
 ## Pipeline at a glance
 
@@ -15,7 +14,6 @@ Stage  Script                      Input → Output (cache/)
                                             00_prepare_summary.json
 
   01   01_collect_commits.py       git log → 01_commits.json
-                                             01_commits.jsonl  (optional)
 
   02   02_collect_build_context.py kernel .config / build logs / DTS roots
                                    → 02_build_context.json
@@ -23,18 +21,16 @@ Stage  Script                      Input → Output (cache/)
 
   03   03_build_product_map.py     build context + git history
                                    → 03_product_map.json
-                                     (CONFIG_* symbol → source file mapping)
 
   04   04_prefilter_commits.py     01_commits.json + 03_product_map.json
                                    → 04_filtered_commits.json
-                                     (keeps only scoreable commits)
 
   05   05_score_commits.py         04_filtered_commits.json
                                    → 05_scored_commits.json
 
   06   06_postfilter_commits.py    05_scored_commits.json
-                                   → 06_relevant_commits.json  (above threshold)
-                                     04_filtered_commits.json  (+ low-score drops)
+                                   → 06_relevant_commits.json
+                                     04_filtered_commits.json (+ low-score drops)
 
   07   07_report_commits.py        06_relevant_commits.json
                                    → output/relevant_commits.{json,csv,xlsx,ods}
@@ -56,8 +52,8 @@ total_score = Σ score[P]
 ```
 
 Score is **exclusively** determined by profile weights and rule weights.
-Metadata flags (CVE, Fix, Stable, Perf) are computed and shown as badges
-in the HTML report but do **not** add to the score.
+Metadata flags (CVE, Fix, Stable, Syzbot) are computed for display in the
+HTML report as badges but do **not** add to the score.
 
 ## Filter hierarchy (stage 04 — prefilter)
 
@@ -72,9 +68,8 @@ Level 2 — Path-based
 
 Level 2½ — Build context
   ANY file has build artifact evidence → KEEP
-  Kconfig-coverage check: if NO file maps to an enabled CONFIG_*
-    and NOT saved by path_whitelist / build_artifact / keyword_whitelist
-    → DROP
+  Kconfig-coverage: if NO file maps to an enabled CONFIG_*
+    and NOT saved by path_whitelist / build_artifact / keyword_whitelist → DROP
 
 Level 1 — Keyword-based
   ANY keyword ∈ keywords_whitelist → KEEP
@@ -83,26 +78,18 @@ Level 1 — Keyword-based
 Level 0 — Default → KEEP
 ```
 
-Dropped commits are recorded with their reason in `04_filtered_commits.json`.
-After stage 06, commits dropped for low score (`score_below_threshold`) are
-appended to the same file so every dropped commit has a reason.
+Dropped commits are recorded with a reason in `04_filtered_commits.json`.
+After stage 06, commits dropped for low score are appended to the same file.
 
 ## Running the pipeline
 
 ```bash
-# Full run
-python3 kcommit_pipeline.py --config configs/my-product.json
-
-# Single stage
-python3 kcommit_pipeline.py --config configs/my-product.json --stage 5
-
-# Re-run from stage 4 onwards
-python3 kcommit_pipeline.py --config configs/my-product.json --from 4
-
-# Validate config without running
-python3 kcommit_pipeline.py --config configs/my-product.json --dry-run
-
-# Override a config value at runtime (deep-merged)
-python3 kcommit_pipeline.py --config configs/my-product.json \
-    --override '{"filter":{"min_score":20}}'
+python3 kcommit_pipeline.py run      --config cfg.json
+python3 kcommit_pipeline.py run      --config cfg.json --stage 5
+python3 kcommit_pipeline.py run      --config cfg.json --from 4
+python3 kcommit_pipeline.py run      --config cfg.json --resume
+python3 kcommit_pipeline.py validate --config cfg.json
+python3 kcommit_pipeline.py status   --config cfg.json
+python3 kcommit_pipeline.py report   --config cfg.json --format html
+python3 kcommit_pipeline.py dropped  --config cfg.json --reason prefilter
 ```
