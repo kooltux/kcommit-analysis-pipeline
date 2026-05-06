@@ -15,7 +15,7 @@ import time
 import sys
 from lib.logsetup import setup_logging
 
-from lib.config import load_config
+from lib.config import load_config, apply_override
 from lib.config import save_json
 from lib.kbuild import load_kernel_config_symbols
 from lib.parse_kconfig import parse_kernel_config, scan_kbuild_tree
@@ -57,7 +57,6 @@ def main():
 
     cfg = load_config(args.config)
     if args.override:
-        from kcommit_pipeline import apply_override
         apply_override(cfg, args.override)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')

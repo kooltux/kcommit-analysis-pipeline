@@ -1,3 +1,97 @@
+## v9.8.0
+
+### Bug fixes
+
+- **`04_filter_commits.py` — `NameError: json is not defined`** (`import json` was missing).
+  `json.dump(dropped_commits, ...)` at line 459 raised `NameError` at runtime.
+  Fixed by adding `import json` to the top-level import block.
+
+- **`lib/logsetup.py` — colored output never applied** `_ColorFormatter.__init__`
+  was not called with `fmt` / `datefmt`, so the parent `logging.Formatter` used
+  its own defaults and the format string defined in `setup_logging()` was silently
+  discarded. Fixed by passing `fmt` and `datefmt` explicitly to the constructor.
+  Color is now also gated behind `_use_color()` which respects `NO_COLOR` /
+  `FORCE_COLOR` environment variables and `sys.stderr.isatty()`, so redirected
+  log files are no longer polluted with ANSI escape sequences.
+
+- **`lib/pipeline_runtime.py` — docstring after code in `print_stage_output()`**
+  The `reasons = reasons or {}` guard appeared *before* the function docstring,
+  making the docstring a dead string expression. Moved after the docstring.
+
+- **`lib/config.py` — `deep_merge()` defined twice** The second definition
+  silently shadowed the first with a slightly different implementation.
+  Single canonical definition kept; `deepmerge()` camelCase alias retained.
+
+- **`lib/config.py` — `_resolve_relative_paths()` corrupted non-path strings**
+  The function walked every string in the entire config tree and absolutised
+  anything containing `/` or starting with `.`, corrupting git revision refs
+  (e.g. `"v4.14/foo"`), regex patterns, and URL fragments. Replaced with
+  `_resolve_known_paths()` which operates on an explicit allowlist of
+  path-typed keys (`source_dir`, `build_dir`, `work_dir`, `*_log`, `*_dir`, etc.).
+
+- **`lib/profile_rules.py` — `cfg['paths']` ignored for profiles/rules dirs**
+  `compile_rules_for_config()` recomputed `profile_root` / `rule_root` directly
+  from `config_dir`, ignoring `cfg['paths']['profiles_dir']` / `rules_dir` that
+  `load_config()` already resolved. A user-configured custom directory was
+  silently skipped. Fixed by reading from `cfg['paths']` first.
+
+- **`04_filter_commits.py` — local pattern helpers duplicated `lib.patterns`**
+  `_match()`, `_any_matches()`, `_any_file_matches()`, `_all_files_match()` were
+  re-implemented locally with outdated substring/fnmatch semantics, diverging
+  from the canonical v9.2 whole-word / case-insensitive glob logic in
+  `lib.patterns`. All four removed; replaced with imports from `lib.patterns`
+  (`match`, `anymatches`, `anyfilematches`, `allfilesmatch`).
+
+- **All stage scripts — `apply_override` imported from `kcommit_pipeline`**
+  Stages used a fragile dynamic `importlib` loader or `from kcommit_pipeline
+  import apply_override` to obtain the override helper. `lib.config` already
+  exports `apply_override` directly. All stages (`00`–`06`) updated to import
+  from `lib.config`; the `_import_override()` helper in stage 04 removed.
+
+- **`00_prepare_pipeline.py` — duplicate directory existence check**
+  The script manually checked for `profiles/` and `rules/` directories, then
+  called `compile_rules_for_config()` which performed the identical checks and
+  raised `RuntimeError`. The redundant manual pre-check removed;
+  `RuntimeError` from `compile_rules_for_config()` is now caught and routed
+  to `fail_stage()`.
+
+- **`kcommit_pipeline.py` — local `_deep_merge()` duplicate**
+  A private `_deep_merge()` shadowed the imported `deep_merge` from `lib.config`.
+  Removed; all callers use the canonical `lib.config.deep_merge`.
+
+### New features
+
+- **Multiple profiles and rules directories** (`lib/config.py`, `lib/profile_rules.py`,
+  `lib/validation.py`, `configs/example-arm-embedded-full.json`):
+  The configuration now accepts list forms for the profiles and rules search paths:
+
+  ```json
+  "profiles": {
+    "active": { "my_profile": 100 },
+    "profiles_dirs": ["${CONFIGDIR}/profiles", "/shared/team/profiles"]
+  },
+  "rules": {
+    "rules_dirs": ["${CONFIGDIR}/rules", "/shared/team/rules"]
+  }
+  ```
+
+  When multiple directories are given, `compile_rules_for_config()` searches all
+  of them in order. **Name collisions are an error**: if a profile or rule name
+  is found in more than one directory, a `RuntimeError` is raised listing every
+  conflicting path. Single-directory `profiles_dir` / `rules_dir` keys remain
+  supported as before. Default when neither key is present:
+  `${CONFIGDIR}/profiles` and `${CONFIGDIR}/rules`.
+
+  `lib/validation.py` validates every directory in the list and reports
+  missing directories as blocking errors. `cfg['paths']` now carries both
+  `profiles_dirs` (list) and `rules_dirs` (list) alongside the legacy
+  single-dir keys for backward compatibility.
+
+### Removed
+
+- **`lib/stagerunner.py` deleted** — defined `runstage()` but was not called
+  by any stage script. Dead code removed.
+
 ## v9.7.0
 
 ### Bug fixes

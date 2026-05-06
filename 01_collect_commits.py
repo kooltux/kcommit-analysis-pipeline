@@ -8,7 +8,7 @@ import time
 import sys
 from lib.logsetup import setup_logging
 
-from lib.config import load_config
+from lib.config import load_config, apply_override
 from lib.config import save_json
 from lib.validation import validate_config_only as validate_inputs
 from lib.pipeline_runtime import (
@@ -32,7 +32,6 @@ def main():
 
     cfg = load_config(args.config)
     if args.override:
-        from kcommit_pipeline import apply_override
         apply_override(cfg, args.override)
     collect_cfg     = cfg.get('collect', {}) or {}
     max_commits     = int(collect_cfg.get('max_commits', 0) or 0)

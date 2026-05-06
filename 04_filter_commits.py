@@ -85,9 +85,9 @@ Reads:   cache/commits.json
          cache/compiled_rules.json  (via load_profile_rules)
 Writes:  cache/filtered_commits.json
 """
+import json
 import logging
 import argparse
-import fnmatch
 import os
 import re
 import sys
@@ -96,7 +96,14 @@ from lib.pipeline_runtime import (
     start_stage, finish_stage, fail_stage, update_stage_progress,
     print_stage_input, print_stage_output
 )
+from lib.config import load_config, apply_override
 from lib.logsetup import setup_logging
+from lib.patterns import (
+    match as _match,
+    anymatches as _any_matches,
+    anyfilematches as _any_file_matches,
+    allfilesmatch as _all_files_match,
+)
 
 
 # ── Build-system file patterns (always pass Kconfig coverage, C5) ─────────────
@@ -110,50 +117,6 @@ def _is_build_system_file(path):
         return True
     _, ext = os.path.splitext(base)
     return ext in ('.mk',)
-
-
-# ── Import helper ─────────────────────────────────────────────────────────────
-def _import_override():
-    import importlib.util as _ilu
-    spec = _ilu.spec_from_file_location(
-        'kcommit_pipeline',
-        os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                     'kcommit_pipeline.py'))
-    mod = _ilu.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.apply_override
-
-
-# ── Pattern matching ──────────────────────────────────────────────────────────
-def _match(pattern, text):
-    """Match pattern against text. Supports re:/glob/substring modes."""
-    if isinstance(pattern, re.Pattern):
-        return bool(pattern.search(text))
-    if pattern.startswith('re:'):
-        try:
-            return bool(re.search(pattern[3:], text, re.I))
-        except re.error:
-            return False
-    if any(c in pattern for c in ('*', '?', '[')):
-        return fnmatch.fnmatch(text, pattern)
-    return pattern.lower() in text.lower()
-
-
-def _any_matches(patterns, text):
-    """Return True if any pattern matches text."""
-    return any(_match(p, text) for p in patterns)
-
-
-def _any_file_matches(patterns, files):
-    """Return True if ANY file matches ANY pattern (OR semantics)."""
-    return any(_match(p, f) for p in patterns for f in files)
-
-
-def _all_files_match(patterns, files):
-    """Return True if ALL files match at least one pattern (AND over files)."""
-    return bool(files) and all(
-        any(_match(p, f) for p in patterns)
-        for f in files)
 
 
 # ── List extraction from merged profile data ─────────────────────────────────
@@ -368,7 +331,7 @@ def main():
 
     cfg = load_config(args.config)
     if args.override:
-        _import_override()(cfg, args.override)
+        apply_override(cfg, args.override)
 
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')

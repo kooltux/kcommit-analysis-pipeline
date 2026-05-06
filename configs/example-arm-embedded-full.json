@@ -67,19 +67,27 @@
       "security_features":  90,
       "performance":        70
     }
-    // Optional: override the default profiles directory.
-    // Default: <CONFIGDIR>/profiles
-    // "profiles_dir": "${CONFIGDIR}/profiles"
+    // Optional: override the profiles search path.
+    // Single directory (default):
+    //   "profiles_dir": "${CONFIGDIR}/profiles"
+    // Multiple directories — profiles are searched in order;
+    // a profile name must be unique across all listed directories (error if duplicated):
+    //   "profiles_dirs": ["${CONFIGDIR}/profiles", "/shared/team/profiles"]
+    // Default when neither key is present: ${CONFIGDIR}/profiles
   },
 
   // ── Rules ─────────────────────────────────────────────────────────────────
-  // Optional: override the default rules directory.
-  // Default: <CONFIGDIR>/rules
-  // Each sub-directory of rules_dir is one rule set; every rule set
+  // Optional: override the rules search path.
+  // Each sub-directory of a rules directory is one rule set; every rule set
   // may contain: keywords_whitelist.txt, keywords_blacklist.txt,
   //              path_whitelist.txt, path_blacklist.txt,
   //              commit_whitelist.txt, commit_blacklist.txt
-  // "rules": { "rules_dir": "${CONFIGDIR}/rules" },
+  //
+  // Single directory (default):
+  //   "rules": { "rules_dir": "${CONFIGDIR}/rules" }
+  // Multiple directories — rule names must be unique across all listed directories:
+  //   "rules": { "rules_dirs": ["${CONFIGDIR}/rules", "/shared/team/rules"] }
+  // Default when neither key is present: ${CONFIGDIR}/rules
 
   // Commits that cannot possibly receive a non-zero score are dropped before
   "filter": {

@@ -1,9 +1,12 @@
 """Logging initializer for kcommit-analysis-pipeline.
 
 Call setup_logging(verbose) once at the start of each stage.
-Colorized output is always enabled (ANSI codes are no-ops on non-ANSI terminals).
+Colorized output is emitted when stderr is a TTY (or FORCE_COLOR is set).
+Color is suppressed when stderr is redirected to a file or pipe,
+or when the NO_COLOR environment variable is set.
 """
 import logging
+import os
 import sys
 
 VERBOSE = 0
@@ -18,12 +21,27 @@ _LEVEL_COLORS = {
 _RESET = '\033[0m'
 
 
+def _use_color() -> bool:
+    """Return True when ANSI color should be emitted on stderr."""
+    if os.environ.get('NO_COLOR'):
+        return False
+    if os.environ.get('FORCE_COLOR'):
+        return True
+    return hasattr(sys.stderr, 'isatty') and sys.stderr.isatty()
+
+
 class _ColorFormatter(logging.Formatter):
     """Formatter that prepends an ANSI colour code based on log level."""
 
+    def __init__(self, fmt=None, datefmt=None, use_color=True):
+        super().__init__(fmt=fmt, datefmt=datefmt)
+        self._use_color = use_color
+
     def format(self, record: logging.LogRecord) -> str:
+        msg = super().format(record)
+        if not self._use_color:
+            return msg
         color = _LEVEL_COLORS.get(record.levelno, '')
-        msg   = super().format(record)
         return f'{color}{msg}{_RESET}' if color else msg
 
 
@@ -34,7 +52,8 @@ def setup_logging(verbose: int = 0) -> None:
     verbose=1  → INFO+      (-v)
     verbose=2  → DEBUG+     (-vv)
 
-    Color is applied unconditionally via ANSI escape codes.
+    Color is applied when stderr is a TTY, NO_COLOR is unset,
+    or FORCE_COLOR is set.
     """
     global VERBOSE
     VERBOSE = verbose
@@ -60,7 +79,8 @@ def setup_logging(verbose: int = 0) -> None:
         root.removeHandler(h)
 
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(_ColorFormatter(fmt, datefmt='%Y%m%d %H:%M:%S'))
+    handler.setFormatter(_ColorFormatter(fmt, datefmt='%Y%m%d %H:%M:%S',
+                                         use_color=_use_color()))
     root.addHandler(handler)
     root.setLevel(loglevel)
 

@@ -8,7 +8,7 @@ import time
 import sys
 from lib.logsetup import setup_logging
 
-from lib.config import load_config
+from lib.config import load_config, apply_override
 from lib.config import load_json, save_json
 from lib.scoring import score_commit, precompile_rules
 from lib.profile_rules import load_profile_rules
@@ -105,7 +105,6 @@ def main():
 
     cfg = load_config(args.config)
     if args.override:
-        from kcommit_pipeline import apply_override
         apply_override(cfg, args.override)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')

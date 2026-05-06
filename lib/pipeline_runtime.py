@@ -1,15 +1,13 @@
-"""Pipeline state tracking and progress for kcommit-analysis-pipeline.
-
-v8.5: elapsed, rate, ETA in update_stage_progress(); progress throttled to
-      0.5 s; wipe_downstream() accepts stage_order for fresh-workspace safety;
-      f-strings throughout; from __future__ removed.
-"""
-import json, os, sys, time
+"""Pipeline state tracking and progress for kcommit-analysis-pipeline."""
+import json
+import os
+import sys
+import time
 
 _PROGRESS_REFRESH = 0.5
 _LINE_WIDTH       = 100
-_stage_t0:  dict  = {}
-_last_upd:  dict  = {}
+_stage_t0: dict   = {}
+_last_upd: dict   = {}
 
 
 def _fmt_hms(secs):
@@ -130,7 +128,7 @@ def wipe_downstream(path, from_key, work_dir, stage_outputs, stage_order=None):
     if stage_order:
         ordered = list(stage_order)
     else:
-        keyed = {v.get("index",999): k for k, v in ss.items()}
+        keyed = {v.get("index", 999): k for k, v in ss.items()}
         ordered = [keyed[i] for i in sorted(keyed)]
     try:
         start = ordered.index(from_key)
@@ -163,7 +161,6 @@ def print_stage_input(label, data):
 
 
 def print_stage_output(label, kept, dropped=None, reasons=None, elapsed=None):
-    reasons = reasons or {}
     """Print a summary of what a stage produced.
 
     Args:
@@ -173,6 +170,7 @@ def print_stage_output(label, kept, dropped=None, reasons=None, elapsed=None):
         reasons – dict {reason_str: count} breakdown (optional)
         elapsed – wall-clock seconds (optional)
     """
+    reasons = reasons or {}
     total = kept + (dropped or 0)
     pct   = f"  ({kept/total:.0%} kept)" if total else ""
     t     = f"  [{elapsed:.1f}s]" if elapsed is not None else ""

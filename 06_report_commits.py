@@ -1,5 +1,6 @@
 import time
 from lib.logsetup import setup_logging
+from lib.config import apply_override
 #!/usr/bin/env python3
 """Stage 06: Generate reports from scored commits.
 
@@ -50,7 +51,6 @@ def main():
 
     cfg = load_config(args.config)
     if args.override:
-        from kcommit_pipeline import apply_override
         apply_override(cfg, args.override)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
