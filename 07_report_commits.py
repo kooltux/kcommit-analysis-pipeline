@@ -2,12 +2,12 @@ import time
 from lib.logsetup import setup_logging
 from lib.config import apply_override
 #!/usr/bin/env python3
-"""Stage 06: Generate reports from scored commits.
+"""Stage 07: Generate reports from scored commits.
 
 v8.5.1: XLSX now stdlib-only (no openpyxl).
 
 v8.5:
-  - reports.min_score: commits below threshold excluded from all outputs.
+  - filter.min_score: commits below threshold excluded from all outputs.
   - Rank column: c['_rank'] (1-based) assigned before any output.
   - Format flags: templates.csv_output / html_summary / xls_output / ods_output.
   - XLSX via lib.spreadsheet.write_xlsx (needs openpyxl).
@@ -54,7 +54,7 @@ def main():
         apply_override(cfg, args.override)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
-    started    = start_stage(state_path, 'report_commits', 6, 7)
+    started    = start_stage(state_path, 'report_commits', 7, 8)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -70,24 +70,15 @@ def main():
         outdir = os.path.join(work, 'output')
         os.makedirs(outdir, exist_ok=True)
 
-        scored = (load_json(os.path.join(cache, 'scored_commits.json'),
+        scored = (load_json(os.path.join(cache, 'relevant_commits.json'),
                             default=[]) or [])
-        scored = sorted(scored, key=lambda x: x.get('score', 0), reverse=True)
+        # relevant_commits.json is already sorted and ranked by stage 06
         _t0_stage = time.time()
         print_stage_input('report input', scored)
 
-        # ── threshold ─────────────────────────────────────────────────────────
         tmpl_cfg    = cfg.get('templates', {}) or {}
         reports_cfg = cfg.get('reports', {}) or {}
-        min_score   = float(reports_cfg.get('min_score', 1) or 0)
-        if min_score > 0:
-            before = len(scored)
-            scored = [c for c in scored if (c.get('score', 0) or 0) >= min_score]
-            print(f'  threshold {min_score}: {len(scored)}/{before} commits kept')
-
-        # ── rank ──────────────────────────────────────────────────────────────
-        for rank, c in enumerate(scored, 1):
-            c['_rank'] = rank
+        min_score   = float((cfg.get('filter', {}) or {}).get('min_score', 0) or 0)
 
         # ── format flags ──────────────────────────────────────────────────────
         want_csv  = bool(tmpl_cfg.get('csv_output',  True))

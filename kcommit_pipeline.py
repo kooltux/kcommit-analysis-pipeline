@@ -45,8 +45,9 @@ STAGE_OUTPUTS = {
     'collect_commits':        ['cache/commits.json'],
     'collect_build_context':  ['cache/build_context.json', 'cache/kbuild_static_map.json'],
     'build_product_map':      ['cache/product_map.json'],
-    'filter_commits':         ['cache/filtered_commits.json'],
+    'prefilter_commits':         ['cache/filtered_commits.json'],
     'score_commits':          ['cache/scored_commits.json'],
+    'postfilter_commits':         ['cache/relevant_commits.json'],
     'report_commits':         ['output/relevant_commits.csv',
                                'output/relevant_commits.json',
                                'output/report_stats.json',
@@ -105,7 +106,10 @@ def _dry_run(cfg, args):
     else:
         print('Profiles  :', ', '.join(str(p) for p in profiles))
     print('Filter    :', filter_cfg)
-    print('Scoring   :', cfg.get('scoring', {}))
+    sc = cfg.get('scoring', {}) or {}
+    print('Scoring   :', sc)
+    fc = cfg.get('filter', {}) or {}
+    print('Min score :', fc.get('min_score', 0), '(stage 06 postfilter threshold)')
     print('Collect   :', cfg.get('collect', {}))
 
     problems, notices = validate_inputs(cfg)

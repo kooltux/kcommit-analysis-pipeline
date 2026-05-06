@@ -128,7 +128,12 @@ table {
   font-size: .8rem;
 }
 
-thead { position: sticky; top: 61px; z-index: 10; }
+/* Only the label row is sticky; filter row scrolls with the table */
+thead tr.kc-col-headers {
+  position: sticky;
+  top: 61px;
+  z-index: 10;
+}
 
 thead tr.kc-col-headers th {
   background: var(--bg3);

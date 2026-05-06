@@ -335,7 +335,7 @@ def main():
 
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
-    started    = start_stage(state_path, 'filter_commits', 4, 7)
+    started    = start_stage(state_path, 'prefilter_commits', 4, 7)
 
     try:
         problems, notices = validate_inputs(cfg)
@@ -344,7 +344,7 @@ def main():
         if problems:
             for p in problems:
                 print('  ERROR:', p)
-            fail_stage(state_path, 'filter_commits', started,
+            fail_stage(state_path, 'prefilter_commits', started,
                        error_msg='; '.join(problems))
             raise SystemExit(2)
 
@@ -477,7 +477,7 @@ def main():
         print_stage_output('filtered commits', len(kept),
             dropped=dropped, reasons=reasons,
             elapsed=time.time()-_t0_stage)
-        finish_stage(state_path, 'filter_commits', started, status='ok',
+        finish_stage(state_path, 'prefilter_commits', started, status='ok',
                      extra={'total': total, 'kept': len(kept),
                             'dropped': dropped, 'reasons': reasons,
                             'enriched': total})
@@ -487,7 +487,7 @@ def main():
     except Exception as exc:
         import traceback
         traceback.print_exc()
-        fail_stage(state_path, 'filter_commits', started, error_msg=str(exc))
+        fail_stage(state_path, 'prefilter_commits', started, error_msg=str(exc))
         raise
 
 

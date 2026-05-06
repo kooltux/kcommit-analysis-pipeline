@@ -172,12 +172,22 @@
         c.matched_profiles.map(function(p){ return '<span class="profile-chip">'+esc(p)+'</span>'; }).join(' '));
     }
 
-    /* Scoring breakdown */
-    if (Object.keys(sc).length) {
+    /* Scoring breakdown — profile-based (no legacy sub-score keys) */
+    var profiles_sc = (sc && sc.profiles) ? sc.profiles : null;
+    if (profiles_sc && Object.keys(profiles_sc).length) {
+      html += '<div class="kc-detail-section"><h4>Profile scores</h4>';
+      Object.keys(profiles_sc).sort().forEach(function(p) {
+        var v = profiles_sc[p];
+        html += field(p, '<span class="score-pill">' + esc(String(v)) + '</span>');
+      });
+      html += '</div>';
+    } else if (sc && Object.keys(sc).length) {
+      /* Fallback: render whatever scoring keys exist */
       html += '<div class="kc-detail-section"><h4>Scoring breakdown</h4>';
       Object.keys(sc).forEach(function(k) {
+        if (k === 'profiles') return; /* already rendered above */
         var v = sc[k];
-        if (typeof v === 'object') {
+        if (typeof v === 'object' && v !== null) {
           html += field(k, '<pre>' + esc(JSON.stringify(v, null, 2)) + '</pre>');
         } else {
           html += field(k, esc(String(v)), 'mono');

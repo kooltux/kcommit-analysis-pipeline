@@ -1,5 +1,5 @@
 {
-  "version": "v9.8.0",
+  "version": "v9.9.0",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for security and performance relevance",
   "library_dir": "lib",
   "scoring_dir": "configs/scoring",
@@ -29,8 +29,8 @@
     },
     {
       "index": 4,
-      "key": "filter_commits",
-      "script": "04_filter_commits.py"
+      "key": "prefilter_commits",
+      "script": "04_prefilter_commits.py"
     },
     {
       "index": 5,
@@ -39,8 +39,13 @@
     },
     {
       "index": 6,
+      "key": "postfilter_commits",
+      "script": "06_postfilter_commits.py"
+    },
+    {
+      "index": 7,
       "key": "report_commits",
-      "script": "06_report_commits.py"
+      "script": "07_report_commits.py"
     }
   ],
   "tools": [

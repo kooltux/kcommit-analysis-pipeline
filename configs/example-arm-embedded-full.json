@@ -1,6 +1,6 @@
 {
   // ─────────────────────────────────────────────────────────────────────────
-  // kcommit-analysis-pipeline — ARM embedded full example config (v9.5)
+  // kcommit-analysis-pipeline — ARM embedded full example config
   //
   // Variable expansion: ${VAR} is expanded in all string values.
   // Available variables:
@@ -106,7 +106,12 @@
     //   null  = auto (enabled automatically when kbuild_static_map is available)
     //   true  = always enforce (pipeline fails if kbuild_static_map is missing)
     //   false = disabled
-    "require_kconfig_coverage": null
+    "require_kconfig_coverage": null,
+
+    // min_score: commits with a total score STRICTLY LOWER THAN this value
+    // are dropped by stage 06 (postfilter_commits) before reports are produced.
+    // Set to 0 (or omit) to keep all scored commits.
+    "min_score": 0
   },
 
   // ── Commit collection (stage 01) ──────────────────────────────────────────
@@ -135,7 +140,7 @@
     //   sampled  – sample every sample_step commits
     //   full     – walk the entire git log (slow)
     //   disabled – skip history mapping entirely
-    "mode":                  "sampled",
+    "mode":                  "range",
     // sample_step: used when mode = "sampled"
     "sample_step":           500,
     "max_commits_per_probe": 3,

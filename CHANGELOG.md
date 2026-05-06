@@ -1,3 +1,73 @@
+## v9.9.0
+
+### Bug fixes
+
+- **HTML report header — double 'v' prefix in version string**
+  The version was displayed as 'vv9.9.0' because `VERSION` from
+  `lib/manifest.py` already contains the leading 'v' and the template
+  added a second one. Removed the hardcoded prefix in `lib/html_report.py`.
+
+
+- **`lib/spreadsheet.py` — XLSX files corrupt / LibreOffice cannot open**
+  Three root causes:
+  1. `_xl_pkg_rels()` was missing the XML declaration header (`<?xml …?>`),
+     producing a malformed relationships file that OOXML parsers rejected.
+  2. `_WB_TYPE`, `_WS_TYPE`, and `_ST_TYPE` MIME constants were cut-off
+     string literals (missing the trailing `+xml` segment on `_WB_TYPE`).
+  3. The bold xf in `_STYLES_XML` was missing the required `applyFont="1"`
+     attribute, causing LibreOffice to ignore the style entirely.
+  All three fixed; every XML entry now includes `standalone="yes"`.
+
+- **`lib/spreadsheet.py` — ODS files corrupt / LibreOffice cannot open**
+  The ODS specification (§3.3) requires the `mimetype` entry to be the
+  *first* file in the ZIP archive and to use `ZIP_STORED` (uncompressed).
+  Previously it was written with `ZIP_DEFLATED` and not guaranteed to be
+  first. Fixed using an explicit `ZipInfo` with `compress_type=ZIP_STORED`.
+
+- **HTML summary — filter widgets overlap normal rows in Profile Summary**
+  The Profile Summary table was rendered with `_table()`, which injects a
+  `<tr class="kc-filters">` row of `<input>` elements into `<thead>`.
+  Since the Profile Summary has no meaningful per-column filtering, the
+  inputs served no purpose and caused the sticky thead to overlap data rows.
+  Fixed by introducing `_plain_table()` (header row only, no filter inputs)
+  used exclusively for the Profile Summary section.
+
+- **HTML summary — filter row in Commits table overlaps body rows on scroll**
+  `thead { position: sticky; top: 61px }` made the *entire* `<thead>`
+  (both the label row and the filter-input row) sticky, so during vertical
+  scroll the filter inputs permanently floated over body rows.
+  Fixed by scoping the sticky rule to `thead tr.kc-col-headers` only; the
+  filter row now scrolls naturally as part of the table content.
+
+### Breaking changes / removals
+
+- **Legacy per-category score columns removed from all outputs**
+  The columns `Security`, `Performance`, `Product`, and `Stable` have been
+  removed from every output format. These were sub-scores computed by the
+  pre-profile scoring engine and are no longer produced by the pipeline.
+
+  All formats now share the same canonical column layout:
+
+  *Commits sheet / HTML commits table:*
+  `Rank | SHA | Subject | Author | Date | Score | Profiles | Product Evidence`
+
+  *Profile Summary sheet:*
+  `Profile | Count | Total Score | Avg Score`
+
+  *Profile Matrix sheet:*
+  `Rank | SHA | Subject | Profile | Total Score | Profile Score`
+
+  This affects: `lib/spreadsheet.py` (`COMMIT_COLS`, `_commit_row`,
+  `write_xlsx`, `write_ods`), `lib/html_report.py` (`_commit_row_html`),
+  and the HTML detail panel in `configs/templates/summary.js`.
+
+- **HTML detail panel — scoring breakdown shows profile scores instead of legacy keys**
+  `configs/templates/summary.js` `renderCommit()` previously read
+  `sc.security`, `sc.performance`, `sc.product`, `sc.stable` from the
+  per-commit JSON. These keys no longer exist. The panel now reads
+  `sc.profiles` (the per-profile score map) and renders each profile name
+  with its score pill.
+
 ## v9.8.0
 
 ### Bug fixes
