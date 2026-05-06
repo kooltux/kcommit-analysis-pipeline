@@ -125,10 +125,10 @@ def main():
         os.makedirs(cache, exist_ok=True)
 
         # Stage 04 always produces filtered_commits.json.
-        commits = load_json(os.path.join(cache, 'filtered_commits.json'), default=[]) or []
+        commits = load_json(os.path.join(cache, '04_filtered_commits.json'), default=[]) or []
         _t0_stage = time.time()
         print_stage_input('score input', commits)
-        product_map   = load_json(os.path.join(cache, 'product_map.json'),
+        product_map   = load_json(os.path.join(cache, '03_product_map.json'),
                                   default={}) or {}
         profile_rules = load_profile_rules(cfg)
 
@@ -140,7 +140,7 @@ def main():
         sys.stdout.write('\n')
         sys.stdout.flush()
 
-        save_json(os.path.join(cache, 'scored_commits.json'), scored)
+        save_json(os.path.join(cache, '05_scored_commits.json'), scored)
         print('  scored %d commits' % len(scored))
         _pos_05 = sum(1 for c in scored if c.get('score', 0) > 0)
         _neg_05 = len(scored) - _pos_05

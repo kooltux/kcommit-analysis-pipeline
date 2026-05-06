@@ -351,10 +351,10 @@ def main():
         cache      = os.path.join(work, 'cache')
         filter_cfg = cfg.get('filter', {}) or {}
 
-        commits     = load_json(os.path.join(cache, 'commits.json'), default=[]) or []
+        commits     = load_json(os.path.join(cache, '01_commits.json'), default=[]) or []
         _t0_stage = time.time()
         print_stage_input('filter input', commits)
-        product_map = load_json(os.path.join(cache, 'product_map.json'), default={}) or {}
+        product_map = load_json(os.path.join(cache, '03_product_map.json'), default={}) or {}
 
         # ── Enrichment ────────────────────────────────────────────────────────
         print('  enriching commits …')
@@ -411,13 +411,13 @@ def main():
         sys.stdout.write('\n')
         sys.stdout.flush()
 
-        save_json(os.path.join(cache, 'filtered_commits.json'), kept)
+        save_json(os.path.join(cache, '04_filtered_commits.json'), kept)
         _tmpl = (cfg.get('templates') or {})
         _odir = cfg.get('paths', {}).get('output_dir') or outdir
         os.makedirs(_odir, exist_ok=True)
 
         # ── Always write dropped_commits JSON to output/ ──────────────────
-        _jp = os.path.join(_odir, 'filtered_commits.json')
+        _jp = os.path.join(_odir, '04_filtered_commits.json')
         with open(_jp, 'w', encoding='utf-8') as _jf:
             json.dump(dropped_commits, _jf, indent=2, default=str)
         print(f'  filtered JSON: {_jp}')

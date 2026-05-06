@@ -70,7 +70,7 @@ def main():
         outdir = os.path.join(work, 'output')
         os.makedirs(outdir, exist_ok=True)
 
-        scored = (load_json(os.path.join(cache, 'relevant_commits.json'),
+        scored = (load_json(os.path.join(cache, '06_relevant_commits.json'),
                             default=[]) or [])
         # relevant_commits.json is already sorted and ranked by stage 06
         _t0_stage = time.time()
@@ -118,7 +118,7 @@ def main():
             print(f'  CSV:  {csv_path}')
 
         # ── JSON ──────────────────────────────────────────────────────────────
-        save_json(os.path.join(outdir, 'relevant_commits.json'), scored)
+        save_json(os.path.join(outdir, '06_relevant_commits.json'), scored)
 
         profile_summary = {}
         for c in scored:

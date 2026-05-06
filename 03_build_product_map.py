@@ -62,13 +62,13 @@ def main():
         cache = os.path.join(work, 'cache')
         os.makedirs(cache, exist_ok=True)
 
-        ctx        = load_json(os.path.join(cache, 'build_context.json'),
+        ctx        = load_json(os.path.join(cache, '02_build_context.json'),
                                default={}) or {}
         source_dir = (cfg.get('kernel', {}) or {}).get('source_dir')
 
         # ── 1. Static config-to-paths map ────────────────────────────────────
         # Prefer the map already computed (and cached) by stage 02.
-        cached_map_path = os.path.join(cache, 'kbuild_static_map.json')
+        cached_map_path = os.path.join(cache, '02_kbuild_static_map.json')
         if os.path.exists(cached_map_path):
             base_map = load_json(cached_map_path, default={}) or {}
             print('  reusing kbuild_static_map.json from stage 02 '
@@ -130,7 +130,7 @@ def main():
                 'snapshot_count': len(history_info.get('snapshots', [])),
             }
 
-        save_json(os.path.join(cache, 'product_map.json'), product_map)
+        save_json(os.path.join(cache, '03_product_map.json'), product_map)
 
         print('  product map built: %d config symbols, %d config dirs'
               % (len(config_to_paths), len(product_map['config_dirs'])))

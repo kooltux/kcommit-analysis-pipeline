@@ -1,57 +1,48 @@
 # Configuration Reference
 
-Configuration files are JSON with `//` and `#` comment support (stripped
-before parsing). All `${VAR}` references in string values are expanded by the
-config loader.
+Config files are JSON with `//` and `#` comment support. All `${VAR}`
+references in string values are expanded by the config loader.
 
-## Top-level sections
-
-### `vars`
-
-User-defined shorthand variables for use elsewhere in the file.
-Environment variables can be captured here:
-
-```json
-"vars": {
-  "WORKSPACE": "${WORKSPACE}",
-  "kernel_src": "${WORKSPACE}/linux"
-}
-```
-
-Built-in variables (always available, no need to declare):
+Built-in variables (always available):
 - `${WORKSPACE}` — from shell environment
 - `${TOOLDIR}` — pipeline repository root (auto-detected)
 - `${CONFIGDIR}` — directory of this config file
 - `${CWD}` — current working directory
 
-### `project`
+## Top-level sections
 
+### `vars`
+User-defined shorthand variables:
 ```json
-"project": {
-  "name":     "my-product",
-  "work_dir": "${WORKSPACE}/work"
+"vars": {
+  "kernel_src": "${WORKSPACE}/linux",
+  "build_dir":  "${WORKSPACE}/build"
 }
 ```
 
+### `paths`
+```json
+"paths": {
+  "work_dir": "${WORKSPACE}/work"
+}
+```
 `work_dir` is where `cache/` and `output/` sub-directories are created.
 
 ### `kernel`
-
 ```json
 "kernel": {
-  "source_dir":       "${kernel_src}",    // required: git repo path
-  "rev_old":          "v4.14.206",        // required: start revision
-  "rev_new":          "v4.14.336",        // required: end revision
-  "kernel_config":    "${build_dir}/.config",    // optional
-  "build_dir":        "${WORKSPACE}/build",      // optional
-  "kernel_build_log": "${logs_dir}/kernel_build.log",  // optional
-  "yocto_build_log":  "${logs_dir}/yocto_build.log",   // optional
-  "dts_roots":        ["${kernel_src}/arch/arm/boot/dts"]  // optional
+  "source_dir":       "${kernel_src}",         // required
+  "rev_old":          "v4.14.206",             // required
+  "rev_new":          "v4.14.336",             // required
+  "kernel_config":    "${build_dir}/.config",  // optional
+  "build_dir":        "${build_dir}",          // optional
+  "kernel_build_log": "${build_dir}/kernel.log",  // optional
+  "yocto_build_log":  "${build_dir}/yocto.log",   // optional
+  "dts_roots":        ["${kernel_src}/arch/arm/boot/dts"]
 }
 ```
 
 ### `profiles`
-
 ```json
 "profiles": {
   "active": {
@@ -61,87 +52,65 @@ Built-in variables (always available, no need to declare):
   }
 }
 ```
+`active` maps profile names to weights (0–100). Weight scales rule
+contributions: 100 = full, 0 = disabled. Profiles are loaded from
+`<CONFIGDIR>/profiles/` by default (override with `"profiles_dir"`).
 
-`active` is a map of `profile-name → weight (0–100)`. List form also accepted.
-The weight scales each profile's rule contributions (100 = full, 0 = disabled).
-
-Profiles are loaded from `<CONFIGDIR>/profiles/` by default.
-Override with `"profiles_dir": "/path/to/profiles"`.
-
-### `filter` *(v8.11)*
-
-Controls the pre-scoring filter in stage 04. All keys are optional.
-
+### `filter`
+Controls both pre-score filtering (stage 04) and post-score filtering (stage 06).
 ```json
 "filter": {
-  "enabled":              true,   // false = skip rules 2+3 (rule 1 always active)
-  "path_blacklist_global": true,  // drop commits where ALL paths are blacklisted
-  "require_product_map":  false   // drop commits with no product-map coverage (opt-in)
+  "enabled":                true,   // false = skip path/keyword rules (SHA rules always on)
+  "path_blacklist_global":  true,   // drop commits where ALL touched files are blacklisted
+  "require_kconfig_coverage": null, // null=auto, true=force, false=disable
+  "min_score":              0       // drop commits below this score (0 = keep all)
 }
 ```
 
-See `docs/ARCHITECTURE.md → Pre-scoring filter` for rule details.
-
 ### `collect`
-
 ```json
 "collect": {
-  "use_numstat":      true,   // attach file-change stats
-  "use_no_merges":    true,   // --no-merges to git log
-  "use_first_parent": false,  // --first-parent to git log
+  "use_numstat":      true,   // attach per-file change stats
+  "use_no_merges":    true,   // pass --no-merges to git log
+  "use_first_parent": false,  // pass --first-parent to git log
   "max_commits":      0,      // 0 = no limit
-  "score_workers":    4,      // parallel workers in stage 05 (0 = all CPUs)
-  "jsonl":            false,  // also write commits.jsonl
-  "include_parents":  false   // attach parent SHA list to each commit
+  "score_workers":    0,      // parallel scoring workers (0 = auto)
+  "jsonl":            false,  // also write 01_commits.jsonl
+  "include_parents":  false   // attach parent SHA list to commits
 }
 ```
 
 ### `history_mapping`
-
+Controls how the CONFIG_* → source-file map is enriched via git history:
 ```json
 "history_mapping": {
   "mode":                  "sampled",  // range | sampled | full | disabled
-  "sample_step":           500,
+  "sample_step":           500,        // used when mode = sampled
   "max_commits_per_probe": 3,
   "max_failure_rate":      0.05
 }
 ```
 
-### `scoring` *(v8.11)*
-
-This section is reserved for future non-profile scoring extensions.
-The previous v8.4/v8.5 multipliers (`product`, `security`, `performance`,
-`stable`, `symbol_match`) are **no longer used** — scoring is exclusively
-through profiles and rules. Remove these keys from your config.
-
 ### `templates`
-
+Output format flags and HTML options:
 ```json
 "templates": {
   "html_summary":  true,
   "report_title":  "My Product Analysis",
-  "top_n":         500,
-  "css_override":  "${CONFIGDIR}/templates/custom.css",
+  "top_n":         5000,
+  "css_override":  "",       // path to extra CSS appended after built-in styles
   "csv_output":    true,
-  "xls_output":    false,
-  "ods_output":    false
+  "xls_output":    true,
+  "ods_output":    true
 }
 ```
 
-`css_override` (replaces deprecated `summary_css`) is a path to a CSS file
-appended after the built-in styles. Relative paths resolve from `CONFIGDIR`.
+## Runtime overrides
 
-## `--override` runtime overrides
-
-Any config key can be overridden at runtime without editing the config file:
-
+Any config key can be overridden without editing the file:
 ```bash
 python3 kcommit_pipeline.py --config cfg.json \
-    --override '{"kernel":{"rev_old":"v4.14.111"}}'
+    --override '{"kernel":{"rev_old":"v4.14.111"},"filter":{"min_score":15}}'
 ```
-
-The JSON object is **deep-merged** into the loaded config: nested dicts are
-merged recursively; scalars and lists are replaced; unpatched sibling keys
-are preserved.
-
-The override is forwarded to every stage script automatically.
+The JSON object is deep-merged: nested dicts are merged recursively; scalars
+and lists are replaced. The override is forwarded to every stage script.

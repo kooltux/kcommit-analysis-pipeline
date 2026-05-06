@@ -1,3 +1,28 @@
+## v9.10.0
+
+### New features
+- **Cache file prefixes**: every cache file is now prefixed with its producing
+  stage number (e.g. `01_commits.json`, `04_filtered_commits.json`).
+- **Merged filtered output**: stage 06 appends low-score commits (with reason
+  `score_below_threshold`) to `04_filtered_commits.json` so all dropped
+  commits — pre-filter and post-filter — share a single file with reasons.
+- **HTML autofilter — multiselect**: columns with ≤ 20 distinct values
+  (e.g. Author, Profiles, Filter reason) get a `<select multiple>` dropdown
+  instead of a free-text input.
+- **HTML autofilter — smart operators**: text-input columns now support
+  numeric operators (`>N`, `<N`, `>=N`, `<=N`, `=N`, `!N`) and glob
+  wildcards (`foo*`, `*bar`, `fo?b`).
+- **HTML commit detail panel — inline data**: commit data is embedded directly
+  in the HTML at generation time (`window.__KC_COMMITS__`). The panel no
+  longer attempts to fetch external `.json` files, making reports fully
+  self-contained and working from `file://` URLs.
+- **Docs consolidated**: 12 docs files replaced by 4 focused files —
+  `OVERVIEW.md`, `CONFIGURATION.md`, `PIPELINE.md`, `PROFILES_AND_RULES.md`.
+- **Commit date format**: HTML reports now display `YYYY/mm/dd HH:MM:SS`.
+- **XLSX shared strings**: XLSX files now use a proper shared strings table
+  (`xl/sharedStrings.xml`) instead of inline strings, fixing corruption in
+  LibreOffice Calc.
+
 ## v9.9.0
 
 ### Bug fixes

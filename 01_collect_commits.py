@@ -91,9 +91,9 @@ def main():
         sys.stdout.write('\n')
         sys.stdout.flush()
 
-        save_json(os.path.join(cache, 'commits.json'), commits)
+        save_json(os.path.join(cache, '01_commits.json'), commits)
         if collect_cfg.get('jsonl'):
-            with open(os.path.join(cache, 'commits.jsonl'), 'w',
+            with open(os.path.join(cache, '01_commits.jsonl'), 'w',
                       encoding='utf-8') as f:
                 for rec in commits:
                     f.write(json.dumps(rec, sort_keys=True) + '\n')

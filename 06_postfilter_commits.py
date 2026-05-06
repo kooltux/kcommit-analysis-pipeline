@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Stage 06: Post-filter commits by applying a score threshold to the scored results.
 
-Reads:   cache/scored_commits.json
-Writes:  cache/relevant_commits.json
+Reads:   cache/05_scored_commits.json
+         cache/04_filtered_commits.json   (to append low-score commits)
+Writes:  cache/06_relevant_commits.json  (commits that pass the threshold)
+         cache/04_filtered_commits.json  (updated: pre-filter drops + low-score drops)
 
 The threshold is configured via ``filter.min_score`` in the config file.
-Commits whose score is **strictly less than** the threshold are dropped.
-A threshold of 0 (the default) keeps every commit that has score >= 0,
-i.e. nothing is dropped.
+Commits whose score is **strictly less than** the threshold are dropped with
+reason ``score_below_threshold`` and appended to ``04_filtered_commits.json``
+so that all dropped commits (pre-filter and post-filter) are collected in one
+place with their individual reasons.
 
 Config key (in the ``filter`` section)::
 
@@ -15,7 +18,7 @@ Config key (in the ``filter`` section)::
         "min_score": 10
     }
 
-The threshold can also be overridden at runtime via ``--override``::
+A value of 0 (the default) keeps every commit. Can be overridden at runtime::
 
     --override '{"filter":{"min_score":25}}'
 """
@@ -77,28 +80,42 @@ def main():
         os.makedirs(cache, exist_ok=True)
         t0 = time.time()
 
-        scored = load_json(os.path.join(cache, 'scored_commits.json'), default=[]) or []
-        # Sort descending by score before applying threshold
+        scored = load_json(os.path.join(cache, '05_scored_commits.json'), default=[]) or []
         scored = sorted(scored, key=lambda c: c.get('score', 0) or 0, reverse=True)
         print_stage_input('postfilter input', scored)
 
         threshold = _get_threshold(cfg)
         if threshold > 0:
-            before    = len(scored)
-            relevant  = [c for c in scored if (c.get('score', 0) or 0) >= threshold]
-            dropped   = before - len(relevant)
+            before   = len(scored)
+            relevant = [c for c in scored if (c.get('score', 0) or 0) >= threshold]
+            low_score = [c for c in scored if (c.get('score', 0) or 0) < threshold]
+            dropped  = len(low_score)
             print(f'  threshold {threshold}: kept {len(relevant)}/{before}'
                   f' commits, dropped {dropped}')
         else:
-            relevant = scored
-            dropped  = 0
+            relevant  = scored
+            low_score = []
+            dropped   = 0
             print(f'  no threshold (min_score=0): keeping all {len(relevant)} commits')
 
         # Assign 1-based rank after filtering
         for rank, c in enumerate(relevant, 1):
             c['_rank'] = rank
 
-        save_json(os.path.join(cache, 'relevant_commits.json'), relevant)
+        save_json(os.path.join(cache, '06_relevant_commits.json'), relevant)
+
+        # ── Merge low-score drops into 04_filtered_commits.json ──────────────
+        if low_score:
+            reason_label = f'score_below_threshold ({threshold})'
+            for c in low_score:
+                c['_filter_reason'] = reason_label
+            existing_filtered = load_json(
+                os.path.join(cache, '04_filtered_commits.json'), default=[]) or []
+            merged_filtered = existing_filtered + low_score
+            save_json(os.path.join(cache, '04_filtered_commits.json'), merged_filtered)
+            print(f'  appended {len(low_score)} low-score commits to'
+                  f' 04_filtered_commits.json'
+                  f' (total filtered: {len(merged_filtered)})')
 
         print_stage_output(
             'postfilter output', len(relevant), dropped=dropped,
@@ -110,10 +127,10 @@ def main():
 
         finish_stage(state_path, 'postfilter_commits', started, status='ok',
                      extra={
-                         'input_count':   len(scored),
-                         'output_count':  len(relevant),
-                         'dropped_count': dropped,
-                         'min_score':     threshold,
+                         'input_count':        len(scored),
+                         'output_count':       len(relevant),
+                         'dropped_count':      dropped,
+                         'min_score':          threshold,
                      })
 
     except SystemExit:

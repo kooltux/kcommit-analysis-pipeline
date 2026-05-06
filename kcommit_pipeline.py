@@ -41,15 +41,15 @@ STAGES = [(s['index'], s['script'], s['key'])
 STAGE_ORDER = [s[2] for s in STAGES]
 
 STAGE_OUTPUTS = {
-    'prepare_pipeline':       ['cache/compiled_rules.json', 'cache/prepare_summary.json'],
-    'collect_commits':        ['cache/commits.json'],
-    'collect_build_context':  ['cache/build_context.json', 'cache/kbuild_static_map.json'],
-    'build_product_map':      ['cache/product_map.json'],
-    'prefilter_commits':         ['cache/filtered_commits.json'],
-    'score_commits':          ['cache/scored_commits.json'],
-    'postfilter_commits':         ['cache/relevant_commits.json'],
+    'prepare_pipeline':       ['cache/00_compiled_rules.json', 'cache/00_prepare_summary.json'],
+    'collect_commits':        ['cache/01_commits.json'],
+    'collect_build_context':  ['cache/02_build_context.json', 'cache/02_kbuild_static_map.json'],
+    'build_product_map':      ['cache/03_product_map.json'],
+    'prefilter_commits':         ['cache/04_filtered_commits.json'],
+    'score_commits':          ['cache/05_scored_commits.json'],
+    'postfilter_commits':         ['cache/06_relevant_commits.json'],
     'report_commits':         ['output/relevant_commits.csv',
-                               'output/relevant_commits.json',
+                               'output/06_relevant_commits.json',
                                'output/report_stats.json',
                                'output/profile_summary.json',
                                'output/profile_matrix.csv',

@@ -114,7 +114,7 @@ def main():
             static_config_map, kbuild_files = {}, []
 
         # Cache static_config_map so stage 03 can skip its own tree walk
-        save_json(os.path.join(cache, 'kbuild_static_map.json'),
+        save_json(os.path.join(cache, '02_kbuild_static_map.json'),
                   static_config_map)
 
         # ── 6. Save context ───────────────────────────────────────────────────
@@ -129,7 +129,7 @@ def main():
             'build_artifacts':      build_artifacts,
             'kbuild_files':         kbuild_files,
         }
-        save_json(os.path.join(cache, 'build_context.json'), ctx)
+        save_json(os.path.join(cache, '02_build_context.json'), ctx)
 
         sys.stdout.write('\n')
         sys.stdout.flush()

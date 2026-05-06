@@ -56,7 +56,7 @@ def _th(label):
 
 
 def _filter_input():
-    return '<input type="text" placeholder="filter…" aria-label="filter column">'
+    return '<input type="text" placeholder="filter…  >N <N foo*" aria-label="filter column">'
 
 
 def _table(headers, rows_html, table_id=''):
@@ -262,11 +262,18 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         + '</main>'
     )
 
+    # Build a SHA→commit lookup and embed it inline so the detail panel
+    # needs no network fetch and works from any filesystem location.
+    commit_map = {(c.get('commit') or '')[:12]: c for c in commits}
+    commits_json = json.dumps(commit_map, default=str)
+    inline_data  = f'<script>window.__KC_COMMITS__={commits_json};</script>'
+
     out = (tpl
            .replace('__TITLE__', f'{title} {VERSION}')
            .replace('__CSS__',   css)
            .replace('__JS__',    js)
-           .replace('__BODY__',  body))
+           .replace('__BODY__',  body)
+           .replace('__COMMITS_DATA__', inline_data))
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:

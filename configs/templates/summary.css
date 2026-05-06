@@ -414,3 +414,29 @@ pre {
   font-size: .8rem;
   display: none;
 }
+
+/* ── Multiselect filter dropdowns ──────────────────────────────────────── */
+.kc-filters th { padding: 2px 4px; }
+
+select.kc-ms {
+  width: 100%;
+  min-width: 80px;
+  max-height: 4.5rem;        /* show ~3 options, rest scrolls */
+  background: var(--bg2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: .7rem;
+  padding: 2px;
+  cursor: pointer;
+  scrollbar-width: thin;
+}
+
+select.kc-ms option {
+  padding: 1px 4px;
+}
+
+select.kc-ms option:checked {
+  background: var(--accent-dim);
+  color: var(--accent);
+}

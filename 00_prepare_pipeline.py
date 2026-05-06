@@ -56,7 +56,7 @@ def main():
             'work_dir':        work,
             'config_path':     args.config,
         }
-        with open(os.path.join(cache, 'prepare_summary.json'), 'w', encoding='utf-8') as f:
+        with open(os.path.join(cache, '00_prepare_summary.json'), 'w', encoding='utf-8') as f:
             json.dump(summary, f, indent=2)
             f.write('\n')
 
