@@ -172,6 +172,78 @@
         });
         applyFilters();
       });
+
+    /* ── J: Persist filter state in URL hash ──────────────────────────────
+       Format: #<encodeURIComponent(JSON.stringify({f:[…per-col values…]}))>
+       Text columns: plain string value.
+       Multi-select: values joined by NUL (\x00).
+       Writing is deferred 100ms after last change to avoid spamming history. */
+
+    var _hashTimer = null;
+
+    function _filterValues() {
+      return controls.map(function (ctrl) {
+        if (ctrl.type === 'text') return ctrl.el.value;
+        return Array.from(ctrl.el.selectedOptions)
+          .map(function (o) { return o.value; }).join('\x00');
+      });
+    }
+
+    function _writeHash() {
+      try {
+        var vals = _filterValues();
+        var empty = vals.every(function (v) {
+          return !v || v === '__all__' || v === '';
+        });
+        var base = location.pathname + location.search;
+        if (empty) {
+          history.replaceState(null, '', base);
+        } else {
+          history.replaceState(null, '', base + '#' +
+            encodeURIComponent(JSON.stringify({ f: vals })));
+        }
+      } catch (e) { /* non-critical */ }
+    }
+
+    function _scheduleWriteHash() {
+      clearTimeout(_hashTimer);
+      _hashTimer = setTimeout(_writeHash, 100);
+    }
+
+    function _restoreFromHash() {
+      try {
+        if (!location.hash) return;
+        var decoded = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+        if (!decoded || !Array.isArray(decoded.f)) return;
+        decoded.f.forEach(function (val, i) {
+          var ctrl = controls[i];
+          if (!ctrl || val == null) return;
+          if (ctrl.type === 'text') {
+            ctrl.el.value = val;
+          } else {
+            var parts = val ? val.split('\x00') : [];
+            Array.from(ctrl.el.options).forEach(function (o) {
+              o.selected = parts.indexOf(o.value) !== -1;
+            });
+          }
+        });
+        applyFilters();
+      } catch (e) { /* ignore malformed hash */ }
+    }
+
+    /* Wire hash-write to every filter control */
+    controls.forEach(function (ctrl) {
+      var evt = ctrl.type === 'multi' ? 'change' : 'input';
+      ctrl.el.addEventListener(evt, _scheduleWriteHash);
+    });
+
+    /* Restore state on load and on back/forward navigation */
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _restoreFromHash);
+    } else {
+      _restoreFromHash();
+    }
+    window.addEventListener('popstate', _restoreFromHash);
     }
   }
 
@@ -207,6 +279,122 @@
         });
         rows.forEach(function (r) { body.appendChild(r); });
       });
+    });
+  }
+
+
+  /* ── K: Column visibility toggle ─────────────────────────────────────────
+     Injects a <div class="kc-col-toggle"> toolbar before the table (or uses
+     one already present in the markup) with one labelled checkbox per column.
+     Toggling a checkbox hides/shows that column across header, filter, and
+     data rows via display:none on every nth-child cell. */
+
+  function initColToggle(table) {
+    var card = table.closest('.kc-card');
+    if (!card) return;
+
+    var toolbar = card.querySelector('.kc-col-toggle');
+    if (!toolbar) {
+      toolbar = document.createElement('div');
+      toolbar.className = 'kc-col-toggle';
+      var wrap = card.querySelector('.kc-table-wrap') || table;
+      card.insertBefore(toolbar, wrap);
+    }
+
+    var headerRow = table.querySelector('tr.kc-col-headers');
+    if (!headerRow) return;
+
+    Array.from(headerRow.cells).forEach(function (th, colIdx) {
+      var label = th.textContent.replace(/[\u25b2\u25bc\u21c5]/g, '').trim()
+                  || ('Col\u00a0' + (colIdx + 1));
+      var uid = 'kc-col-' + colIdx;
+
+      var cb = document.createElement('input');
+      cb.type    = 'checkbox';
+      cb.id      = uid;
+      cb.checked = true;
+      cb.setAttribute('aria-label', 'Show column: ' + label);
+
+      var lbl = document.createElement('label');
+      lbl.htmlFor = uid;
+      lbl.textContent = label;
+
+      cb.addEventListener('change', function () {
+        /* nth-child is 1-based */
+        var sel = 'tr > *:nth-child(' + (colIdx + 1) + ')';
+        Array.from(table.querySelectorAll(sel)).forEach(function (cell) {
+          cell.style.display = cb.checked ? '' : 'none';
+        });
+      });
+
+      toolbar.appendChild(cb);
+      toolbar.appendChild(lbl);
+    });
+  }
+
+
+  /* ── L: Export visible rows as CSV blob ──────────────────────────────────
+     Looks for a [data-kc="export-csv"] button in .kc-filter-bar; if absent,
+     creates one.  On click: reads all non-hidden tbody rows (post-filter),
+     respects hidden columns (display:none), and triggers a browser download
+     of kcommit-export.csv without any server round-trip. */
+
+  function initCsvExport(table) {
+    var card = table.closest('.kc-card');
+    if (!card) return;
+
+    var btn = card.querySelector('[data-kc="export-csv"]');
+    if (!btn) {
+      var bar = card.querySelector('.kc-filter-bar');
+      if (!bar) return;
+      btn = document.createElement('button');
+      btn.setAttribute('data-kc', 'export-csv');
+      btn.className   = 'kc-export-btn';
+      btn.textContent = 'Export CSV';
+      btn.setAttribute('aria-label', 'Export visible rows as CSV');
+      bar.appendChild(btn);
+    }
+
+    btn.addEventListener('click', function () {
+      function csvCell(text) {
+        var s = (text || '').replace(/\r?\n/g, ' ').trim();
+        if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1) {
+          return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+      }
+
+      function visibleCells(row) {
+        return Array.from(row.cells).filter(function (td) {
+          return td.style.display !== 'none';
+        });
+      }
+
+      var headerRow = table.querySelector('tr.kc-col-headers');
+      var headers   = headerRow
+        ? visibleCells(headerRow).map(function (th) {
+            return csvCell(th.textContent.replace(/[\u25b2\u25bc\u21c5]/g, '').trim());
+          })
+        : [];
+
+      var dataRows = Array.from(table.tBodies[0].rows)
+        .filter(function (r) { return !r.classList.contains('hidden'); })
+        .map(function (r) {
+          return visibleCells(r).map(function (td) {
+            return csvCell(td.textContent.trim());
+          }).join(',');
+        });
+
+      var csv  = [headers.join(',')].concat(dataRows).join('\r\n');
+      var blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+      var url  = URL.createObjectURL(blob);
+      var a    = document.createElement('a');
+      a.href     = url;
+      a.download = 'kcommit-export.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
     });
   }
 
@@ -319,6 +507,8 @@
   document.querySelectorAll('table.kc-table').forEach(function (tbl) {
     initFilters(tbl);
     initSort(tbl);
+    initColToggle(tbl);   /* K */
+    initCsvExport(tbl);   /* L */
   });
   initShaLinks();
 
