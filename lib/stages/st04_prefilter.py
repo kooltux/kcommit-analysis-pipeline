@@ -238,7 +238,7 @@ def run(cfg, cache):
                                   'filtering', n_done=i + 1, n_total=total)
     sys.stdout.write('\n'); sys.stdout.flush()
 
-    save_json(os.path.join(cache, CACHE_FILES['filtered']), kept)
+    save_json(os.path.join(cache, CACHE_FILES['filtered']), dropped_commits)
     return kept, dropped_commits, reasons
 
 

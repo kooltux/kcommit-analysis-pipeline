@@ -13,11 +13,22 @@ from lib.manifest import CACHE_FILES
 # Single definition used by all output formats (CSV, XLSX, ODS).
 
 COMMIT_COLS = [
-    'rank', 'sha12', 'subject', 'author', 'date', 'score',
+    'rank', 'sha', 'subject', 'author', 'date', 'score',
     'profiles', 'product_evidence',
 ]
 
 COMMIT_COLS_FILTERED = COMMIT_COLS + ['filter_reason']
+
+
+def _fmt_date(ts):
+    """Format a Unix timestamp or ISO string as YYYY-MM-DD HH:MM."""
+    if not ts:
+        return ''
+    try:
+        import datetime
+        return datetime.datetime.utcfromtimestamp(int(ts)).strftime('%Y-%m-%d %H:%M')
+    except (TypeError, ValueError):
+        return str(ts)[:16]
 
 
 def _commit_rows(commits, include_reason=False):
@@ -28,7 +39,7 @@ def _commit_rows(commits, include_reason=False):
             (c.get('commit') or '')[:12],
             c.get('subject', ''),
             c.get('author_name', ''),
-            c.get('author_time', ''),
+            _fmt_date(c.get('author_time', '')),
             c.get('score', 0) or 0,
             fmt_profiles(c),
             fmt_evidence(c),
@@ -129,7 +140,12 @@ def _report_title(cfg):
 def run(cfg, cache, outdir):
     from lib.profile_rules import load_profile_rules
     try:
-        from lib.spreadsheet import write_xlsx, write_ods, write_summary_xlsx, write_summary_ods
+        from lib.spreadsheet import (
+            write_xlsx, write_ods,
+            write_profile_summary_xlsx, write_profile_matrix_xlsx,
+            write_profile_summary_ods,  write_profile_matrix_ods,
+            write_summary_xlsx, write_summary_ods,
+        )
     except ImportError:
         write_xlsx = write_ods = None
 
@@ -173,6 +189,15 @@ def run(cfg, cache, outdir):
             w = csv.writer(fh)
             w.writerow(mat_hdr)
             w.writerows(mat_rows)
+        ps_path = os.path.join(outdir, 'profile_summary.csv')
+        with open(ps_path, 'w', newline='', encoding='utf-8') as fh:
+            w = csv.writer(fh)
+            w.writerow(['profile', 'count', 'total_score', 'avg_score'])
+            for pname, pd in sorted(prof_summary.items(),
+                                    key=lambda kv: kv[1].get('commit_count', 0),
+                                    reverse=True):
+                w.writerow([pname, pd.get('commit_count', 0),
+                             pd.get('total_score', 0), pd.get('avg_score', 0)])
         # Filtered-out commits
         if filtered:
             flt_path = os.path.join(outdir, 'filtered_commits.csv')
@@ -222,8 +247,19 @@ def run(cfg, cache, outdir):
                 except Exception as e:
                     logging.warning('XLSX filtered failed: %s', e)
             try:
+                write_profile_summary_xlsx(
+                    os.path.join(outdir, 'profile_summary.xlsx'), prof_summary)
+            except Exception as e:
+                logging.warning('XLSX profile_summary failed: %s', e)
+            try:
+                write_profile_matrix_xlsx(
+                    os.path.join(outdir, 'profile_matrix.xlsx'), scored)
+            except Exception as e:
+                logging.warning('XLSX profile_matrix failed: %s', e)
+            try:
                 write_summary_xlsx(os.path.join(outdir, 'summary.xlsx'),
                                    scored, filtered, prof_summary,
+                                   report_stats=report_stats,
                                    report_title=title)
             except Exception as e:
                 logging.warning('XLSX summary failed: %s', e)
@@ -248,8 +284,19 @@ def run(cfg, cache, outdir):
                 except Exception as e:
                     logging.warning('ODS filtered failed: %s', e)
             try:
+                write_profile_summary_ods(
+                    os.path.join(outdir, 'profile_summary.ods'), prof_summary)
+            except Exception as e:
+                logging.warning('ODS profile_summary failed: %s', e)
+            try:
+                write_profile_matrix_ods(
+                    os.path.join(outdir, 'profile_matrix.ods'), scored)
+            except Exception as e:
+                logging.warning('ODS profile_matrix failed: %s', e)
+            try:
                 write_summary_ods(os.path.join(outdir, 'summary.ods'),
                                   scored, filtered, prof_summary,
+                                  report_stats=report_stats,
                                   report_title=title)
             except Exception as e:
                 logging.warning('ODS summary failed: %s', e)
