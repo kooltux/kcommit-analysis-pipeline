@@ -164,7 +164,7 @@
 
     // outputs: list of formats to produce.
     // Accepted values (any combination): "html", "csv", "xlsx", "ods"
-    "outputs": ["html", "csv", "xlsx", "ods"],
+    "outputs": ["html", "csv", "xlsx"],
 
     // top_n: maximum number of commits included in HTML/XLSX/ODS reports.
     // Accepted: integer > 0. Default: 5000

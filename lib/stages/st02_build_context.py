@@ -31,13 +31,6 @@ def _scan_build_dir(build_dir):
 
 
 def run(cfg, cache):
-    for note in notices:
-        print('  NOTICE:', note)
-    if problems:
-        for p in problems:
-            print('  ERROR:', p)
-        raise SystemExit(2)
-
     kernel       = cfg.get('kernel', {}) or {}
     source_dir   = kernel.get('source_dir')
     kconfig_path = kernel.get('kernel_config')
