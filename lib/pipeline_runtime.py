@@ -204,3 +204,10 @@ def print_stage_output(label, kept, dropped=None, reasons=None, elapsed=None):
     if reasons:
         for reason, count in sorted(reasons.items(), key=lambda x: -x[1]):
             _eprint('      %-40s %6s' % (reason, format(count, ',')))
+
+
+def finish_progress_line():
+    """Write a newline to stderr to terminate an in-place progress bar line."""
+    import sys
+    sys.stderr.write('\n')
+    sys.stderr.flush()

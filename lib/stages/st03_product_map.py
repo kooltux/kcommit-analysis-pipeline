@@ -3,12 +3,11 @@
 Stage 03 of the kcommit pipeline (absorbed into lib/stages in v9.13).
 """
 import os
-import sys
 
 from lib.config import load_json, save_json
 from lib.history_map import build_history_config_map, _set_gitshow_cache_dir
 from lib.parse_kconfig import scan_makefile_config_map
-from lib.pipeline_runtime import update_stage_progress
+from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.manifest import CACHE_FILES, NSTAGES
 
 
@@ -71,7 +70,7 @@ def run(cfg, cache):
     elif source_dir and os.path.isdir(source_dir) and not base_map:
         print('  skipping history map: base kbuild map is empty')
 
-    sys.stderr.write('\n'); sys.stderr.flush()
+    finish_progress_line()
 
     # 3. Assemble product map
     product_map = {

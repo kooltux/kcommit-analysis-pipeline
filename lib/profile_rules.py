@@ -92,6 +92,11 @@ def _find_unique(name, dirs, suffix=''):
     return found[0] if found else None
 
 
+def _merged_patterns(pdata):
+    """Return the merged pattern dict from a profile data entry (safe, never None)."""
+    return (pdata or {}).get('merged', {}) or {}
+
+
 def compile_rules_for_config(cfg, work_dir):
     """Compile rules for all active profiles and cache to compiled_rules.json.
 

@@ -82,12 +82,11 @@ def infer_touched_paths(subject, cfg=None):
     import os as _os
     if not cfg:
         return []
-    meta     = cfg.get('_meta', {}) or {}
-    vars_    = meta.get('vars', {}) or {}
-    tooldir  = (vars_.get('TOOLDIR')
-                or _os.environ.get('TOOLDIR')
-                or _os.path.abspath(_os.path.join(meta.get('config_dir', '.'), '..')))
-    hints_path = _os.path.join(tooldir, 'configs', 'scoring', 'subsystem_path_hints.json')
+    paths      = cfg.get('paths', {}) or {}
+    scoring_dir = paths.get('scoring_dir') or _os.path.join(
+        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+        'configs', 'scoring')
+    hints_path = _os.path.join(scoring_dir, 'subsystem_path_hints.json')
     if not _os.path.exists(hints_path):
         return []
     hints = _load_hints_from_path(_os.path.abspath(hints_path))

@@ -15,14 +15,13 @@ import json
 import os
 import time
 
-from lib.manifest    import VERSION, TEMPLATE_DIR
+from lib.manifest    import VERSION
 from lib.spreadsheet import COMMIT_COLS, SUMMARY_COLS, MATRIX_COLS
 
 
 @functools.lru_cache(maxsize=None)
-def _get_template(name, default=''):
-    root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-    path = os.path.join(root, TEMPLATE_DIR, name)
+def _get_template(name, templates_dir, default=''):
+    path = os.path.join(templates_dir, name)
     try:
         with open(path, 'r', encoding='utf-8') as f:
             return f.read()
@@ -30,8 +29,8 @@ def _get_template(name, default=''):
         return default
 
 
-def _logo():
-    return _get_template('logo.svg', '')
+def _logo(templates_dir):
+    return _get_template('logo.svg', templates_dir, '')
 
 
 def _score_pill(score):
@@ -140,16 +139,24 @@ def _section(title, badge, content, anchor=''):
 
 def generate_html_report(commits, profile_summary, report_stats, output_path,
                          title='kcommit-analysis-pipeline',
-                         is_filtered=False):
+                         is_filtered=False, templates_dir=None):
     """Write HTML report to *output_path*.
 
     Section order: Run Stats → Profile Summary → Commits table.
     Commit table columns match COMMIT_COLS (no legacy sub-score columns).
     """
-    tpl       = _get_template('report.html', '__BODY__')
-    css       = _get_template('summary.css')
-    js        = _get_template('summary.js')
-    logo      = _logo()
+    if templates_dir is None:
+        templates_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'configs', 'html')
+    tpl  = _get_template('report.html', templates_dir, '__BODY__')
+    if '__BODY__' not in tpl:
+        raise RuntimeError(
+            'HTML template missing or invalid: expected __BODY__ marker in '
+            + os.path.join(templates_dir, 'report.html'))
+    css  = _get_template('summary.css', templates_dir)
+    js   = _get_template('summary.js', templates_dir)
+    logo = _logo(templates_dir)
     generated = time.strftime('%Y-%m-%d %H:%M:%S')
     commits   = commits or []
 

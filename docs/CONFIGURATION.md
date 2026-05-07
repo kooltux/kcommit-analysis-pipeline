@@ -71,7 +71,7 @@ Controls pre-score filtering (stage 04) and post-score filtering (stage 06).
   "enabled":                  true,  // false = skip path/keyword rules (SHA rules always active)
   "path_blacklist_global":    true,  // drop commits where ALL touched files are blacklisted
   "require_kconfig_coverage": null,  // null=auto, true=force, false=disable
-  "min_score":                0      // drop commits below this score (0 = keep all)
+  "min_score":                0      // canonical threshold: drop commits below this score (0 = keep all)
 }
 ```
 
@@ -113,10 +113,9 @@ using `git show` on Makefiles across the revision range.
 ### `reports`
 ```json
 "reports": {
-  "title":     "My Report",          // report heading shown in HTML output
-  "outputs":   ["html", "csv", "xlsx"],  // formats to produce (html, csv, xlsx, ods)
-  "top_n":     500,                  // maximum commits in HTML/XLSX/ODS reports
-  "min_score": 10                    // same as filter.min_score — post-score threshold
+  "title":   "My Report",           // report heading shown in HTML output
+  "outputs": ["html", "csv", "xlsx"],  // formats to produce (html, csv, xlsx, ods)
+  "top_n":   500                    // maximum commits in HTML/XLSX/ODS reports (default: 5000)
 }
 ```
 

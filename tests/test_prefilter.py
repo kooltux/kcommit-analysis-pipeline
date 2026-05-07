@@ -1,8 +1,7 @@
 """Tests for lib.stages.prefilter — filter_decision and helpers."""
-import sys, os, re
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import os, re
 
-from lib.stages.prefilter import (
+from lib.stages.st04_prefilter import (
     filter_decision, build_merged_lists, build_compiled_sets,
 )
 
@@ -124,3 +123,89 @@ def test_build_compiled_sets_with_data():
     assert 'drivers/usb/core/hub.c' in cs['compiled_files']
     assert 'drivers/usb/core' in cs['compiled_dirs']
     assert 'drivers/usb/core/hub' in cs['artifact_stems']
+
+
+# ── min_score threshold (E.1c / st06_postfilter) ─────────────────────────────
+from lib.stages.st06_postfilter import _get_threshold
+
+
+def test_get_threshold_default():
+    assert _get_threshold({}) == 0.0
+
+
+def test_get_threshold_from_filter():
+    assert _get_threshold({'filter': {'min_score': 25}}) == 25.0
+
+
+def test_get_threshold_ignores_reports():
+    """reports.min_score is no longer the canonical key."""
+    assert _get_threshold({'reports': {'min_score': 99}}) == 0.0
+
+
+def test_get_threshold_filter_wins():
+    """filter.min_score takes priority over reports.min_score."""
+    cfg = {'filter': {'min_score': 10}, 'reports': {'min_score': 99}}
+    assert _get_threshold(cfg) == 10.0
+
+
+# ── L2½: build-artifact evidence keeps commit ─────────────────────────────────
+def test_artifact_evidence_keeps_commit():
+    """Commit whose file stem is in artifact_stems is kept at L2½ (before path_bl drop)."""
+    c = _commit(files=['drivers/usb/core/hub.c'])
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs=set(),
+        artifact_stems={'drivers/usb/core/hub'},   # stem matches hub.c
+        log_basenames=set(),
+        available=True,
+    )
+    # No path_wl, no path_bl all-files-drop — falls through to L2½ artifact check
+    action, reason = filter_decision(c, _lists(), cs, {}, False)
+    assert action == 'keep'
+    assert reason == 'build_artifact'
+
+
+# ── L2½: kconfig coverage miss drops commit ───────────────────────────────────
+def test_kconfig_miss_drops_commit():
+    """require_kconfig_coverage=True + kconfig_enabled=True: no covered file → drop."""
+    c = _commit(files=['drivers/usb/core/hub.c'])
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs=set(),
+        artifact_stems=set(),
+        log_basenames=set(),
+        available=True,
+    )
+    # 4th arg = filter_cfg, 5th = kconfig_enabled
+    action, reason = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'drop'
+    assert 'kconfig' in reason
+
+
+def test_kconfig_coverage_not_required_keeps():
+    """require_kconfig_coverage=False: kconfig miss does not drop."""
+    c = _commit(files=['drivers/usb/core/hub.c'])
+    cs = dict(
+        compiled_files=set(), compiled_dirs=set(),
+        artifact_stems=set(), log_basenames=set(),
+        available=True,
+    )
+    action, _ = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': False}, True)
+    assert action == 'keep'
+
+
+# ── build_merged_lists: multiple profiles merged correctly ────────────────────
+def test_build_merged_lists_multiple_profiles():
+    profile_rules = {
+        'net':  {'merged': {'path_whitelist': ['drivers/net/'], 'path_blacklist': [],
+                            'keywords_whitelist': [], 'keywords_blacklist': [],
+                            'commit_whitelist': [], 'commit_blacklist': []}},
+        'usb':  {'merged': {'path_whitelist': ['drivers/usb/'], 'path_blacklist': [],
+                            'keywords_whitelist': [], 'keywords_blacklist': [],
+                            'commit_whitelist': [], 'commit_blacklist': []}},
+    }
+    lists = build_merged_lists(profile_rules)
+    assert 'drivers/net/' in lists['path_wl']
+    assert 'drivers/usb/' in lists['path_wl']

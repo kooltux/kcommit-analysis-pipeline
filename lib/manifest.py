@@ -15,8 +15,6 @@ with open(_MANIFEST_PATH, 'r', encoding='utf-8') as _f:
 
 VERSION         = MANIFEST.get('version', 'v0.0.0')
 LIBRARY_DIR     = MANIFEST.get('library_dir', 'lib')
-SCORING_DIR     = MANIFEST.get('scoring_dir', 'configs/scoring')
-TEMPLATE_DIR    = MANIFEST.get('template_dir', 'configs/templates')
 PIPELINE_STAGES = MANIFEST.get('pipeline_stages', [])
 TOOLS           = MANIFEST.get('tools', [])
 

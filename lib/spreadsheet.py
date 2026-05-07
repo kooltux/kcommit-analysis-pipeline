@@ -1,3 +1,4 @@
+from lib.scoring import fmt_profiles, fmt_evidence
 """Spreadsheet export for kcommit-analysis-pipeline.
 
 v9.11: XLSX uses openpyxl for correctness; ODS remains stdlib (zipfile).
@@ -23,8 +24,8 @@ def _commit_row(c):
         c.get('author_name', ''),
         c.get('author_time', ''),
         c.get('score', 0) or 0,
-        '; '.join(c.get('matched_profiles') or []),
-        '; '.join(c.get('product_evidence') or []),
+        fmt_profiles(c),
+        fmt_evidence(c),
     ]
 
 

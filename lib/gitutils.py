@@ -43,10 +43,10 @@ def iter_git_log_records(cfg):
 
     # Config key is 'no_merges' (canonical). Support 'use_no_merges' as a
     # transparent fallback so configs written before the rename still work.
-    no_merges = collect.get('no_merges', collect.get('use_no_merges', True))
+    no_merges = collect.get('no_merges', True)
     if no_merges:
         args.append('--no-merges')
-    if collect.get('first_parent') or collect.get('use_first_parent'):
+    if collect.get('first_parent'):
         args.append('--first-parent')
     if collect.get('use_numstat', True):
         args.append('--numstat')
@@ -131,10 +131,10 @@ def list_rev_commits(cfg):
     collect = cfg.get('collect', {}) or {}
     rev_range = '%s..%s' % (kernel['rev_old'], kernel['rev_new'])
     args = ['rev-list', '--reverse', rev_range]
-    no_merges = collect.get('no_merges', collect.get('use_no_merges', True))
+    no_merges = collect.get('no_merges', True)
     if no_merges:
         args.append('--no-merges')
-    if collect.get('first_parent') or collect.get('use_first_parent'):
+    if collect.get('first_parent'):
         args.append('--first-parent')
     out = run_git(cfg, args)
     return [x.strip() for x in out.splitlines() if x.strip()]

@@ -3,12 +3,11 @@
 Stage 02 of the kcommit pipeline (absorbed into lib/stages in v9.13).
 """
 import os
-import sys
 
 from lib.config import save_json
 from lib.kbuild import load_kernel_config_symbols
 from lib.parse_kconfig import parse_kernel_config, scan_kbuild_tree
-from lib.pipeline_runtime import update_stage_progress
+from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.manifest import CACHE_FILES, NSTAGES
 
 
@@ -32,8 +31,6 @@ def _scan_build_dir(build_dir):
 
 
 def run(cfg, cache):
-    from lib.validation import validate_inputs
-    problems, notices = validate_inputs(cfg)
     for note in notices:
         print('  NOTICE:', note)
     if problems:
@@ -90,6 +87,6 @@ def run(cfg, cache):
         'kbuild_files':         kbuild_files,
     }
     save_json(os.path.join(cache, CACHE_FILES['build_context']), ctx)
-    sys.stderr.write('\n'); sys.stderr.flush()
+    finish_progress_line()
     print('  build context captured')
     return ctx, static_config_map

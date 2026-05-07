@@ -1,22 +1,10 @@
-"""Historical Kbuild/Makefile config-to-paths mapping for kcommit-analysis-pipeline.
+"""Stage 03 helper: build a Kconfig-symbol → source-file history map.
 
-v9.0 changes vs v8.0:
-  - concurrent.futures import moved to module top level.
-  - Failure rate threshold now configurable via history_mapping.max_failure_rate
-    (default 0.05); avoids magic constant.
-
-v8.0 changes vs v7.19:
-  - Dropped from __future__ import print_function (Py2 dead code).
-  - %-formatting replaced with f-strings.
-  - Fixed silent error swallowing in the ThreadPoolExecutor loop: individual
-    task failures are now counted.  If more than 5% of git-show tasks fail,
-    a RuntimeError is raised to fail the stage loudly.  Below the threshold,
-    a stderr warning is printed and the pipeline continues with partial data.
-
-v7.18 additions vs v7.17:
-  - Parallel git-show calls via concurrent.futures.ThreadPoolExecutor.
-  - progress_callback(done, total) parameter.
-  - Serial fallback when max_workers <= 1.
+Walks git commits in the requested mode (range / sampled / full / disabled)
+and records which source files were touched alongside each changed Kconfig symbol.
+Parallel git-show calls are used via ThreadPoolExecutor; a serial fallback
+is used when max_workers <= 1. Failure rate is capped by
+history_mapping.max_failure_rate (default 0.05).
 """
 import os
 import re

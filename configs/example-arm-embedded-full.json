@@ -88,26 +88,26 @@
 
   // Commits that cannot possibly receive a non-zero score are dropped before
   "filter": {
-    // enabled: set false to disable path/product filtering.
-    // Rule 1 (SHA commit_blacklist) remains active even when enabled=false.
+    // enabled: enable/disable path and product filtering.
+    // Accepted: true | false. Default: true
+    // Note: SHA-based commit_blacklist is always active regardless of this flag.
     "enabled": true,
 
-    // path_blacklist_global: drop commits where EVERY touched file matches
-    // the merged path_blacklist across all active profiles.
-    // Example: a commit that only touches Documentation/ would be dropped
-    // if Documentation/** is in a profile's path_blacklist.
+    // path_blacklist_global: drop commits where EVERY touched file is blacklisted.
+    // Accepted: true | false. Default: true
+    // When true: a commit touching only Documentation/ is dropped if that path is blacklisted.
     "path_blacklist_global": true,
 
-    // require_kconfig_coverage: drop commits where no touched file is reachable
-    // from any Kconfig symbol enabled in the kernel .config.
-    //   null  = auto (enabled automatically when kbuild_static_map is available)
-    //   true  = always enforce (pipeline fails if kbuild_static_map is missing)
+    // require_kconfig_coverage: drop commits where no touched file maps to an enabled CONFIG_*.
+    // Accepted: null | true | false. Default: null
+    //   null  = auto (active when kbuild_static_map is available)
+    //   true  = always enforce (error if kbuild_static_map is missing)
     //   false = disabled
     "require_kconfig_coverage": null,
 
     // min_score: commits with a total score STRICTLY LOWER THAN this value
     // are dropped by stage 06 (postfilter_commits) before reports are produced.
-    // Set to 0 (or omit) to keep all scored commits.
+    // Accepted: integer >= 0. Default: 0 (keep all scored commits).
     "min_score": 0
   },
 
@@ -151,9 +151,29 @@
     "max_failure_rate":      0.05
   },
 
+  // ── Scoring ───────────────────────────────────────────────────────────────
+  // Optional: override the scoring data directory.
+  // Default: ${CONFIGDIR}/scoring
+  // "scoring": { "scoring_dir": "${CONFIGDIR}/scoring" },
+
   // ── HTML report and output options ────────────────────────────────────────
   "reports": {
-    "title": "ARM Embedded Analysis",
-    "outputs": ["html", "csv", "xlsx"]
+    // title: heading shown at the top of the HTML report.
+    // Accepted: any string. Default: "kcommit Analysis Report"
+    "title":   "ARM Embedded Analysis",
+
+    // outputs: list of formats to produce.
+    // Accepted values (any combination): "html", "csv", "xlsx", "ods"
+    "outputs": ["html", "csv", "xlsx", "ods"],
+
+    // top_n: maximum number of commits included in HTML/XLSX/ODS reports.
+    // Accepted: integer > 0. Default: 5000
+    "top_n":   500
+
+    // templates_dir: override the HTML template directory.
+    // Accepted: absolute path, or path relative to this config file.
+    // Default: <pipeline_root>/configs/html/
+    // Useful when maintaining custom report templates outside the pipeline repo.
+    // "templates_dir": "${CONFIGDIR}/html"
   }
 }

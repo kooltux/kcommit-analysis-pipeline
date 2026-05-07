@@ -1,3 +1,4 @@
+from lib.scoring import fmt_profiles, fmt_evidence
 """Stage 07 logic: generate all output formats."""
 import csv
 import json
@@ -29,8 +30,8 @@ def _commit_rows(commits, include_reason=False):
             c.get('author_name', ''),
             c.get('author_time', ''),
             c.get('score', 0) or 0,
-            '; '.join(c.get('matched_profiles') or []),
-            '; '.join(c.get('product_evidence') or []),
+            fmt_profiles(c),
+            fmt_evidence(c),
         ]
         if include_reason:
             row.append(c.get('_filter_reason', ''))
@@ -168,7 +169,8 @@ def run(cfg, cache, outdir):
         try:
             generate_html_report(
                 scored, prof_summary, report_stats,
-                os.path.join(outdir, 'summary.html'),
+                os.path.join(outdir, 'summary.html',
+                          templates_dir=cfg['paths'].get('templates_dir')),
                 title=title,
             )
         except Exception as e:

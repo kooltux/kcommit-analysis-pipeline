@@ -284,11 +284,23 @@ def load_config(path, inherited_vars=None, seen=None):
     expanded = _resolve_known_paths(expanded, config_dir)
 
     # ── Canonical paths namespace ─────────────────────────────────────────────
-    work_raw = (expanded.get('project', {}) or {}).get('work_dir', './work')
+    work_raw = (expanded.get('paths', {}) or {}).get('work_dir', './work')
     work = (os.path.normpath(os.path.join(config_dir, work_raw))
             if not os.path.isabs(work_raw) else work_raw)
 
-    scoring_dir   = os.path.join(config_dir, 'scoring')
+    _scoring_cfg = expanded.get('scoring', {}) or {}
+    _scoring_raw = _scoring_cfg.get('scoring_dir')
+    if _scoring_raw and not os.path.isabs(_scoring_raw):
+        _scoring_raw = os.path.normpath(os.path.join(config_dir, _scoring_raw))
+    scoring_dir  = _scoring_raw if _scoring_raw else os.path.join(config_dir, 'scoring')
+    # templates_dir: from reports.templates_dir in config, else pipeline's own configs/html/
+    _reports_cfg  = expanded.get('reports', {}) or {}
+    _tool_dir     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _default_tpl  = os.path.join(_tool_dir, 'configs', 'html')
+    _custom_tpl   = _reports_cfg.get('templates_dir')
+    if _custom_tpl and not os.path.isabs(_custom_tpl):
+        _custom_tpl = os.path.normpath(os.path.join(config_dir, _custom_tpl))
+    templates_dir = _custom_tpl if _custom_tpl else _default_tpl
     _profiles_cfg = expanded.get('profiles', {}) or {}
     _rules_cfg    = expanded.get('rules', {}) or {}
 

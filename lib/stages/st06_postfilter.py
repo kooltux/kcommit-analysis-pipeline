@@ -5,16 +5,9 @@ from lib.manifest import CACHE_FILES
 
 
 def _get_threshold(cfg):
-    """Return the min_score threshold.
-
-    Canonical key: reports.min_score
-    Legacy fallback: filter.min_score (deprecated — use reports.min_score)
-    """
-    reports = cfg.get('reports', {}) or {}
-    legacy  = cfg.get('filter',  {}) or {}
-    raw = (reports.get('min_score')
-           if reports.get('min_score') is not None
-           else legacy.get('min_score', 0))
+    """Return the min_score threshold from filter.min_score (default 0)."""
+    filt = cfg.get('filter', {}) or {}
+    raw  = filt.get('min_score', 0)
     try:
         return float(raw or 0)
     except (TypeError, ValueError):

@@ -1,3 +1,4 @@
+from lib.profile_rules import _merged_patterns
 """Commit scoring helpers for kcommit-analysis-pipeline.
 
 v9.12 changes:
@@ -168,7 +169,9 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     # ── First pass: per-profile blacklist exclusions ──────────────────────────
     _profile_blacklisted = set()
     for _pname, _pdata in (profile_rules or {}).items():
-        _merged = (_pdata or {}).get('merged', {}) or {}
+        if not isinstance(_pdata, dict):
+            continue
+        _merged = _merged_patterns(_pdata)
         for _pat in _merged.get('keywords_blacklist', []):
             if _pat_match(_pat, subject):
                 _profile_blacklisted.add(_pname)
@@ -184,10 +187,12 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     profile_scores   = {}
 
     for pname, pdata in (profile_rules or {}).items():
+        if not isinstance(pdata, dict):
+            continue
         if pname in _profile_blacklisted:
             profile_scores[pname] = 0
             continue
-        merged = (pdata or {}).get('merged', {}) or {}
+        merged = _merged_patterns(pdata)
         rules  = (pdata or {}).get('rules',  {}) or {}
         pmult  = prof_mults.get(pname, 1.0)
 
@@ -236,3 +241,15 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         'product_evidence': evidence,
     })
     return result
+
+
+# ── Commit display helpers ────────────────────────────────────────────────────
+
+def fmt_profiles(commit):
+    """Return matched_profiles as a semicolon-separated string."""
+    return '; '.join(commit.get('matched_profiles') or [])
+
+
+def fmt_evidence(commit):
+    """Return product_evidence as a semicolon-separated string."""
+    return '; '.join(commit.get('product_evidence') or [])

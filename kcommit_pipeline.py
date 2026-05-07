@@ -43,6 +43,14 @@ STAGE_ORDER = [key for key, _ in STAGES]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _load_cfg(args):
+    """Load config and apply --override in one step."""
+    cfg = load_config(args.config)
+    if getattr(args, 'override', None):
+        apply_override(cfg, args.override)
+    return cfg
+
+
 def _resolve_stage(token):
     """Resolve a stage by index (0-7) or key name."""
     for idx, (key, _fn) in enumerate(STAGES):
@@ -160,15 +168,13 @@ def _run_stage(idx, key, fn, cfg, cache, work, state_path, args):
 
 
 def cmd_run(args):
-    cfg  = load_config(args.config)
-    if args.override:
-        apply_override(cfg, args.override)
+    cfg = _load_cfg(args)
 
     work       = cfg['paths']['work_dir']
-    cache      = os.path.join(work, 'cache')
+    cache      = cfg['paths']['cache_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     os.makedirs(cache,  exist_ok=True)
-    os.makedirs(os.path.join(work, 'output'), exist_ok=True)
+    os.makedirs(cfg['paths']['output_dir'], exist_ok=True)
     if not os.path.exists(state_path):
         init_pipeline_state(state_path)
 
@@ -208,8 +214,7 @@ def cmd_run(args):
 # ── Sub-command: status ───────────────────────────────────────────────────────
 
 def cmd_status(args):
-    cfg        = load_config(args.config)
-    if args.override: apply_override(cfg, args.override)
+    cfg = _load_cfg(args)
     work       = cfg['paths']['work_dir']
     state_path = os.path.join(work, 'pipeline_state.json')
     state      = _load_state(state_path)
@@ -234,8 +239,7 @@ def cmd_status(args):
 # ── Sub-command: validate ─────────────────────────────────────────────────────
 
 def cmd_validate(args):
-    cfg = load_config(args.config)
-    if args.override: apply_override(cfg, args.override)
+    cfg = _load_cfg(args)
     work     = cfg['paths']['work_dir']
     kernel   = cfg.get('kernel', {}) or {}
     filt     = cfg.get('filter', {}) or {}
@@ -263,11 +267,10 @@ def cmd_validate(args):
 # ── Sub-command: report (E.10) ────────────────────────────────────────────────
 
 def cmd_report(args):
-    cfg    = load_config(args.config)
-    if args.override: apply_override(cfg, args.override)
+    cfg = _load_cfg(args)
     work   = cfg['paths']['work_dir']
-    cache  = os.path.join(work, 'cache')
-    outdir = cfg.get('paths', {}).get('output_dir') or os.path.join(work, 'output')
+    cache  = cfg['paths']['cache_dir']
+    outdir = cfg['paths']['output_dir']
 
     if args.format:
         reports = cfg.setdefault('reports', {})
@@ -282,10 +285,9 @@ def cmd_report(args):
 # ── Sub-command: dropped ──────────────────────────────────────────────────────
 
 def cmd_dropped(args):
-    cfg    = load_config(args.config)
-    if args.override: apply_override(cfg, args.override)
-    work   = cfg['paths']['work_dir']
-    cache  = os.path.join(work, 'cache')
+    cfg = _load_cfg(args)
+    work  = cfg['paths']['work_dir']
+    cache = cfg['paths']['cache_dir']
 
     filtered = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
 

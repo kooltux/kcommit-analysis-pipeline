@@ -45,3 +45,17 @@
 #
 # Note: all dropped commits are tagged with a _filter_reason and written
 # to cache/04_filtered_commits.json for inspection via `kcommit_pipeline.py dropped`.
+#
+# Rules directory configuration:
+#   The pipeline searches for rule sets in one or more rules directories.
+#   Configure via the "rules" section of your config file:
+#
+#     Single directory:
+#       "rules": { "rules_dir": "${CONFIGDIR}/rules" }
+#
+#     Multiple directories (rule set names must be unique across all dirs):
+#       "rules": { "rules_dirs": ["${CONFIGDIR}/rules", "/shared/team/rules"] }
+#
+#   Default when neither key is present: ${CONFIGDIR}/rules
+#   Note: "rules_dir" (singular) and "rules_dirs" (plural list) are both accepted;
+#   the plural form is canonical.

@@ -2,7 +2,6 @@
   "version": "v9.13.0",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
   "library_dir": "lib",
-  "scoring_dir": "configs/scoring",
   "example_configs": [
     "configs/example-arm-embedded-full.json"
   ],
@@ -73,6 +72,5 @@
   ],
   "tools": [
     "tools/generate_message_whitelist.py"
-  ],
-  "template_dir": "configs/html"
+  ]
 }

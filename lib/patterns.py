@@ -1,3 +1,4 @@
+from lib.profile_rules import _merged_patterns
 """Pattern matching primitives for kcommit-analysis-pipeline.
 
 v9.3 semantics:
@@ -128,7 +129,9 @@ def precompile_rules(profile_rules):
             'path_whitelist', 'path_blacklist',
             'commit_whitelist', 'commit_blacklist')
     for pdata in (profile_rules or {}).values():
-        merged = (pdata or {}).get('merged', {}) or {}
+        if not isinstance(pdata, dict):
+            continue
+        merged = _merged_patterns(pdata)
         for key in keys:
             merged[key] = [compilepat(p) for p in merged.get(key, [])]
         for rdata in ((pdata or {}).get('rules') or {}).values():

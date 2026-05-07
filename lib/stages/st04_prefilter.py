@@ -1,4 +1,3 @@
-from lib.manifest import NSTAGES
 """Stage 04 logic: enrich and pre-filter commits before scoring.
 
 Filter hierarchy (higher level wins):
@@ -26,8 +25,9 @@ from lib.patterns import (
     anyfilematches as _any_file_matches,
     allfilesmatch as _all_files_match,
 )
-from lib.pipeline_runtime import update_stage_progress
-from lib.scoring import extract_commit_meta, precompile_rules
+from lib.pipeline_runtime import update_stage_progress, finish_progress_line
+from lib.profile_rules import load_profile_rules, _merged_patterns
+from lib.scoring import extract_commit_meta, precompile_rules, fmt_profiles, fmt_evidence
 from lib.kbuild import infer_touched_paths
 from lib.manifest import CACHE_FILES
 
@@ -55,7 +55,7 @@ def build_merged_lists(profile_rules):
         'keywords_blacklist': 'kw_bl',
     }
     for pdata in (profile_rules or {}).values():
-        merged = (pdata or {}).get('merged', {}) or {}
+        merged = _merged_patterns(pdata)
         for src, dst in MAP.items():
             out[dst].extend(merged.get(src, []))
     for k in out:
@@ -185,7 +185,6 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
 def run(cfg, cache):
     """Enrich + filter commits. Returns (kept, dropped_commits, reasons)."""
     from lib.config import load_json
-    from lib.profile_rules import load_profile_rules
 
     filter_cfg  = cfg.get('filter', {}) or {}
     commits     = load_json(os.path.join(cache, CACHE_FILES['commits']), default=[]) or []
@@ -267,8 +266,8 @@ def write_outputs(cfg, dropped_commits, outdir):
                     c.get('author_name', ''),
                     c.get('author_time', ''),
                     c.get('score', 0) or 0,
-                    '; '.join(c.get('matched_profiles') or []),
-                    '; '.join(c.get('product_evidence') or []),
+                    fmt_profiles(c),
+                    fmt_evidence(c),
                     c.get('_filter_reason', ''),
                 ])
         print(f'  filtered CSV:  {cp}')
@@ -278,7 +277,9 @@ def write_outputs(cfg, dropped_commits, outdir):
             from lib.html_report import generate_html_report
             hp = os.path.join(outdir, 'filtered_commits.html')
             title = reports.get('title', 'kcommit Analysis Report') + ' — Filtered'
-            generate_html_report(dropped_commits, {}, {}, hp, title=title, is_filtered=True)
+            generate_html_report(dropped_commits, {}, {}, hp, title=title, is_filtered=True,
+                          templates_dir=cfg['paths'].get('templates_dir',
+                          templates_dir=cfg['paths'].get('templates_dir')))
             print(f'  filtered HTML: {hp}')
         except Exception as e:
             logging.warning('filtered HTML failed: %s', e)

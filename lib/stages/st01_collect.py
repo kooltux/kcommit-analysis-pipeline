@@ -2,10 +2,9 @@ from lib.manifest import NSTAGES
 """Stage 01 logic: collect commits from git log."""
 import json
 import os
-import sys
 from lib.config import save_json
 from lib.gitutils import iter_git_log_records
-from lib.pipeline_runtime import update_stage_progress
+from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.manifest import CACHE_FILES
 
 _PROGRESS_INTERVAL = 100
@@ -45,7 +44,7 @@ def run(cfg, cache):
                 update_stage_progress(1, NSTAGES, 0.0, 'collecting commits', n_done=n)
 
     update_stage_progress(1, NSTAGES, 1.0, 'collecting commits', n_done=len(commits), n_total=max_commits if max_commits else len(commits))
-    sys.stderr.write('\n'); sys.stderr.flush()
+    finish_progress_line()
     save_json(os.path.join(cache, CACHE_FILES['commits']), commits)
 
     if collect_cfg.get('jsonl'):
