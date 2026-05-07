@@ -129,7 +129,7 @@ def _report_title(cfg):
 def run(cfg, cache, outdir):
     from lib.profile_rules import load_profile_rules
     try:
-        from lib.spreadsheet import write_xlsx, write_ods
+        from lib.spreadsheet import write_xlsx, write_ods, write_summary_xlsx, write_summary_ods
     except ImportError:
         write_xlsx = write_ods = None
 
@@ -153,9 +153,9 @@ def run(cfg, cache, outdir):
     mat_hdr, mat_rows = _profile_matrix(scored)
 
     # JSON outputs (always written)
-    save_json(os.path.join(outdir, CACHE_FILES['relevant']), scored)
-    save_json(os.path.join(outdir, 'report_stats.json'),        report_stats)
-    save_json(os.path.join(outdir, 'profile_summary.json'),     prof_summary)
+    save_json(os.path.join(outdir, 'relevant_commits.json'),  scored)
+    save_json(os.path.join(outdir, 'report_stats.json'),      report_stats)
+    save_json(os.path.join(outdir, 'profile_summary.json'),   prof_summary)
     save_json(os.path.join(outdir, 'profile_matrix.json'),
               {'header': mat_hdr, 'rows': mat_rows})
     if filtered:
@@ -186,7 +186,7 @@ def run(cfg, cache, outdir):
         try:
             generate_html_report(
                 scored, prof_summary, report_stats,
-                os.path.join(outdir, 'summary.html'),
+                os.path.join(outdir, 'relevant_commits.html'),
                 title=title,
                 templates_dir=cfg['paths'].get('templates_dir'),
             )
@@ -209,15 +209,24 @@ def run(cfg, cache, outdir):
         if write_xlsx:
             try:
                 write_xlsx(os.path.join(outdir, 'relevant_commits.xlsx'),
-                           scored, prof_summary)
+                           scored, prof_summary,
+                           sheet_name='Relevant Commits')
             except Exception as e:
                 logging.warning('XLSX failed: %s', e)
             if filtered:
                 try:
                     write_xlsx(os.path.join(outdir, 'filtered_commits.xlsx'),
-                               filtered, {})
+                               filtered, {},
+                               sheet_name='Filtered Commits',
+                               include_reason=True)
                 except Exception as e:
                     logging.warning('XLSX filtered failed: %s', e)
+            try:
+                write_summary_xlsx(os.path.join(outdir, 'summary.xlsx'),
+                                   scored, filtered, prof_summary,
+                                   report_title=title)
+            except Exception as e:
+                logging.warning('XLSX summary failed: %s', e)
         else:
             logging.warning("'xlsx' output requested but lib.spreadsheet not available")
 
@@ -226,15 +235,24 @@ def run(cfg, cache, outdir):
         if write_ods:
             try:
                 write_ods(os.path.join(outdir, 'relevant_commits.ods'),
-                          scored, prof_summary)
+                          scored, prof_summary,
+                          sheet_name='Relevant Commits')
             except Exception as e:
                 logging.warning('ODS failed: %s', e)
             if filtered:
                 try:
                     write_ods(os.path.join(outdir, 'filtered_commits.ods'),
-                              filtered, {})
+                              filtered, {},
+                              sheet_name='Filtered Commits',
+                              include_reason=True)
                 except Exception as e:
                     logging.warning('ODS filtered failed: %s', e)
+            try:
+                write_summary_ods(os.path.join(outdir, 'summary.ods'),
+                                  scored, filtered, prof_summary,
+                                  report_title=title)
+            except Exception as e:
+                logging.warning('ODS summary failed: %s', e)
         else:
             logging.warning("'ods' output requested but lib.spreadsheet not available")
 

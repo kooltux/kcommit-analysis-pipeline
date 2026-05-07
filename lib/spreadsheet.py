@@ -1,23 +1,27 @@
 from lib.scoring import fmt_profiles, fmt_evidence
 """Spreadsheet export for kcommit-analysis-pipeline.
 
-v9.11: XLSX uses openpyxl for correctness; ODS remains stdlib (zipfile).
-       Shared column layout and row builders used by all three formats.
+v9.12 changes:
+  - Individual write_xlsx / write_ods each write a single-sheet file.
+  - New write_summary_xlsx / write_summary_ods produce a multi-sheet summary
+    (summary.xlsx / summary.ods) merging all datasets into one workbook:
+    Relevant Commits, Filtered Commits, Profile Summary, Profile Matrix.
 """
 import os
 import zipfile
 import xml.sax.saxutils as _sx
 
 # ── Column definitions ────────────────────────────────────────────────────────
-COMMIT_COLS  = ['Rank', 'SHA', 'Subject', 'Author', 'Date',
-                'Score', 'Profiles', 'Product Evidence']
-SUMMARY_COLS = ['Profile', 'Count', 'Total Score', 'Avg Score']
-MATRIX_COLS  = ['Rank', 'SHA', 'Subject', 'Profile', 'Total Score', 'Profile Score']
+COMMIT_COLS          = ['Rank', 'SHA', 'Subject', 'Author', 'Date',
+                        'Score', 'Profiles', 'Product Evidence']
+COMMIT_COLS_FILTERED = COMMIT_COLS + ['Filter Reason']
+SUMMARY_COLS         = ['Profile', 'Count', 'Total Score', 'Avg Score']
+MATRIX_COLS          = ['Rank', 'SHA', 'Subject', 'Profile', 'Total Score', 'Profile Score']
 
 
 # ── Shared row builders ───────────────────────────────────────────────────────
-def _commit_row(c):
-    return [
+def _commit_row(c, include_reason=False):
+    row = [
         c.get('_rank', ''),
         (c.get('commit') or '')[:12],
         c.get('subject', ''),
@@ -27,6 +31,9 @@ def _commit_row(c):
         fmt_profiles(c),
         fmt_evidence(c),
     ]
+    if include_reason:
+        row.append(c.get('_filter_reason', ''))
+    return row
 
 
 def _summary_rows(ps):
@@ -55,59 +62,80 @@ def _matrix_rows(scored):
 
 
 # ── XLSX via openpyxl ─────────────────────────────────────────────────────────
-def write_xlsx(path: str, scored: list, profile_summary: dict,
-               report_title: str = 'kcommit Analysis Report') -> None:
-    """Write XLSX using openpyxl — correct shared strings, styles, col widths."""
-    import openpyxl
+def _xlsx_write_sheet(ws, headers, rows, col_widths=None):
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
-
-    HEADER_FONT   = Font(bold=True, name='Calibri', size=11)
     HEADER_FILL   = PatternFill('solid', fgColor='1F4E79')
     HEADER_FONT_W = Font(bold=True, name='Calibri', size=11, color='FFFFFF')
     WRAP          = Alignment(wrap_text=True, vertical='top')
     TOP           = Alignment(vertical='top')
-
-    def _write_sheet(ws, headers, rows, col_widths=None):
-        ws.append(headers)
-        for cell in ws[1]:
-            cell.font      = HEADER_FONT_W
-            cell.fill      = HEADER_FILL
-            cell.alignment = WRAP
-        ws.row_dimensions[1].height = 18
-        for row in rows:
-            ws.append(row)
-        for i, cell in enumerate(ws[1]):
-            col  = get_column_letter(i + 1)
-            w    = (col_widths or {}).get(i, 18)
-            ws.column_dimensions[col].width = w
-        ws.freeze_panes = 'A2'
-        # Auto-filter on header row
-        ws.auto_filter.ref = ws.dimensions
-
-    wb = openpyxl.Workbook()
-
-    # Sheet 1: Commits
-    ws1 = wb.active
-    ws1.title = 'Commits'
-    _write_sheet(ws1, COMMIT_COLS, [_commit_row(c) for c in scored],
-                 {0: 6, 1: 13, 2: 60, 3: 22, 4: 18, 5: 8, 6: 30, 7: 40})
-    for row in ws1.iter_rows(min_row=2):
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font      = HEADER_FONT_W
+        cell.fill      = HEADER_FILL
+        cell.alignment = WRAP
+    ws.row_dimensions[1].height = 18
+    for row in rows:
+        ws.append(row)
+    for i, cell in enumerate(ws[1]):
+        col = get_column_letter(i + 1)
+        ws.column_dimensions[col].width = (col_widths or {}).get(i, 18)
+    ws.freeze_panes = 'A2'
+    ws.auto_filter.ref = ws.dimensions
+    for row in ws.iter_rows(min_row=2):
         for cell in row:
             cell.alignment = TOP
 
-    # Sheet 2: Profile Summary
-    ws2 = wb.create_sheet('Profile Summary')
-    _write_sheet(ws2, SUMMARY_COLS, _summary_rows(profile_summary),
-                 {0: 28, 1: 10, 2: 12, 3: 10})
 
-    # Sheet 3: Profile Matrix
-    ws3 = wb.create_sheet('Profile Matrix')
-    _write_sheet(ws3, MATRIX_COLS, _matrix_rows(scored),
-                 {0: 6, 1: 13, 2: 50, 3: 22, 4: 12, 5: 12})
-
+def _xlsx_save(wb, path):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     wb.save(path)
+
+
+def write_xlsx(path: str, scored: list, profile_summary: dict,
+               sheet_name: str = 'Commits',
+               include_reason: bool = False) -> None:
+    """Write a single-sheet XLSX for *scored* commits."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+    cols = COMMIT_COLS_FILTERED if include_reason else COMMIT_COLS
+    widths = {0: 6, 1: 13, 2: 60, 3: 22, 4: 18, 5: 8, 6: 30, 7: 40}
+    if include_reason:
+        widths[8] = 30
+    _xlsx_write_sheet(ws, cols, [_commit_row(c, include_reason) for c in scored], widths)
+    _xlsx_save(wb, path)
+
+
+def write_summary_xlsx(path: str, scored: list, filtered: list,
+                       profile_summary: dict,
+                       report_title: str = 'kcommit Analysis Report') -> None:
+    """Write a multi-sheet summary XLSX merging all datasets."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+
+    ws1 = wb.active
+    ws1.title = 'Relevant Commits'
+    _xlsx_write_sheet(ws1, COMMIT_COLS, [_commit_row(c) for c in scored],
+                      {0: 6, 1: 13, 2: 60, 3: 22, 4: 18, 5: 8, 6: 30, 7: 40})
+
+    if filtered:
+        ws2 = wb.create_sheet('Filtered Commits')
+        _xlsx_write_sheet(ws2, COMMIT_COLS_FILTERED,
+                          [_commit_row(c, include_reason=True) for c in filtered],
+                          {0: 6, 1: 13, 2: 60, 3: 22, 4: 18, 5: 8, 6: 30, 7: 40, 8: 30})
+
+    if profile_summary:
+        ws3 = wb.create_sheet('Profile Summary')
+        _xlsx_write_sheet(ws3, SUMMARY_COLS, _summary_rows(profile_summary),
+                          {0: 28, 1: 10, 2: 12, 3: 10})
+
+    ws4 = wb.create_sheet('Profile Matrix')
+    _xlsx_write_sheet(ws4, MATRIX_COLS, _matrix_rows(scored),
+                      {0: 6, 1: 13, 2: 50, 3: 22, 4: 12, 5: 12})
+
+    _xlsx_save(wb, path)
 
 
 # ── ODS via stdlib zipfile ────────────────────────────────────────────────────
@@ -154,15 +182,7 @@ def _ods_sheet(name, headers, rows):
     return ''.join(lines)
 
 
-def write_ods(path: str, scored: list, profile_summary: dict,
-              report_title: str = 'kcommit Analysis Report') -> None:
-    content = (
-        _ODS_HEAD
-        + _ods_sheet('Commits',        COMMIT_COLS,  [_commit_row(c) for c in scored])
-        + _ods_sheet('Profile Summary', SUMMARY_COLS, _summary_rows(profile_summary))
-        + _ods_sheet('Profile Matrix',  MATRIX_COLS,  _matrix_rows(scored))
-        + _ODS_TAIL
-    )
+def _ods_save(content, path):
     manifest = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<manifest:manifest'
@@ -183,3 +203,31 @@ def write_ods(path: str, scored: list, profile_summary: dict,
         zf.writestr('content.xml', content)
 
 
+def write_ods(path: str, scored: list, profile_summary: dict,
+              sheet_name: str = 'Commits',
+              include_reason: bool = False) -> None:
+    """Write a single-sheet ODS for *scored* commits."""
+    cols = COMMIT_COLS_FILTERED if include_reason else COMMIT_COLS
+    content = (
+        _ODS_HEAD
+        + _ods_sheet(sheet_name, cols,
+                     [_commit_row(c, include_reason) for c in scored])
+        + _ODS_TAIL
+    )
+    _ods_save(content, path)
+
+
+def write_summary_ods(path: str, scored: list, filtered: list,
+                      profile_summary: dict,
+                      report_title: str = 'kcommit Analysis Report') -> None:
+    """Write a multi-sheet summary ODS merging all datasets."""
+    sheets = _ods_sheet('Relevant Commits', COMMIT_COLS,
+                        [_commit_row(c) for c in scored])
+    if filtered:
+        sheets += _ods_sheet('Filtered Commits', COMMIT_COLS_FILTERED,
+                             [_commit_row(c, include_reason=True) for c in filtered])
+    if profile_summary:
+        sheets += _ods_sheet('Profile Summary', SUMMARY_COLS,
+                             _summary_rows(profile_summary))
+    sheets += _ods_sheet('Profile Matrix', MATRIX_COLS, _matrix_rows(scored))
+    _ods_save(_ODS_HEAD + sheets + _ODS_TAIL, path)
