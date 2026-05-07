@@ -289,9 +289,13 @@ def load_profile_rules(cfg):
 
     _stale, _reason = _needs_recompile(cache_path)
     if _stale:
-        logging.warning(
-            'compiled_rules.json %s — recompiling now. '
-            'Run stage 00 (prepare_pipeline) first for faster startup.', _reason)
+        if _reason == 'unreadable':
+            logging.warning('profile_rules: compiled_rules.json %s — recompiling.', _reason)
+        elif _reason == 'no schema_hash (pre-v9.12 cache)':
+            logging.info('profile_rules: compiled_rules.json %s — recompiling. '
+                         'Re-run stage 00 once to persist the updated cache.', _reason)
+        else:
+            logging.debug('profile_rules: compiled_rules.json %s — recompiling.', _reason)
         return compile_rules_for_config(cfg, cache_dir)
 
     with open(cache_path, encoding='utf-8') as f:
