@@ -110,8 +110,13 @@ def _resolve_outputs(cfg):
 
 
 def _top_n(cfg):
+    """Return the top-N limit, or None when top_n is 0 (meaning no limit)."""
     reports = cfg.get('reports', {}) or {}
-    return int(reports.get('top_n') or 5000)
+    val = reports.get('top_n')
+    if val is None:
+        return 5000  # default
+    n = int(val)
+    return None if n == 0 else n  # 0 → no limit
 
 
 def _report_title(cfg):
@@ -133,7 +138,9 @@ def run(cfg, cache, outdir):
     title    = _report_title(cfg)
     os.makedirs(outdir, exist_ok=True)
 
-    scored        = (load_json(os.path.join(cache, CACHE_FILES['relevant']), default=[]) or [])[:top_n]
+    scored        = (load_json(os.path.join(cache, CACHE_FILES['relevant']), default=[]) or [])
+    if top_n is not None:
+        scored = scored[:top_n]
     profile_rules = load_profile_rules(cfg)
 
     report_stats = {
@@ -163,6 +170,14 @@ def run(cfg, cache, outdir):
             w = csv.writer(fh)
             w.writerow(mat_hdr)
             w.writerows(mat_rows)
+        # Filtered-out commits (written by st04)
+        filtered = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
+        if filtered:
+            flt_path = os.path.join(outdir, 'filtered_commits.csv')
+            with open(flt_path, 'w', newline='', encoding='utf-8') as fh:
+                w = csv.writer(fh)
+                w.writerow(COMMIT_COLS_FILTERED)
+                w.writerows(_commit_rows(filtered, include_reason=True))
 
     # HTML
     if 'html' in outputs:
