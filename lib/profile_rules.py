@@ -97,7 +97,7 @@ def _merged_patterns(pdata):
     return (pdata or {}).get('merged', {}) or {}
 
 
-def compile_rules_for_config(cfg, work_dir):
+def compile_rules_for_config(cfg, cache_dir):
     """Compile rules for all active profiles and cache to compiled_rules.json.
 
     v9.12: writes a deduplicated on-disk schema:
@@ -251,8 +251,9 @@ def compile_rules_for_config(cfg, work_dir):
                 _hash_parts.append(open(_rfp, 'rb').read().hex())
     schema_hash = hashlib.sha1('|'.join(_hash_parts).encode()).hexdigest()[:16]
 
-    cache_path = os.path.join(work_dir, 'cache', 'compiled_rules.json')
+    cache_path = os.path.join(cache_dir, 'compiled_rules.json')
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    disk_doc['schema_hash'] = schema_hash
     with open(cache_path, 'w', encoding='utf-8') as f:
         json.dump(disk_doc, f, indent=2, sort_keys=True)
         f.write('\n')
@@ -266,7 +267,8 @@ def load_profile_rules(cfg):
     """
     paths      = cfg.get('paths', {}) or {}
     work_dir   = paths.get('work_dir') or cfg.get('project', {}).get('work_dir', './work')
-    cache_path = os.path.join(work_dir, 'cache', 'compiled_rules.json')
+    cache_dir  = paths.get('cache_dir') or os.path.join(work_dir, 'cache')
+    cache_path = os.path.join(cache_dir, 'compiled_rules.json')
 
     def _needs_recompile(cache_p):
         if not os.path.exists(cache_p):
@@ -286,7 +288,7 @@ def load_profile_rules(cfg):
         logging.warning(
             'compiled_rules.json %s — recompiling now. '
             'Run stage 00 (prepare_pipeline) first for faster startup.', _reason)
-        return compile_rules_for_config(cfg, work_dir)
+        return compile_rules_for_config(cfg, cache_dir)
 
     with open(cache_path, encoding='utf-8') as f:
         doc = json.load(f)

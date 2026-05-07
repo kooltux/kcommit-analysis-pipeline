@@ -15,7 +15,7 @@ def run(cfg, cache):
             print(f'  ERROR:  {p}')
         raise SystemExit(2)
 
-    compiled = compile_rules_for_config(cfg, work_dir=cache)
+    compiled = compile_rules_for_config(cfg, cache_dir=cache)
     save_json(os.path.join(cache, CACHE_FILES['compiled_rules']), compiled)
 
     names   = active_profile_names(cfg)
