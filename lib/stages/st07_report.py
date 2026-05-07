@@ -141,6 +141,7 @@ def run(cfg, cache, outdir):
     scored        = (load_json(os.path.join(cache, CACHE_FILES['relevant']), default=[]) or [])
     if top_n is not None:
         scored = scored[:top_n]
+    filtered      = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
     profile_rules = load_profile_rules(cfg)
 
     report_stats = {
@@ -157,6 +158,8 @@ def run(cfg, cache, outdir):
     save_json(os.path.join(outdir, 'profile_summary.json'),     prof_summary)
     save_json(os.path.join(outdir, 'profile_matrix.json'),
               {'header': mat_hdr, 'rows': mat_rows})
+    if filtered:
+        save_json(os.path.join(outdir, 'filtered_commits.json'), filtered)
 
     # CSV
     if 'csv' in outputs:
@@ -170,8 +173,7 @@ def run(cfg, cache, outdir):
             w = csv.writer(fh)
             w.writerow(mat_hdr)
             w.writerows(mat_rows)
-        # Filtered-out commits (written by st04)
-        filtered = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
+        # Filtered-out commits
         if filtered:
             flt_path = os.path.join(outdir, 'filtered_commits.csv')
             with open(flt_path, 'w', newline='', encoding='utf-8') as fh:
@@ -190,6 +192,17 @@ def run(cfg, cache, outdir):
             )
         except Exception as e:
             logging.warning('HTML report failed: %s', e)
+        if filtered:
+            try:
+                generate_html_report(
+                    filtered, {}, {'total_scored_commits': len(filtered)},
+                    os.path.join(outdir, 'filtered_commits.html'),
+                    title=title + ' — Filtered Commits',
+                    is_filtered=True,
+                    templates_dir=cfg['paths'].get('templates_dir'),
+                )
+            except Exception as e:
+                logging.warning('HTML filtered report failed: %s', e)
 
     # XLSX
     if 'xlsx' in outputs:
@@ -199,6 +212,12 @@ def run(cfg, cache, outdir):
                            scored, prof_summary)
             except Exception as e:
                 logging.warning('XLSX failed: %s', e)
+            if filtered:
+                try:
+                    write_xlsx(os.path.join(outdir, 'filtered_commits.xlsx'),
+                               filtered, {})
+                except Exception as e:
+                    logging.warning('XLSX filtered failed: %s', e)
         else:
             logging.warning("'xlsx' output requested but lib.spreadsheet not available")
 
@@ -210,6 +229,12 @@ def run(cfg, cache, outdir):
                           scored, prof_summary)
             except Exception as e:
                 logging.warning('ODS failed: %s', e)
+            if filtered:
+                try:
+                    write_ods(os.path.join(outdir, 'filtered_commits.ods'),
+                              filtered, {})
+                except Exception as e:
+                    logging.warning('ODS filtered failed: %s', e)
         else:
             logging.warning("'ods' output requested but lib.spreadsheet not available")
 
