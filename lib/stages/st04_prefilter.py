@@ -29,7 +29,7 @@ from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.profile_rules import load_profile_rules, _merged_patterns
 from lib.scoring import extract_commit_meta, precompile_rules, fmt_profiles, fmt_evidence
 from lib.kbuild import infer_touched_paths
-from lib.manifest import CACHE_FILES
+from lib.manifest import CACHE_FILES, NSTAGES
 
 _BUILD_SYS_NAMES = frozenset({'Makefile', 'Kbuild', 'Kconfig'})
 
