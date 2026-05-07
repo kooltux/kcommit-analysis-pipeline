@@ -1,3 +1,4 @@
+from lib.manifest import NSTAGES
 """Stage 04 logic: enrich and pre-filter commits before scoring.
 
 Filter hierarchy (higher level wins):
@@ -26,7 +27,9 @@ from lib.patterns import (
     allfilesmatch as _all_files_match,
 )
 from lib.pipeline_runtime import update_stage_progress
-from lib.scoring import extract_commit_meta, infer_touched_paths, precompile_rules
+from lib.scoring import extract_commit_meta, precompile_rules
+from lib.kbuild import infer_touched_paths
+from lib.manifest import CACHE_FILES
 
 _BUILD_SYS_NAMES = frozenset({'Makefile', 'Kbuild', 'Kconfig'})
 
@@ -185,8 +188,8 @@ def run(cfg, cache):
     from lib.profile_rules import load_profile_rules
 
     filter_cfg  = cfg.get('filter', {}) or {}
-    commits     = load_json(os.path.join(cache, '01_commits.json'), default=[]) or []
-    product_map = load_json(os.path.join(cache, '03_product_map.json'), default={}) or {}
+    commits     = load_json(os.path.join(cache, CACHE_FILES['commits']), default=[]) or []
+    product_map = load_json(os.path.join(cache, CACHE_FILES['product_map']), default={}) or {}
 
     # Enrichment
     print('  enriching commits …')
@@ -196,7 +199,7 @@ def run(cfg, cache):
         c['meta']                = extract_commit_meta(c)
         c['touched_paths_guess'] = infer_touched_paths(c.get('subject', ''), cfg)
         if i % step == 0 or i == total - 1:
-            update_stage_progress(4, 7, 0.4 * (i + 1) / max(total, 1),
+            update_stage_progress(4, NSTAGES, 0.4 * (i + 1) / max(total, 1),
                                   'enriching', n_done=i + 1, n_total=total)
     sys.stdout.write('\n')
 
@@ -230,18 +233,19 @@ def run(cfg, cache):
         else:
             kept.append(c)
         if i % step == 0 or i == total - 1:
-            update_stage_progress(4, 7, 0.4 + 0.6 * (i + 1) / max(total, 1),
+            update_stage_progress(4, NSTAGES, 0.4 + 0.6 * (i + 1) / max(total, 1),
                                   'filtering', n_done=i + 1, n_total=total)
     sys.stdout.write('\n'); sys.stdout.flush()
 
-    save_json(os.path.join(cache, '04_filtered_commits.json'), kept)
+    save_json(os.path.join(cache, CACHE_FILES['filtered']), kept)
     return kept, dropped_commits, reasons
 
 
 def write_outputs(cfg, dropped_commits, outdir):
     """Write filtered output files (JSON, CSV, HTML, XLSX, ODS)."""
     from lib.spreadsheet import COMMIT_COLS, write_xlsx, write_ods
-    tmpl = cfg.get('templates') or {}
+    reports = cfg.get('reports', {}) or {}
+    tmpl    = reports  # reports.* is canonical; templates.* removed in v9.12
     os.makedirs(outdir, exist_ok=True)
 
     # Always write dropped JSON
@@ -250,7 +254,7 @@ def write_outputs(cfg, dropped_commits, outdir):
         json.dump(dropped_commits, f, indent=2, default=str)
     print(f'  filtered JSON: {jp}')
 
-    if tmpl.get('csv_output', False):
+    if reports.get('outputs') and 'csv' in (reports.get('outputs') or []):
         cp = os.path.join(outdir, 'filtered_commits.csv')
         with open(cp, 'w', newline='', encoding='utf-8') as fh:
             w = csv.writer(fh)
@@ -269,17 +273,17 @@ def write_outputs(cfg, dropped_commits, outdir):
                 ])
         print(f'  filtered CSV:  {cp}')
 
-    if tmpl.get('html_summary', False):
+    if reports.get('outputs') and 'html' in (reports.get('outputs') or []):
         try:
             from lib.html_report import generate_html_report
             hp = os.path.join(outdir, 'filtered_commits.html')
-            title = tmpl.get('report_title', 'kcommit Analysis Report') + ' — Filtered'
+            title = reports.get('title', 'kcommit Analysis Report') + ' — Filtered'
             generate_html_report(dropped_commits, {}, {}, hp, title=title, is_filtered=True)
             print(f'  filtered HTML: {hp}')
         except Exception as e:
             logging.warning('filtered HTML failed: %s', e)
 
-    if tmpl.get('xls_output', False):
+    if reports.get('outputs') and 'xlsx' in (reports.get('outputs') or []):
         try:
             xp = os.path.join(outdir, 'filtered_commits.xlsx')
             write_xlsx(xp, dropped_commits, {})
@@ -287,7 +291,7 @@ def write_outputs(cfg, dropped_commits, outdir):
         except Exception as e:
             logging.warning('filtered XLSX failed: %s', e)
 
-    if tmpl.get('ods_output', False):
+    if reports.get('outputs') and 'ods' in (reports.get('outputs') or []):
         try:
             op = os.path.join(outdir, 'filtered_commits.ods')
             write_ods(op, dropped_commits, {})

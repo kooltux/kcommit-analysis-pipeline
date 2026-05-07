@@ -1,7 +1,7 @@
 """HTML report generator for kcommit-analysis-pipeline.
 
 v9.9 changes:
-  - _commit_row(): removed Security, Performance, Product, Stable sub-score
+  - _commit_row(): removed legacy fixed sub-score columns
     columns. Columns now match COMMIT_COLS exactly (Rank, SHA, Subject,
     Author, Date, Score, Profiles, Product Evidence [+ Filter reason]).
   - _table(): filter row now rendered as part of <thead> with class

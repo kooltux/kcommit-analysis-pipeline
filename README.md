@@ -14,16 +14,16 @@ ODS reports for manual review.
 
 ## Pipeline stages
 
-| # | Key | Script | Purpose |
-|---|-----|--------|---------|
-| 0 | `prepare_pipeline`      | `00_prepare_pipeline.py`      | Validate config, compile profiles/rules |
-| 1 | `collect_commits`       | `01_collect_commits.py`       | Collect commit metadata from `git log` |
-| 2 | `collect_build_context` | `02_collect_build_context.py` | Collect kernel `.config`, build artifacts, logs |
-| 3 | `build_product_map`     | `03_build_product_map.py`     | Map `CONFIG_*` symbols → source paths |
-| 4 | `prefilter_commits`     | `04_prefilter_commits.py`     | Drop commits that cannot possibly score |
-| 5 | `score_commits`         | `05_score_commits.py`         | Score commits via active profiles and rules |
-| 6 | `postfilter_commits`    | `06_postfilter_commits.py`    | Drop commits below score threshold |
-| 7 | `report_commits`        | `07_report_commits.py`        | Generate CSV / JSON / HTML / XLSX / ODS reports |
+| # | Key | Stage module | Purpose |
+|---|------------------------|--------------------------------------|------------------------------------------------------|
+| 0 | `prepare_pipeline`      | `lib/stages/st00_prepare.py`       | Validate config, compile profiles/rules |
+| 1 | `collect_commits`       | `lib/stages/st01_collect.py`       | Collect commit metadata from `git log` |
+| 2 | `collect_build_context` | `lib/stages/st02_build_context.py` | Collect kernel `.config`, build artifacts, logs |
+| 3 | `build_product_map`     | `lib/stages/st03_product_map.py`   | Map `CONFIG_*` symbols → source paths |
+| 4 | `prefilter_commits`     | `lib/stages/st04_prefilter.py`     | Drop commits that cannot possibly score |
+| 5 | `score_commits`         | `lib/stages/st05_score.py`         | Score commits via active profiles and rules |
+| 6 | `postfilter_commits`    | `lib/stages/st06_postfilter.py`    | Drop commits below score threshold |
+| 7 | `report_commits`        | `lib/stages/st07_report.py`        | Generate CSV / JSON / HTML / XLSX / ODS reports |
 
 Intermediate data is stored in `<work_dir>/cache/` and each stage can be
 restarted independently.
@@ -66,7 +66,7 @@ python3 kcommit_pipeline.py run --config /path/to/cfg.json --progress-json
 ## Scoring model
 
 Scoring is **exclusively through profiles and rules**. Kernel annotation
-metadata (CVE, Fixes, Stable, Syzbot) is extracted and displayed as badges
+metadata (CVE, Fixes, Cc:stable, Syzbot) is extracted and displayed as badges
 in the HTML report but does **not** add to the score.
 
 ```
@@ -123,17 +123,17 @@ and `rules.rules_dirs` (defaulting to `<CONFIGDIR>/profiles/` and
 | File | Description |
 |------|-------------|
 | `output/relevant_commits.csv`  | Ranked commits above the score threshold |
-| `output/relevant_commits.json` | Same data as JSON |
+| `output/06_relevant_commits.json` | Same data as JSON |
 | `output/summary.html`          | Interactive HTML report (filters, sort, dark mode, CSV export) |
 | `output/profile_summary.json`  | Per-profile commit count and average score |
 | `output/profile_matrix.csv`    | Per-commit × per-profile score breakdown |
 | `output/report_stats.json`     | Pipeline run statistics |
 
-Optional: `.xlsx` / `.ods` (enable with `templates.xls_output` / `templates.ods_output`).
+Optional: `.xlsx` / `.ods` (enable with `"reports": { "outputs": ["xlsx", "ods"] }`).
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.6+
 - `git` on `PATH`
 - `openpyxl` for XLSX output (`pip install openpyxl`)
 

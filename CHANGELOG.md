@@ -1,3 +1,89 @@
+## v9.13.0
+
+### Documentation & config consistency audit (H, I)
+
+#### Documentation fixes (H)
+- H.1: `README.md` — outputs table replaced deprecated `templates.xls_output` /
+  `templates.ods_output` references with canonical `reports.outputs` form.
+- H.2: `README.md` — stage table separator row widths corrected.
+- H.3: `docs/CONFIGURATION.md` — duplicate `reports` section merged into one,
+  covering all four keys: `title`, `outputs`, `top_n`, `min_score`.
+- H.4: `MANIFEST.json` — stage 0 output filenames corrected from
+  `cache/00_compiled_rules.json` / `cache/00_prepare_summary.json` to
+  `cache/compiled_rules.json` / `cache/prepare_summary.json` to match
+  `CACHE_FILES` entries and the actual files written by `st00_prepare.py`.
+- H.5: `docs/OVERVIEW.md` — preformatted stage table header renamed
+  `Script` → `Module`.
+- H.6: `README.md` — Python version floor corrected from `3.8+` to `3.6+`
+  to match `OVERVIEW.md`, `lib/gitutils.py`, and `lib/validation.py`.
+- H.7: `README.md` — output filename corrected from `output/relevant_commits.json`
+  to `output/06_relevant_commits.json` (matching `MANIFEST.json` stage 7 outputs).
+
+#### Config/source consistency audit (I)
+- I.1: `configs/example-arm-embedded-full.json` — replaced `"project": {"name":…,
+  "work_dir":…}` with `"paths": {"work_dir":…}` (canonical per `CONFIGURATION.md`);
+  the silently-ignored `project.name` key removed.
+- I.2: `configs/example-arm-embedded-full.json` — replaced legacy alias keys
+  `use_no_merges` / `use_first_parent` with canonical `no_merges` / `first_parent`.
+- I.3: `configs/rules/README` — filter hierarchy rewritten to match actual stage 04
+  code: correct L-levels, correct logic labels, added `_filter_reason` / dropped-file
+  note.
+- I.4: `docs/CONFIGURATION.md` — added `scoring (internal)` section documenting
+  `configs/scoring/subsystem_path_hints.json`.
+- I.5: `configs/templates/` renamed to `configs/html/`; `MANIFEST.json`
+  `template_dir` updated to `configs/html`. `lib/html_report.py` and
+  `lib/manifest.py` required no changes (path is manifest-driven).
+- I.6: `lib/profile_rules.py` — validation check added: if a profile JSON
+  declares a `"name"` field that does not match the filename stem, stage 00
+  raises `RuntimeError` immediately.
+- I.7: `docs/CONFIGURATION.md` — `history_mapping` section added, documenting
+  `mode`, `sample_step`, `max_commits_per_probe`, and `max_failure_rate`.
+- I.8: `docs/CONFIGURATION.md` — `collect` section extended with `max_commits`,
+  `git_binary`, `use_name_only`, `extra_git_log_args`; all four added as
+  commented-out entries in `configs/example-arm-embedded-full.json`.
+- I.9: `lib/profile_rules.py` + `lib/stages/st07_report.py` — profile
+  `"description"` field is now stored in `profiles_mem` and written to
+  `output/profile_summary.json`, making it visible to downstream consumers.
+
+## v9.13.0
+
+### Architecture — Stage runner refactor (E.3)
+- All 8 top-level `NN_*.py` stage scripts deleted; pipeline is now run
+  exclusively through `kcommit_pipeline.py`.
+- Stage logic absorbed: `02_collect_build_context.py` → `lib/stages/st02_build_context.py`,
+  `03_build_product_map.py` → `lib/stages/st03_product_map.py`.
+- All `lib/stages/*.py` renamed with `stNN_` prefix for unambiguous stage-to-file
+  mapping (`st00_prepare.py` … `st07_report.py`).
+- `lib/stages/__init__.py` is now the stage registry; exports `STAGES` (ordered list
+  of `(key, run_fn)` pairs) and `NSTAGES`. `kcommit_pipeline.py` iterates it directly —
+  no subprocess calls, no filename knowledge, no hardcoded stage count.
+- `kcommit_pipeline.py` rewrites `cmd_run` as an in-process stage runner using
+  `_run_stage()` helper; `cmd_report` calls `st07_report.run()` directly (E.10).
+
+### Cache filenames (E.2)
+- `lib/manifest.py` now exports `CACHE_FILES` dict — single source of truth for all
+  `NN_*.json` filenames. All stages replaced bare string literals with `CACHE_FILES[key]`.
+
+### Stage count (E.1)
+- Hardcoded literal `7` in all `update_stage_progress` / `start_stage` calls replaced
+  with `NSTAGES` imported from `lib.stages`.
+
+### Fixes
+- D.1: `st01_collect.py` — initial + final progress updates added; trailing newline on stderr.
+- D.2: `st04_prefilter.py` — `infer_touched_paths` now imported from `lib.kbuild` (not `lib.scoring`).
+- D.3: Stage 03 skips history map when base kbuild map is empty.
+- E.4: `st06_postfilter.run()` returns `(relevant, low_score, threshold)`; threshold no
+  longer read twice from inconsistent keys.
+- E.5: Dead `commit.get('stable_hints')` fallback removed from `lib/scoring.py`.
+- E.6: Unused `_load_json_commented` import removed from `lib/scoring.py`.
+- E.7: `st04_prefilter.write_outputs()` reads `reports.outputs` (canonical) instead of
+  deprecated `templates.*` keys.
+- E.9: `lib/profile_rules.py` `schema_hash` now includes all rule file contents, not just
+  profile JSON files — stale cache is correctly invalidated on rule changes.
+- E.11: `lib/history_map.py` — persistent on-disk `git show` cache under
+  `cache/gitshow_cache/`; repeated runs with the same kernel range skip git-show entirely.
+- E.12: `st05_score.py` — `precompile_rules()` called once before serial loop, not per-commit.
+
 ## v9.12.0
 
 ### Improvements

@@ -25,6 +25,21 @@ NSTAGES      = len(PIPELINE_STAGES)
 STAGE_OUTPUTS = {s['key']: s.get('outputs', []) for s in PIPELINE_STAGES}
 
 
+# Canonical cache filenames — single source of truth for all stages.
+# Import via: from lib.manifest import CACHE_FILES
+CACHE_FILES = {
+    'compiled_rules': 'compiled_rules.json',
+    'prepare_summary': 'prepare_summary.json',
+    'commits':        '01_commits.json',
+    'build_context':  '02_build_context.json',
+    'kbuild_map':     '02_kbuild_static_map.json',
+    'product_map':    '03_product_map.json',
+    'filtered':       '04_filtered_commits.json',
+    'scored':         '05_scored_commits.json',
+    'relevant':       '06_relevant_commits.json',
+}
+
+
 def load_manifest(path=None):
     """Return the MANIFEST dict.
 

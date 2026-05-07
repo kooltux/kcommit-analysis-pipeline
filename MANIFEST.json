@@ -1,6 +1,6 @@
 {
-  "version": "v9.12.0",
-  "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for security and performance relevance",
+  "version": "v9.13.0",
+  "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
   "library_dir": "lib",
   "scoring_dir": "configs/scoring",
   "example_configs": [
@@ -10,16 +10,14 @@
     {
       "index": 0,
       "key": "prepare_pipeline",
-      "script": "00_prepare_pipeline.py",
       "outputs": [
-        "cache/00_compiled_rules.json",
-        "cache/00_prepare_summary.json"
+        "cache/compiled_rules.json",
+        "cache/prepare_summary.json"
       ]
     },
     {
       "index": 1,
       "key": "collect_commits",
-      "script": "01_collect_commits.py",
       "outputs": [
         "cache/01_commits.json"
       ]
@@ -27,7 +25,6 @@
     {
       "index": 2,
       "key": "collect_build_context",
-      "script": "02_collect_build_context.py",
       "outputs": [
         "cache/02_build_context.json",
         "cache/02_kbuild_static_map.json"
@@ -36,7 +33,6 @@
     {
       "index": 3,
       "key": "build_product_map",
-      "script": "03_build_product_map.py",
       "outputs": [
         "cache/03_product_map.json"
       ]
@@ -44,7 +40,6 @@
     {
       "index": 4,
       "key": "prefilter_commits",
-      "script": "04_prefilter_commits.py",
       "outputs": [
         "cache/04_filtered_commits.json"
       ]
@@ -52,7 +47,6 @@
     {
       "index": 5,
       "key": "score_commits",
-      "script": "05_score_commits.py",
       "outputs": [
         "cache/05_scored_commits.json"
       ]
@@ -60,7 +54,6 @@
     {
       "index": 6,
       "key": "postfilter_commits",
-      "script": "06_postfilter_commits.py",
       "outputs": [
         "cache/06_relevant_commits.json"
       ]
@@ -68,7 +61,6 @@
     {
       "index": 7,
       "key": "report_commits",
-      "script": "07_report_commits.py",
       "outputs": [
         "output/relevant_commits.csv",
         "output/06_relevant_commits.json",
@@ -82,5 +74,5 @@
   "tools": [
     "tools/generate_message_whitelist.py"
   ],
-  "template_dir": "configs/templates"
+  "template_dir": "configs/html"
 }

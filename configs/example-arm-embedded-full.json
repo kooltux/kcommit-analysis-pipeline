@@ -22,9 +22,7 @@
     "logs_dir":   "${WORKSPACE}/logs"
   },
 
-  "project": {
-    "name":     "arm-embedded-full",
-    // work_dir: where cache/ and output/ sub-directories are created.
+  "paths": {
     "work_dir": "${WORKSPACE}/work"
   },
 
@@ -60,7 +58,6 @@
   //   100 = full contribution (multiplier 1.0)
   //    50 = half  contribution (multiplier 0.5)
   //     0 = profile disabled
-  // List form also accepted: ["security_fixes", "performance"]
   "profiles": {
     "active": {
       "security_fixes":    100,
@@ -119,13 +116,19 @@
     // use_numstat: attach per-file change stats (insertions/deletions).
     "use_numstat":       true,
     // use_no_merges: pass --no-merges to git log (recommended).
-    "use_no_merges":     true,
+    "no_merges":     true,
     // use_first_parent: pass --first-parent to git log.
-    "use_first_parent":  false,
+    "first_parent":  false,
     // max_commits: cap on commits collected (0 = no limit).
     "max_commits":       0,
     // score_workers: parallel workers for scoring (0 = auto-detect).
     "score_workers":     0,
+    // git_binary: override the git executable path (default: "git").
+    // "git_binary":       "git",
+    // use_name_only: pass --name-only to git log instead of --name-status.
+    // "use_name_only":    false,
+    // extra_git_log_args: raw extra args appended to git log (advanced).
+    // "extra_git_log_args": [],
     // jsonl: also write commits.jsonl for streaming consumers.
     "jsonl":             false,
     // include_parents: attach parent SHA list to each commit dict.
@@ -149,21 +152,8 @@
   },
 
   // ── HTML report and output options ────────────────────────────────────────
-  "templates": {
-    // html_summary: generate output/summary.html.
-    "html_summary":  true,
-    // report_title: shown in HTML <title> and page header (analysis date appended).
-    "report_title":  "ARM Embedded - Full Analysis",
-    // top_n: maximum commits to display in the HTML table (sorted by score desc).
-    "top_n":         5000,
-    // css_override: path to a custom CSS file appended after the built-in styles.
-    // Relative paths resolve from CONFIGDIR.
-    "css_override":  "",
-    // csv_output: generate output/relevant_commits.csv.
-    "csv_output":    true,
-    // xls_output: generate output/relevant_commits.xlsx (stdlib zipfile, no deps).
-    "xls_output":    true,
-    // ods_output: generate output/relevant_commits.ods.
-    "ods_output":    true
+  "reports": {
+    "title": "ARM Embedded Analysis",
+    "outputs": ["html", "csv", "xlsx"]
   }
 }

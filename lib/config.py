@@ -289,8 +289,6 @@ def load_config(path, inherited_vars=None, seen=None):
             if not os.path.isabs(work_raw) else work_raw)
 
     scoring_dir   = os.path.join(config_dir, 'scoring')
-    templates_dir = os.path.join(config_dir, 'templates')
-
     _profiles_cfg = expanded.get('profiles', {}) or {}
     _rules_cfg    = expanded.get('rules', {}) or {}
 

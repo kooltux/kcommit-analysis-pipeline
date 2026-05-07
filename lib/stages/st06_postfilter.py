@@ -1,6 +1,7 @@
 """Stage 06 logic: apply min_score threshold, merge low-score drops."""
 import os
 from lib.config import load_json, save_json
+from lib.manifest import CACHE_FILES
 
 
 def _get_threshold(cfg):
@@ -21,7 +22,7 @@ def _get_threshold(cfg):
 
 
 def run(cfg, cache):
-    scored = load_json(os.path.join(cache, '05_scored_commits.json'), default=[]) or []
+    scored = load_json(os.path.join(cache, CACHE_FILES['scored']), default=[]) or []
     scored = sorted(scored, key=lambda c: c.get('score', 0) or 0, reverse=True)
 
     threshold = _get_threshold(cfg)
@@ -38,14 +39,14 @@ def run(cfg, cache):
     for rank, c in enumerate(relevant, 1):
         c['_rank'] = rank
 
-    save_json(os.path.join(cache, '06_relevant_commits.json'), relevant)
+    save_json(os.path.join(cache, CACHE_FILES['relevant']), relevant)
 
     if low_score:
         label    = f'score_below_threshold ({threshold})'
         for c in low_score:
             c['_filter_reason'] = label
-        existing = load_json(os.path.join(cache, '04_filtered_commits.json'), default=[]) or []
-        save_json(os.path.join(cache, '04_filtered_commits.json'), existing + low_score)
+        existing = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
+        save_json(os.path.join(cache, CACHE_FILES['filtered']), existing + low_score)
         print(f'  appended {len(low_score)} low-score commits to 04_filtered_commits.json')
 
-    return relevant, low_score
+    return relevant, low_score, threshold

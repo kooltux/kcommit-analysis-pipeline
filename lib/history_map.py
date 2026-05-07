@@ -25,6 +25,49 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from lib.gitutils import list_rev_commits, show_path_history
 
+import hashlib as _hashlib
+import tempfile as _tempfile
+
+_GITSHOW_CACHE_DIR = None
+
+
+def _set_gitshow_cache_dir(cache_dir):
+    """Set the on-disk git-show cache directory (called by stage 03)."""
+    global _GITSHOW_CACHE_DIR
+    _GITSHOW_CACHE_DIR = cache_dir
+
+
+def _gitshow_cache_get(rev, path):
+    """Return cached git-show result or None if not cached."""
+    if not _GITSHOW_CACHE_DIR:
+        return None
+    key = _hashlib.sha256(f'{rev}:{path}'.encode()).hexdigest()[:24]
+    fpath = os.path.join(_GITSHOW_CACHE_DIR, 'gitshow_cache', key)
+    if os.path.exists(fpath):
+        try:
+            with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
+                return f.read()
+        except Exception:
+            return None
+    return None
+
+
+def _gitshow_cache_put(rev, path, text):
+    """Persist a git-show result to disk cache."""
+    if not _GITSHOW_CACHE_DIR:
+        return
+    cache_dir = os.path.join(_GITSHOW_CACHE_DIR, 'gitshow_cache')
+    os.makedirs(cache_dir, exist_ok=True)
+    key = _hashlib.sha256(f'{rev}:{path}'.encode()).hexdigest()[:24]
+    fpath = os.path.join(cache_dir, key)
+    try:
+        with open(fpath + '.tmp', 'w', encoding='utf-8') as f:
+            f.write(text or '')
+        os.replace(fpath + '.tmp', fpath)
+    except Exception:
+        pass
+
+
 
 OBJ_LINE_RE = re.compile(r'^(obj-[^\s:+?=]+)\s*[:+]?=\s*(.+)$', re.M)
 
@@ -76,7 +119,11 @@ def build_history_config_map(cfg, base_map, progress_callback=None):
         try:
             def _fetch(task):
                 rev, mk = task
+                cached = _gitshow_cache_get(rev, mk)
+                if cached is not None:
+                    return rev, mk, cached
                 text = show_path_history(cfg, rev, mk)
+                _gitshow_cache_put(rev, mk, text or '')
                 return rev, mk, text
 
             done_count   = [0]
@@ -147,6 +194,7 @@ def build_history_config_map(cfg, base_map, progress_callback=None):
 
 
 def _serial_fetch(cfg, tasks, progress_callback):
+    # Uses disk cache for each (rev, path) pair when available.
     results = {}
     for i, (rev, mk) in enumerate(tasks):
         results[(rev, mk)] = show_path_history(cfg, rev, mk)

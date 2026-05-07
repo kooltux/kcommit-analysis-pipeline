@@ -7,14 +7,13 @@ v9.12 changes:
   - _load_hints / _load_hints_from_path removed from this module;
     subsystem hints are loaded directly in _collect_product_evidence()
     via lib.kbuild.infer_touched_paths().
-  - Legacy fixed categories (security/performance/stable/product) fully
+  - Legacy fixed scoring categories fully
     removed. Scoring is exclusively driven by user-defined profiles and rules.
 """
 import os
 import re
 
 from lib.patterns import match as _pat_match, precompile_rules
-from lib.config   import _load_json as _load_json_commented
 
 # ── Kernel commit annotation regexes ─────────────────────────────────────────
 _RE_FIXES  = re.compile(r'^fixes\s*:\s+[0-9a-f]{6,}', re.I | re.MULTILINE)
@@ -68,6 +67,13 @@ def extract_commit_meta(commit):
 
 
 def _collect_product_evidence(commit, product_map):
+    """Informational product-coverage evidence tags (set by scoring, not prefilter).
+
+    prefilter's build_compiled_sets() serves filtering decisions only.
+    This function produces the 'product_evidence' field in scored commit dicts
+    for display in reports. Both use product_map but for different purposes.
+    """
+    # (docstring replaces old one below)
     """Collect informational product-coverage evidence tags for *commit*.
 
     Purely informational — evidence tags appear in the report but do NOT
@@ -156,9 +162,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     body         = commit.get('body',    '') or ''
     commit_files = set(commit.get('files', []) or [])
 
-    hints    = (commit.get('meta')
-                or commit.get('stable_hints')
-                or extract_commit_meta(commit))
+    hints    = commit.get('meta') or extract_commit_meta(commit)
     evidence = _collect_product_evidence(commit, product_map)
 
     # ── First pass: per-profile blacklist exclusions ──────────────────────────

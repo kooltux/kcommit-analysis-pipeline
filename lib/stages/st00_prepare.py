@@ -15,7 +15,7 @@ def run(cfg, cache):
         raise SystemExit(2)
 
     compiled = compile_rules_for_config(cfg, work_dir=cache)
-    save_json(os.path.join(cache, '00_compiled_rules.json'), compiled)
+    save_json(os.path.join(cache, CACHE_FILES['compiled_rules']), compiled)
 
     names   = active_profile_names(cfg)
     summary = {
@@ -25,5 +25,5 @@ def run(cfg, cache):
             for pname in names
         },
     }
-    save_json(os.path.join(cache, '00_prepare_summary.json'), summary)
+    save_json(os.path.join(cache, CACHE_FILES['prepare_summary']), summary)
     return summary

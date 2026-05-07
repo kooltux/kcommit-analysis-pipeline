@@ -141,6 +141,16 @@ def compile_rules_for_config(cfg, work_dir):
         if not pdata:
             raise RuntimeError(f'profile {name!r} not found or empty at {prof_path}')
 
+        # I.6: validate that the 'name' field inside the JSON (if present)
+        # matches the filename stem used to load the profile.  A mismatch
+        # indicates the file was renamed without updating its content.
+        _json_name = pdata.get('name')
+        if _json_name is not None and _json_name != name:
+            raise RuntimeError(
+                f'profile file {os.path.basename(prof_path)!r} declares '
+                f'name={_json_name!r} but was loaded as {name!r}. '
+                f'Rename the file to {_json_name!r}.json or update the "name" field.')
+
         rules_cfg = pdata.get('rules') or {}
         if not isinstance(rules_cfg, dict) or not rules_cfg:
             raise RuntimeError(f'profile {name!r} must define a non-empty rules mapping')
@@ -202,8 +212,9 @@ def compile_rules_for_config(cfg, work_dir):
             per_rule_mem[rname] = {'weight': w, **body}
 
         profiles_mem[name] = {
-            'merged': {k: sorted(v) for k, v in merged_accum.items()},
-            'rules':  per_rule_mem,
+            'merged':      {k: sorted(v) for k, v in merged_accum.items()},
+            'rules':       per_rule_mem,
+            'description': pdata.get('description', ''),
         }
 
     # ── Write deduplicated schema ────────────────────────────────────────────
@@ -225,6 +236,14 @@ def compile_rules_for_config(cfg, work_dir):
         _pdir = _find_unique(_pname, profiles_dirs, suffix='.json')
         if _pdir:
             _hash_parts.append(open(_pdir, 'rb').read().hex())
+    # E.9: also hash all rule files so cache is invalidated on rule changes
+    for _rdir in rules_dirs:
+        if not os.path.isdir(_rdir):
+            continue
+        for _rf in sorted(os.listdir(_rdir)):
+            _rfp = os.path.join(_rdir, _rf)
+            if os.path.isfile(_rfp):
+                _hash_parts.append(open(_rfp, 'rb').read().hex())
     schema_hash = hashlib.sha1('|'.join(_hash_parts).encode()).hexdigest()[:16]
 
     cache_path = os.path.join(work_dir, 'cache', 'compiled_rules.json')

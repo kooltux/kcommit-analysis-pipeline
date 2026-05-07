@@ -26,29 +26,28 @@ import argparse
 import json
 import logging
 import os
-import subprocess
 import sys
 import time
 
 from lib.logsetup import setup_logging
-from lib.config import load_config, deep_merge, apply_override
-from lib.manifest import VERSION, load_manifest, STAGE_OUTPUTS
+from lib.config import load_config, apply_override, load_json
+from lib.manifest import VERSION, STAGE_OUTPUTS, CACHE_FILES
 from lib.validation import validate_inputs
 from lib.pipeline_runtime import (is_stage_done, wipe_downstream,
-                                   init_pipeline_state)
+                                   init_pipeline_state, start_stage,
+                                   finish_stage, fail_stage, print_stage_output)
+from lib.stages import STAGES, NSTAGES
 
-_manifest   = load_manifest()
-STAGES      = [(s['index'], s['script'], s['key'])
-               for s in _manifest['pipeline_stages']]
-STAGE_ORDER = [s[2] for s in STAGES]
-
+# Ordered list of stage keys for wipe_downstream
+STAGE_ORDER = [key for key, _ in STAGES]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _resolve_stage(token):
-    for s in STAGES:
-        if str(s[0]) == str(token) or s[2] == token or s[1] == token:
-            return s
+    """Resolve a stage by index (0-7) or key name."""
+    for idx, (key, _fn) in enumerate(STAGES):
+        if str(idx) == str(token) or key == token:
+            return idx, key
     raise SystemExit(f'Unknown stage: {token!r}')
 
 
@@ -62,7 +61,6 @@ def _load_state(state_path):
 
 
 def _stage_needs_run(key, work, state):
-    """True when the stage is not yet done OR its outputs are missing."""
     s = state.get(key, {})
     if s.get('status') != 'ok':
         return True
@@ -83,79 +81,123 @@ def _emit_progress(stage_idx, key, status, pct=None, extra=None):
 
 # ── Sub-command: run ──────────────────────────────────────────────────────────
 
+def _run_stage(idx, key, fn, cfg, cache, work, state_path, args):
+    """Run a single stage function in-process with start/finish/fail tracking."""
+    if not args.force and not getattr(args, 'resume', False) and is_stage_done(state_path, key):
+        if args.progress_json:
+            _emit_progress(idx, key, 'skipped')
+        else:
+            print(f'[stage {idx}] {key} already OK – skipping')
+        return
+
+    if args.progress_json:
+        _emit_progress(idx, key, 'running')
+    else:
+        print(f'\n[stage {idx}] {key} …')
+
+    t0 = time.time()
+    t  = start_stage(state_path, key, idx, NSTAGES)
+    outdir = cfg.get('paths', {}).get('output_dir') or os.path.join(work, 'output')
+
+    try:
+        # Stages with extra arguments
+        if key == 'report_commits':
+            result = fn(cfg, cache, outdir)
+        else:
+            result = fn(cfg, cache)
+
+        elapsed = time.time() - t0
+        extra   = {}
+
+        # Stage-specific finish metadata
+        if key == 'prepare_pipeline' and result:
+            extra = {'profile_count': len(result.get('profiles', []))}
+        elif key == 'collect_commits' and result:
+            extra = {'commit_count': len(result)}
+            print(f'  collected {len(result)} commits')
+        elif key == 'collect_build_context' and result:
+            ctx, smap = result
+            extra = {'enabled_config_count': len(ctx.get('kernel_config',[])),
+                     'kbuild_file_count':    len(ctx.get('kbuild_files',[])),
+                     'static_config_map_symbols': len(smap)}
+        elif key == 'build_product_map' and result:
+            extra = {'config_symbol_count': len(result.get('config_to_paths',{}))}
+        elif key == 'prefilter_commits' and result:
+            kept, dropped, reasons = result
+            print_stage_output('prefilter', len(kept), dropped=len(dropped),
+                               reasons=reasons, elapsed=elapsed)
+            extra = {'kept_count': len(kept), 'dropped_count': len(dropped)}
+        elif key == 'score_commits' and result:
+            extra = {'scored_count': len(result)}
+        elif key == 'postfilter_commits' and result:
+            relevant, low_score, threshold = result
+            print_stage_output('postfilter', len(relevant),
+                               dropped=len(low_score),
+                               reasons={f'score>={threshold}': len(relevant),
+                                        f'score<{threshold}': len(low_score)},
+                               elapsed=elapsed)
+            extra = {'output_count': len(relevant), 'dropped_count': len(low_score),
+                     'min_score': threshold}
+        elif key == 'report_commits' and result:
+            extra = {'total_scored_commits': result.get('total_scored_commits', 0)}
+
+        finish_stage(state_path, key, t, status='ok', extra=extra or None)
+
+        if args.progress_json:
+            _emit_progress(idx, key, 'ok', extra={'elapsed_sec': round(elapsed, 1)})
+
+    except SystemExit:
+        fail_stage(state_path, key, t, error_msg='SystemExit')
+        raise
+    except Exception as exc:
+        import traceback; traceback.print_exc()
+        fail_stage(state_path, key, t, error_msg=str(exc))
+        if args.progress_json:
+            _emit_progress(idx, key, 'failed', extra={'error': str(exc)})
+        else:
+            print(f'\n[stage {idx}] FAILED: {exc}')
+        raise SystemExit(1)
+
+
 def cmd_run(args):
     cfg  = load_config(args.config)
     if args.override:
         apply_override(cfg, args.override)
 
     work       = cfg['paths']['work_dir']
+    cache      = os.path.join(work, 'cache')
     state_path = os.path.join(work, 'pipeline_state.json')
-    os.makedirs(os.path.join(work, 'cache'),  exist_ok=True)
+    os.makedirs(cache,  exist_ok=True)
     os.makedirs(os.path.join(work, 'output'), exist_ok=True)
     if not os.path.exists(state_path):
         init_pipeline_state(state_path)
 
-    script_dir       = os.path.dirname(os.path.abspath(__file__))
-    extra_stage_args = ['--override', args.override] if args.override else []
-    if args.verbose:
-        extra_stage_args += ['-' + 'v' * args.verbose]
-
     # Determine run list
     if args.stage is not None:
-        target   = _resolve_stage(args.stage)
-        run_list = [target]
+        idx, key = _resolve_stage(args.stage)
+        run_list = [(idx, key, STAGES[idx][1])]
         if args.force:
-            wipe_downstream(state_path, target[2], work, STAGE_OUTPUTS,
+            wipe_downstream(state_path, key, work, STAGE_OUTPUTS,
                             stage_order=STAGE_ORDER)
     elif args.from_ is not None:
-        from_stage = _resolve_stage(args.from_)
-        run_list   = [s for s in STAGES if s[0] >= from_stage[0]]
-        wipe_downstream(state_path, from_stage[2], work, STAGE_OUTPUTS,
+        from_idx, from_key = _resolve_stage(args.from_)
+        run_list = [(i, k, fn) for i, (k, fn) in enumerate(STAGES) if i >= from_idx]
+        wipe_downstream(state_path, from_key, work, STAGE_OUTPUTS,
                         stage_order=STAGE_ORDER)
     elif args.resume:
         state    = _load_state(state_path)
-        run_list = [s for s in STAGES if _stage_needs_run(s[2], work, state)]
+        run_list = [(i, k, fn) for i, (k, fn) in enumerate(STAGES)
+                    if _stage_needs_run(k, work, state)]
         if not run_list:
             print('All stages complete — nothing to do. Use --force to re-run.')
             return
         print(f'  resume: running {len(run_list)} pending stage(s): '
-              + ', '.join(str(s[0]) for s in run_list))
+              + ', '.join(str(i) for i, _, _ in run_list))
     else:
-        run_list = list(STAGES)
+        run_list = [(i, k, fn) for i, (k, fn) in enumerate(STAGES)]
 
-    for (idx, script, key) in run_list:
-        if not args.force and not args.resume and is_stage_done(state_path, key):
-            if args.progress_json:
-                _emit_progress(idx, key, 'skipped')
-            else:
-                print(f'[stage {idx}] {key} already OK – skipping')
-            continue
-
-        if args.progress_json:
-            _emit_progress(idx, key, 'running')
-        else:
-            print(f'\n[stage {idx}] running {script} …')
-
-        t0  = time.time()
-        ret = subprocess.run(
-            [sys.executable, os.path.join(script_dir, script),
-             '--config', args.config] + extra_stage_args
-        ).returncode
-
-        elapsed = time.time() - t0
-        if ret != 0:
-            if args.progress_json:
-                _emit_progress(idx, key, 'failed', extra={'exit': ret})
-            else:
-                print(f'\n[stage {idx}] FAILED (exit {ret})')
-                next_stages = [s for s in STAGES if s[0] > idx]
-                if next_stages:
-                    print(f'  re-run hint: kcommit_pipeline.py run '
-                          f'--config {args.config} --from {idx}')
-            raise SystemExit(ret)
-
-        if args.progress_json:
-            _emit_progress(idx, key, 'ok', extra={'elapsed_sec': round(elapsed, 1)})
+    for (idx, key, fn) in run_list:
+        _run_stage(idx, key, fn, cfg, cache, work, state_path, args)
 
     if args.progress_json:
         _emit_progress(-1, 'pipeline', 'complete')
@@ -172,16 +214,15 @@ def cmd_status(args):
     state_path = os.path.join(work, 'pipeline_state.json')
     state      = _load_state(state_path)
 
-    print(f'{"#":<3}  {"Key":<30}  {"Script":<36}  {"Status":<10}  Duration')
-    print('-' * 97)
-    for (idx, script, key) in STAGES:
+    print(f'{"#":<3}  {"Key":<30}  {"Status":<10}  Duration')
+    print('-' * 70)
+    for idx, (key, _fn) in enumerate(STAGES):
         s    = state.get(key, {})
         st   = s.get('status', 'pending')
         dur  = f"{s['duration_sec']:.1f}s" if 'duration_sec' in s else ''
         mark = {'ok': '✓', 'failed': '✗', 'running': '…'}.get(st, ' ')
-        print(f'{mark}{idx:<3}  {key:<30}  {script:<36}  {st:<10}  {dur}')
+        print(f'{mark}{idx:<3}  {key:<30}  {st:<10}  {dur}')
 
-    # Cache files presence
     print()
     for key, files in STAGE_OUTPUTS.items():
         for rel in files:
@@ -195,7 +236,6 @@ def cmd_status(args):
 def cmd_validate(args):
     cfg = load_config(args.config)
     if args.override: apply_override(cfg, args.override)
-    meta     = cfg.get('_meta', {}) or {}
     work     = cfg['paths']['work_dir']
     kernel   = cfg.get('kernel', {}) or {}
     filt     = cfg.get('filter', {}) or {}
@@ -220,7 +260,7 @@ def cmd_validate(args):
     print('Configuration OK.')
 
 
-# ── Sub-command: report ───────────────────────────────────────────────────────
+# ── Sub-command: report (E.10) ────────────────────────────────────────────────
 
 def cmd_report(args):
     cfg    = load_config(args.config)
@@ -229,18 +269,14 @@ def cmd_report(args):
     cache  = os.path.join(work, 'cache')
     outdir = cfg.get('paths', {}).get('output_dir') or os.path.join(work, 'output')
 
-    # Override format flags from --format arguments
     if args.format:
-        tmpl = cfg.setdefault('templates', {})
-        tmpl['html_summary'] = 'html'  in args.format
-        tmpl['csv_output']   = 'csv'   in args.format
-        tmpl['xls_output']   = 'xlsx'  in args.format
-        tmpl['ods_output']   = 'ods'   in args.format
+        reports = cfg.setdefault('reports', {})
+        reports['outputs'] = args.format
 
-    from lib.stages.report import run as stage_run
+    from lib.stages.st07_report import run as stage_run
     stats = stage_run(cfg, cache, outdir)
     print(f'Reports written to {outdir}')
-    print(f'  {stats.get("total_scored_commits",0)} commits')
+    print(f'  {stats.get("total_scored_commits", 0)} commits')
 
 
 # ── Sub-command: dropped ──────────────────────────────────────────────────────
@@ -251,8 +287,7 @@ def cmd_dropped(args):
     work   = cfg['paths']['work_dir']
     cache  = os.path.join(work, 'cache')
 
-    from lib.config import load_json
-    filtered = load_json(os.path.join(cache, '04_filtered_commits.json'), default=[]) or []
+    filtered = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
 
     reason_filter = args.reason or 'all'
     if reason_filter == 'prefilter':
@@ -268,7 +303,6 @@ def cmd_dropped(args):
         print(json.dumps(commits, indent=2, default=str))
         return
 
-    # Tabular summary grouped by reason
     from collections import Counter
     counts = Counter(c.get('_filter_reason', 'unknown') for c in commits)
     print(f'Dropped commits ({reason_filter}): {len(commits)}')
@@ -299,30 +333,23 @@ def main():
     sub = ap.add_subparsers(dest='cmd', metavar='SUBCOMMAND')
     sub.required = True
 
-    # ── run ──
     p_run = sub.add_parser('run', help='Run pipeline stages')
-    p_run.add_argument('--config',    required=True)
-    p_run.add_argument('--override',  default=None, metavar='JSON')
-    p_run.add_argument('--stage',     default=None)
-    p_run.add_argument('--from',      dest='from_', default=None)
-    p_run.add_argument('--resume',    action='store_true',
-                       help='Run only stages whose outputs are missing or stale')
-    p_run.add_argument('--force',     action='store_true',
-                       help='Re-run even if already done')
-    p_run.add_argument('--progress-json', action='store_true',
-                       help='Emit machine-readable JSON progress lines to stdout')
+    p_run.add_argument('--config',   required=True)
+    p_run.add_argument('--override', default=None, metavar='JSON')
+    p_run.add_argument('--stage',    default=None)
+    p_run.add_argument('--from',     dest='from_', default=None)
+    p_run.add_argument('--resume',   action='store_true')
+    p_run.add_argument('--force',    action='store_true')
+    p_run.add_argument('--progress-json', action='store_true')
 
-    # ── status ──
     p_st = sub.add_parser('status', help='Show stage completion status')
     p_st.add_argument('--config',   required=True)
     p_st.add_argument('--override', default=None, metavar='JSON')
 
-    # ── validate ──
     p_val = sub.add_parser('validate', help='Validate config without running')
     p_val.add_argument('--config',   required=True)
     p_val.add_argument('--override', default=None, metavar='JSON')
 
-    # ── report ──
     p_rep = sub.add_parser('report', help='Re-generate reports from cached data')
     p_rep.add_argument('--config',   required=True)
     p_rep.add_argument('--override', default=None, metavar='JSON')
@@ -330,25 +357,17 @@ def main():
                        choices=['html', 'csv', 'xlsx', 'ods'],
                        help='Output format(s); may be repeated')
 
-    # ── dropped ──
     p_dr = sub.add_parser('dropped', help='Inspect filtered-out commits')
     p_dr.add_argument('--config',   required=True)
     p_dr.add_argument('--override', default=None, metavar='JSON')
     p_dr.add_argument('--reason',   default='all',
                       choices=['all', 'prefilter', 'low-score'])
-    p_dr.add_argument('--json',     action='store_true', help='Output raw JSON')
+    p_dr.add_argument('--json',     action='store_true')
 
     args = ap.parse_args()
     setup_logging(args.verbose)
-
-    # Backward-compat shim: bare --config without subcommand was the old usage.
-    dispatch = {
-        'run':      cmd_run,
-        'status':   cmd_status,
-        'validate': cmd_validate,
-        'report':   cmd_report,
-        'dropped':  cmd_dropped,
-    }
+    dispatch = {'run': cmd_run, 'status': cmd_status, 'validate': cmd_validate,
+                'report': cmd_report, 'dropped': cmd_dropped}
     dispatch[args.cmd](args)
 
 

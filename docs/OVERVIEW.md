@@ -8,31 +8,31 @@ output in HTML, CSV, XLSX, and ODS formats.
 ## Pipeline at a glance
 
 ```
-Stage  Script                      Input → Output (cache/)
+Stage  Module                      Input → Output (cache/)
 ─────────────────────────────────────────────────────────────────────────────
-  00   00_prepare_pipeline.py      config → 00_compiled_rules.json
+  00   lib/stages/st00_prepare.py      config → 00_compiled_rules.json
                                             00_prepare_summary.json
 
-  01   01_collect_commits.py       git log → 01_commits.json
+  01   lib/stages/st01_collect.py       git log → 01_commits.json
 
-  02   02_collect_build_context.py kernel .config / build logs / DTS roots
+  02   lib/stages/st02_build_context.py kernel .config / build logs / DTS roots
                                    → 02_build_context.json
                                      02_kbuild_static_map.json
 
-  03   03_build_product_map.py     build context + git history
+  03   lib/stages/st03_product_map.py     build context + git history
                                    → 03_product_map.json
 
-  04   04_prefilter_commits.py     01_commits.json + 03_product_map.json
+  04   lib/stages/st04_prefilter.py     01_commits.json + 03_product_map.json
                                    → 04_filtered_commits.json
 
-  05   05_score_commits.py         04_filtered_commits.json
+  05   lib/stages/st05_score.py         04_filtered_commits.json
                                    → 05_scored_commits.json
 
-  06   06_postfilter_commits.py    05_scored_commits.json
+  06   lib/stages/st06_postfilter.py    05_scored_commits.json
                                    → 06_relevant_commits.json
                                      04_filtered_commits.json (+ low-score drops)
 
-  07   07_report_commits.py        06_relevant_commits.json
+  07   lib/stages/st07_report.py        06_relevant_commits.json
                                    → output/relevant_commits.{json,csv,xlsx,ods}
                                      output/summary.html
                                      output/profile_summary.json
@@ -52,7 +52,7 @@ total_score = Σ score[P]
 ```
 
 Score is **exclusively** determined by profile weights and rule weights.
-Metadata flags (CVE, Fix, Stable, Syzbot) are computed for display in the
+Metadata flags (CVE, Fix, Cc:stable, Syzbot) are computed for display in the
 HTML report as badges but do **not** add to the score.
 
 ## Filter hierarchy (stage 04 — prefilter)

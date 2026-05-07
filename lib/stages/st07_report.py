@@ -5,6 +5,7 @@ import logging
 import os
 from lib.config import load_json, save_json
 from lib.html_report import generate_html_report
+from lib.manifest import CACHE_FILES
 
 
 # ── Column definitions ────────────────────────────────────────────────────────
@@ -46,6 +47,7 @@ def _profile_summary(scored, profile_rules):
         matched = [c for c in scored if pname in (c.get('matched_profiles') or [])]
         scores  = [c.get('score', 0) or 0 for c in matched]
         summary[pname] = {
+            'description':  (profile_rules.get(pname) or {}).get('description', ''),
             'commit_count': len(matched),
             'total_score':  sum(scores),
             'avg_score':    round(sum(scores) / len(scores), 1) if scores else 0,
@@ -93,38 +95,27 @@ def _coverage_metrics(scored):
 def _resolve_outputs(cfg):
     """Return the set of output format names to produce.
 
-    Accepts both the new ``reports.outputs`` list and the legacy
-    ``templates.*`` boolean flags.  ``reports.outputs`` takes precedence
-    when present; otherwise the flags are mapped to format names.
-
-    Recognised names: 'csv', 'html', 'xlsx', 'ods'.
-    Default (no config): {'csv', 'html'}.
+    Reads ``reports.outputs`` list.  Recognised names: 'csv', 'html', 'xlsx', 'ods'.
+    Default when not configured: {'csv', 'html'}.
     """
     reports   = cfg.get('reports', {}) or {}
-    tmpl      = cfg.get('templates', {}) or {}
     outputs_l = reports.get('outputs')
 
     if outputs_l is not None:
         return {str(o).lower() for o in (outputs_l or [])}
 
-    # legacy flags
-    result = set()
-    if tmpl.get('csv_output',   True):  result.add('csv')
-    if tmpl.get('html_summary', True):  result.add('html')
-    if tmpl.get('xls_output',   False): result.add('xlsx')
-    if tmpl.get('ods_output',   False): result.add('ods')
-    return result or {'csv', 'html'}
+    # No outputs configured — use default
+    return {'csv', 'html'}
 
 
 def _top_n(cfg):
     reports = cfg.get('reports', {}) or {}
-    tmpl    = cfg.get('templates', {}) or {}
-    return int(reports.get('top_n') or tmpl.get('top_n') or 5000)
+    return int(reports.get('top_n') or 5000)
 
 
 def _report_title(cfg):
-    tmpl = cfg.get('templates', {}) or {}
-    return tmpl.get('report_title', 'kcommit Analysis Report')
+    tmpl = cfg.get('reports', {}) or {}
+    return tmpl.get('title', 'kcommit Analysis Report')
 
 
 # ── Stage entry point ─────────────────────────────────────────────────────────
@@ -141,7 +132,7 @@ def run(cfg, cache, outdir):
     title    = _report_title(cfg)
     os.makedirs(outdir, exist_ok=True)
 
-    scored        = (load_json(os.path.join(cache, '06_relevant_commits.json'), default=[]) or [])[:top_n]
+    scored        = (load_json(os.path.join(cache, CACHE_FILES['relevant']), default=[]) or [])[:top_n]
     profile_rules = load_profile_rules(cfg)
 
     report_stats = {
@@ -153,7 +144,7 @@ def run(cfg, cache, outdir):
     mat_hdr, mat_rows = _profile_matrix(scored)
 
     # JSON outputs (always written)
-    save_json(os.path.join(outdir, '06_relevant_commits.json'), scored)
+    save_json(os.path.join(outdir, CACHE_FILES['relevant']), scored)
     save_json(os.path.join(outdir, 'report_stats.json'),        report_stats)
     save_json(os.path.join(outdir, 'profile_summary.json'),     prof_summary)
     save_json(os.path.join(outdir, 'profile_matrix.json'),

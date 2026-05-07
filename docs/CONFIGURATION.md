@@ -75,31 +75,67 @@ Controls pre-score filtering (stage 04) and post-score filtering (stage 06).
 }
 ```
 
+### `history_mapping`
+
+Controls how stage 03 builds the `CONFIG_*`-symbol → source-file history map
+using `git show` on Makefiles across the revision range.
+
+```json
+"history_mapping": {
+  "mode":                  "range",
+  "sample_step":           500,
+  "max_commits_per_probe": 3,
+  "max_failure_rate":      0.05
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mode` | `"range"` | `range` — walk rev_old..rev_new; `sampled` — every N commits; `full` — entire git history; `disabled` — skip |
+| `sample_step` | `500` | Commit interval when `mode = "sampled"` |
+| `max_commits_per_probe` | `3` | Maximum Makefile revisions probed per config symbol |
+| `max_failure_rate` | `0.05` | Abort stage 03 if the fraction of failed `git show` calls exceeds this value |
+
 ### `collect`
 ```json
 "collect": {
-  "use_numstat":    false,  // git log --numstat (adds changed-lines data)
-  "no_merges":      true,   // git log --no-merges
-  "first_parent":   false,  // git log --first-parent
-  "score_workers":  0       // parallel scoring workers (0 = auto)
+  "use_numstat":         false,  // git log --numstat (adds changed-lines data)
+  "no_merges":           true,   // git log --no-merges
+  "first_parent":        false,  // git log --first-parent
+  "max_commits":         0,      // cap on commits collected (0 = no limit)
+  "score_workers":       0,      // parallel scoring workers (0 = auto)
+  "git_binary":          "git",  // override path to git executable
+  "use_name_only":       false,  // use --name-only instead of --name-status
+  "extra_git_log_args":  []      // raw extra arguments appended to git log
 }
 ```
 
 ### `reports`
 ```json
 "reports": {
-  "min_score":   10,    // same as filter.min_score — post-score threshold
-  "top_n":       500    // maximum commits in HTML/XLSX/ODS reports
+  "title":     "My Report",          // report heading shown in HTML output
+  "outputs":   ["html", "csv", "xlsx"],  // formats to produce (html, csv, xlsx, ods)
+  "top_n":     500,                  // maximum commits in HTML/XLSX/ODS reports
+  "min_score": 10                    // same as filter.min_score — post-score threshold
 }
 ```
 
-### `templates`
+
+### `scoring` (internal)
+
+The file `configs/scoring/subsystem_path_hints.json` maps commit metadata
+keywords (subsystem tags, CVE prefixes, known authors) to kernel source-path
+prefixes used to enrich product-evidence scoring.  It is bundled with the
+pipeline and does not normally need editing.  To override or extend it,
+copy the file into your product config directory and point `scoring_dir`
+at it in `MANIFEST.json`:
+
 ```json
-"templates": {
-  "xls_output": true,   // generate relevant_commits.xlsx
-  "ods_output": false   // generate relevant_commits.ods
-}
+"scoring_dir": "${CONFIGDIR}/scoring"
 ```
+
+The file is read-only from a config perspective — there is no config key
+that references it directly.
 
 ## `--override`
 

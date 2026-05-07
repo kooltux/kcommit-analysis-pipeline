@@ -31,10 +31,17 @@
 #   commit_whitelist.txt     — SHA-based absolute KEEP rules
 #   commit_blacklist.txt     — SHA-based absolute DROP rules
 #
-# Filter decision hierarchy (higher wins):
-#   L3 commit_whitelist  > commit_blacklist  (SHA, absolute)
-#   L2 path_blacklist(all files match) > path_whitelist(any file matches)
-#   L2½ build_artifact coverage
-#   L1½ Kconfig coverage (require_kconfig_coverage)
-#   L1 keywords_whitelist > keywords_blacklist
-#   L0 default: KEEP
+# Filter decision hierarchy (higher level wins):
+#   L3  commit_whitelist  → FORCE-KEEP  (beats everything)
+#       commit_blacklist  → FORCE-DROP  (beaten only by whitelist)
+#   L2  ALL touched files ∈ path_blacklist  → DROP
+#       ANY touched file  ∈ path_whitelist  → KEEP
+#   L2½ Build-artifact evidence (compiled .o/.ko/.a found) → KEEP
+#       Kconfig coverage (require_kconfig_coverage=true):
+#         no touched file maps to an enabled CONFIG_* → DROP
+#   L1  ANY keyword ∈ keywords_whitelist → KEEP
+#       ANY keyword ∈ keywords_blacklist → DROP
+#   L0  default → KEEP
+#
+# Note: all dropped commits are tagged with a _filter_reason and written
+# to cache/04_filtered_commits.json for inspection via `kcommit_pipeline.py dropped`.
