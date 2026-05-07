@@ -117,7 +117,6 @@ def start_stage(path, key, index, total):
     sk = (index, total)
     _stage_t0[sk] = time.monotonic()
     _last_upd[sk] = 0.0
-    _eprint('%s running %s' % (_bar(index - 1, total), key.ljust(30)))
     return started
 
 

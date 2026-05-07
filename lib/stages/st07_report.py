@@ -169,9 +169,9 @@ def run(cfg, cache, outdir):
         try:
             generate_html_report(
                 scored, prof_summary, report_stats,
-                os.path.join(outdir, 'summary.html',
-                          templates_dir=cfg['paths'].get('templates_dir')),
+                os.path.join(outdir, 'summary.html'),
                 title=title,
+                templates_dir=cfg['paths'].get('templates_dir'),
             )
         except Exception as e:
             logging.warning('HTML report failed: %s', e)
