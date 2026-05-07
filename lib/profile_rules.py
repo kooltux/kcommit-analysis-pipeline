@@ -94,7 +94,11 @@ def _find_unique(name, dirs, suffix=''):
 
 def _merged_patterns(pdata):
     """Return the merged pattern dict from a profile data entry (safe, never None)."""
-    return (pdata or {}).get('merged', {}) or {}
+    if not isinstance(pdata, dict):
+        logging.warning('_merged_patterns: expected dict, got %s %r — skipping',
+                        type(pdata).__name__, pdata)
+        return {}
+    return pdata.get('merged', {}) or {}
 
 
 def compile_rules_for_config(cfg, cache_dir):

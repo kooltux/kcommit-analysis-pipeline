@@ -14,6 +14,10 @@ v9.3 semantics:
 import fnmatch
 import re
 
+# Private sentinel key used by precompile_rules — never collides with profile names.
+_COMPILED_SENTINEL = object()
+
+
 
 # Characters that trigger glob mode when unescaped
 _GLOB_CHARS = frozenset('*?[')
@@ -122,9 +126,9 @@ def precompile_rules(profile_rules):
     # Sentinel key avoids re-compiling the same dict.
     # Using a sentinel avoids the id()-reuse hazard of a
     # module-level set (Python may reuse addresses of dead objects).
-    if profile_rules.get('__compiled__'):
+    if profile_rules.get(_COMPILED_SENTINEL):
         return profile_rules
-    profile_rules['__compiled__'] = True
+    profile_rules[_COMPILED_SENTINEL] = True
     keys = ('keywords_whitelist', 'keywords_blacklist',
             'path_whitelist', 'path_blacklist',
             'commit_whitelist', 'commit_blacklist')

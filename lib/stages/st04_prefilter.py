@@ -54,7 +54,9 @@ def build_merged_lists(profile_rules):
         'keywords_whitelist': 'kw_wl',
         'keywords_blacklist': 'kw_bl',
     }
-    for pdata in (profile_rules or {}).values():
+    for pname, pdata in (profile_rules or {}).items():
+        if not isinstance(pdata, dict):
+            continue  # skip sentinels injected by precompile_rules
         merged = _merged_patterns(pdata)
         for src, dst in MAP.items():
             out[dst].extend(merged.get(src, []))
