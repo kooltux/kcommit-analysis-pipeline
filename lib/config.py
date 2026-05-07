@@ -60,6 +60,7 @@ CONFIG_SCHEMA = {
     'filter': {
         '__type__': 'dict',
         'enabled':                  {'type': 'bool'},
+        'min_score':                {'type': 'float'},
         'path_blacklist_global':    {'type': 'bool'},
         'require_kconfig_coverage': {'type': 'bool'},
     },
