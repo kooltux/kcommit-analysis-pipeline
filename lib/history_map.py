@@ -25,12 +25,23 @@ def _set_gitshow_cache_dir(cache_dir):
     _GITSHOW_CACHE_DIR = cache_dir
 
 
+def _gitshow_cache_path(key):
+    """Return the sharded file path for *key* inside gitshow_cache/.
+
+    Layout: gitshow_cache/<key[0:2]>/<key[2:4]>/<key>
+    This mirrors git's own object store sharding and avoids filesystem
+    congestion when the cache grows to tens of thousands of entries.
+    """
+    return os.path.join(_GITSHOW_CACHE_DIR, 'gitshow_cache',
+                        key[:2], key[2:4], key)
+
+
 def _gitshow_cache_get(rev, path):
     """Return cached git-show result or None if not cached."""
     if not _GITSHOW_CACHE_DIR:
         return None
-    key = _hashlib.sha256(f'{rev}:{path}'.encode()).hexdigest()[:24]
-    fpath = os.path.join(_GITSHOW_CACHE_DIR, 'gitshow_cache', key)
+    key   = _hashlib.sha256(f'{rev}:{path}'.encode()).hexdigest()[:24]
+    fpath = _gitshow_cache_path(key)
     if os.path.exists(fpath):
         try:
             with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
@@ -44,10 +55,9 @@ def _gitshow_cache_put(rev, path, text):
     """Persist a git-show result to disk cache."""
     if not _GITSHOW_CACHE_DIR:
         return
-    cache_dir = os.path.join(_GITSHOW_CACHE_DIR, 'gitshow_cache')
-    os.makedirs(cache_dir, exist_ok=True)
-    key = _hashlib.sha256(f'{rev}:{path}'.encode()).hexdigest()[:24]
-    fpath = os.path.join(cache_dir, key)
+    key   = _hashlib.sha256(f'{rev}:{path}'.encode()).hexdigest()[:24]
+    fpath = _gitshow_cache_path(key)
+    os.makedirs(os.path.dirname(fpath), exist_ok=True)
     try:
         with open(fpath + '.tmp', 'w', encoding='utf-8') as f:
             f.write(text or '')
