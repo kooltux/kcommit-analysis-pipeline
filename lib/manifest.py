@@ -32,9 +32,11 @@ CACHE_FILES = {
     'build_context':  'build_context.json',
     'kbuild_map':     'kbuild_map.json',
     'product_map':    'product_map.json',
+    'prefilter_kept': 'prefilter_kept_commits.json',
     'filtered':       'filtered_commits.json',
     'scored':         'scored_commits.json',
     'relevant':       'relevant_commits.json',
+    'postfilter_dropped': 'postfilter_dropped_commits.json',
 }
 
 

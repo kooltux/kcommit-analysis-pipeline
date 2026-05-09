@@ -75,20 +75,18 @@ def test_run_threshold_drops_low_scores(tmp_path):
     assert 'score_below_threshold' in low[0]['_filter_reason']
 
 
-# ── run(): dropped appended to filtered cache ──────────────────────────────
-def test_run_appends_to_filtered_cache(tmp_path):
+# ── run(): dropped written to dedicated postfilter cache ───────────────────
+def test_run_writes_postfilter_dropped_cache(tmp_path):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
-    existing_filtered = [_scored_commit('pre', 1)]
     _write_json(os.path.join(cache, CACHE_FILES['scored']),
                 [_scored_commit('keep', 50), _scored_commit('drop', 2)])
-    _write_json(os.path.join(cache, CACHE_FILES['filtered']), existing_filtered)
+    _write_json(os.path.join(cache, CACHE_FILES['filtered']), [_scored_commit('pre', 1)])
 
     run({'filter': {'min_score': 10}}, cache)
-    filtered = _read_json(os.path.join(cache, CACHE_FILES['filtered']))
-    shas = [c['commit'] for c in filtered]
-    assert 'pre' in shas   # pre-existing preserved
-    assert 'drop' in shas  # newly dropped appended
+    dropped = _read_json(os.path.join(cache, CACHE_FILES['postfilter_dropped']))
+    shas = [c['commit'] for c in dropped]
+    assert shas == ['drop']
 
 
 # ── run(): relevant written to cache ──────────────────────────────────────

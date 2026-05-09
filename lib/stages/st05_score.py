@@ -14,6 +14,7 @@ from lib.scoring import score_commit, precompile_rules
 from lib.profile_rules import load_profile_rules
 from lib.pipeline_runtime import update_stage_progress, _eprint
 from lib.manifest import CACHE_FILES, NSTAGES
+from lib.schema import validate_commit_list, validate_scored_commit_list
 
 # ── Process-pool worker state ─────────────────────────────────────────────────
 # These globals are initialised once per worker process by _worker_init().
@@ -108,12 +109,14 @@ def score_all(commits, product_map, profile_rules, cfg):
 
 
 def run(cfg, cache):
-    commits       = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
+    commits       = load_json(os.path.join(cache, CACHE_FILES['prefilter_kept']), default=[]) or []
+    validate_commit_list(commits)
     product_map   = load_json(os.path.join(cache, CACHE_FILES['product_map']), default={}) or {}
     profile_rules = load_profile_rules(cfg)
     update_stage_progress(5, NSTAGES, 0.01, 'ready', n_done=0, n_total=len(commits))
     scored = score_all(commits, product_map, profile_rules, cfg)
     sys.stderr.write('\n')
     sys.stderr.flush()
+    validate_scored_commit_list(scored)
     save_json(os.path.join(cache, CACHE_FILES['scored']), scored)
     return scored

@@ -70,6 +70,7 @@ def _schema_problems(cfg):
                     errors.append(('{}.{}'.format(section_name, key),
                                    'must be {}, got {!r}'.format(
                                        spec['type'], type(val).__name__)))
+    errors.extend(_validate_unknown_keys(cfg))
     return errors
 
 
@@ -254,3 +255,20 @@ def validate_config_only(cfg):
             'got {!r}'.format(hm_step))
 
     return problems, notices
+
+
+def _validate_unknown_keys(cfg):
+    errors = []
+    for section_name, section in (cfg or {}).items():
+        if section_name == 'vars':
+            continue
+        schema = CONFIG_SCHEMA.get(section_name)
+        if schema is None:
+            errors.append((section_name, 'unknown top-level section'))
+            continue
+        if not isinstance(section, dict):
+            continue
+        allowed = {k for k in schema if k != '__type__'}
+        for key in sorted(set(section) - allowed):
+            errors.append(('{}.{}'.format(section_name, key), 'unknown key'))
+    return errors

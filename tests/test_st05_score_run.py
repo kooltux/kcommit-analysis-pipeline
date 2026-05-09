@@ -118,8 +118,7 @@ def _setup(tmp_path, commits=None):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
     commits = commits if commits is not None else [_commit('x', 'net: fix skb')]
-    # st05.run() reads from CACHE_FILES['filtered'] (kept-after-prefilter, misnamed)
-    _write(os.path.join(cache, CACHE_FILES['filtered']), commits)
+    _write(os.path.join(cache, CACHE_FILES['prefilter_kept']), commits)
     _write(os.path.join(cache, CACHE_FILES['product_map']), {})
     _write(os.path.join(cache, CACHE_FILES['compiled_rules']), _compiled_rules())
     cfg = {

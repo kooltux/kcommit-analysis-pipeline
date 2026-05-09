@@ -30,6 +30,7 @@ from lib.profile_rules import load_profile_rules, _merged_patterns
 from lib.scoring import extract_commit_meta, precompile_rules, fmt_profiles, fmt_evidence
 from lib.kbuild import infer_touched_paths
 from lib.manifest import CACHE_FILES, NSTAGES
+from lib.schema import validate_commit_list, validate_filtered_commit_list
 
 _BUILD_SYS_NAMES = frozenset({'Makefile', 'Kbuild', 'Kconfig'})
 
@@ -190,6 +191,7 @@ def run(cfg, cache):
 
     filter_cfg  = cfg.get('filter', {}) or {}
     commits     = load_json(os.path.join(cache, CACHE_FILES['commits']), default=[]) or []
+    validate_commit_list(commits)
     product_map = load_json(os.path.join(cache, CACHE_FILES['product_map']), default={}) or {}
 
     # Enrichment
@@ -238,6 +240,9 @@ def run(cfg, cache):
                                   'filtering', n_done=i + 1, n_total=total)
     sys.stdout.write('\n'); sys.stdout.flush()
 
+    validate_commit_list(kept)
+    validate_filtered_commit_list(dropped_commits)
+    save_json(os.path.join(cache, CACHE_FILES['prefilter_kept']), kept)
     save_json(os.path.join(cache, CACHE_FILES['filtered']), dropped_commits)
     return kept, dropped_commits, reasons
 

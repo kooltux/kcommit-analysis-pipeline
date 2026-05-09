@@ -30,10 +30,8 @@ User-defined shorthand variables expanded before any other processing:
 ```
 `work_dir` is where `cache/` and `output/` sub-directories are created.
 Override `cache_dir` or `output_dir` individually to place them on different
-storage (e.g. a RAM disk for the cache). The keys `profiles_dirs`, `rules_dirs`,
-`scoring_dir`, `templates_dir`, and `css_override` are also valid under `paths`
-as alternatives to their canonical locations under `profiles`, `rules`, and
-`reports` respectively.
+storage (e.g. a RAM disk for the cache). Only `work_dir`, `cache_dir`, and
+`output_dir` are valid under `paths` in v10.
 
 ### `kernel`
 ```json
@@ -102,7 +100,7 @@ using `git show` on Makefiles across the revision range.
 | `sample_step` | `500` | Commit interval when `mode = "sampled"` |
 | `max_commits_per_probe` | `3` | Maximum Makefile revisions probed per config symbol |
 | `max_failure_rate` | `0.05` | Abort stage 03 if the fraction of failed `git show` calls exceeds this value |
-| `enabled` | `true` | Legacy shorthand: `false` is equivalent to `"mode": "disabled"`. Prefer `mode` directly. |
+| `history_workers` | `0` | Parallel worker count for history mapping (`0` = auto/implementation default). |
 
 ### `collect`
 ```json
@@ -143,12 +141,7 @@ The file `configs/scoring/subsystem_path_hints.json` maps commit metadata
 keywords (subsystem tags, CVE prefixes, known authors) to kernel source-path
 prefixes used to enrich product-evidence scoring.  It is bundled with the
 pipeline and does not normally need editing.  To override or extend it,
-copy the file into your product config directory and point `scoring_dir`
-at it in `MANIFEST.json`:
-
-```json
-"scoring_dir": "${CONFIGDIR}/scoring"
-```
+copy the file into your product config directory and point the pipeline at it through `reports.css_override` or product-local files only if you extend report assets; scoring hints remain an internal bundled file in v10.
 
 The file is read-only from a config perspective — there is no config key
 that references it directly.
@@ -193,3 +186,12 @@ my-product/
     └── rule_set_y/
         └── keywords_whitelist.txt
 ```
+
+
+## Cache files
+
+- `prefilter_kept_commits.json` — stage 04 commits that survived prefiltering
+- `filtered_commits.json` — stage 04 dropped commits
+- `scored_commits.json` — stage 05 scored commits
+- `relevant_commits.json` — stage 06 commits above threshold
+- `postfilter_dropped_commits.json` — stage 06 commits dropped by score threshold

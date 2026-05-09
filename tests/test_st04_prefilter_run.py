@@ -133,3 +133,37 @@ def test_run_reason_dict_populated(tmp_path):
     _, _, reasons = run(cfg, cache)
     assert isinstance(reasons, dict)
     assert sum(reasons.values()) >= 1
+
+
+def test_run_writes_kept_and_filtered_caches(tmp_path, monkeypatch):
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    commits = [
+        {'commit': 'keep1', 'subject': 'net: keep', 'body': '', 'files': ['drivers/net/x.c'], 'author_name': 'A', 'author_time': 0},
+        {'commit': 'drop1', 'subject': 'misc', 'body': '', 'files': ['Documentation/readme'], 'author_name': 'A', 'author_time': 0},
+    ]
+    with open(os.path.join(cache, CACHE_FILES['commits']), 'w') as f:
+        json.dump(commits, f)
+    with open(os.path.join(cache, CACHE_FILES['product_map']), 'w') as f:
+        json.dump({}, f)
+
+    monkeypatch.setattr('lib.stages.st04_prefilter.load_profile_rules', lambda cfg: {
+        'p': {'merged': {'commit_whitelist': [], 'commit_blacklist': [],
+                         'path_whitelist': ['drivers/net/*'], 'path_blacklist': ['Documentation/*'],
+                         'keywords_whitelist': [], 'keywords_blacklist': []},
+              'rules': {}}
+    })
+    monkeypatch.setattr('lib.stages.st04_prefilter.precompile_rules', lambda rules: None)
+    monkeypatch.setattr('lib.stages.st04_prefilter.extract_commit_meta', lambda c: {})
+    monkeypatch.setattr('lib.stages.st04_prefilter.infer_touched_paths', lambda subject, cfg: [])
+
+    kept, dropped, _ = run({'filter': {}}, cache)
+    with open(os.path.join(cache, CACHE_FILES['prefilter_kept'])) as f:
+        kept_cache = json.load(f)
+    with open(os.path.join(cache, CACHE_FILES['filtered'])) as f:
+        dropped_cache = json.load(f)
+
+    assert [c['commit'] for c in kept] == ['keep1']
+    assert [c['commit'] for c in dropped] == ['drop1']
+    assert [c['commit'] for c in kept_cache] == ['keep1']
+    assert [c['commit'] for c in dropped_cache] == ['drop1']

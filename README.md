@@ -148,3 +148,20 @@ counterparts, plus `profile_summary.*`, `profile_matrix.*`, and `summary.*`
 
 `configs/example-arm-embedded-full.json` — fully annotated example with all
 available options documented.
+
+
+## Cache note
+
+Stage 04 now writes two distinct cache files: `prefilter_kept_commits.json` for commits that survived prefiltering and `filtered_commits.json` for commits dropped by prefiltering or postfilter thresholding. Stage 05 scores only `prefilter_kept_commits.json`.
+
+
+## v10 cache contract
+
+Stage 04 writes `prefilter_kept_commits.json` and `filtered_commits.json`.
+Stage 05 scores only `prefilter_kept_commits.json`.
+Stage 06 writes `relevant_commits.json` and `postfilter_dropped_commits.json`.
+Stage 07 merges `filtered_commits.json` and `postfilter_dropped_commits.json` only for report outputs.
+
+## v10 config rules
+
+Configuration is strict: unknown top-level or section keys are rejected. Legacy aliases and shorthand compatibility keys were removed.

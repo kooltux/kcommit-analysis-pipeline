@@ -144,3 +144,13 @@ def test_load_config_profiles_dirs_normalised(tmp_path):
     cfg = load_config(str(p))
     for d in cfg['paths']['profiles_dirs']:
         assert os.path.isabs(d), f"profiles_dirs entry not absolute: {d}"
+
+
+def test_load_config_rejects_unknown_top_level(tmp_path):
+    p = tmp_path / 'cfg.json'
+    p.write_text('{"paths":{"work_dir":"w"},"kernel":{"source_dir":"s","rev_old":"a","rev_new":"b"},"bogus":1}')
+    import pytest
+    with pytest.raises(ValueError):
+        load_config(str(p))
+
+

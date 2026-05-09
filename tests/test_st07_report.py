@@ -17,6 +17,12 @@ def _commit(sha='abc123', score=50, rank=1, reason=None):
     return c
 
 
+
+
+def _write_json(path, data):
+    with open(path, 'w') as f:
+        json.dump(data, f)
+
 def _setup(tmp_path, scored=None, filtered=None, cfg_extra=None):
     cache  = str(tmp_path / 'cache')
     outdir = str(tmp_path / 'output')
@@ -189,3 +195,18 @@ def test_top_n_zero_means_no_limit(tmp_path):
     run(cfg, cache, outdir)
     data = json.load(open(os.path.join(outdir, 'relevant_commits.json')))
     assert len(data) == 10
+
+
+def test_filtered_outputs_merge_prefilter_and_postfilter_drops(tmp_path):
+    cache, outdir, cfg = _setup(tmp_path)
+    _write_json(os.path.join(cache, CACHE_FILES['filtered']), [{
+        'commit': 'pre', 'subject': 'prefilter', 'author_name': 'A', 'author_time': 0,
+        'files': [], '_filter_reason': 'prefilter'}])
+    _write_json(os.path.join(cache, CACHE_FILES['postfilter_dropped']), [{
+        'commit': 'post', 'subject': 'postfilter', 'author_name': 'A', 'author_time': 0,
+        'score': 1, 'matched_profiles': [], 'product_evidence': [], 'meta': {}, 'scoring': {},
+        '_filter_reason': 'score_below_threshold (10)'}])
+    run(cfg, cache, outdir)
+    with open(os.path.join(outdir, 'filtered_commits.json')) as f:
+        data = json.load(f)
+    assert [c['commit'] for c in data] == ['pre', 'post']

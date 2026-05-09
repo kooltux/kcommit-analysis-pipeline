@@ -30,7 +30,7 @@ def _parse_date(ts):
     if not ts:
         return None
     try:
-        return datetime.datetime.utcfromtimestamp(int(ts))
+        return datetime.datetime.fromtimestamp(int(ts), tz=datetime.timezone.utc).replace(tzinfo=None)
     except (TypeError, ValueError):
         return None
 

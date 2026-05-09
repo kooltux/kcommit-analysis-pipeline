@@ -43,11 +43,6 @@ CONFIG_SCHEMA = {
         'work_dir':      {'type': 'path'},
         'cache_dir':     {'type': 'path'},
         'output_dir':    {'type': 'path'},
-        'profiles_dirs': {'type': 'path', 'list': True},
-        'rules_dirs':    {'type': 'path', 'list': True},
-        'scoring_dir':   {'type': 'path'},
-        'templates_dir': {'type': 'path'},
-        'css_override':  {'type': 'path'},
     },
     # profiles section
     'profiles': {
@@ -82,6 +77,11 @@ CONFIG_SCHEMA = {
         'jsonl':               {'type': 'bool'},
         'include_parents':     {'type': 'bool'},
     },
+    # scoring section
+    'scoring': {
+        '__type__': 'dict',
+        'scoring_dir': {'type': 'path'},
+    },
     # reports section
     'reports': {
         '__type__': 'dict',
@@ -89,17 +89,16 @@ CONFIG_SCHEMA = {
         'title':         {'type': 'str'},
         'top_n':         {'type': 'int'},
         'templates_dir': {'type': 'path'},
+        'css_override':  {'type': 'path'},
     },
     # history_mapping section
     'history_mapping': {
         '__type__': 'dict',
-        # 'mode': 'range'|'sampled'|'full'|'disabled'
         'mode':                   {'type': 'str'},
         'sample_step':            {'type': 'int'},
         'max_commits_per_probe':  {'type': 'int'},
         'max_failure_rate':       {'type': 'float'},
-        # 'enabled': false is equivalent to mode='disabled' (legacy shorthand)
-        'enabled':                {'type': 'bool'},
+        'history_workers':        {'type': 'int'},
     },
 }
 
@@ -258,6 +257,15 @@ def _resolve_known_paths(node, base_dir):
 
 # ── Config loader ─────────────────────────────────────────────────────────────
 
+_ALLOWED_TOP_LEVEL = frozenset(CONFIG_SCHEMA.keys())
+
+
+def _reject_unknown_keys(cfg):
+    unknown = sorted(set(cfg) - _ALLOWED_TOP_LEVEL - {'vars'})
+    if unknown:
+        raise ValueError('unknown top-level keys: {}'.format(', '.join(unknown)))
+
+
 def load_config(path, inherited_vars=None, seen=None):
     path = os.path.abspath(path)
     if seen is None:
@@ -267,6 +275,7 @@ def load_config(path, inherited_vars=None, seen=None):
     seen.add(path)
 
     cfg = _load_json(path)
+    _reject_unknown_keys(cfg)
     config_dir = os.path.dirname(path)
 
     merged = {}

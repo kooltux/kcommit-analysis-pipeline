@@ -1,3 +1,29 @@
+## Unreleased
+
+## v10.0.0 — 2026-05-09
+
+### v10 pipeline contract cleanup
+- Stage 04 now writes `prefilter_kept_commits.json` for commits that survive prefiltering and `filtered_commits.json` only for commits dropped during prefiltering.
+- Stage 05 scores only `prefilter_kept_commits.json`, eliminating the old filtered/kept cache ambiguity.
+- Stage 06 now writes threshold drops to `postfilter_dropped_commits.json` instead of mutating the prefilter-dropped cache.
+- Stage 07 merges prefilter and postfilter dropped commits only when generating filtered output reports.
+
+### Validation and schema tightening
+- Added `lib/schema.py` to validate filtered and scored commit cache artifact shapes.
+- Tightened configuration handling and validation toward the v10 strict-contract model, including rejection of unknown top-level keys.
+- Updated stage tests and validation tests to cover the new cache contract and stricter config behavior.
+
+### Reporting and timestamp handling
+- Updated report-generation paths to use the new cache split consistently.
+- Reworked timestamp handling in report paths and spreadsheet export to avoid deprecated patterns while keeping generated files valid.
+
+### Documentation and test suite
+- Updated `README.md` and `docs/CONFIGURATION.md` to describe the v10 cache contract and config direction.
+- Full test suite passes: **406 tests, 0 failures**.
+
+- v10 cleanup in progress: strict config validation, explicit cache contracts, dedicated `postfilter_dropped_commits.json`, artifact schema validation, and timezone-aware UTC timestamp formatting.
+- Fix stage-cache flow for filtered vs relevant generation: stage 04 now stores kept commits in `prefilter_kept_commits.json`, and stage 05 scores that cache instead of mistakenly reading `filtered_commits.json`. This ensures relevant commits come from prefilter-kept commits while filtered output remains the dropped set.
+
 ## v9.14.17 — 2026-05-09
 
 ### Filtered-commit output in all report formats (T.1 / T.2)

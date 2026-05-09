@@ -81,7 +81,7 @@ def _commit_row_html(i, c, with_reason=False):
     _ts    = c.get('author_time') or ''
     try:
         import datetime as _dt
-        date = _dt.datetime.utcfromtimestamp(int(_ts)).strftime('%Y-%m-%d %H:%M') if _ts else ''
+        date = _dt.datetime.fromtimestamp(int(_ts), tz=_dt.timezone.utc).strftime('%Y-%m-%d %H:%M') if _ts else ''
     except (TypeError, ValueError):
         date = str(_ts)[:16]
     score  = c.get('score', 0) or 0

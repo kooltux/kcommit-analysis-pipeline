@@ -23,7 +23,7 @@ def _fmt_date(ts):
         return ''
     try:
         import datetime
-        return datetime.datetime.utcfromtimestamp(int(ts)).strftime('%Y-%m-%d %H:%M')
+        return datetime.datetime.fromtimestamp(int(ts), tz=datetime.timezone.utc).strftime('%Y-%m-%d %H:%M')
     except (TypeError, ValueError):
         return str(ts)[:16]
 
@@ -164,7 +164,9 @@ def run(cfg, cache, outdir):
     scored        = (load_json(os.path.join(cache, CACHE_FILES['relevant']), default=[]) or [])
     if top_n is not None:
         scored = scored[:top_n]
-    filtered      = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
+    prefiltered   = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
+    postfiltered  = load_json(os.path.join(cache, CACHE_FILES['postfilter_dropped']), default=[]) or []
+    filtered      = list(prefiltered) + list(postfiltered)
     profile_rules = load_profile_rules(cfg)
 
     report_stats = {

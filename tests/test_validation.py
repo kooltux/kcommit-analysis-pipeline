@@ -205,3 +205,12 @@ def test_reports_valid_config(tmp_path):
     cfg['reports'] = {'title': 'My Report', 'outputs': ['html', 'csv'], 'top_n': 100}
     problems, _ = validate_config_only(cfg)
     assert not any('reports' in p for p in problems)
+
+
+def test_validate_unknown_nested_key():
+    cfg = {
+        'paths': {'work_dir': '/tmp'},
+        'kernel': {'source_dir': '/src', 'rev_old': 'a', 'rev_new': 'b', 'bogus': 1},
+    }
+    problems, notices = validate_inputs(cfg)
+    assert any('kernel.bogus' in p for p in problems)
