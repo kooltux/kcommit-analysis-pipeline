@@ -2,7 +2,6 @@ from lib.profile_rules import _merged_patterns
 """Commit scoring helpers for kcommit-analysis-pipeline.
 
 v9.12 changes:
-  - extract_stable_hints backward-compat alias removed.
   - _collect_product_evidence() extracted from score_commit().
   - infer_touched_paths() moved to lib/kbuild.py.
   - _load_hints / _load_hints_from_path removed from this module;

@@ -1,16 +1,14 @@
 """HTML report generator for kcommit-analysis-pipeline.
 
-v9.9 changes:
-  - _commit_row(): removed legacy fixed sub-score columns
-    columns. Columns now match COMMIT_COLS exactly (Rank, SHA, Subject,
-    Author, Date, Score, Profiles, Product Evidence [+ Filter reason]).
-  - _table(): filter row now rendered as part of <thead> with class
-    'kc-filters'; sticky offset is handled in CSS, not here.
-  - Profile Summary table no longer uses _table() (no per-column filters
-    needed); rendered as a plain <table class="kc-table"> to avoid the
-    filter-row overlapping regular rows.
+Column definitions (COMMIT_COLS, SUMMARY_COLS, MATRIX_COLS) are the
+canonical source in lib.manifest and imported here via lib.spreadsheet.
+
+E-series changes:
+  - Dead code removed: @lru_cache on _get_template, _plain_table(),
+    _filter_input() (inlined), functools import.
+  - _section() anchor argument is now mandatory (assert guard).
+  - json import restored (used by inline commit-map serialisation).
 """
-import functools
 import json
 import os
 import time
@@ -19,7 +17,6 @@ from lib.manifest    import VERSION
 from lib.spreadsheet import COMMIT_COLS, SUMMARY_COLS, MATRIX_COLS
 
 
-@functools.lru_cache(maxsize=None)
 def _get_template(name, templates_dir, default=''):
     path = os.path.join(templates_dir, name)
     try:
@@ -52,10 +49,6 @@ def _th(label):
             f'<i class="sort-icon">⇅</i></th>')
 
 
-def _filter_input():
-    return '<input type="text" placeholder="filter…  >N <N foo*" aria-label="filter column">'
-
-
 def _table(headers, rows_html, table_id=''):
     """Table with sticky header row + per-column filter row."""
     id_attr = f' id="{table_id}"' if table_id else ''
@@ -65,7 +58,7 @@ def _table(headers, rows_html, table_id=''):
         + ''.join(_th(h) for h in headers)
         + '</tr>'
         '<tr class="kc-filters">'
-        + ''.join(f'<th>{_filter_input()}</th>' for _ in headers)
+        + ''.join('<th><input type="text" placeholder="filter…  >N <N foo*" aria-label="filter column"></th>' for _ in headers)
         + '</tr>'
         '</thead>'
     )
@@ -78,29 +71,19 @@ def _table(headers, rows_html, table_id=''):
     )
 
 
-def _plain_table(headers, rows_html, table_id=''):
-    """Plain table with only a header row (no filter inputs)."""
-    id_attr = f' id="{table_id}"' if table_id else ''
-    thead = (
-        '<thead><tr class="kc-col-headers">'
-        + ''.join(_th(h) for h in headers)
-        + '</tr></thead>'
-    )
-    return (
-        f'<table class="kc-table"{id_attr}>'
-        + thead
-        + '<tbody>' + ''.join(rows_html) + '</tbody>'
-        + '</table>'
-    )
-
 
 def _commit_row_html(i, c, with_reason=False):
-    """Build a <tr> for a commit.  Matches COMMIT_COLS exactly."""
+    """Build a <tr> for a commit.  Matches COMMIT_COLS (from lib.manifest)."""
     sha    = (c.get('commit') or '')
     sha12  = sha[:12]
     subj   = c.get('subject') or ''
     author = c.get('author_name') or ''
-    date   = c.get('author_time') or ''
+    _ts    = c.get('author_time') or ''
+    try:
+        import datetime as _dt
+        date = _dt.datetime.utcfromtimestamp(int(_ts)).strftime('%Y-%m-%d %H:%M') if _ts else ''
+    except (TypeError, ValueError):
+        date = str(_ts)[:16]
     score  = c.get('score', 0) or 0
     profs  = c.get('matched_profiles') or []
     evid   = '; '.join(c.get('product_evidence') or [])
@@ -126,7 +109,8 @@ def _commit_row_html(i, c, with_reason=False):
     return '<tr>' + ''.join(cells) + '</tr>'
 
 
-def _section(title, badge, content, anchor=''):
+def _section(title, badge, content, anchor):
+    assert anchor, "_section() requires a non-empty anchor"
     id_attr = f' id="{anchor}"' if anchor else ''
     return (
         f'<section class="kc-card"{id_attr}>'
@@ -143,7 +127,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     """Write HTML report to *output_path*.
 
     Section order: Run Stats → Profile Summary → Commits table.
-    Commit table columns match COMMIT_COLS (no legacy sub-score columns).
+    Commit table columns match COMMIT_COLS imported from lib.manifest.
     """
     if templates_dir is None:
         templates_dir = os.path.join(
@@ -160,14 +144,13 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     generated = time.strftime('%Y-%m-%d %H:%M:%S')
     commits   = commits or []
 
-    # ── Nav ───────────────────────────────────────────────────────────────
-    nav = (
-        '<nav class="kc-nav">'
-        '<a href="#stats">Stats</a>'
-        '<a href="#profiles">Profiles</a>'
-        '<a href="#commits">Commits</a>'
-        '</nav>'
-    )
+    # ── Header ────────────────────────────────────────────────────────────
+    rs      = report_stats or {}
+    total   = rs.get('total_scored_commits', len(commits))
+    min_s   = rs.get('min_score_threshold', '—')
+    n_profs = len(profile_summary or {})
+    cov     = rs.get('profile_coverage', {})
+    cov_pct = f'{cov.get("pct", 0):.0f}%' if isinstance(cov, dict) else str(cov)
 
     header = (
         '<header class="kc-header">'
@@ -176,18 +159,12 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         f'<h1>{title}</h1>'
         f'<p>{VERSION} &nbsp;·&nbsp; generated {generated}</p>'
         '</div>'
-        + nav
-        + '</header>'
+        '<div class="kc-header-spacer"></div>'
+        '<nav class="kc-nav"><a href="#commits">Commits</a></nav>'
+        '</header>'
     )
 
-    # ── Stats cards ───────────────────────────────────────────────────────
-    rs      = report_stats or {}
-    total   = rs.get('total_scored_commits', len(commits))
-    min_s   = rs.get('min_score_threshold', '—')
-    n_profs = len(profile_summary or {})
-    cov     = rs.get('profile_coverage', {})
-    cov_pct = f'{cov.get("pct", 0):.0f}%' if isinstance(cov, dict) else str(cov)
-
+    # ── Sidebar ───────────────────────────────────────────────────────────
     def stat_card(label, value):
         return (
             f'<div class="kc-stat-card">'
@@ -196,50 +173,37 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
             f'</div>'
         )
 
-    stats_grid = (
-        '<div class="kc-stats-grid">'
-        + stat_card('Total scored', total)
+    sidebar_stats = (
+        '<div class="kc-sidebar-section"><h3>Run Stats</h3>'
+        + stat_card('Commits', total)
         + stat_card('Min score', min_s)
-        + stat_card('Active profiles', n_profs)
-        + stat_card('Profile coverage', cov_pct)
+        + stat_card('Profiles', n_profs)
+        + stat_card('Coverage', cov_pct)
         + '</div>'
     )
-    stats_pre    = json.dumps(rs, indent=2, default=str)
-    stats_detail = (
-        '<details style="padding:0 1rem 1rem">'
-        '<summary style="cursor:pointer;color:var(--text-muted);'
-        'font-size:.75rem;padding:.5rem 0">Full run stats JSON</summary>'
-        f'<pre>{stats_pre}</pre>'
-        '</details>'
-    )
-    stats_section = _section(
-        'Run Stats', str(len(commits)) + ' commits',
-        stats_grid + stats_detail, anchor='stats')
 
-    # ── Profile summary — plain table (no per-column filter inputs) ───────
-    p_rows = []
+    prof_items = []
     for pname, pd in sorted((profile_summary or {}).items(),
                              key=lambda x: -x[1].get('total_score', 0)):
-        avg = pd.get('avg_score', 0)
-        p_rows.append(
-            '<tr>'
-            f'<td><span class="profile-chip">{pname}</span></td>'
-            f'<td class="num">{pd.get("count", 0)}</td>'
-            f'<td class="num">{pd.get("total_score", 0)}</td>'
-            f'<td class="num">{avg:.1f}</td>'
-            '</tr>'
+        cnt = pd.get('commit_count', pd.get('count', 0))
+        prof_items.append(
+            f'<li><span class="pname">{pname}</span>'
+            f'<span class="pbadge">{cnt} commits</span></li>'
         )
-    prof_content = (
-        '<div class="kc-table-wrap">'
-        + _plain_table(SUMMARY_COLS, p_rows, table_id='tbl-profiles')
-        + '</div>'
-    )
-    prof_section = _section(
-        'Profile Summary',
-        str(len(profile_summary or {})) + ' profiles',
-        prof_content, anchor='profiles')
+    sidebar_profiles = (
+        '<div class="kc-sidebar-section"><h3>Profiles</h3>'
+        f'<ul class="kc-profile-list">{"".join(prof_items)}</ul>'
+        '</div>'
+    ) if prof_items else ''
 
-    # ── Commits table ──────────────────────────────────────────────────────
+    sidebar = (
+        '<aside class="kc-sidebar">'
+        + sidebar_stats
+        + sidebar_profiles
+        + '</aside>'
+    )
+
+    # ── Commits table ─────────────────────────────────────────────────────
     commit_headers = list(COMMIT_COLS)
     if is_filtered:
         commit_headers = commit_headers + ['Filter reason']
@@ -247,8 +211,12 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     c_rows = [_commit_row_html(i, c, with_reason=is_filtered)
               for i, c in enumerate(commits, 1)]
     commits_content = (
-        '<div class="kc-filter-bar"><label>Filter:</label>'
-        '<button type="button">Clear all</button></div>'
+        '<div class="kc-filter-bar">'
+        '<label>Search:</label>'
+        '<input class="kc-global-filter" type="text"'
+        ' placeholder="search all columns…" aria-label="global search">'
+        '<button type="button">Clear all</button>'
+        '</div>'
         '<div class="kc-table-wrap">'
         + _table(commit_headers, c_rows, table_id='tbl-commits')
         + '</div>'
@@ -260,11 +228,12 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
 
     body = (
         header
+        + '<div class="kc-layout">'
+        + sidebar
         + '<main class="kc-main">'
-        + stats_section
-        + prof_section
         + commits_section
         + '</main>'
+        + '</div>'
     )
 
     # Build a SHA→commit lookup and embed it inline so the detail panel

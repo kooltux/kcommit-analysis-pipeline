@@ -10,33 +10,34 @@ output in HTML, CSV, XLSX, and ODS formats.
 ```
 Stage  Module                      Input → Output (cache/)
 ─────────────────────────────────────────────────────────────────────────────
-  00   lib/stages/st00_prepare.py      config → 00_compiled_rules.json
-                                            00_prepare_summary.json
+  00   lib/stages/st00_prepare.py      config → compiled_rules.json
+                                            prepare_summary.json
 
-  01   lib/stages/st01_collect.py       git log → 01_commits.json
+  01   lib/stages/st01_collect.py       git log → commits.json
 
   02   lib/stages/st02_build_context.py kernel .config / build logs / DTS roots
-                                   → 02_build_context.json
-                                     02_kbuild_static_map.json
+                                   → build_context.json
+                                     kbuild_map.json
 
   03   lib/stages/st03_product_map.py     build context + git history
-                                   → 03_product_map.json
+                                   → product_map.json
 
-  04   lib/stages/st04_prefilter.py     01_commits.json + 03_product_map.json
-                                   → 04_filtered_commits.json
+  04   lib/stages/st04_prefilter.py     commits.json + product_map.json
+                                   → filtered_commits.json
 
-  05   lib/stages/st05_score.py         04_filtered_commits.json
-                                   → 05_scored_commits.json
+  05   lib/stages/st05_score.py         filtered_commits.json
+                                   → scored_commits.json
 
-  06   lib/stages/st06_postfilter.py    05_scored_commits.json
-                                   → 06_relevant_commits.json
-                                     04_filtered_commits.json (+ low-score drops)
+  06   lib/stages/st06_postfilter.py    scored_commits.json
+                                   → relevant_commits.json
+                                     filtered_commits.json (+ low-score drops)
 
-  07   lib/stages/st07_report.py        06_relevant_commits.json
-                                   → output/relevant_commits.{json,csv,xlsx,ods}
-                                     output/summary.html
-                                     output/profile_summary.json
-                                     output/profile_matrix.{json,csv}
+  07   lib/stages/st07_report.py        relevant_commits.json
+                                   → output/relevant_commits.{json,csv,html,xlsx,ods}
+                                     output/filtered_commits.{json,csv,html,xlsx,ods}
+                                     output/profile_summary.{json,xlsx,ods}
+                                     output/profile_matrix.{json,csv,xlsx,ods}
+                                     output/summary.{xlsx,ods}
                                      output/report_stats.json
 ```
 
@@ -78,8 +79,8 @@ Level 1 — Keyword-based
 Level 0 — Default → KEEP
 ```
 
-Dropped commits are recorded with a reason in `04_filtered_commits.json`.
-After stage 06, commits dropped for low score are appended to the same file.
+Dropped commits are recorded with a reason in `filtered_commits.json`.
+After stage 06, commits dropped for low score are appended to `filtered_commits.json`.
 
 ## Running the pipeline
 

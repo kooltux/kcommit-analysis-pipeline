@@ -5,49 +5,50 @@
 ### Stage 00 — prepare_pipeline
 - Validates configuration and all referenced paths.
 - Loads all active profile JSON files and resolves rule directories.
-- Compiles rule patterns into `00_compiled_rules.json` (deduplicated: each
+- Compiles rule patterns into `compiled_rules.json` (deduplicated: each
   rule body stored once, referenced by name from each profile).
-- Writes `00_prepare_summary.json` with active profile names and rule counts.
+- Writes `prepare_summary.json` with active profile names and rule counts.
 
 ### Stage 01 — collect_commits
 - Runs `git log <rev_old>..<rev_new> --name-only` (optionally `--numstat`,
   `--no-merges`, `--first-parent`).
 - Parses commit metadata: SHA, subject, body, author, timestamps, touched files.
-- Outputs `01_commits.json`.
+- Outputs `commits.json`.
 
 ### Stage 02 — collect_build_context
 - Reads the kernel `.config` to extract enabled `CONFIG_*` symbols.
 - Scans `build_dir` for compiled `.o`/`.ko` artifacts.
 - Parses `kernel_build_log` and `yocto_build_log` for compiled object names.
 - Parses DTS roots for device-tree source paths.
-- Outputs `02_build_context.json` and `02_kbuild_static_map.json`.
+- Outputs `build_context.json` and `kbuild_map.json`.
 
 ### Stage 03 — build_product_map
-- Combines `02_build_context.json` with the static Kbuild map.
+- Combines `build_context.json` with the static Kbuild map.
 - Optionally walks historical Makefiles via `lib/history_map.py` to extend
   the `CONFIG_* → source file` mapping across the revision range.
-- Outputs `03_product_map.json`.
+- Outputs `product_map.json`.
 
 ### Stage 04 — prefilter_commits
 - Loads compiled rules and applies the multi-level filter hierarchy.
-- Kept commits → `04_filtered_commits.json` (input for scoring).
+- Kept commits → `filtered_commits.json` (input for scoring).
 - Dropped commits → same file with `_filter_reason`.
-- Also writes `output/filtered_commits.*` (JSON, CSV, HTML, XLSX, ODS).
+- Also writes `output/filtered_commits.{json,csv,html,xlsx,ods}` for each
+  format enabled in `reports.outputs`.
 
 ### Stage 05 — score_commits
-- Reads `04_filtered_commits.json`.
+- Reads `filtered_commits.json`.
 - Evaluates all rules of all active profiles for each commit.
 - Supports parallel scoring via multiprocessing (`collect.score_workers`).
-- Outputs `05_scored_commits.json` with `score`, `matched_profiles`,
+- Outputs `scored_commits.json` with `score`, `matched_profiles`,
   `product_evidence`, and `scoring.profiles` per commit.
 
 ### Stage 06 — postfilter_commits
 - Sorts scored commits descending by score.
 - Drops commits below `filter.min_score`.
 - Dropped commits get `_filter_reason: score_below_threshold` and are
-  appended to `04_filtered_commits.json`.
+  appended to `filtered_commits.json`.
 - Assigns `_rank` (1-based) to kept commits.
-- Outputs `06_relevant_commits.json`.
+- Outputs `relevant_commits.json`.
 
 ### Stage 07 — report_commits
 - Generates all outputs under `<work_dir>/output/`:

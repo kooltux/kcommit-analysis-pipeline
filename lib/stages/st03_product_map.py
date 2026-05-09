@@ -5,7 +5,7 @@ Stage 03 of the kcommit pipeline (absorbed into lib/stages in v9.13).
 import os
 
 from lib.config import load_json, save_json
-from lib.history_map import build_history_config_map, _set_gitshow_cache_dir
+from lib.history_map import build_history_config_map
 from lib.parse_kconfig import scan_makefile_config_map
 from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.manifest import CACHE_FILES, NSTAGES
@@ -38,9 +38,9 @@ def run(cfg, cache):
     cached_map_path = os.path.join(cache, CACHE_FILES['kbuild_map'])
     if os.path.exists(cached_map_path):
         base_map = load_json(cached_map_path, default={}) or {}
-        print('  reusing kbuild_static_map from stage 02 (%d symbols)' % len(base_map))
+        print('  reusing kbuild_map from stage 02 (%d symbols)' % len(base_map))
     elif source_dir and os.path.isdir(source_dir):
-        print('  kbuild_static_map not found — scanning tree ...')
+        print('  kbuild_map not found — scanning tree ...')
         base_map = scan_makefile_config_map(source_dir)
     else:
         base_map = {}
@@ -49,7 +49,6 @@ def run(cfg, cache):
                           n_done=len(base_map), n_total=len(base_map))
 
     # Wire on-disk git-show cache
-    _set_gitshow_cache_dir(cache)
 
     # 2. History-based config map
     history_info    = None
@@ -61,7 +60,7 @@ def run(cfg, cache):
                                   'history map', n_done=done, n_total=total)
         try:
             history_info    = build_history_config_map(
-                cfg, base_map, progress_callback=_hist_progress)
+                cfg, base_map, cache, progress_callback=_hist_progress)
             config_to_paths = history_info.get('config_to_paths', base_map)
         except Exception as e:
             print('\n  warning: history config mapping disabled: %s' % e)

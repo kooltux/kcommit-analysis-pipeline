@@ -102,9 +102,9 @@ def test_filter_require_kconfig_coverage_valid_bool(tmp_path):
 
 # ── schema type validation ────────────────────────────────────────────────────
 def test_schema_wrong_type_for_min_score(tmp_path):
-    """reports.min_score must be float — passing a string triggers a schema error."""
+    """filter.min_score must be float — passing a string triggers a schema error."""
     cfg = _base(tmp_path)
-    cfg['reports'] = {'min_score': 'high'}   # 'high' is not a float
+    cfg['filter'] = {'min_score': 'high'}   # 'high' is not a float/int
     problems, _ = validate_config_only(cfg)
     assert any('min_score' in p for p in problems)
 
@@ -133,3 +133,75 @@ def test_validate_inputs_invalid_git_dir(tmp_path):
     problems, _ = validate_inputs(cfg)
     assert any('rev_old' in p or 'rev_new' in p or 'git' in p.lower()
                for p in problems)
+
+
+# ── collect section (I-series: new schema keys) ───────────────────────────────
+def test_collect_unknown_key_is_not_a_problem(tmp_path):
+    """Unrecognised collect keys are tolerated (schema validates known keys only)."""
+    cfg = _base(tmp_path)
+    cfg['collect'] = {'no_merges': True, 'max_commits': 100}
+    problems, _ = validate_config_only(cfg)
+    assert not any('collect' in p for p in problems)
+
+
+def test_collect_wrong_type_for_max_commits(tmp_path):
+    """collect.max_commits must be int — a string triggers a schema type error."""
+    cfg = _base(tmp_path)
+    cfg['collect'] = {'max_commits': 'all'}
+    problems, _ = validate_config_only(cfg)
+    assert any('max_commits' in p for p in problems)
+
+
+def test_collect_wrong_type_for_score_workers(tmp_path):
+    """collect.score_workers must be int."""
+    cfg = _base(tmp_path)
+    cfg['collect'] = {'score_workers': 'auto'}
+    problems, _ = validate_config_only(cfg)
+    assert any('score_workers' in p for p in problems)
+
+
+# ── history_mapping section (I-series: new schema keys) ──────────────────────
+def test_history_mapping_max_failure_rate_wrong_type(tmp_path):
+    """history_mapping.max_failure_rate must be float."""
+    cfg = _base(tmp_path)
+    cfg['history_mapping'] = {'max_failure_rate': 'high'}
+    problems, _ = validate_config_only(cfg)
+    assert any('max_failure_rate' in p for p in problems)
+
+
+def test_history_mapping_max_commits_per_probe_wrong_type(tmp_path):
+    """history_mapping.max_commits_per_probe must be int."""
+    cfg = _base(tmp_path)
+    cfg['history_mapping'] = {'max_commits_per_probe': 'lots'}
+    problems, _ = validate_config_only(cfg)
+    assert any('max_commits_per_probe' in p for p in problems)
+
+
+def test_history_mapping_valid_full_config(tmp_path):
+    """A fully-specified history_mapping block raises no problems."""
+    cfg = _base(tmp_path)
+    cfg['history_mapping'] = {
+        'mode': 'sampled',
+        'sample_step': 250,
+        'max_commits_per_probe': 5,
+        'max_failure_rate': 0.1,
+    }
+    problems, _ = validate_config_only(cfg)
+    assert not any('history_mapping' in p for p in problems)
+
+
+# ── reports section (I-series: title/top_n, no min_score) ────────────────────
+def test_reports_top_n_wrong_type(tmp_path):
+    """reports.top_n must be int."""
+    cfg = _base(tmp_path)
+    cfg['reports'] = {'top_n': 'all'}
+    problems, _ = validate_config_only(cfg)
+    assert any('top_n' in p for p in problems)
+
+
+def test_reports_valid_config(tmp_path):
+    """A valid reports block raises no problems."""
+    cfg = _base(tmp_path)
+    cfg['reports'] = {'title': 'My Report', 'outputs': ['html', 'csv'], 'top_n': 100}
+    problems, _ = validate_config_only(cfg)
+    assert not any('reports' in p for p in problems)

@@ -28,14 +28,25 @@ STAGE_OUTPUTS = {s['key']: s.get('outputs', []) for s in PIPELINE_STAGES}
 CACHE_FILES = {
     'compiled_rules': 'compiled_rules.json',
     'prepare_summary': 'prepare_summary.json',
-    'commits':        '01_commits.json',
-    'build_context':  '02_build_context.json',
-    'kbuild_map':     '02_kbuild_static_map.json',
-    'product_map':    '03_product_map.json',
-    'filtered':       '04_filtered_commits.json',
-    'scored':         '05_scored_commits.json',
-    'relevant':       '06_relevant_commits.json',
+    'commits':        'commits.json',
+    'build_context':  'build_context.json',
+    'kbuild_map':     'kbuild_map.json',
+    'product_map':    'product_map.json',
+    'filtered':       'filtered_commits.json',
+    'scored':         'scored_commits.json',
+    'relevant':       'relevant_commits.json',
 }
+
+
+# ── Column definitions — single source of truth ───────────────────────────────
+# Import via: from lib.manifest import COMMIT_COLS, COMMIT_COLS_FILTERED, ...
+COMMIT_COLS          = ["Rank", "SHA", "Subject", "Author", "Date",
+                        "Score", "Profiles", "Product Evidence"]
+COMMIT_COLS_FILTERED = COMMIT_COLS + ["Filter Reason"]
+SUMMARY_COLS         = ["Profile", "Count", "Total Score", "Avg Score"]
+MATRIX_COLS          = ["Rank", "SHA", "Subject", "Profile",
+                        "Total Score", "Profile Score"]
+STATS_COLS           = ["Metric", "Value"]
 
 
 def load_manifest(path=None):

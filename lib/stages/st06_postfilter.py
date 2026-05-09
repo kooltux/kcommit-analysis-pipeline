@@ -40,6 +40,6 @@ def run(cfg, cache):
             c['_filter_reason'] = label
         existing = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
         save_json(os.path.join(cache, CACHE_FILES['filtered']), existing + low_score)
-        print(f'  appended {len(low_score)} low-score commits to 04_filtered_commits.json')
+        print(f'  appended {len(low_score)} low-score commits to {CACHE_FILES["filtered"]}')
 
     return relevant, low_score, threshold

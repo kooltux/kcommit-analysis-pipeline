@@ -122,14 +122,21 @@ and `rules.rules_dirs` (defaulting to `<CONFIGDIR>/profiles/` and
 
 | File | Description |
 |------|-------------|
-| `output/relevant_commits.csv`  | Ranked commits above the score threshold |
-| `output/06_relevant_commits.json` | Same data as JSON |
-| `output/summary.html`          | Interactive HTML report (filters, sort, dark mode, CSV export) |
-| `output/profile_summary.json`  | Per-profile commit count and average score |
-| `output/profile_matrix.csv`    | Per-commit × per-profile score breakdown |
-| `output/report_stats.json`     | Pipeline run statistics |
+| `output/relevant_commits.html`   | Interactive HTML report (filters, sort, dark mode, CSV export) |
+| `output/relevant_commits.csv`    | Ranked commits above the score threshold |
+| `output/relevant_commits.json`   | Same data as JSON |
+| `output/filtered_commits.html`   | Dropped commits with filter reason (HTML) |
+| `output/filtered_commits.csv`    | Dropped commits with filter reason (CSV) |
+| `output/filtered_commits.json`   | Dropped commits with filter reason (JSON) |
+| `output/profile_summary.json`    | Per-profile commit count and average score |
+| `output/profile_matrix.json`     | Per-commit × per-profile score breakdown (JSON) |
+| `output/profile_matrix.csv`      | Per-commit × per-profile score breakdown (CSV) |
+| `output/report_stats.json`       | Pipeline run statistics and generated file list |
 
-Optional: `.xlsx` / `.ods` (enable with `"reports": { "outputs": ["xlsx", "ods"] }`).
+Optional XLSX/ODS: enable with `"reports": { "outputs": ["xlsx", "ods"] }`.
+Each enabled format produces both `relevant_commits.*` and `filtered_commits.*`
+counterparts, plus `profile_summary.*`, `profile_matrix.*`, and `summary.*`
+(multi-sheet workbook).
 
 ## Requirements
 

@@ -16,32 +16,25 @@ from lib.gitutils import list_rev_commits, show_path_history
 import hashlib as _hashlib
 import tempfile as _tempfile
 
-_GITSHOW_CACHE_DIR = None
 
 
-def _set_gitshow_cache_dir(cache_dir):
-    """Set the on-disk git-show cache directory (called by stage 03)."""
-    global _GITSHOW_CACHE_DIR
-    _GITSHOW_CACHE_DIR = cache_dir
-
-
-def _gitshow_cache_path(key):
+def _gitshow_cache_path(cache_dir, key):
     """Return the sharded file path for *key* inside gitshow_cache/.
 
     Layout: gitshow_cache/<key[0:2]>/<key[2:4]>/<key>
     This mirrors git's own object store sharding and avoids filesystem
     congestion when the cache grows to tens of thousands of entries.
     """
-    return os.path.join(_GITSHOW_CACHE_DIR, 'gitshow_cache',
+    return os.path.join(cache_dir, 'gitshow_cache',
                         key[:2], key[2:4], key)
 
 
-def _gitshow_cache_get(rev, path):
+def _gitshow_cache_get(cache_dir, rev, path):
     """Return cached git-show result or None if not cached."""
-    if not _GITSHOW_CACHE_DIR:
+    if not cache_dir:
         return None
     key   = _hashlib.sha256(f'{rev}:{path}'.encode()).hexdigest()[:24]
-    fpath = _gitshow_cache_path(key)
+    fpath = _gitshow_cache_path(cache_dir, key)
     if os.path.exists(fpath):
         try:
             with open(fpath, 'r', encoding='utf-8', errors='replace') as f:
@@ -51,12 +44,12 @@ def _gitshow_cache_get(rev, path):
     return None
 
 
-def _gitshow_cache_put(rev, path, text):
+def _gitshow_cache_put(cache_dir, rev, path, text):
     """Persist a git-show result to disk cache."""
-    if not _GITSHOW_CACHE_DIR:
+    if not cache_dir:
         return
     key   = _hashlib.sha256(f'{rev}:{path}'.encode()).hexdigest()[:24]
-    fpath = _gitshow_cache_path(key)
+    fpath = _gitshow_cache_path(cache_dir, key)
     os.makedirs(os.path.dirname(fpath), exist_ok=True)
     try:
         with open(fpath + '.tmp', 'w', encoding='utf-8') as f:
@@ -70,7 +63,7 @@ def _gitshow_cache_put(rev, path, text):
 OBJ_LINE_RE = re.compile(r'^(obj-[^\s:+?=]+)\s*[:+]?=\s*(.+)$', re.M)
 
 
-def build_history_config_map(cfg, base_map, progress_callback=None):
+def build_history_config_map(cfg, base_map, cache_dir, progress_callback=None):
     """Build a merged config_to_paths dict by sampling historical Makefiles."""
     hm = cfg.get('history_mapping', {})
     if not hm.get('enabled', True):
@@ -117,11 +110,11 @@ def build_history_config_map(cfg, base_map, progress_callback=None):
         try:
             def _fetch(task):
                 rev, mk = task
-                cached = _gitshow_cache_get(rev, mk)
+                cached = _gitshow_cache_get(cache_dir, rev, mk)
                 if cached is not None:
                     return rev, mk, cached
                 text = show_path_history(cfg, rev, mk)
-                _gitshow_cache_put(rev, mk, text or '')
+                _gitshow_cache_put(cache_dir, rev, mk, text or '')
                 return rev, mk, text
 
             done_count   = [0]

@@ -33,7 +33,11 @@ CONFIG_SCHEMA = {
         'yocto_build_log':  {'type': 'path'},
         'dts_roots':        {'type': 'path',   'list': True},
     },
-    # paths section (built by load_config, not user-authored)
+    # paths section — populated by load_config() from user config + derived values.
+    # User may set work_dir (and optionally cache_dir/output_dir) directly;
+    # cache_dir and output_dir default to <work_dir>/cache and <work_dir>/output.
+    # profiles_dirs/rules_dirs/scoring_dir/templates_dir/css_override are
+    # resolved from their source sections and written here for uniform access.
     'paths': {
         '__type__': 'dict',
         'work_dir':      {'type': 'path'},
@@ -67,28 +71,35 @@ CONFIG_SCHEMA = {
     # collect section
     'collect': {
         '__type__': 'dict',
-        'use_numstat':    {'type': 'bool'},
-        'no_merges':      {'type': 'bool'},
-        'first_parent':   {'type': 'bool'},
-        'score_workers':  {'type': 'int'},
+        'use_numstat':         {'type': 'bool'},
+        'no_merges':           {'type': 'bool'},
+        'first_parent':        {'type': 'bool'},
+        'score_workers':       {'type': 'int'},
+        'max_commits':         {'type': 'int'},
+        'git_binary':          {'type': 'str'},
+        'use_name_only':       {'type': 'bool'},
+        'extra_git_log_args':  {'type': 'list'},
+        'jsonl':               {'type': 'bool'},
+        'include_parents':     {'type': 'bool'},
     },
     # reports section
     'reports': {
         '__type__': 'dict',
-        'outputs':   {'type': 'list'},
-        'min_score': {'type': 'float'},
+        'outputs':       {'type': 'list'},
+        'title':         {'type': 'str'},
+        'top_n':         {'type': 'int'},
+        'templates_dir': {'type': 'path'},
     },
     # history_mapping section
     'history_mapping': {
         '__type__': 'dict',
-        'mode':        {'type': 'str'},
-        'sample_step': {'type': 'int'},
-        'enabled':     {'type': 'bool'},
-    },
-    # project section
-    'project': {
-        '__type__': 'dict',
-        'work_dir': {'type': 'path'},
+        # 'mode': 'range'|'sampled'|'full'|'disabled'
+        'mode':                   {'type': 'str'},
+        'sample_step':            {'type': 'int'},
+        'max_commits_per_probe':  {'type': 'int'},
+        'max_failure_rate':       {'type': 'float'},
+        # 'enabled': false is equivalent to mode='disabled' (legacy shorthand)
+        'enabled':                {'type': 'bool'},
     },
 }
 

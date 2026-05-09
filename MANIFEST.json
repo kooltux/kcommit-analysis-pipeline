@@ -1,5 +1,5 @@
 {
-  "version": "v9.13.0",
+  "version": "v9.14.17",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
   "library_dir": "lib",
   "example_configs": [
@@ -18,56 +18,49 @@
       "index": 1,
       "key": "collect_commits",
       "outputs": [
-        "cache/01_commits.json"
+        "cache/commits.json"
       ]
     },
     {
       "index": 2,
       "key": "collect_build_context",
       "outputs": [
-        "cache/02_build_context.json",
-        "cache/02_kbuild_static_map.json"
+        "cache/build_context.json",
+        "cache/kbuild_map.json"
       ]
     },
     {
       "index": 3,
       "key": "build_product_map",
       "outputs": [
-        "cache/03_product_map.json"
+        "cache/product_map.json"
       ]
     },
     {
       "index": 4,
       "key": "prefilter_commits",
       "outputs": [
-        "cache/04_filtered_commits.json"
+        "cache/filtered_commits.json"
       ]
     },
     {
       "index": 5,
       "key": "score_commits",
       "outputs": [
-        "cache/05_scored_commits.json"
+        "cache/scored_commits.json"
       ]
     },
     {
       "index": 6,
       "key": "postfilter_commits",
       "outputs": [
-        "cache/06_relevant_commits.json"
+        "cache/relevant_commits.json"
       ]
     },
     {
       "index": 7,
       "key": "report_commits",
-      "outputs": [
-        "output/relevant_commits.csv",
-        "output/06_relevant_commits.json",
-        "output/report_stats.json",
-        "output/profile_summary.json",
-        "output/profile_matrix.csv",
-        "output/summary.html"
-      ]
+      "outputs": []
     }
   ],
   "tools": [

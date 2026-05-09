@@ -66,7 +66,7 @@
     }
     // Optional: override the profiles search path.
     // Single directory (default):
-    //   "profiles_dir": "${CONFIGDIR}/profiles"
+    //   "profiles_dirs": ["${CONFIGDIR}/profiles"]
     // Multiple directories — profiles are searched in order;
     // a profile name must be unique across all listed directories (error if duplicated):
     //   "profiles_dirs": ["${CONFIGDIR}/profiles", "/shared/team/profiles"]

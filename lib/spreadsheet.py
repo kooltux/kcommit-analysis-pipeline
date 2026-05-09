@@ -9,19 +9,19 @@ v9.14 changes:
     header row, capped 8–60 chars.
   - ODS: _ods_cell handles datetime with office:value-type="date" and
     office:date-value="ISO8601". Floats keep office:value-type="float".
+
+E.1: COMMIT_COLS, COMMIT_COLS_FILTERED, SUMMARY_COLS, MATRIX_COLS,
+     STATS_COLS moved to lib.manifest (single source of truth).
+     This module re-exports them for backward import compatibility.
 """
 import datetime
 import os
 import zipfile
 import xml.sax.saxutils as _sx
 
-# ── Column definitions ────────────────────────────────────────────────────────
-COMMIT_COLS          = ["Rank", "SHA", "Subject", "Author", "Date",
-                        "Score", "Profiles", "Product Evidence"]
-COMMIT_COLS_FILTERED = COMMIT_COLS + ["Filter Reason"]
-SUMMARY_COLS         = ["Profile", "Count", "Total Score", "Avg Score"]
-MATRIX_COLS          = ["Rank", "SHA", "Subject", "Profile", "Total Score", "Profile Score"]
-STATS_COLS           = ["Metric", "Value"]
+# Column definitions imported from manifest (single source of truth)
+from lib.manifest import (COMMIT_COLS, COMMIT_COLS_FILTERED,
+                          SUMMARY_COLS, MATRIX_COLS, STATS_COLS)
 
 
 # ── Date helper ───────────────────────────────────────────────────────────────

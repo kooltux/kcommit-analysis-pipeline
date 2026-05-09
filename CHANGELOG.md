@@ -1,3 +1,30 @@
+## v9.14.17 — 2026-05-09
+
+### Filtered-commit output in all report formats (T.1 / T.2)
+- `lib/stages/st07_report.py` — filtered commits are now written to the output
+  folder alongside the scored-commit reports, in every enabled format:
+  `filtered_commits.html`, `filtered_commits.csv`, `filtered_commits.xlsx`,
+  `filtered_commits.ods`, and always `filtered_commits.json`.
+- HTML dump reuses the same template pipeline as the main summary, with a
+  dedicated `is_filtered=True` flag that makes the `Filter reason` column visible.
+- All writes are guarded by `if filtered:` — no empty files are created.
+
+### Test suite — Tier 1 / 2 / 3 (T.5 – T.13)
+- 23 test files, **399 tests, 0 failures**, ~80 % line coverage.
+- **Tier 1** (173 tests): `test_config`, `test_pipeline_runtime`,
+  `test_prefilter`, `test_scoring`, `test_spreadsheet`, `test_st04_prefilter_run`,
+  `test_st05_score_run`, `test_st06_postfilter`, `test_st07_report`,
+  `test_parse_kconfig`, `test_kbuild`, `test_logsetup`, `test_validation`.
+- **Tier 2** (57 tests): `test_st02_build_context`, `test_spreadsheet_extra`,
+  `test_scoring_extra`, `test_st07_report_extra`.
+- **Tier 3** (81 tests): `test_gitutils` (all git helpers via mocked subprocess),
+  `test_st03_product_map`, `test_history_map` (gitshow disk-cache roundtrip +
+  `build_history_config_map`), `test_commands` (`cmd_validate`, `cmd_status`,
+  `cmd_dropped`, `cmd_report`, base helpers).
+- Deferred (T.14): `datetime.utcfromtimestamp()` deprecation warnings in
+  `spreadsheet.py`, `st07_report.py`, `html_report.py` — non-blocking, logged
+  for next maintenance cycle.
+
 ## v9.13.0
 
 ### Documentation & config consistency audit (H, I)

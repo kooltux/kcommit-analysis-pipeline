@@ -6,11 +6,35 @@ v9.12 changes:
     is active). This prevents the bar characters from corrupting JSON streams.
   - start_stage(), finish_stage(), fail_stage(), print_stage_input() and
     print_stage_output() also write to stderr so they never pollute stdout.
+
+E.4: StageResult dataclass added — structured return value for stage
+     run() functions (count, dropped, reasons, extra). Stages may return
+     a StageResult or a legacy tuple/dict; _stage_extra() in
+     lib/commands/base.py handles both.
 """
 import json
 import os
 import sys
 import time
+
+import dataclasses as _dc
+from typing import Any, Dict, Optional
+
+
+@_dc.dataclass
+class StageResult:
+    """Structured return value from every stage run() function."""
+    count:   int            = 0      # primary output count (commits kept, files found, …)
+    dropped: int            = 0      # items dropped / filtered out
+    reasons: Dict[str, int] = _dc.field(default_factory=dict)
+    extra:   Dict[str, Any] = _dc.field(default_factory=dict)
+
+    def to_extra_dict(self) -> Dict[str, Any]:
+        d = dict(self.extra)
+        if self.count:   d.setdefault('count',   self.count)
+        if self.dropped: d.setdefault('dropped',  self.dropped)
+        return d
+
 
 _PROGRESS_REFRESH = 0.5
 _LINE_WIDTH       = 100

@@ -1,515 +1,293 @@
-/* kcommit-analysis-pipeline — table autofilter, column sort, commit detail panel */
+/* kcommit-analysis-pipeline — filter/sort/export + commit detail panel */
 (function () {
   'use strict';
 
-  /* ── Autofilter ──────────────────────────────────────────────────────── */
+  /* ── Helpers ──────────────────────────────────────────────────────────── */
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
 
-  /* Columns with at most this many distinct values get a multiselect dropdown
-     instead of a free-text input.  Adjust to taste. */
-  var MULTISELECT_THRESHOLD = 20;
+  function fmtDate(ts) {
+    if (!ts) return '';
+    var n = Number(ts);
+    if (!isNaN(n) && n > 1e8) {
+      var d = new Date(n * 1000);
+      var p = function(x){ return String(x).padStart(2,'0'); };
+      return d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate())
+             +' '+p(d.getUTCHours())+':'+p(d.getUTCMinutes());
+    }
+    return String(ts).slice(0,16);
+  }
 
-  function getDistinctValues(rows, colIdx) {
-    var seen = Object.create(null);
-    var vals = [];
-    rows.forEach(function (row) {
-      var cell = row.cells[colIdx];
-      var text = cell ? cell.textContent.trim() : '';
-      /* Split on '; ' to handle multi-value cells (profiles, evidence) */
-      var parts = text ? text.split(/;\s*/) : [''];
-      parts.forEach(function (p) {
+  /* ── Per-column filters + global search ──────────────────────────────── */
+  var MULTISELECT_MAX = 20;
+
+  function distinctVals(rows, ci) {
+    var seen = Object.create(null), vals = [];
+    rows.forEach(function(r) {
+      var text = r.cells[ci] ? r.cells[ci].textContent.trim() : '';
+      text.split(/[;,]\s*/).forEach(function(p) {
         p = p.trim();
         if (p && !seen[p]) { seen[p] = true; vals.push(p); }
       });
     });
-    vals.sort(function (a, b) { return a.localeCompare(b); });
-    return vals;
+    return vals.sort(function(a,b){ return a.localeCompare(b); });
   }
 
-  function buildMultiselect(vals) {
+  function buildSelect(vals) {
     var sel = document.createElement('select');
-    sel.multiple = true;
-    sel.setAttribute('aria-label', 'filter column');
-    sel.className = 'kc-ms';
-    /* "All" option — selecting it means no filter */
-    var allOpt = document.createElement('option');
-    allOpt.value    = '__all__';
-    allOpt.text     = '(all)';
-    allOpt.selected = true;
-    sel.appendChild(allOpt);
-    vals.forEach(function (v) {
-      var o = document.createElement('option');
-      o.value = v; o.text = v;
+    sel.multiple = true; sel.className = 'kc-ms';
+    sel.setAttribute('aria-label','filter column');
+    var all = document.createElement('option');
+    all.value = '__all__'; all.text = '(all)'; all.selected = true;
+    sel.appendChild(all);
+    vals.forEach(function(v) {
+      var o = document.createElement('option'); o.value = o.text = v;
       sel.appendChild(o);
     });
     return sel;
   }
 
-  function initFilters(table) {
-    var filterRow = table.querySelector('tr.kc-filters');
-    if (!filterRow) return;
-    var filterCells = Array.from(filterRow.querySelectorAll('th'));
-    var rows        = Array.from(table.tBodies[0].rows);
-    var noMatch     = table.closest('.kc-card')
-                           .querySelector('.kc-no-match');
+  function matchesToken(text, tok) {
+    if (!tok) return true;
+    if (tok[0] === '>') { var n = parseFloat(tok.slice(1)); return !isNaN(n) && parseFloat(text) > n; }
+    if (tok[0] === '<') { var n = parseFloat(tok.slice(1)); return !isNaN(n) && parseFloat(text) < n; }
+    if (tok[0] === '=') return text === tok.slice(1).toLowerCase();
+    var pat = tok.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g,'.*');
+    try { return new RegExp(pat).test(text); } catch(e) { return text.includes(tok); }
+  }
 
-    /* For each column decide: multiselect or free-text */
-    var controls = filterCells.map(function (th, colIdx) {
-      var distinct = getDistinctValues(rows, colIdx);
-      if (distinct.length > 0 && distinct.length <= MULTISELECT_THRESHOLD) {
-        var sel = buildMultiselect(distinct);
-        th.innerHTML = '';
-        th.appendChild(sel);
-        return { type: 'multi', el: sel };
+  function initTable(tbl) {
+    var tbody   = tbl.querySelector('tbody');
+    var rows    = Array.from(tbody.querySelectorAll('tr'));
+    var noMatch = tbl.parentElement.querySelector('.kc-no-match');
+    var filterRow = tbl.querySelector('tr.kc-filters');
+    if (!filterRow) return;
+
+    var controls = [];
+    Array.from(filterRow.querySelectorAll('th')).forEach(function(th, ci) {
+      var vals = distinctVals(rows, ci);
+      var ctrl;
+      if (vals.length > 0 && vals.length <= MULTISELECT_MAX) {
+        ctrl = buildSelect(vals);
       } else {
-        /* Keep or create a text input */
-        var inp = th.querySelector('input') || (function () {
-          var i = document.createElement('input');
-          i.type = 'text'; i.placeholder = 'filter\u2026';
-          i.setAttribute('aria-label', 'filter column');
-          th.innerHTML = ''; th.appendChild(i); return i;
-        }());
-        return { type: 'text', el: inp };
+        ctrl = document.createElement('input');
+        ctrl.type = 'text'; ctrl.placeholder = 'filter\u2026';
+        ctrl.setAttribute('aria-label','filter column');
       }
+      th.innerHTML = '';
+      th.appendChild(ctrl);
+      controls.push(ctrl);
     });
 
-    /* ── Smart match helpers ───────────────────────────────────────────── */
+    var card = tbl.closest('.kc-card');
+    var globalEl = card && card.querySelector('.kc-global-filter');
 
-    /* Convert a glob pattern (foo*, *bar, fo?b) to a RegExp. */
-    function globToRe(pat) {
-      var escaped = pat.replace(/[.+^${}()|[\]\\]/g, '\\$&')
-                       .replace(/\*/g, '.*')
-                       .replace(/\?/g, '.');
-      return new RegExp('^' + escaped + '$', 'i');
-    }
-
-    /* Parse a numeric expression: >N <N >=N <=N =N !N
-       Returns a function(cellNum) → bool, or null if not a numeric expr. */
-    function numericMatcher(term) {
-      var m = term.match(/^(>=|<=|>|<|=|!)\s*(-?[\d.]+)$/);
-      if (!m) return null;
-      var op  = m[1];
-      var val = parseFloat(m[2]);
-      return function(n) {
-        switch(op) {
-          case '>':  return n >  val;
-          case '<':  return n <  val;
-          case '>=': return n >= val;
-          case '<=': return n <= val;
-          case '=':  return n === val;
-          case '!':  return n !== val;
+    function apply() {
+      var colFilters = controls.map(function(c) {
+        if (c.tagName === 'SELECT') {
+          var sel = Array.from(c.options)
+            .filter(function(o){ return o.selected && o.value !== '__all__'; })
+            .map(function(o){ return o.value.toLowerCase(); });
+          return sel.length ? sel : null;
         }
-        return true;
-      };
-    }
-
-    /* Match a single raw cell text against a term string.
-       Numeric operators take priority; then glob (*/?); then substring. */
-    function matchText(cellText, term) {
-      if (!term) return true;
-      term = term.trim();
-      if (!term) return true;
-      var numFn = numericMatcher(term);
-      if (numFn !== null) {
-        var n = parseFloat(cellText);
-        if (isNaN(n)) return false;
-        return numFn(n);
-      }
-      if (term.indexOf('*') !== -1 || term.indexOf('?') !== -1) {
-        return globToRe(term).test(cellText);
-      }
-      return cellText.toLowerCase().indexOf(term.toLowerCase()) !== -1;
-    }
-
-    function applyFilters() {
+        return c.value.trim().toLowerCase() || null;
+      });
+      var global = globalEl ? globalEl.value.trim().toLowerCase() : '';
       var visible = 0;
-      rows.forEach(function (row) {
+      rows.forEach(function(row) {
         var cells = Array.from(row.cells);
-        var show  = controls.every(function (ctrl, i) {
-          var cell = cells[i];
-          var cellText = cell ? cell.textContent.trim() : '';
-          if (ctrl.type === 'text') {
-            var term = ctrl.el.value.trim();
-            return !term || matchText(cellText, term);
-          } else {
-            /* multiselect: pass if (all) selected or any selected value matches */
-            var opts = Array.from(ctrl.el.selectedOptions);
-            if (!opts.length) return true;
-            if (opts.some(function (o) { return o.value === '__all__'; })) return true;
-            var selected = opts.map(function (o) { return o.value; });
-            /* cell may contain multiple values separated by '; ' */
-            var cellParts = cellText ? cellText.split(/;\s*/) : [];
-            return selected.some(function (s) {
-              return cellParts.some(function (p) {
-                return p.trim() === s;
-              });
-            });
-          }
+        var colOk = colFilters.every(function(f, ci) {
+          if (!f) return true;
+          var text = cells[ci] ? cells[ci].textContent.trim().toLowerCase() : '';
+          if (Array.isArray(f)) return f.some(function(v){ return text.includes(v); });
+          return f.split(/\s+/).every(function(tok){ return matchesToken(text, tok); });
         });
+        var glOk = !global || cells.some(function(c){
+          return c.textContent.toLowerCase().includes(global);
+        });
+        var show = colOk && glOk;
         row.classList.toggle('hidden', !show);
         if (show) visible++;
       });
-      if (noMatch) noMatch.style.display = visible === 0 ? 'block' : 'none';
+      if (noMatch) noMatch.classList.toggle('visible', visible === 0);
     }
 
-    controls.forEach(function (ctrl) {
-      var evt = ctrl.type === 'multi' ? 'change' : 'input';
-      ctrl.el.addEventListener(evt, applyFilters);
+    controls.forEach(function(c) {
+      c.addEventListener(c.tagName === 'SELECT' ? 'change' : 'input', apply);
     });
+    if (globalEl) globalEl.addEventListener('input', apply);
 
-    /* clear-all button */
-    var bar = table.closest('.kc-card').querySelector('.kc-filter-bar button');
-    if (bar) {
-      bar.addEventListener('click', function () {
-        controls.forEach(function (ctrl) {
-          if (ctrl.type === 'text') {
-            ctrl.el.value = '';
-          } else {
-            /* reset to (all) */
-            Array.from(ctrl.el.options).forEach(function (o) {
-              o.selected = o.value === '__all__';
-            });
-          }
-        });
-        applyFilters();
+    var clearBtn = card && card.querySelector('.kc-filter-bar button');
+    if (clearBtn) clearBtn.addEventListener('click', function() {
+      controls.forEach(function(c) {
+        if (c.tagName === 'SELECT') {
+          Array.from(c.options).forEach(function(o){ o.selected = o.value === '__all__'; });
+        } else { c.value = ''; }
       });
-
-    /* ── J: Persist filter state in URL hash ──────────────────────────────
-       Format: #<encodeURIComponent(JSON.stringify({f:[…per-col values…]}))>
-       Text columns: plain string value.
-       Multi-select: values joined by NUL (\x00).
-       Writing is deferred 100ms after last change to avoid spamming history. */
-
-    var _hashTimer = null;
-
-    function _filterValues() {
-      return controls.map(function (ctrl) {
-        if (ctrl.type === 'text') return ctrl.el.value;
-        return Array.from(ctrl.el.selectedOptions)
-          .map(function (o) { return o.value; }).join('\x00');
-      });
-    }
-
-    function _writeHash() {
-      try {
-        var vals = _filterValues();
-        var empty = vals.every(function (v) {
-          return !v || v === '__all__' || v === '';
-        });
-        var base = location.pathname + location.search;
-        if (empty) {
-          history.replaceState(null, '', base);
-        } else {
-          history.replaceState(null, '', base + '#' +
-            encodeURIComponent(JSON.stringify({ f: vals })));
-        }
-      } catch (e) { /* non-critical */ }
-    }
-
-    function _scheduleWriteHash() {
-      clearTimeout(_hashTimer);
-      _hashTimer = setTimeout(_writeHash, 100);
-    }
-
-    function _restoreFromHash() {
-      try {
-        if (!location.hash) return;
-        var decoded = JSON.parse(decodeURIComponent(location.hash.slice(1)));
-        if (!decoded || !Array.isArray(decoded.f)) return;
-        decoded.f.forEach(function (val, i) {
-          var ctrl = controls[i];
-          if (!ctrl || val == null) return;
-          if (ctrl.type === 'text') {
-            ctrl.el.value = val;
-          } else {
-            var parts = val ? val.split('\x00') : [];
-            Array.from(ctrl.el.options).forEach(function (o) {
-              o.selected = parts.indexOf(o.value) !== -1;
-            });
-          }
-        });
-        applyFilters();
-      } catch (e) { /* ignore malformed hash */ }
-    }
-
-    /* Wire hash-write to every filter control */
-    controls.forEach(function (ctrl) {
-      var evt = ctrl.type === 'multi' ? 'change' : 'input';
-      ctrl.el.addEventListener(evt, _scheduleWriteHash);
+      if (globalEl) globalEl.value = '';
+      apply();
     });
-
-    /* Restore state on load and on back/forward navigation */
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', _restoreFromHash);
-    } else {
-      _restoreFromHash();
-    }
-    window.addEventListener('popstate', _restoreFromHash);
-    }
   }
 
-  /* ── Column sort ─────────────────────────────────────────────────────── */
-  function initSort(table) {
-    var headerRow = table.querySelector('tr.kc-col-headers');
-    if (!headerRow) return;
-    var ths  = Array.from(headerRow.cells);
-    var body = table.tBodies[0];
+  /* ── Column sort ──────────────────────────────────────────────────────── */
+  function initSort(tbl) {
+    var tbody   = tbl.querySelector('tbody');
+    var rows    = Array.from(tbody.querySelectorAll('tr'));
+    var headers = Array.from(tbl.querySelectorAll('tr.kc-col-headers th'));
+    var sortState = { col: -1, dir: 1 };
 
-    ths.forEach(function (th, colIdx) {
-      th.dataset.sortDir = '';
-      th.addEventListener('click', function () {
-        var dir = th.dataset.sortDir === 'asc' ? 'desc' : 'asc';
-        ths.forEach(function (h) {
-          h.dataset.sortDir = '';
-          h.classList.remove('sorted-asc', 'sorted-desc');
-          var si = h.querySelector('.sort-icon');
-          if (si) si.textContent = '\u21c5';
+    headers.forEach(function(th, ci) {
+      var icon = th.querySelector('.sort-icon');
+      th.addEventListener('click', function() {
+        sortState.dir = (sortState.col === ci) ? -sortState.dir : 1;
+        sortState.col = ci;
+        headers.forEach(function(h) {
+          var ic = h.querySelector('.sort-icon');
+          if (ic) ic.className = 'sort-icon';
         });
-        th.dataset.sortDir = dir;
-        th.classList.add('sorted-' + dir);
-        var si = th.querySelector('.sort-icon');
-        if (si) si.textContent = dir === 'asc' ? '\u25b2' : '\u25bc';
-
-        var rows = Array.from(body.rows);
-        rows.sort(function (a, b) {
-          var av = a.cells[colIdx] ? a.cells[colIdx].textContent.trim() : '';
-          var bv = b.cells[colIdx] ? b.cells[colIdx].textContent.trim() : '';
+        if (icon) icon.className = 'sort-icon ' + (sortState.dir === 1 ? 'asc' : 'desc');
+        rows.slice().sort(function(a, b) {
+          var av = a.cells[ci] ? a.cells[ci].textContent.trim() : '';
+          var bv = b.cells[ci] ? b.cells[ci].textContent.trim() : '';
           var an = parseFloat(av), bn = parseFloat(bv);
-          if (!isNaN(an) && !isNaN(bn)) return dir === 'asc' ? an - bn : bn - an;
-          return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
-        });
-        rows.forEach(function (r) { body.appendChild(r); });
+          var cmp = (!isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv);
+          return cmp * sortState.dir;
+        }).forEach(function(r){ tbody.appendChild(r); });
       });
     });
   }
 
-
-  /* ── K: Column visibility toggle ─────────────────────────────────────────
-     Injects a <div class="kc-col-toggle"> toolbar before the table (or uses
-     one already present in the markup) with one labelled checkbox per column.
-     Toggling a checkbox hides/shows that column across header, filter, and
-     data rows via display:none on every nth-child cell. */
-
-  function initColToggle(table) {
-    var card = table.closest('.kc-card');
+  /* ── CSV export ───────────────────────────────────────────────────────── */
+  function initCsvExport(tbl) {
+    var card = tbl.closest('.kc-card');
     if (!card) return;
-
-    var toolbar = card.querySelector('.kc-col-toggle');
-    if (!toolbar) {
-      toolbar = document.createElement('div');
-      toolbar.className = 'kc-col-toggle';
-      var wrap = card.querySelector('.kc-table-wrap') || table;
-      card.insertBefore(toolbar, wrap);
-    }
-
-    var headerRow = table.querySelector('tr.kc-col-headers');
-    if (!headerRow) return;
-
-    Array.from(headerRow.cells).forEach(function (th, colIdx) {
-      var label = th.textContent.replace(/[\u25b2\u25bc\u21c5]/g, '').trim()
-                  || ('Col\u00a0' + (colIdx + 1));
-      var uid = 'kc-col-' + colIdx;
-
-      var cb = document.createElement('input');
-      cb.type    = 'checkbox';
-      cb.id      = uid;
-      cb.checked = true;
-      cb.setAttribute('aria-label', 'Show column: ' + label);
-
-      var lbl = document.createElement('label');
-      lbl.htmlFor = uid;
-      lbl.textContent = label;
-
-      cb.addEventListener('change', function () {
-        /* nth-child is 1-based */
-        var sel = 'tr > *:nth-child(' + (colIdx + 1) + ')';
-        Array.from(table.querySelectorAll(sel)).forEach(function (cell) {
-          cell.style.display = cb.checked ? '' : 'none';
-        });
+    var bar = card.querySelector('.kc-filter-bar');
+    if (!bar) return;
+    var btn = document.createElement('button');
+    btn.textContent = '\u2193 CSV'; btn.title = 'Export visible rows as CSV';
+    bar.appendChild(btn);
+    btn.addEventListener('click', function() {
+      var hdrs = Array.from(tbl.querySelectorAll('tr.kc-col-headers th'))
+        .map(function(th){ return '"'+th.textContent.replace(/[⇅▲▼]/g,'').trim().replace(/"/g,'""')+'"'; });
+      var lines = [hdrs.join(',')];
+      Array.from(tbl.querySelectorAll('tbody tr:not(.hidden)')).forEach(function(r) {
+        lines.push(Array.from(r.cells).map(function(td){
+          return '"'+td.textContent.trim().replace(/"/g,'""')+'"';
+        }).join(','));
       });
-
-      toolbar.appendChild(cb);
-      toolbar.appendChild(lbl);
+      var blob = new Blob([lines.join('\r\n')], {type:'text/csv'});
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'kcommit-export.csv';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 10000);
     });
   }
 
-
-  /* ── L: Export visible rows as CSV blob ──────────────────────────────────
-     Looks for a [data-kc="export-csv"] button in .kc-filter-bar; if absent,
-     creates one.  On click: reads all non-hidden tbody rows (post-filter),
-     respects hidden columns (display:none), and triggers a browser download
-     of kcommit-export.csv without any server round-trip. */
-
-  function initCsvExport(table) {
-    var card = table.closest('.kc-card');
-    if (!card) return;
-
-    var btn = card.querySelector('[data-kc="export-csv"]');
-    if (!btn) {
-      var bar = card.querySelector('.kc-filter-bar');
-      if (!bar) return;
-      btn = document.createElement('button');
-      btn.setAttribute('data-kc', 'export-csv');
-      btn.className   = 'kc-export-btn';
-      btn.textContent = 'Export CSV';
-      btn.setAttribute('aria-label', 'Export visible rows as CSV');
-      bar.appendChild(btn);
-    }
-
-    btn.addEventListener('click', function () {
-      function csvCell(text) {
-        var s = (text || '').replace(/\r?\n/g, ' ').trim();
-        if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1) {
-          return '"' + s.replace(/"/g, '""') + '"';
-        }
-        return s;
-      }
-
-      function visibleCells(row) {
-        return Array.from(row.cells).filter(function (td) {
-          return td.style.display !== 'none';
-        });
-      }
-
-      var headerRow = table.querySelector('tr.kc-col-headers');
-      var headers   = headerRow
-        ? visibleCells(headerRow).map(function (th) {
-            return csvCell(th.textContent.replace(/[\u25b2\u25bc\u21c5]/g, '').trim());
-          })
-        : [];
-
-      var dataRows = Array.from(table.tBodies[0].rows)
-        .filter(function (r) { return !r.classList.contains('hidden'); })
-        .map(function (r) {
-          return visibleCells(r).map(function (td) {
-            return csvCell(td.textContent.trim());
-          }).join(',');
-        });
-
-      var csv  = [headers.join(',')].concat(dataRows).join('\r\n');
-      var blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-      var url  = URL.createObjectURL(blob);
-      var a    = document.createElement('a');
-      a.href     = url;
-      a.download = 'kcommit-export.csv';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
-    });
-  }
-
-  /* ── Detail panel ────────────────────────────────────────────────────── */
-  var overlay = document.getElementById('kc-detail-overlay');
-  var panel   = document.getElementById('kc-detail-panel');
-  var panelH3 = document.getElementById('kc-detail-sha');
-  var body    = document.getElementById('kc-detail-body');
-  var closeBtn= document.getElementById('kc-detail-close');
+  /* ── Detail panel ─────────────────────────────────────────────────────── */
+  var overlay   = document.getElementById('kc-detail-overlay');
+  var panel     = document.getElementById('kc-detail-panel');
+  var panelH3   = document.getElementById('kc-detail-sha');
+  var panelBody = document.getElementById('kc-detail-body');
+  var closeBtn  = document.getElementById('kc-detail-close');
 
   function openPanel(sha) {
     if (!overlay || !panel) return;
     overlay.classList.add('open');
     panel.classList.add('open');
     if (panelH3) panelH3.textContent = sha;
-    body.innerHTML = '';
-
-    /* Inline data map injected at report-generation time */
-    var map = (typeof window.__KC_COMMITS__ === 'object' && window.__KC_COMMITS__)
+    if (panelBody) panelBody.innerHTML = '';
+    var map = (window.__KC_COMMITS__ && typeof window.__KC_COMMITS__ === 'object')
               ? window.__KC_COMMITS__ : {};
-    var commit = map[sha] || null;
-    renderCommit(commit, sha);
+    renderCommit(map[sha] || null, sha);
   }
 
   function closePanel() {
-    if (!overlay || !panel) return;
-    overlay.classList.remove('open');
-    panel.classList.remove('open');
+    if (overlay) overlay.classList.remove('open');
+    if (panel)   panel.classList.remove('open');
   }
 
-  if (closeBtn) closeBtn.addEventListener('click',  closePanel);
-  if (overlay)  overlay.addEventListener('click',   closePanel);
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closePanel(); });
+  /* D.5 fix-1: only close on backdrop click, not panel child clicks */
+  if (overlay) overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) closePanel();
+  });
+  if (closeBtn) closeBtn.addEventListener('click', closePanel);
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closePanel(); });
 
   function scoreClass(s) {
     s = parseFloat(s) || 0;
-    if (s >= 70) return 'score-hi';
-    if (s >= 30) return 'score-mid';
-    return 'score-low';
-  }
-
-  function esc(s) {
-    return String(s)
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return s >= 70 ? 'hi' : s >= 30 ? 'mid' : 'low';
   }
 
   function field(label, value, cls) {
     return '<div class="kc-detail-field">'
-      + '<div class="field-label">' + esc(label) + '</div>'
-      + '<div class="field-value' + (cls ? ' ' + cls : '') + '">' + value + '</div>'
+      + '<div class="field-label">'+esc(label)+'</div>'
+      + '<div class="field-value'+(cls?' '+cls:'')+'">'+value+'</div>'
       + '</div>';
   }
 
   function renderCommit(c, sha) {
+    if (!panelBody) return;
     if (!c) {
-      body.innerHTML = field('SHA', esc(sha), 'mono')
-        + '<p style="color:var(--text-muted);margin-top:1rem;font-size:.75rem">'
-        + 'Commit detail not found in inline data.</p>';
+      panelBody.innerHTML = field('SHA', esc(sha), 'mono')
+        + '<p style="color:var(--text-muted);margin-top:.75rem;font-size:.75rem">'
+        + 'No detail data available for this commit.</p>';
       return;
     }
-    var score = c.score || 0;
-    var sc    = c.scoring || {};
-    var html  = '';
-    html += field('SHA',     '<code>' + esc((c.commit||'').slice(0,40)) + '</code>', 'mono');
+    var sc = c.scoring || {};
+    var html = '';
+    html += field('SHA',    '<code>'+esc((c.commit||'').slice(0,40))+'</code>', 'mono');
     html += field('Subject', esc(c.subject || ''));
-    html += field('Author',  esc((c.author_name||'') + ' <' + (c.author_email||'') + '>'));
-    html += field('Date',    esc(c.author_time || ''), 'mono');
-    html += field('Score',   '<span class="score-pill ' + scoreClass(score) + '">' + score + '</span>');
-
+    html += field('Author',  esc((c.author_name||'')+(c.author_email?' <'+c.author_email+'>':'')));
+    html += field('Date',    esc(fmtDate(c.author_time)), 'mono');
+    html += field('Score',   '<span class="score-pill '+scoreClass(c.score||0)+'">'+esc(String(c.score||0))+'</span>');
     if (c.matched_profiles && c.matched_profiles.length) {
       html += field('Profiles',
-        c.matched_profiles.map(function(p){ return '<span class="profile-chip">'+esc(p)+'</span>'; }).join(' '));
+        c.matched_profiles.map(function(p){
+          return '<span class="profile-chip">'+esc(p)+'</span>';
+        }).join(' '));
     }
-
-    var profiles_sc = (sc && sc.profiles) ? sc.profiles : null;
-    if (profiles_sc && Object.keys(profiles_sc).length) {
+    if (sc.profiles && Object.keys(sc.profiles).length) {
       html += '<div class="kc-detail-section"><h4>Profile scores</h4>';
-      Object.keys(profiles_sc).sort().forEach(function(p) {
-        html += field(p, '<span class="score-pill">' + esc(String(profiles_sc[p])) + '</span>');
+      Object.keys(sc.profiles).sort().forEach(function(p) {
+        html += field(p, '<span class="score-pill">'+esc(String(sc.profiles[p]))+'</span>');
       });
       html += '</div>';
     }
-
     if (c.product_evidence && c.product_evidence.length) {
-      html += '<div class="kc-detail-section"><h4>Product evidence</h4><ul style="padding-left:1rem">';
-      c.product_evidence.forEach(function(p){ html += '<li><code>' + esc(p) + '</code></li>'; });
+      html += '<div class="kc-detail-section"><h4>Product evidence</h4>'
+        + '<ul style="padding-left:1.1rem;font-size:.75rem">';
+      c.product_evidence.forEach(function(p){
+        html += '<li><code>'+esc(p)+'</code></li>';
+      });
       html += '</ul></div>';
     }
-
-    if (c.body) {
-      html += '<div class="kc-detail-section"><h4>Commit message body</h4>'
-        + '<pre style="max-height:180px;overflow-y:auto">' + esc(c.body.slice(0,2000))
-        + (c.body.length > 2000 ? '\n\u2026' : '') + '</pre></div>';
+    if (c._filter_reason) {
+      html += '<div class="kc-detail-section"><h4>Filter reason</h4>'
+        + field('', esc(c._filter_reason)) + '</div>';
     }
-
-    body.innerHTML = html;
+    if (c.body) {
+      html += '<div class="kc-detail-section"><h4>Commit message</h4>'
+        + '<pre style="white-space:pre-wrap;font-size:.72rem;max-height:220px;overflow-y:auto">'
+        + esc(c.body.slice(0,3000))+(c.body.length>3000?'\n\u2026':'')
+        + '</pre></div>';
+    }
+    panelBody.innerHTML = html;
   }
 
-  function initShaLinks() {
-    document.querySelectorAll('a.sha-link').forEach(function (a) {
-      a.addEventListener('click', function (e) {
-        e.preventDefault();
-        openPanel(a.dataset.sha);
-      });
-    });
-  }
-
-  /* ── Bootstrap ───────────────────────────────────────────────────────── */
-  document.querySelectorAll('table.kc-table').forEach(function (tbl) {
-    initFilters(tbl);
-    initSort(tbl);
-    initColToggle(tbl);   /* K */
-    initCsvExport(tbl);   /* L */
+  /* D.5 fix-2: event delegation — works after filter/sort reorders rows */
+  document.addEventListener('click', function(e) {
+    var a = e.target.closest && e.target.closest('a.sha-link');
+    if (a) { e.preventDefault(); openPanel(a.dataset.sha); }
   });
-  initShaLinks();
+
+  /* ── Bootstrap ────────────────────────────────────────────────────────── */
+  document.querySelectorAll('table.kc-table').forEach(function(tbl) {
+    initTable(tbl);
+    initSort(tbl);
+    initCsvExport(tbl);
+  });
 
 })();

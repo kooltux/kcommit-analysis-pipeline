@@ -23,10 +23,17 @@ User-defined shorthand variables expanded before any other processing:
 ### `paths`
 ```json
 "paths": {
-  "work_dir": "${WORKSPACE}/work"
+  "work_dir":  "${WORKSPACE}/work",  // required: pipeline working directory
+  "cache_dir": "${WORKSPACE}/work/cache",  // optional override (default: <work_dir>/cache)
+  "output_dir": "${WORKSPACE}/work/output" // optional override (default: <work_dir>/output)
 }
 ```
 `work_dir` is where `cache/` and `output/` sub-directories are created.
+Override `cache_dir` or `output_dir` individually to place them on different
+storage (e.g. a RAM disk for the cache). The keys `profiles_dirs`, `rules_dirs`,
+`scoring_dir`, `templates_dir`, and `css_override` are also valid under `paths`
+as alternatives to their canonical locations under `profiles`, `rules`, and
+`reports` respectively.
 
 ### `kernel`
 ```json
@@ -95,6 +102,7 @@ using `git show` on Makefiles across the revision range.
 | `sample_step` | `500` | Commit interval when `mode = "sampled"` |
 | `max_commits_per_probe` | `3` | Maximum Makefile revisions probed per config symbol |
 | `max_failure_rate` | `0.05` | Abort stage 03 if the fraction of failed `git show` calls exceeds this value |
+| `enabled` | `true` | Legacy shorthand: `false` is equivalent to `"mode": "disabled"`. Prefer `mode` directly. |
 
 ### `collect`
 ```json
@@ -106,18 +114,27 @@ using `git show` on Makefiles across the revision range.
   "score_workers":       0,      // parallel scoring workers (0 = auto)
   "git_binary":          "git",  // override path to git executable
   "use_name_only":       false,  // use --name-only instead of --name-status
-  "extra_git_log_args":  []      // raw extra arguments appended to git log
+  "extra_git_log_args":  [],     // raw extra arguments appended to git log
+  "jsonl":               false,  // also write commits.jsonl for streaming consumers
+  "include_parents":     false   // attach parent SHA list to each commit dict
 }
 ```
 
 ### `reports`
 ```json
 "reports": {
-  "title":   "My Report",           // report heading shown in HTML output
-  "outputs": ["html", "csv", "xlsx"],  // formats to produce (html, csv, xlsx, ods)
-  "top_n":   500                    // maximum commits in HTML/XLSX/ODS reports (default: 5000)
+  "title":         "My Report",          // heading shown in HTML/XLSX output
+  "outputs":       ["html", "csv", "xlsx"],  // formats: html, csv, xlsx, ods
+  "top_n":         500,                  // max commits in reports (default: 5000; 0 = no limit)
+  "templates_dir": "${CONFIGDIR}/html"   // optional: override HTML template directory
 }
 ```
+
+Each enabled format produces both a `relevant_commits.*` file (scored commits
+above the threshold) and a `filtered_commits.*` file (commits dropped by
+pre- or post-filter, with `filter_reason` column). XLSX and ODS also produce
+`profile_summary.*`, `profile_matrix.*`, and a multi-sheet `summary.*`
+workbook combining all views.
 
 
 ### `scoring` (internal)

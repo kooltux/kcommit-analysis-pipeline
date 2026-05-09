@@ -48,7 +48,7 @@ def run(cfg, cache):
     save_json(os.path.join(cache, CACHE_FILES['commits']), commits)
 
     if collect_cfg.get('jsonl'):
-        with open(os.path.join(cache, '01_commits.jsonl'), 'w', encoding='utf-8') as f:
+        with open(os.path.join(cache, 'commits.jsonl'), 'w', encoding='utf-8') as f:
             for rec in commits:
                 f.write(json.dumps(rec, sort_keys=True) + '\n')
 

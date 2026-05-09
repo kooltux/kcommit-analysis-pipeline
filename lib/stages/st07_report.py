@@ -9,15 +9,12 @@ from lib.html_report import generate_html_report
 from lib.manifest import CACHE_FILES
 
 
-# ── Column definitions ────────────────────────────────────────────────────────
-# Single definition used by all output formats (CSV, XLSX, ODS).
-
-COMMIT_COLS = [
-    'rank', 'sha', 'subject', 'author', 'date', 'score',
-    'profiles', 'product_evidence',
-]
-
-COMMIT_COLS_FILTERED = COMMIT_COLS + ['filter_reason']
+# Column definitions imported from manifest (single source of truth)
+from lib.manifest import COMMIT_COLS as _MC, COMMIT_COLS_FILTERED as _MCF
+# Use lowercase keys for CSV row construction; headers come from manifest
+_COMMIT_KEYS          = ["rank", "sha", "subject", "author", "date",
+                         "score", "profiles", "product_evidence"]
+_COMMIT_KEYS_FILTERED = _COMMIT_KEYS + ["filter_reason"]
 
 
 def _fmt_date(ts):
@@ -153,6 +150,16 @@ def run(cfg, cache, outdir):
     top_n    = _top_n(cfg)
     title    = _report_title(cfg)
     os.makedirs(outdir, exist_ok=True)
+    _written = []  # every file actually written this run
+
+    def _emit(path):
+        """Record path as successfully written. Call AFTER the write."""
+        try:
+            _written.append(os.path.relpath(path, outdir))
+        except ValueError:
+            _written.append(path)
+
+
 
     scored        = (load_json(os.path.join(cache, CACHE_FILES['relevant']), default=[]) or [])
     if top_n is not None:
@@ -169,26 +176,30 @@ def run(cfg, cache, outdir):
     mat_hdr, mat_rows = _profile_matrix(scored)
 
     # JSON outputs (always written)
-    save_json(os.path.join(outdir, 'relevant_commits.json'),  scored)
-    save_json(os.path.join(outdir, 'report_stats.json'),      report_stats)
-    save_json(os.path.join(outdir, 'profile_summary.json'),   prof_summary)
-    save_json(os.path.join(outdir, 'profile_matrix.json'),
-              {'header': mat_hdr, 'rows': mat_rows})
+    _p = os.path.join(outdir, 'relevant_commits.json')
+    save_json(_p, scored);  _emit(_p)
+    _p = os.path.join(outdir, 'profile_summary.json')
+    save_json(_p, prof_summary);  _emit(_p)
+    _p = os.path.join(outdir, 'profile_matrix.json')
+    save_json(_p, {'header': mat_hdr, 'rows': mat_rows});  _emit(_p)
     if filtered:
-        save_json(os.path.join(outdir, 'filtered_commits.json'), filtered)
+        _p = os.path.join(outdir, 'filtered_commits.json')
+        save_json(_p, filtered);  _emit(_p)
 
     # CSV
     if 'csv' in outputs:
         csv_path = os.path.join(outdir, 'relevant_commits.csv')
         with open(csv_path, 'w', newline='', encoding='utf-8') as fh:
             w = csv.writer(fh)
-            w.writerow(COMMIT_COLS)
+            w.writerow(_MC)
             w.writerows(_commit_rows(scored))
+        _emit(csv_path)
         mat_path = os.path.join(outdir, 'profile_matrix.csv')
         with open(mat_path, 'w', newline='', encoding='utf-8') as fh:
             w = csv.writer(fh)
             w.writerow(mat_hdr)
             w.writerows(mat_rows)
+        _emit(mat_path)
         ps_path = os.path.join(outdir, 'profile_summary.csv')
         with open(ps_path, 'w', newline='', encoding='utf-8') as fh:
             w = csv.writer(fh)
@@ -198,34 +209,38 @@ def run(cfg, cache, outdir):
                                     reverse=True):
                 w.writerow([pname, pd.get('commit_count', 0),
                              pd.get('total_score', 0), pd.get('avg_score', 0)])
+        _emit(ps_path)
         # Filtered-out commits
         if filtered:
             flt_path = os.path.join(outdir, 'filtered_commits.csv')
             with open(flt_path, 'w', newline='', encoding='utf-8') as fh:
                 w = csv.writer(fh)
-                w.writerow(COMMIT_COLS_FILTERED)
+                w.writerow(_MCF)
                 w.writerows(_commit_rows(filtered, include_reason=True))
+            _emit(flt_path)
 
     # HTML
     if 'html' in outputs:
         try:
+            _hp = os.path.join(outdir, 'relevant_commits.html')
             generate_html_report(
-                scored, prof_summary, report_stats,
-                os.path.join(outdir, 'relevant_commits.html'),
+                scored, prof_summary, report_stats, _hp,
                 title=title,
                 templates_dir=cfg['paths'].get('templates_dir'),
             )
+            _emit(_hp)
         except Exception as e:
             logging.warning('HTML report failed: %s', e)
         if filtered:
             try:
+                _fhp = os.path.join(outdir, 'filtered_commits.html')
                 generate_html_report(
                     filtered, {}, {'total_scored_commits': len(filtered)},
-                    os.path.join(outdir, 'filtered_commits.html'),
-                    title=title + ' — Filtered Commits',
+                    _fhp, title=title + ' — Filtered Commits',
                     is_filtered=True,
                     templates_dir=cfg['paths'].get('templates_dir'),
                 )
+                _emit(_fhp)
             except Exception as e:
                 logging.warning('HTML filtered report failed: %s', e)
 
@@ -236,6 +251,7 @@ def run(cfg, cache, outdir):
                 write_xlsx(os.path.join(outdir, 'relevant_commits.xlsx'),
                            scored, prof_summary,
                            sheet_name='Relevant Commits')
+                _emit(os.path.join(outdir, 'relevant_commits.xlsx'))
             except Exception as e:
                 logging.warning('XLSX failed: %s', e)
             if filtered:
@@ -244,6 +260,7 @@ def run(cfg, cache, outdir):
                                filtered, {},
                                sheet_name='Filtered Commits',
                                include_reason=True)
+                    _emit(os.path.join(outdir, 'filtered_commits.xlsx'))
                 except Exception as e:
                     logging.warning('XLSX filtered failed: %s', e)
             try:
@@ -261,6 +278,7 @@ def run(cfg, cache, outdir):
                                    scored, filtered, prof_summary,
                                    report_stats=report_stats,
                                    report_title=title)
+                _emit(os.path.join(outdir, 'summary.xlsx'))
             except Exception as e:
                 logging.warning('XLSX summary failed: %s', e)
         else:
@@ -273,6 +291,7 @@ def run(cfg, cache, outdir):
                 write_ods(os.path.join(outdir, 'relevant_commits.ods'),
                           scored, prof_summary,
                           sheet_name='Relevant Commits')
+                _emit(os.path.join(outdir, 'relevant_commits.ods'))
             except Exception as e:
                 logging.warning('ODS failed: %s', e)
             if filtered:
@@ -281,6 +300,7 @@ def run(cfg, cache, outdir):
                               filtered, {},
                               sheet_name='Filtered Commits',
                               include_reason=True)
+                    _emit(os.path.join(outdir, 'filtered_commits.ods'))
                 except Exception as e:
                     logging.warning('ODS filtered failed: %s', e)
             try:
@@ -298,9 +318,13 @@ def run(cfg, cache, outdir):
                                   scored, filtered, prof_summary,
                                   report_stats=report_stats,
                                   report_title=title)
+                _emit(os.path.join(outdir, 'summary.ods'))
             except Exception as e:
                 logging.warning('ODS summary failed: %s', e)
         else:
             logging.warning("'ods' output requested but lib.spreadsheet not available")
-
+    # Embed generated_files list, then write report_stats.json last
+    report_stats['generated_files'] = sorted(set(
+        f for f in _written if f != 'report_stats.json'))
+    save_json(os.path.join(outdir, 'report_stats.json'), report_stats)
     return report_stats
