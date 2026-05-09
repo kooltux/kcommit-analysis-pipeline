@@ -60,9 +60,9 @@
   //     0 = profile disabled
   "profiles": {
     "active": {
-      "usb_focus":        100,
-      "boot_focus":        90,
-      "power_focus":       70
+      "performance":        70,
+      "security_fixes":    100,
+      "security_features":  90
     }
     // Optional: override the profiles search path.
     // Single directory (default):

@@ -1,5 +1,10 @@
 ## Unreleased
 
+## v10.1.1 — 2026-05-09
+
+### Example config alignment
+- Restored the example config's performance/security profile names to match the repository's existing shipped profile set.
+
 ## v10.1.0 — 2026-05-09
 
 ### Report scaling and ordering
