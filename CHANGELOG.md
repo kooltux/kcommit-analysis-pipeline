@@ -1,5 +1,10 @@
 ## Unreleased
 
+## v10.1.2 — 2026-05-09
+
+### Example profile cleanup
+- Removed the temporary usb/boot/power example profiles so the shipped profiles directory matches the restored performance/security example config.
+
 ## v10.1.1 — 2026-05-09
 
 ### Example config alignment

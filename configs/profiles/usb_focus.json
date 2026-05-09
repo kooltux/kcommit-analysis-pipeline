@@ -1,8 +1,0 @@
-{
-  "name": "usb_focus",
-  "description": "USB host, gadget, and PHY related changes.",
-  "rules": {
-    "security_general": 40,
-    "performance_general": 30
-  }
-}

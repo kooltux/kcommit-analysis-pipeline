@@ -1,8 +1,0 @@
-{
-  "name": "power_focus",
-  "description": "Suspend, resume, regulator, clock, and power-management changes.",
-  "rules": {
-    "performance_throughput": 20,
-    "performance_latency": 20
-  }
-}
