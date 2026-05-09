@@ -257,10 +257,14 @@ def validate_config_only(cfg):
     return problems, notices
 
 
+_DERIVED_TOP_LEVEL_KEYS = frozenset({'_meta', 'config_dir'})
+_DERIVED_PATH_KEYS = frozenset({'profiles_dirs', 'rules_dirs', 'scoring_dir', 'templates_dir'})
+
+
 def _validate_unknown_keys(cfg):
     errors = []
     for section_name, section in (cfg or {}).items():
-        if section_name == 'vars':
+        if section_name == 'vars' or section_name in _DERIVED_TOP_LEVEL_KEYS:
             continue
         schema = CONFIG_SCHEMA.get(section_name)
         if schema is None:
@@ -269,6 +273,8 @@ def _validate_unknown_keys(cfg):
         if not isinstance(section, dict):
             continue
         allowed = {k for k in schema if k != '__type__'}
+        if section_name == 'paths':
+            allowed |= _DERIVED_PATH_KEYS
         for key in sorted(set(section) - allowed):
             errors.append(('{}.{}'.format(section_name, key), 'unknown key'))
     return errors

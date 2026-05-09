@@ -214,3 +214,27 @@ def test_validate_unknown_nested_key():
     }
     problems, notices = validate_inputs(cfg)
     assert any('kernel.bogus' in p for p in problems)
+
+
+def test_validate_loaded_config_allows_derived_fields(tmp_path):
+    cfg = {
+        'paths': {
+            'work_dir': str(tmp_path),
+            'cache_dir': str(tmp_path / 'cache'),
+            'output_dir': str(tmp_path / 'output'),
+            'profiles_dirs': [str(tmp_path / 'profiles')],
+            'rules_dirs': [str(tmp_path / 'rules')],
+            'scoring_dir': str(tmp_path / 'scoring'),
+            'templates_dir': str(tmp_path / 'html'),
+        },
+        'kernel': {'source_dir': str(tmp_path / 'linux'), 'rev_old': 'a', 'rev_new': 'b'},
+        'profiles': {'active': {'p': 100}},
+        '_meta': {'config_dir': str(tmp_path)},
+        'config_dir': str(tmp_path),
+    }
+    (tmp_path / 'linux').mkdir()
+    (tmp_path / 'profiles').mkdir()
+    (tmp_path / 'rules').mkdir()
+    (tmp_path / 'profiles' / 'p.json').write_text('{}')
+    problems, notices = validate_inputs(cfg)
+    assert not any('unknown key' in p or 'unknown top-level section' in p for p in problems)

@@ -1,5 +1,5 @@
 {
-  "version": "v10.0.0",
+  "version": "v10.0.1",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
   "library_dir": "lib",
   "example_configs": [

@@ -1,5 +1,11 @@
 ## Unreleased
 
+## v10.0.1 — 2026-05-09
+
+### Validation compatibility fix
+- Restored acceptance of loader-derived runtime fields in validation so `prepare_pipeline` no longer rejects `paths.profiles_dirs`, `paths.rules_dirs`, `paths.scoring_dir`, `paths.templates_dir`, `_meta`, or `config_dir`.
+- Added a regression test covering the normalized config shape emitted by `load_config()`.
+
 ## v10.0.0 — 2026-05-09
 
 ### v10 pipeline contract cleanup
