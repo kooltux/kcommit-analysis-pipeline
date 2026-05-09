@@ -39,9 +39,9 @@ def _make_cfg(tmp_path):
         },
         'profiles': {
             'active': {
-                'security_fixes':    100,
-                'security_features':  90,
-                'performance':        70,
+                'usb_focus': 100,
+                'boot_focus': 90,
+                'power_focus': 70,
             },
         },
     }
@@ -78,7 +78,7 @@ def test_st00_run_with_example_config(tmp_path):
         on_disk = json.load(f)
 
     # ── all 3 active profiles must be compiled ───────────────────────────────
-    expected_profiles = {'security_fixes', 'security_features', 'performance'}
+    expected_profiles = {'usb_focus', 'boot_focus', 'power_focus'}
     assert expected_profiles.issubset(set(compiled.keys())), (
         f"Missing profiles in compiled_rules: "
         f"{expected_profiles - set(compiled.keys())}"

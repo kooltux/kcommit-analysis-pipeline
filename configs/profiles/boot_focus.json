@@ -1,0 +1,8 @@
+{
+  "name": "boot_focus",
+  "description": "Boot, init, firmware, and early bring-up changes.",
+  "rules": {
+    "security_general": 20,
+    "performance_latency": 20
+  }
+}

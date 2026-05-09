@@ -161,3 +161,30 @@ def test_write_profile_matrix_xlsx(tmp_path):
     p = str(tmp_path / 'pm.xlsx')
     write_profile_matrix_xlsx(p, [_commit()])
     assert os.path.exists(p)
+
+
+@pytest.mark.skipif(not HAS_OPENPYXL, reason='openpyxl not available')
+def test_write_summary_xlsx_contains_rule_trace_sheet(tmp_path):
+    p = str(tmp_path / 'summary_trace.xlsx')
+    commit = _commit()
+    commit['scoring'] = {
+        'profiles': {'p': 42},
+        'trace': {'profiles': {'p': {
+            'final_score': 42,
+            'rules': {'r1': {
+                'matched': True,
+                'matched_level': 'matched',
+                'score': 42,
+                'matches': {
+                    'keywords_whitelist': [{'pattern': 'usb*', 'value': 'subject'}],
+                    'path_whitelist': [],
+                    'commit_whitelist': [],
+                },
+            }},
+        }}},
+    }
+    write_summary_xlsx(p, [commit], [], _profile_summary())
+    import zipfile
+    with zipfile.ZipFile(p) as zf:
+        workbook = zf.read('xl/workbook.xml').decode('utf-8')
+    assert 'Rule Trace' in workbook

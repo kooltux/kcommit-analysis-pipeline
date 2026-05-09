@@ -188,3 +188,28 @@ def test_extract_meta_multiple_flags():
     assert m['has_cve'] is True
     assert m['is_fix'] is True
     assert m['has_stable_cc'] is True
+
+
+def test_score_commit_includes_rule_trace_details():
+    commit = {'commit': 'abc123', 'subject': 'usb fix', 'body': 'CVE-2026-1234', 'files': ['drivers/usb/core.c']}
+    product_map = {'config_to_paths': {}, 'enabled_configs': [], 'config_dirs': [], 'built_objects_from_log': [], 'built_artifacts_from_dir': []}
+    profile_rules = {'sec': {'merged': {'keywords_whitelist': ['CVE-*'], 'keywords_blacklist': [], 'path_whitelist': ['drivers/usb/*'], 'path_blacklist': [], 'commit_whitelist': [], 'commit_blacklist': []}, 'rules': {'r1': {'weight': 30, 'keywords_whitelist': ['CVE-*'], 'path_whitelist': [], 'commit_whitelist': []}, 'r2': {'weight': 20, 'keywords_whitelist': [], 'path_whitelist': ['drivers/usb/*'], 'commit_whitelist': []}}}}
+    out = score_commit(commit, product_map, profile_rules, {'profiles': {'active': {'sec': 100}}})
+    trace = out['scoring']['trace']['profiles']['sec']
+    assert trace['raw_rule_total'] == 50
+    assert trace['final_score'] == 50
+    assert trace['rules']['r1']['matched'] is True
+    assert trace['rules']['r1']['score'] == 30
+    assert trace['rules']['r1']['matches']['keywords_whitelist'][0]['pattern'] == 'CVE-*'
+    assert trace['rules']['r2']['matches']['path_whitelist'][0]['value'] == 'drivers/usb/core.c'
+
+
+def test_score_commit_trace_marks_blocked_profiles():
+    commit = {'commit': 'deadbeef', 'subject': 'skip me', 'body': '', 'files': ['a.txt']}
+    product_map = {'config_to_paths': {}, 'enabled_configs': [], 'config_dirs': [], 'built_objects_from_log': [], 'built_artifacts_from_dir': []}
+    profile_rules = {'p': {'merged': {'keywords_whitelist': [], 'keywords_blacklist': ['skip*'], 'path_whitelist': [], 'path_blacklist': [], 'commit_whitelist': [], 'commit_blacklist': []}, 'rules': {'r': {'weight': 10, 'keywords_whitelist': ['skip*'], 'path_whitelist': [], 'commit_whitelist': []}}}}
+    out = score_commit(commit, product_map, profile_rules, {'profiles': {'active': {'p': 100}}})
+    trace = out['scoring']['trace']['profiles']['p']
+    assert trace['blocked'] is True
+    assert trace['final_score'] == 0
+    assert trace['rules']['r']['matched_level'] == 'blocked'

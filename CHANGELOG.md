@@ -1,5 +1,12 @@
 ## Unreleased
 
+## v10.1.0 — 2026-05-09
+
+### Report scaling and ordering
+- Added sidecar HTML table datasets and sharded per-commit detail JSON for scalable report loading.
+- Added optional compressed embedded HTML commit payloads.
+- Enforced canonical git-log-style ordering for detailed commit JSON outputs.
+
 ## v10.0.1 — 2026-05-09
 
 ### Validation compatibility fix

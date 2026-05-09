@@ -22,6 +22,7 @@ import xml.sax.saxutils as _sx
 # Column definitions imported from manifest (single source of truth)
 from lib.manifest import (COMMIT_COLS, COMMIT_COLS_FILTERED,
                           SUMMARY_COLS, MATRIX_COLS, STATS_COLS)
+TRACE_COLS = ('sha', 'profile', 'rule', 'matched_level', 'rule_score', 'profile_score', 'pattern_type', 'pattern', 'matched_value')
 
 
 # ── Date helper ───────────────────────────────────────────────────────────────
@@ -42,6 +43,30 @@ def _fmt_date_str(ts):
 
 
 # ── Shared row builders ───────────────────────────────────────────────────────
+def _trace_rows(scored):
+    rows = []
+    for c in scored or []:
+        sha = (c.get('commit') or '')[:12]
+        trace = (((c.get('scoring') or {}).get('trace') or {}).get('profiles') or {})
+        for pname in sorted(trace):
+            pdata = trace.get(pname) or {}
+            pscore = pdata.get('final_score', 0)
+            rules = pdata.get('rules') or {}
+            if not rules:
+                rows.append([sha, pname, '', '', 0, pscore, '', '', ''])
+                continue
+            for rname in sorted(rules):
+                rdata = rules.get(rname) or {}
+                matches = rdata.get('matches') or {}
+                emitted = False
+                for kind in ['keywords_whitelist', 'path_whitelist', 'commit_whitelist']:
+                    for m in (matches.get(kind) or []):
+                        rows.append([sha, pname, rname, rdata.get('matched_level', ''), rdata.get('score', 0), pscore, kind, m.get('pattern', ''), m.get('value', '')])
+                        emitted = True
+                if not emitted:
+                    rows.append([sha, pname, rname, rdata.get('matched_level', ''), rdata.get('score', 0), pscore, '', '', ''])
+    return rows
+
 def _commit_row(c, include_reason=False, native_types=False):
     """Build a row for a commit record.
 
@@ -229,6 +254,9 @@ def write_summary_xlsx(path: str, scored: list, filtered: list,
 
     ws4 = wb.create_sheet("Profile Matrix")
     _xlsx_write_sheet(ws4, MATRIX_COLS, _matrix_rows(scored, native_types=True))
+
+    ws5 = wb.create_sheet("Rule Trace")
+    _xlsx_write_sheet(ws5, TRACE_COLS, _trace_rows(scored))
 
     _xlsx_save(wb, path)
 

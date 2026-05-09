@@ -164,4 +164,11 @@ Stage 07 merges `filtered_commits.json` and `postfilter_dropped_commits.json` on
 
 ## v10 config rules
 
-Configuration is strict: unknown top-level or section keys are rejected. Legacy aliases and shorthand compatibility keys were removed.
+Configuration rejects unknown top-level sections and validates known section keys/types. Legacy aliases and shorthand compatibility keys were removed.
+
+
+- v10.1.0: HTML commit details now expose a rule-by-rule scoring trace, including matched patterns/paths/SHA values, per-rule score, per-profile score, and final combined score.
+
+- v10.1.0: Non-HTML outputs now expose rule-analysis details too: JSON includes rule_trace.json, and summary XLSX/ODS include a Rule Trace sheet.
+
+- v10.1.0: HTML reports now support sidecar table datasets (`relevant_commits.table.json`, `filtered_commits.table.json`), sharded per-commit detail JSON under `output/commits/aa/bb/<sha>.json`, optional compressed embedded commit maps, and canonical git-log-style field ordering for commit detail payloads.

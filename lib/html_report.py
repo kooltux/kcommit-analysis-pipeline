@@ -3,18 +3,34 @@
 Column definitions (COMMIT_COLS, SUMMARY_COLS, MATRIX_COLS) are the
 canonical source in lib.manifest and imported here via lib.spreadsheet.
 
+v10.1.0 changes:
+  - Commit detail pane preserves body formatting and supports either embedded or sidecar-backed detail loading.
+  - Commit detail pane includes rule-match/score analysis from scoring.trace when present.
+
 E-series changes:
   - Dead code removed: @lru_cache on _get_template, _plain_table(),
     _filter_input() (inlined), functools import.
   - _section() anchor argument is now mandatory (assert guard).
   - json import restored (used by inline commit-map serialisation).
 """
+import base64
 import json
 import os
 import time
+import zlib
 
 from lib.manifest    import VERSION
+from lib.scoring     import order_commit_details
 from lib.spreadsheet import COMMIT_COLS, SUMMARY_COLS, MATRIX_COLS
+
+
+def _esc(text):
+    return (str(text or '')
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('\"', '&quot;'))
+
 
 
 def _get_template(name, templates_dir, default=''):
@@ -89,7 +105,7 @@ def _commit_row_html(i, c, with_reason=False):
     evid   = '; '.join(c.get('product_evidence') or [])
 
     sha_link = (
-        f'<a class="sha-link" data-sha="{sha12}" href="#"'
+        f'<a class="sha-link" data-sha="{sha12}" data-full-sha="{sha}" href="#"'
         f' title="Show commit details">{sha12}</a>'
     )
 
@@ -123,7 +139,9 @@ def _section(title, badge, content, anchor):
 
 def generate_html_report(commits, profile_summary, report_stats, output_path,
                          title='kcommit-analysis-pipeline',
-                         is_filtered=False, templates_dir=None):
+                         is_filtered=False, templates_dir=None,
+                         detail_mode='embedded', commit_index_path=None,
+                         commit_detail_root=None, embed_compression='none'):
     """Write HTML report to *output_path*.
 
     Section order: Run Stats → Profile Summary → Commits table.
@@ -236,11 +254,21 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         + '</div>'
     )
 
-    # Build a SHA→commit lookup and embed it inline so the detail panel
-    # needs no network fetch and works from any filesystem location.
-    commit_map = {(c.get('commit') or '')[:12]: c for c in commits}
-    commits_json = json.dumps(commit_map, default=str)
-    inline_data  = f'<script>window.__KC_COMMITS__={commits_json};</script>'
+    commit_map = {(c.get('commit') or '')[:12]: order_commit_details(c) for c in commits}
+    boot = []
+    if commit_detail_root:
+        boot.append('window.__KC_COMMIT_DETAIL_ROOT__=' + json.dumps(commit_detail_root) + ';')
+    if detail_mode == 'sidecar' and commit_index_path:
+        boot.append('window.__KC_COMMITS_INDEX__=' + json.dumps({'mode': 'sidecar', 'path': commit_index_path}) + ';')
+    else:
+        commits_json = json.dumps(commit_map, default=str, separators=(',', ':'))
+        if embed_compression == 'zlib':
+            compressed = base64.b64encode(zlib.compress(commits_json.encode('utf-8'), 9)).decode('ascii')
+            boot.append('window.__KC_COMMITS_COMPRESSED__=' + json.dumps(compressed) + ';')
+            boot.append('window.__KC_COMMITS_COMPRESSION__=' + json.dumps('zlib') + ';')
+        else:
+            boot.append('window.__KC_COMMITS__=' + commits_json + ';')
+    inline_data = '<script>' + ''.join(boot) + '</script>'
 
     out = (tpl
            .replace('__TITLE__', f'{title} {VERSION}')

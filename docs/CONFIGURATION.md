@@ -190,7 +190,7 @@ my-product/
 
 ## Cache files
 
-- `prefilter_kept_commits.json` — stage 04 commits that survived prefiltering
+- `stage-01 collected commits after stage-04 filtering` — stage 04 commits that survived prefiltering
 - `filtered_commits.json` — stage 04 dropped commits
 - `scored_commits.json` — stage 05 scored commits
 - `relevant_commits.json` — stage 06 commits above threshold

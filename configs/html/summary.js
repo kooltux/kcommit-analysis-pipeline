@@ -9,6 +9,34 @@
       .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  function b64ToBytes(b64) {
+    var bin = atob(b64), out = new Uint8Array(bin.length), i;
+    for (i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function loadCommitStore() {
+    if (window.__KC_COMMITS__) return Promise.resolve(window.__KC_COMMITS__);
+    if (window.__KC_COMMITS_COMPRESSED__ && window.__KC_COMMITS_COMPRESSION__ === 'zlib' && typeof DecompressionStream !== 'undefined') {
+      var ds = new DecompressionStream('deflate');
+      var blob = new Blob([b64ToBytes(window.__KC_COMMITS_COMPRESSED__)]);
+      return new Response(blob.stream().pipeThrough(ds)).text().then(function(txt){
+        window.__KC_COMMITS__ = JSON.parse(txt);
+        return window.__KC_COMMITS__;
+      });
+    }
+    if (window.__KC_COMMITS_INDEX__ && window.__KC_COMMITS_INDEX__.mode === 'sidecar') {
+      return fetch(window.__KC_COMMITS_INDEX__.path).then(function(r){ return r.json(); }).then(function(data){
+        var map = {};
+        (data || []).forEach(function(c){ map[String(c.commit || '').slice(0, 12)] = c; });
+        window.__KC_COMMITS__ = map;
+        return map;
+      });
+    }
+    window.__KC_COMMITS__ = {};
+    return Promise.resolve(window.__KC_COMMITS__);
+  }
+
   function fmtDate(ts) {
     if (!ts) return '';
     var n = Number(ts);

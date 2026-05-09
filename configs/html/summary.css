@@ -174,3 +174,24 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI'
   .kc-main{padding:.75rem}
   .kc-header-text p{display:none}
 }
+
+
+#kc-detail-panel { width: min(1200px, 96vw); height: min(92vh, 980px); }
+#kc-detail-body { height: calc(100% - 56px); overflow: hidden; }
+.kc-detail-split { display: grid; grid-template-rows: minmax(280px, 42%) minmax(240px, 58%); height: 100%; gap: 12px; }
+.kc-detail-top, .kc-detail-bottom { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px; min-height: 0; }
+.kc-detail-top { display: grid; grid-template-rows: auto auto 1fr; gap: 12px; }
+.kc-detail-bottom { overflow: auto; }
+.kc-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; font-size: 14px; }
+.kc-commit-message { min-height: 0; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; }
+.kc-commit-message pre { margin: 0; white-space: pre-wrap; tab-size: 4; font-family: var(--font-mono); font-size: 13px; line-height: 1.45; }
+.kc-analysis-profile { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; margin-top: 12px; background: var(--bg); }
+.kc-analysis-profile-head, .kc-rule-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 8px; }
+.kc-analysis-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+.kc-mini-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--accent-dim); color: var(--accent-dark); font-size: 12px; }
+.kc-analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.kc-analysis-list { margin: 8px 0 0 18px; }
+.kc-analysis-list li { margin: 4px 0; }
+.kc-analysis-empty { color: var(--text-muted); font-style: italic; }
+.kc-rule-card { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+@media (max-width: 900px) { .kc-detail-split { grid-template-rows: auto auto; } .kc-analysis-grid, .kc-detail-grid { grid-template-columns: 1fr; } }

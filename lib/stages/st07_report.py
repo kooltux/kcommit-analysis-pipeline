@@ -1,4 +1,4 @@
-from lib.scoring import fmt_profiles, fmt_evidence
+from lib.scoring import fmt_profiles, fmt_evidence, order_commit_details
 """Stage 07 logic: generate all output formats."""
 import csv
 import json
@@ -46,6 +46,84 @@ def _commit_rows(commits, include_reason=False):
         rows.append(row)
     return rows
 
+
+
+
+def _trace_summary(commit):
+    trace = (((commit or {}).get('scoring') or {}).get('trace') or {}).get('profiles') or {}
+    parts = []
+    for pname in sorted(trace):
+        pdata = trace.get(pname) or {}
+        rules = pdata.get('rules') or {}
+        matched = sum(1 for rv in rules.values() if (rv or {}).get('matched'))
+        parts.append('%s:%s/%s=%s' % (pname, matched, len(rules), pdata.get('final_score', 0)))
+    return '; '.join(parts)
+
+
+TRACE_COLS = ['sha', 'profile', 'rule', 'matched_level', 'rule_score', 'profile_score', 'pattern_type', 'pattern', 'matched_value']
+
+def _trace_rows(scored):
+    header = TRACE_COLS
+    rows = []
+    for c in scored or []:
+        sha = (c.get('commit') or '')[:12]
+        trace = (((c.get('scoring') or {}).get('trace') or {}).get('profiles') or {})
+        for pname in sorted(trace):
+            pdata = trace.get(pname) or {}
+            pscore = pdata.get('final_score', 0)
+            rules = pdata.get('rules') or {}
+            if not rules:
+                rows.append([sha, pname, '', '', 0, pscore, '', '', ''])
+                continue
+            for rname in sorted(rules):
+                rdata = rules.get(rname) or {}
+                matches = rdata.get('matches') or {}
+                emitted = False
+                for kind in ['keywords_whitelist', 'path_whitelist', 'commit_whitelist']:
+                    for m in (matches.get(kind) or []):
+                        rows.append([sha, pname, rname, rdata.get('matched_level', ''), rdata.get('score', 0), pscore, kind, m.get('pattern', ''), m.get('value', '')])
+                        emitted = True
+                if not emitted:
+                    rows.append([sha, pname, rname, rdata.get('matched_level', ''), rdata.get('score', 0), pscore, '', '', ''])
+    return header, rows
+
+
+
+def _canonical_commit(commit):
+    return order_commit_details(commit)
+
+
+def _write_commit_details(root, commits):
+    if not commits:
+        return
+    os.makedirs(root, exist_ok=True)
+    seen = set()
+    for c in commits:
+        full = c.get('commit') or ''
+        if not full or full in seen:
+            continue
+        seen.add(full)
+        shard = os.path.join(root, full[:2], full[2:4])
+        os.makedirs(shard, exist_ok=True)
+        _save_ordered_json(os.path.join(shard, full + '.json'), _canonical_commit(c))
+
+
+def _write_table_json(path, commits, include_reason=False):
+    rows = []
+    for c in commits:
+        row = {
+            'commit': c.get('commit', ''),
+            'subject': c.get('subject', ''),
+            'author_name': c.get('author_name', ''),
+            'author_time': c.get('author_time', ''),
+            'score': c.get('score', 0) or 0,
+            'matched_profiles': list(c.get('matched_profiles') or []),
+            'product_evidence': list(c.get('product_evidence') or []),
+        }
+        if include_reason and c.get('_filter_reason', ''):
+            row['_filter_reason'] = c.get('_filter_reason', '')
+        rows.append(order_commit_details(row))
+    _save_ordered_json(path, rows)
 
 # ── Per-profile statistics ────────────────────────────────────────────────────
 
@@ -99,6 +177,14 @@ def _coverage_metrics(scored):
     }
 
 
+
+
+def _save_ordered_json(path, data):
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
+        f.write('\n')
+
 # ── Output helpers ────────────────────────────────────────────────────────────
 
 def _resolve_outputs(cfg):
@@ -149,6 +235,9 @@ def run(cfg, cache, outdir):
     outputs  = _resolve_outputs(cfg)
     top_n    = _top_n(cfg)
     title    = _report_title(cfg)
+    reports_cfg = cfg.get('reports', {}) or {}
+    html_detail_mode = reports_cfg.get('html_detail_mode', 'sidecar')
+    html_embed_compression = reports_cfg.get('html_embed_compression', 'none')
     os.makedirs(outdir, exist_ok=True)
     _written = []  # every file actually written this run
 
@@ -176,17 +265,22 @@ def run(cfg, cache, outdir):
     }
     prof_summary      = _profile_summary(scored, profile_rules)
     mat_hdr, mat_rows = _profile_matrix(scored)
+    details_root = os.path.join(outdir, 'commits')
+    _write_commit_details(details_root, list(scored) + list(filtered))
 
     # JSON outputs (always written)
     _p = os.path.join(outdir, 'relevant_commits.json')
-    save_json(_p, scored);  _emit(_p)
+    _save_ordered_json(_p, [_canonical_commit(c) for c in scored]);  _emit(_p)
     _p = os.path.join(outdir, 'profile_summary.json')
     save_json(_p, prof_summary);  _emit(_p)
     _p = os.path.join(outdir, 'profile_matrix.json')
     save_json(_p, {'header': mat_hdr, 'rows': mat_rows});  _emit(_p)
+    trace_hdr, trace_rows = _trace_rows(scored)
+    _p = os.path.join(outdir, 'rule_trace.json')
+    save_json(_p, {'header': trace_hdr, 'rows': trace_rows});  _emit(_p)
     if filtered:
         _p = os.path.join(outdir, 'filtered_commits.json')
-        save_json(_p, filtered);  _emit(_p)
+        _save_ordered_json(_p, [_canonical_commit(c) for c in filtered]);  _emit(_p)
 
     # CSV
     if 'csv' in outputs:
@@ -225,10 +319,17 @@ def run(cfg, cache, outdir):
     if 'html' in outputs:
         try:
             _hp = os.path.join(outdir, 'relevant_commits.html')
+            _tp = os.path.join(outdir, 'relevant_commits.table.json')
+            _write_table_json(_tp, scored, include_reason=False)
+            _emit(_tp)
             generate_html_report(
                 scored, prof_summary, report_stats, _hp,
                 title=title,
                 templates_dir=cfg['paths'].get('templates_dir'),
+                detail_mode=html_detail_mode,
+                commit_index_path='./relevant_commits.table.json' if html_detail_mode == 'sidecar' else None,
+                commit_detail_root='./commits',
+                embed_compression=html_embed_compression,
             )
             _emit(_hp)
         except Exception as e:
@@ -236,11 +337,18 @@ def run(cfg, cache, outdir):
         if filtered:
             try:
                 _fhp = os.path.join(outdir, 'filtered_commits.html')
+                _ftp = os.path.join(outdir, 'filtered_commits.table.json')
+                _write_table_json(_ftp, filtered, include_reason=True)
+                _emit(_ftp)
                 generate_html_report(
                     filtered, {}, {'total_scored_commits': len(filtered)},
                     _fhp, title=title + ' — Filtered Commits',
                     is_filtered=True,
                     templates_dir=cfg['paths'].get('templates_dir'),
+                    detail_mode=html_detail_mode,
+                    commit_index_path='./filtered_commits.table.json' if html_detail_mode == 'sidecar' else None,
+                    commit_detail_root='./commits',
+                    embed_compression=html_embed_compression,
                 )
                 _emit(_fhp)
             except Exception as e:
