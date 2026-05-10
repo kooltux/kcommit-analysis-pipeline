@@ -325,17 +325,19 @@ def load_config(path, inherited_vars=None, seen=None):
     _profiles_cfg = expanded.get('profiles', {}) or {}
     _rules_cfg    = expanded.get('rules', {}) or {}
 
-    def _resolve_dir_list(cfg_section, key_plural, default_dir):
+    def _resolve_dir_list(cfg_section, key_plural, key_singular, default_dir):
         raw = cfg_section.get(key_plural)
-        if raw:
+        if raw in (None, [], ''):
+            raw = cfg_section.get(key_singular)
+        if raw not in (None, [], ''):
             entries = raw if isinstance(raw, list) else [raw]
             return [r if os.path.isabs(r) else os.path.normpath(os.path.join(config_dir, r))
                     for r in entries]
         return [default_dir]
 
-    profiles_dirs = _resolve_dir_list(_profiles_cfg, 'profiles_dirs',
+    profiles_dirs = _resolve_dir_list(_profiles_cfg, 'profiles_dirs', 'profiles_dir',
                                       os.path.join(config_dir, 'profiles'))
-    rules_dirs    = _resolve_dir_list(_rules_cfg, 'rules_dirs',
+    rules_dirs    = _resolve_dir_list(_rules_cfg, 'rules_dirs', 'rules_dir',
                                       os.path.join(config_dir, 'rules'))
 
     expanded['paths'] = {

@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.2.1 - 2026-05-10
+
+### Fixed
+- Accepted singular `paths.rules_dir` and `paths.profiles_dir` aliases during stage-0 profile/rule compilation, so prepare_pipeline resolves runtime-derived path mappings consistently with config loading.
+
+### Tests
+- Added regression tests covering singular alias handling directly in `lib.profile_rules.compile_rules_for_config()` and revalidated the targeted QA set including the mini full-pipeline test.
+
+## v11.2.0 - 2026-05-10
+
+### Fixed
+- Accepted the singular compatibility aliases `profiles_dir` and `rules_dir` in configuration files and normalized them to the internal `paths.profiles_dirs` and `paths.rules_dirs` list form.
+
+### Tests
+- Added unit tests covering `profiles_dir` and `rules_dir` config-file handling and revalidated the targeted QA set including the mini full-pipeline test.
+
 ## v11.1.0 - 2026-05-10
 
 ### Fixed

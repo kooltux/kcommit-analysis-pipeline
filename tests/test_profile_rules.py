@@ -168,3 +168,42 @@ def test_compile_rules_prefers_external_rule_dir_before_builtin(tmp_path):
     kw = result['performance']['merged'].get('keywords_whitelist', [])
     kw_strs = [p if isinstance(p, str) else p.pattern for p in kw]
     assert any('artemis-only-keyword' in k for k in kw_strs)
+
+
+
+def test_compile_rules_accepts_singular_paths_rules_dir_alias(tmp_path):
+    profiles = tmp_path / 'profiles'
+    rules = tmp_path / 'rules'
+    profiles.mkdir(); rules.mkdir()
+    _write_profile(profiles, 'myprof', {'r1': 100})
+    _write_rule(rules, 'r1', {'keyword.txt': ['foo']})
+    cfg = {
+        'profiles': {'active': {'myprof': 100}},
+        'paths': {
+            'profiles_dir': str(profiles),
+            'rules_dir': str(rules),
+        },
+        '_meta': {'config_dir': str(tmp_path)},
+    }
+    out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
+    assert 'myprof' in out
+    assert 'r1' in out['myprof']['rules']
+
+
+def test_compile_rules_accepts_singular_paths_profiles_dir_alias(tmp_path):
+    profiles = tmp_path / 'profiles'
+    rules = tmp_path / 'rules'
+    profiles.mkdir(); rules.mkdir()
+    _write_profile(profiles, 'myprof', {'r1': 100})
+    _write_rule(rules, 'r1', {'keyword.txt': ['foo']})
+    cfg = {
+        'profiles': {'active': {'myprof': 100}},
+        'paths': {
+            'profiles_dir': str(profiles),
+            'rules_dirs': [str(rules)],
+        },
+        '_meta': {'config_dir': str(tmp_path)},
+    }
+    out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
+    assert 'myprof' in out
+    assert 'r1' in out['myprof']['rules']

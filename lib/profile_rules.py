@@ -62,11 +62,19 @@ RULE_SCHEMA = {
 
 def _resolve_dirs(cfg, key_plural, default_subdir):
     """Return the directory list for *key_plural* from cfg['paths'].
+
+    Also accepts the singular compatibility aliases ``profiles_dir`` and
+    ``rules_dir`` in the derived ``paths`` mapping, normalizing them to the
+    same list form used internally.
     Falls back to <config_dir>/<default_subdir> when not set.
     """
     paths = cfg.get('paths', {}) or {}
     if paths.get(key_plural):
         return list(paths[key_plural])
+    key_singular = key_plural[:-1] if key_plural.endswith('s') else key_plural
+    raw = paths.get(key_singular)
+    if raw not in (None, [], ''):
+        return list(raw) if isinstance(raw, list) else [raw]
     meta       = cfg.get('_meta', {}) or {}
     config_dir = meta.get('config_dir') or os.getcwd()
     return [os.path.join(config_dir, default_subdir)]

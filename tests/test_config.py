@@ -154,3 +154,32 @@ def test_load_config_rejects_unknown_top_level(tmp_path):
         load_config(str(p))
 
 
+
+def test_load_config_rules_dir_singular_alias_normalised(tmp_path):
+    """D.1: rules.rules_dir singular alias is accepted and normalized."""
+    from lib.config import load_config
+    cfg_json = tmp_path / 'cfg.json'
+    (tmp_path / 'team_rules').mkdir()
+    cfg_json.write_text(
+        '{\n'
+        '  "kernel": {"source_dir": "/tmp", "rev_old": "a", "rev_new": "b"},\n'
+        '  "profiles": {"active": {}},\n'
+        '  "rules": {"rules_dir": "team_rules"}\n'
+        '}')
+    cfg = load_config(str(cfg_json))
+    assert cfg['paths']['rules_dirs'] == [str((tmp_path / 'team_rules').resolve())]
+
+
+def test_load_config_profiles_dir_singular_alias_normalised(tmp_path):
+    """D.1: profiles.profiles_dir singular alias is accepted and normalized."""
+    from lib.config import load_config
+    cfg_json = tmp_path / 'cfg.json'
+    (tmp_path / 'team_profiles').mkdir()
+    cfg_json.write_text(
+        '{\n'
+        '  "kernel": {"source_dir": "/tmp", "rev_old": "a", "rev_new": "b"},\n'
+        '  "profiles": {"profiles_dir": "team_profiles", "active": {}},\n'
+        '  "rules": {}\n'
+        '}')
+    cfg = load_config(str(cfg_json))
+    assert cfg['paths']['profiles_dirs'] == [str((tmp_path / 'team_profiles').resolve())]
