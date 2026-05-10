@@ -1,20 +1,11 @@
-from lib.scoring import fmt_profiles, fmt_evidence
 """Spreadsheet export for kcommit-analysis-pipeline.
 
-v9.14 changes:
-  - Native Python types throughout: datetime for dates, int/float for numbers.
-  - XLSX: _xlsx_write_sheet applies number/date cell formats automatically
-    by inspecting cell value type (datetime → date format, float → 0.00,
-    int → 0).  Auto-width measures actual rendered text width including
-    header row, capped 8–60 chars.
-  - ODS: _ods_cell handles datetime with office:value-type="date" and
-    office:date-value="ISO8601". Floats keep office:value-type="float".
-
-E.1: COMMIT_COLS, COMMIT_COLS_FILTERED, SUMMARY_COLS, MATRIX_COLS,
-     STATS_COLS moved to lib.manifest (single source of truth).
-     This module re-exports them for backward import compatibility.
+Writes commit data to XLSX, ODS, CSV and related tabular formats.
+Column definitions (COMMIT_COLS, COMMIT_COLS_FILTERED, SUMMARY_COLS,
+MATRIX_COLS, STATS_COLS) are the canonical source in lib.manifest.
 """
 import datetime
+from lib.scoring import fmt_profiles, fmt_evidence
 import os
 import zipfile
 import xml.sax.saxutils as _sx
@@ -88,6 +79,7 @@ def _commit_row(c, include_reason=False, native_types=False):
     """
     date_val = _parse_date(c.get("author_time")) if native_types else _fmt_date_str(c.get("author_time"))
     row = [
+        c.get("_rank", ""),
         (c.get("commit") or "")[:12],
         c.get("subject", ""),
         c.get("author_name", ""),

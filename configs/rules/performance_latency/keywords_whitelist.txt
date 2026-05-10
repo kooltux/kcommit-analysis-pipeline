@@ -1,4 +1,2 @@
-latency
-reduce latency
 tail latency
 jitter

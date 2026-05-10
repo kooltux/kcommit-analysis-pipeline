@@ -18,6 +18,5 @@ re:(?i)side[\s-]channel
 re:(?i)cert(?:ificate)
 re:(?i)sign(?:ature)|verif(?:ication)
 re:(?i)key\s+(?:material|leak)
-re:(?i)sign(?:ature)|verif(?:ication)
 re:(?i)integrity|ima|evm|measurement|appraise
-re:(?i)tpm|trusted|tboot|security|attestation
+re:(?i)tpm|trusted|tboot|attestation

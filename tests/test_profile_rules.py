@@ -42,15 +42,15 @@ def _cfg(tmp_path, active, profiles_dir, rules_dir):
 
 # ── active_profile_names ──────────────────────────────────────────────────────
 def test_active_profile_names_dict():
-    cfg = {'profiles': {'active': {'security': 100, 'net': 80}}}
+    cfg = {'profiles': {'active': {'security_fixes': 100, 'networking': 80}}}
     names = active_profile_names(cfg)
-    assert set(names) == {'security', 'net'}
+    assert set(names) == {'security_fixes', 'networking'}
 
 
 def test_active_profile_names_list():
-    cfg = {'profiles': {'active': ['security', 'net']}}
+    cfg = {'profiles': {'active': ['security_fixes', 'networking']}}
     names = active_profile_names(cfg)
-    assert set(names) == {'security', 'net'}
+    assert set(names) == {'security_fixes', 'networking'}
 
 
 def test_active_profile_names_empty():
@@ -133,11 +133,11 @@ def test_load_profile_rules_uses_compiled_cache(tmp_path):
     rd = tmp_path / 'rules';    rd.mkdir()
     (tmp_path / 'cache').mkdir()
     _write_rule(rd, 'r1', ['cve'])
-    _write_profile(pd, 'security', ['r1'])
-    cfg = _cfg(tmp_path, {'security': 100}, pd, rd)
+    _write_profile(pd, 'security_fixes', ['r1'])
+    cfg = _cfg(tmp_path, {'security_fixes': 100}, pd, rd)
 
     result1 = load_profile_rules(cfg)
-    assert 'security' in result1
+    assert 'security_fixes' in result1
 
     result2 = load_profile_rules(cfg)
-    assert 'security' in result2
+    assert 'security_fixes' in result2

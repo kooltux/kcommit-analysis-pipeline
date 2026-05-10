@@ -142,13 +142,13 @@ def test_score_commit_capped_at_100_per_profile():
                         'path_whitelist': [], 'path_blacklist': [],
                         'commit_whitelist': [], 'commit_blacklist': [],
                         'weight': 60} for i in range(5)}
-    pr = {'net': {'description': '', 'rules': rules,
+    pr = {'networking': {'description': '', 'rules': rules,
                   'merged': {'keywords_whitelist': ['net:'], 'keywords_blacklist': [],
                               'path_whitelist': [], 'path_blacklist': [],
                               'commit_whitelist': [], 'commit_blacklist': []}}}
     precompile_rules(pr)
     r = score_commit(_commit(subject='net: big fix'), {}, pr)
-    assert r['scoring']['profiles']['net'] <= 100
+    assert r['scoring']['profiles']['networking'] <= 100
 
 
 def test_score_commit_product_evidence_config_map():
@@ -169,8 +169,8 @@ def test_score_commit_meta_stored():
 
 # ── fmt_profiles / fmt_evidence ───────────────────────────────────────────────
 def test_fmt_profiles_multiple():
-    c = {'matched_profiles': ['networking', 'security']}
-    assert fmt_profiles(c) == 'networking; security'
+    c = {'matched_profiles': ['networking', 'security_fixes']}
+    assert fmt_profiles(c) == 'networking; security_fixes'
 
 
 def test_fmt_profiles_empty():

@@ -1,7 +1,6 @@
 Fixes:
 BUG:
 re:(?i)cve-[0-9]{4}-[0-9]+
-re:(?i)(?:CVE|cve)\s*[0-9]+
 re:(?i)bz#?[0-9]+
 re:(?i)bts#[0-9]+
 re:(?i)(?:GH-|GHSA|PR|issue|pull)[\s\-#](?:[0-9]+|CVE[0-9]+)

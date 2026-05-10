@@ -1,7 +1,7 @@
 // Comments are allowed: lines starting with // or # are ignored by the loader.
 {
   "name": "performance",
-  "description": "Performance, latency, and throughput improvements.",
+  "description": "Performance improvements: latency reduction, throughput gains, scalability, and scheduler/memory hotpath optimisations.",
   "rules": {
     "generic": 20,
     "performance_general": 70,

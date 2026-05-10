@@ -11,7 +11,7 @@ def _commit(sha='abc', score=50, rank=1, profiles=None):
     return {
         'commit': sha, 'subject': f'fix: {sha}', 'score': score,
         '_rank': rank, 'author_name': 'Dev', 'author_time': 1700000000,
-        'matched_profiles': profiles or ['security'],
+        'matched_profiles': profiles or ['security_fixes'],
         'product_evidence': ['config_map:CONFIG_USB'],
     }
 
@@ -21,7 +21,7 @@ def _compiled_rules():
         'schema_hash': 'test',
         'rules': {},
         'profiles': {
-            'security': {'description': 'Security', 'rules': {},
+            'security_fixes': {'description': 'Security', 'rules': {},
                          'merged': {'keywords_whitelist': [],
                                      'keywords_blacklist': [],
                                      'path_whitelist': [],
@@ -48,7 +48,7 @@ def _setup(tmp_path, scored=None, filtered=None, outputs=None):
         'reports': {'outputs': outputs or ['csv'], 'title': 'Test', 'top_n': 0},
         'paths':   {'templates_dir': None, 'cache_dir': cache,
                     'work_dir': str(tmp_path)},
-        'profiles': {'active': {'security': 100}},
+        'profiles': {'active': {'security_fixes': 100}},
     }
     return cache, outdir, cfg
 

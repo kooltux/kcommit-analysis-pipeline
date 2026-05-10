@@ -8,7 +8,7 @@ def _base(tmp_path):
     return {
         'paths':   {'work_dir': str(tmp_path)},
         'kernel':  {'source_dir': str(tmp_path), 'rev_old': 'v6.8', 'rev_new': 'HEAD'},
-        'profiles': {'active': {'security': 100}},
+        'profiles': {'active': {'security_fixes': 100}},
     }
 
 
@@ -67,7 +67,7 @@ def test_empty_active_profiles(tmp_path):
 
 def test_profile_weight_out_of_range(tmp_path):
     cfg = _base(tmp_path)
-    cfg['profiles']['active'] = {'security': 150}
+    cfg['profiles']['active'] = {'security_fixes': 150}
     problems, _ = validate_config_only(cfg)
     assert any('150' in p or 'weight' in p for p in problems)
 

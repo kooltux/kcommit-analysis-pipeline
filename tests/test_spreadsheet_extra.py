@@ -32,7 +32,7 @@ def _commit(sha='abc', score=80, rank=1, profiles=None, profile_scores=None):
 def _profile_summary(profiles=None):
     return {
         'networking': {'count': 3, 'total_score': 180, 'top_score': 80},
-        'security':   {'count': 1, 'total_score': 50,  'top_score': 50},
+        'security_fixes':   {'count': 1, 'total_score': 50,  'top_score': 50},
     }
 
 
@@ -44,13 +44,13 @@ def test_matrix_rows_single_profile():
 
 
 def test_matrix_rows_multi_profile():
-    c = _commit('b', profiles=['networking', 'security'],
-                profile_scores={'networking': 40, 'security': 30})
+    c = _commit('b', profiles=['networking', 'security_fixes'],
+                profile_scores={'networking': 40, 'security_fixes': 30})
     rows = _matrix_rows([c])
     assert len(rows) == 2
     profile_names = [r[3] for r in rows]
     assert 'networking' in profile_names
-    assert 'security' in profile_names
+    assert 'security_fixes' in profile_names
 
 
 def test_matrix_rows_empty():

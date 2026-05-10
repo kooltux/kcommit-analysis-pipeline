@@ -91,3 +91,20 @@ def test_html_report_includes_profile_scores_column(tmp_path):
     assert 'Profile Scores' in txt
     assert 'performance:5' in txt
     assert 'security_fixes:42' in txt
+
+
+def test_summary_js_openpanel_uses_async_loadcommitstore():
+    """G.2: openPanel must resolve commit data via loadCommitStore().then()
+    so that compressed and sidecar detail modes always populate the pane."""
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    assert 'loadCommitStore().then' in js, \
+        "openPanel must use loadCommitStore().then() for async commit resolution"
+    # The synchronous map lookup must NOT appear in openPanel any more
+    open_panel_start = js.index('function openPanel')
+    open_panel_end   = js.index('\n  }', open_panel_start) + 4
+    open_panel_body  = js[open_panel_start:open_panel_end]
+    assert 'window.__KC_COMMITS__' not in open_panel_body, \
+        "openPanel must not access window.__KC_COMMITS__ directly (use loadCommitStore)"

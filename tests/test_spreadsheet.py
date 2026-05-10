@@ -19,7 +19,7 @@ def _scored():
     return [{
         'commit': 'abc123def456', 'subject': 'usb: fix hub reset',
         'score': 80, '_rank': 1, 'author_name': 'Dev', 'author_time': 1700000000,
-        'matched_profiles': ['security'], 'product_evidence': ['config_map:CONFIG_USB'],
+        'matched_profiles': ['security_fixes'], 'product_evidence': ['config_map:CONFIG_USB'],
     }]
 
 
@@ -34,7 +34,7 @@ def _filtered():
 
 def _profile_summary():
     return {
-        'security': {'commit_count': 1, 'total_score': 80,
+        'security_fixes': {'commit_count': 1, 'total_score': 80,
                      'avg_score': 80.0, 'description': ''},
     }
 
@@ -125,4 +125,5 @@ def test_commit_row_contains_profile_scores_text():
         'score': 7, 'matched_profiles': ['p1'], 'product_evidence': ['e1'],
         'scoring': {'profiles': {'p2': 3, 'p1': 7}}
     })
-    assert row[6] == 'p1:7; p2:3'
+    assert row[0] == ''          # _rank not set → empty string
+    assert row[7] == 'p1:7; p2:3'

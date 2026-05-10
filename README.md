@@ -132,6 +132,7 @@ and `paths.rules_dirs` (defaulting to `<CONFIGDIR>/profiles/` and
 | `output/profile_matrix.json`     | Per-commit × per-profile score breakdown (JSON) |
 | `output/profile_matrix.csv`      | Per-commit × per-profile score breakdown (CSV) |
 | `output/report_stats.json`       | Pipeline run statistics and generated file list |
+| `output/rule_trace.json`         | Per-commit × per-rule scoring trace (JSON) |
 
 Optional XLSX/ODS: enable with `"reports": { "outputs": ["xlsx", "ods"] }`.
 Each enabled format produces both `relevant_commits.*` and `filtered_commits.*`
@@ -139,7 +140,7 @@ counterparts, plus `profile_summary.*`, `profile_matrix.*`, and workbook outputs
 
 ## Requirements
 
-- Python 3.6+
+- Python 3.13+
 - `git` on `PATH`
 - `openpyxl` for XLSX output (`pip install openpyxl`)
 
@@ -149,33 +150,14 @@ counterparts, plus `profile_summary.*`, `profile_matrix.*`, and workbook outputs
 available options documented.
 
 
-## Cache note
+## Cache contract
 
-Stage 04 now writes two distinct cache files: `prefilter_kept_commits.json` for commits that survived prefiltering and `filtered_commits.json` for commits dropped by prefiltering or postfilter thresholding. Stage 05 scores only `prefilter_kept_commits.json`.
-
-
-## v10 cache contract
-
-Stage 04 writes `prefilter_kept_commits.json` and `filtered_commits.json`.
+Stage 04 writes `prefilter_kept_commits.json` (kept) and `filtered_commits.json` (dropped).
 Stage 05 scores only `prefilter_kept_commits.json`.
 Stage 06 writes `relevant_commits.json` and `postfilter_dropped_commits.json`.
-Stage 07 merges `filtered_commits.json` and `postfilter_dropped_commits.json` only for report outputs.
+Stage 07 merges dropped lists for report outputs only.
 
-## v10 config rules
-
-Configuration rejects unknown top-level sections and validates known section keys/types. Legacy aliases and shorthand compatibility keys were removed.
-
-
-- v10.2.0: HTML commit details now expose a rule-by-rule scoring trace, including matched patterns/paths/SHA values, per-rule score, per-profile score, and final combined score.
-
-- v10.2.0: Non-HTML outputs now expose rule-analysis details too: JSON includes rule_trace.json, and summary XLSX/ODS include a Rule Trace sheet.
-
-- v10.2.0: HTML reports now support sidecar table datasets (`relevant_commits.table.json`, `filtered_commits.table.json`), sharded per-commit detail JSON under `output/commits/aa/bb/<sha>.json`, optional compressed embedded commit maps, and canonical git-log-style field ordering for commit detail payloads.
-
-
-## Reporting updates
-
-Commit tabular reports include a **Profile Scores** column that serializes per-profile final scores as `profile:score` pairs for sorting and filtering. HTML sidecar detail panes also resolve commit detail JSON correctly when the index uses short and full commit identifiers.
+Configuration rejects unknown top-level sections and validates known section keys/types.
 
 
 ## End-to-end command test

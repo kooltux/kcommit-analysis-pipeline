@@ -10,7 +10,7 @@ def _commit(sha='abc123', score=50, rank=1, reason=None):
     c = {
         'commit': sha, 'subject': f'fix: {sha}', 'score': score,
         '_rank': rank, 'author_name': 'Dev', 'author_time': 1700000000,
-        'matched_profiles': ['security'], 'product_evidence': ['config_map:CONFIG_USB'],
+        'matched_profiles': ['security_fixes'], 'product_evidence': ['config_map:CONFIG_USB'],
     }
     if reason:
         c['_filter_reason'] = reason
@@ -47,7 +47,7 @@ def _setup(tmp_path, scored=None, filtered=None, cfg_extra=None):
         'schema_hash': 'test-sentinel-hash',
         'rules':    {},
         'profiles': {
-            'security': {
+            'security_fixes': {
                 'description': 'Security fixes',
                 'rules': {},
                 'merged': _rule_body,
@@ -61,7 +61,7 @@ def _setup(tmp_path, scored=None, filtered=None, cfg_extra=None):
         'reports': {'outputs': ['csv'], 'title': 'Test', 'top_n': 0},
         'paths':   {'templates_dir': None, 'cache_dir': cache,
                     'work_dir': str(tmp_path)},
-        'profiles': {'active': {'security': 100}},
+        'profiles': {'active': {'security_fixes': 100}},
     }
     if cfg_extra:
         for k, v in cfg_extra.items():

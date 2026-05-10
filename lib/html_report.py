@@ -1,17 +1,11 @@
 """HTML report generator for kcommit-analysis-pipeline.
 
+Generates self-contained HTML reports with embedded or sidecar-backed
+commit detail panes. Commit details include rule-match/score analysis
+from scoring.trace when present.
+
 Column definitions (COMMIT_COLS, SUMMARY_COLS, MATRIX_COLS) are the
 canonical source in lib.manifest and imported here via lib.spreadsheet.
-
-v10.1.0 changes:
-  - Commit detail pane preserves body formatting and supports either embedded or sidecar-backed detail loading.
-  - Commit detail pane includes rule-match/score analysis from scoring.trace when present.
-
-E-series changes:
-  - Dead code removed: @lru_cache on _get_template, _plain_table(),
-    _filter_input() (inlined), functools import.
-  - _section() anchor argument is now mandatory (assert guard).
-  - json import restored (used by inline commit-map serialisation).
 """
 import base64
 import json

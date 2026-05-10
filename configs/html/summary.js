@@ -232,10 +232,11 @@
     overlay.classList.add('open');
     panel.classList.add('open');
     if (panelH3) panelH3.textContent = sha;
-    if (panelBody) panelBody.innerHTML = '';
-    var map = (window.__KC_COMMITS__ && typeof window.__KC_COMMITS__ === 'object')
-              ? window.__KC_COMMITS__ : {};
-    renderCommit(map[sha] || null, sha);
+    if (panelBody) panelBody.innerHTML = '<p style="color:var(--text-muted);font-size:.75rem">Loading…</p>';
+    loadCommitStore().then(function(map) {
+      map = (map && typeof map === 'object') ? map : {};
+      renderCommit(map[sha] || null, sha);
+    });
   }
 
   function closePanel() {

@@ -4,5 +4,3 @@ typo
 comment only
 whitespace
 *cleanup*
-documentation
-comment

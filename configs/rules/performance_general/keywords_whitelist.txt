@@ -1,7 +1,6 @@
 performance
 throughput
 latency
-regression
 reduce latency
 speed up
 speedup
