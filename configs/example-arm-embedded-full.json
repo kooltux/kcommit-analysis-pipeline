@@ -23,7 +23,7 @@
   },
 
   "paths": {
-    "work_dir": "${WORKSPACE}/"
+    "work_dir": "${WORKSPACE}/work"
     // Optional: override cache/output locations individually.
     // "cache_dir":  "${WORKSPACE}/work/cache",
     // "output_dir": "${WORKSPACE}/work/output",

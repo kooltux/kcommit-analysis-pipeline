@@ -118,6 +118,12 @@
 
     var card = tbl.closest('.kc-card');
     var globalEl = card && card.querySelector('.kc-global-filter');
+    var liveCountEl = card && card.querySelector('.kc-live-count');
+
+    function updateLiveCount(visible) {
+      if (!liveCountEl) return;
+      liveCountEl.textContent = 'Showing ' + visible + ' of ' + rows.length + ' commits';
+    }
 
     function apply() {
       var colFilters = controls.map(function(c) {
@@ -147,6 +153,7 @@
         if (show) visible++;
       });
       if (noMatch) noMatch.classList.toggle('visible', visible === 0);
+      updateLiveCount(visible);
     }
 
     controls.forEach(function(c) {
@@ -154,7 +161,7 @@
     });
     if (globalEl) globalEl.addEventListener('input', apply);
 
-    var clearBtn = card && card.querySelector('.kc-filter-bar button');
+    var clearBtn = card && card.querySelector('.kc-clear-filters');
     if (clearBtn) clearBtn.addEventListener('click', function() {
       controls.forEach(function(c) {
         if (c.tagName === 'SELECT') {
@@ -164,6 +171,8 @@
       if (globalEl) globalEl.value = '';
       apply();
     });
+
+    apply();
   }
 
   /* ── Column sort ──────────────────────────────────────────────────────── */
@@ -198,11 +207,9 @@
   function initCsvExport(tbl) {
     var card = tbl.closest('.kc-card');
     if (!card) return;
-    var bar = card.querySelector('.kc-filter-bar');
-    if (!bar) return;
-    var btn = document.createElement('button');
-    btn.textContent = '\u2193 CSV'; btn.title = 'Export visible rows as CSV';
-    bar.appendChild(btn);
+    var btn = card.querySelector('.kc-export-filtered-csv');
+    if (!btn) return;
+    btn.title = 'Export visible rows as CSV';
     btn.addEventListener('click', function() {
       var hdrs = Array.from(tbl.querySelectorAll('tr.kc-col-headers th'))
         .map(function(th){ return '"'+th.textContent.replace(/[⇅▲▼]/g,'').trim().replace(/"/g,'""')+'"'; });

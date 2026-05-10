@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.2.4 - 2026-05-10
+
+### Added
+- HTML commit reports now show a live counter for the currently visible commit rows after filtering.
+- HTML commit reports now include a button to export the currently filtered visible rows as CSV.
+
+### Tests
+- Added HTML report regression coverage for the live counter and filtered CSV export button.
+
 ## v11.2.3 - 2026-05-10
 
 ### Fixed

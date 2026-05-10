@@ -108,3 +108,31 @@ def test_summary_js_openpanel_uses_async_loadcommitstore():
     open_panel_body  = js[open_panel_start:open_panel_end]
     assert 'window.__KC_COMMITS__' not in open_panel_body, \
         "openPanel must not access window.__KC_COMMITS__ directly (use loadCommitStore)"
+
+
+def test_html_report_includes_live_filtered_counter_and_csv_button(tmp_path):
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'a'*40, 'subject': 'usb fix', 'author_name': 'Alice', 'author_time': 1710000000,
+        'score': 42, 'matched_profiles': ['mini_security'], 'product_evidence': []
+    }, {
+        'commit': 'b'*40, 'subject': 'net fix', 'author_name': 'Bob', 'author_time': 1710000100,
+        'score': 17, 'matched_profiles': ['mini_network'], 'product_evidence': []
+    }]
+    generate_html_report(commits, {}, {}, str(out))
+    txt = out.read_text(encoding='utf-8')
+    assert 'kc-live-count' in txt
+    assert 'Showing 2 of 2 commits' in txt
+    assert 'kc-export-filtered-csv' in txt
+    assert 'Export filtered CSV' in txt
+
+
+def test_summary_js_updates_live_count_and_exports_visible_rows():
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    assert 'updateLiveCount(visible)' in js
+    assert "Showing ' + visible + ' of ' + rows.length + ' commits" in js
+    assert "querySelector('.kc-export-filtered-csv')" in js
+    assert 'tbody tr:not(.hidden)' in js

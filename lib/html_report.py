@@ -241,7 +241,11 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         '<label>Search:</label>'
         '<input class="kc-global-filter" type="text"'
         ' placeholder="search all columns…" aria-label="global search">'
-        '<button type="button">Clear all</button>'
+        + '<span class="kc-live-count" aria-live="polite">'
+        + 'Showing ' + str(len(commits)) + ' of ' + str(len(commits)) + ' commits'
+        + '</span>'
+        '<button type="button" class="kc-clear-filters">Clear all</button>'
+        '<button type="button" class="kc-export-filtered-csv">↓ Export filtered CSV</button>'
         '</div>'
         '<div class="kc-table-wrap">'
         + _table(commit_headers, c_rows, table_id='tbl-commits')
