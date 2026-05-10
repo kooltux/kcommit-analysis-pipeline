@@ -116,3 +116,13 @@ def test_write_ods_empty_scored(tmp_path):
     path = str(tmp_path / 'empty.ods')
     write_ods(path, [], {})
     assert os.path.exists(path)
+
+
+def test_commit_row_contains_profile_scores_text():
+    from lib.spreadsheet import _commit_row
+    row = _commit_row({
+        'commit': 'b'*40, 'subject': 'x', 'author_name': 'A', 'author_time': 1710000000,
+        'score': 7, 'matched_profiles': ['p1'], 'product_evidence': ['e1'],
+        'scoring': {'profiles': {'p2': 3, 'p1': 7}}
+    })
+    assert row[6] == 'p1:7; p2:3'

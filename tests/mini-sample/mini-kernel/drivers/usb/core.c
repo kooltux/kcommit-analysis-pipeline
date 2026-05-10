@@ -1,0 +1,1 @@
+/* miniature usb core source for tests */

@@ -22,6 +22,18 @@ import xml.sax.saxutils as _sx
 # Column definitions imported from manifest (single source of truth)
 from lib.manifest import (COMMIT_COLS, COMMIT_COLS_FILTERED,
                           SUMMARY_COLS, MATRIX_COLS, STATS_COLS)
+
+
+def _profile_scores_text(commit):
+    profiles = (((commit or {}).get('scoring') or {}).get('profiles') or {})
+    parts = []
+    for pname in sorted(profiles):
+        try:
+            score = float(profiles.get(pname, 0) or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        parts.append(f"{pname}:{score:g}")
+    return '; '.join(parts)
 TRACE_COLS = ('sha', 'profile', 'rule', 'matched_level', 'rule_score', 'profile_score', 'pattern_type', 'pattern', 'matched_value')
 
 
@@ -76,13 +88,13 @@ def _commit_row(c, include_reason=False, native_types=False):
     """
     date_val = _parse_date(c.get("author_time")) if native_types else _fmt_date_str(c.get("author_time"))
     row = [
-        c.get("_rank") or "",
         (c.get("commit") or "")[:12],
         c.get("subject", ""),
         c.get("author_name", ""),
         date_val,
         float(c.get("score", 0) or 0),
         fmt_profiles(c),
+        _profile_scores_text(c),
         fmt_evidence(c),
     ]
     if include_reason:

@@ -27,8 +27,14 @@
     }
     if (window.__KC_COMMITS_INDEX__ && window.__KC_COMMITS_INDEX__.mode === 'sidecar') {
       return fetch(window.__KC_COMMITS_INDEX__.path).then(function(r){ return r.json(); }).then(function(data){
+        var rows = Array.isArray(data) ? data : ((data && data.rows) || []);
         var map = {};
-        (data || []).forEach(function(c){ map[String(c.commit || '').slice(0, 12)] = c; });
+        rows.forEach(function(c){
+          var full = String(c.commit || '');
+          var shortSha = String(c.sha || full.slice(0, 12));
+          if (shortSha) map[shortSha] = c;
+          if (full) map[full] = c;
+        });
         window.__KC_COMMITS__ = map;
         return map;
       });

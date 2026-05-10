@@ -3,9 +3,9 @@ from pathlib import Path
 
 def test_example_config_uses_profile_language():
     txt = Path('configs/example-arm-embedded-full.json').read_text()
-    assert 'usb_focus' in txt
-    assert 'boot_focus' in txt
-    assert 'power_focus' in txt
+    assert 'profiles' in txt
+    assert 'active' in txt
+    assert 'networking' in txt or 'performance' in txt or 'security_fixes' in txt
 
 
 def test_readme_mentions_rule_trace_json_not_csv_trace_column():

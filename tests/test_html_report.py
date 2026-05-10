@@ -76,3 +76,18 @@ def test_html_filtered_table_includes_reason_column(tmp_path):
     txt = out.read_text()
     assert 'Filter reason' in txt
     assert 'path_blacklist' in txt
+
+
+def test_html_report_includes_profile_scores_column(tmp_path):
+    from lib.html_report import generate_html_report
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'a'*40, 'subject': 'usb fix', 'author_name': 'Alice', 'author_time': 1710000000,
+        'score': 42, 'matched_profiles': ['security_fixes'], 'product_evidence': [],
+        'scoring': {'profiles': {'security_fixes': 42, 'performance': 5}}
+    }]
+    generate_html_report(commits, {}, {}, str(out))
+    txt = out.read_text(encoding='utf-8')
+    assert 'Profile Scores' in txt
+    assert 'performance:5' in txt
+    assert 'security_fixes:42' in txt

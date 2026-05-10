@@ -1,0 +1,2 @@
+config USB
+    bool "USB support"

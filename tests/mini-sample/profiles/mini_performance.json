@@ -1,0 +1,6 @@
+{
+  "description": "Mini performance profile",
+  "rules": {
+    "mini_usb_rule": {"weight": 60}
+  }
+}

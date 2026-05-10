@@ -1,0 +1,32 @@
+{
+  "paths": {
+    "work_dir": "tests/tmp/work",
+    "cache_dir": "tests/tmp/cache",
+    "output_dir": "tests/tmp/output",
+    "profiles_dirs": ["tests/mini-sample/profiles"],
+    "rules_dirs": ["tests/mini-sample/rules"]
+  },
+  "kernel": {
+    "source_dir": "tests/mini-sample/mini-kernel",
+    "rev_old": "v6.0",
+    "rev_new": "v6.1",
+    "kernel_config": "tests/mini-sample/mini-kernel/.config"
+  },
+  "profiles": {
+    "active": {
+      "mini_performance": 100,
+      "mini_security": 100
+    }
+  },
+  "collect": {
+    "max_commits": 10
+  },
+  "filter": {
+    "min_score": 0
+  },
+  "reports": {
+    "outputs": ["html", "csv"],
+    "title": "Mini full pipeline test",
+    "top_n": 0
+  }
+}

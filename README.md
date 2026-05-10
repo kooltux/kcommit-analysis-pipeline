@@ -114,15 +114,15 @@ Key sections:
 
 ## Profiles and rules
 
-Profiles and rules live in directories referenced by `profiles.profiles_dirs`
-and `rules.rules_dirs` (defaulting to `<CONFIGDIR>/profiles/` and
+Profiles and rules live in directories referenced by `paths.profiles_dirs`
+and `paths.rules_dirs` (defaulting to `<CONFIGDIR>/profiles/` and
 `<CONFIGDIR>/rules/`). See `docs/PROFILES_AND_RULES.md` for the full format.
 
 ## Outputs
 
 | File | Description |
 |------|-------------|
-| `output/relevant_commits.html`   | Interactive HTML report (filters, sort, dark mode, CSV export) |
+| `output/relevant_commits.html`   | Interactive HTML report (filters, sort, CSV export, commit detail view) |
 | `output/relevant_commits.csv`    | Ranked commits above the score threshold |
 | `output/relevant_commits.json`   | Same data as JSON |
 | `output/filtered_commits.html`   | Dropped commits with filter reason (HTML) |
@@ -135,8 +135,7 @@ and `rules.rules_dirs` (defaulting to `<CONFIGDIR>/profiles/` and
 
 Optional XLSX/ODS: enable with `"reports": { "outputs": ["xlsx", "ods"] }`.
 Each enabled format produces both `relevant_commits.*` and `filtered_commits.*`
-counterparts, plus `profile_summary.*`, `profile_matrix.*`, and `summary.*`
-(multi-sheet workbook).
+counterparts, plus `profile_summary.*`, `profile_matrix.*`, and workbook outputs when those formats are enabled.
 
 ## Requirements
 
@@ -167,8 +166,20 @@ Stage 07 merges `filtered_commits.json` and `postfilter_dropped_commits.json` on
 Configuration rejects unknown top-level sections and validates known section keys/types. Legacy aliases and shorthand compatibility keys were removed.
 
 
-- v10.1.0: HTML commit details now expose a rule-by-rule scoring trace, including matched patterns/paths/SHA values, per-rule score, per-profile score, and final combined score.
+- v10.2.0: HTML commit details now expose a rule-by-rule scoring trace, including matched patterns/paths/SHA values, per-rule score, per-profile score, and final combined score.
 
-- v10.1.0: Non-HTML outputs now expose rule-analysis details too: JSON includes rule_trace.json, and summary XLSX/ODS include a Rule Trace sheet.
+- v10.2.0: Non-HTML outputs now expose rule-analysis details too: JSON includes rule_trace.json, and summary XLSX/ODS include a Rule Trace sheet.
 
-- v10.1.0: HTML reports now support sidecar table datasets (`relevant_commits.table.json`, `filtered_commits.table.json`), sharded per-commit detail JSON under `output/commits/aa/bb/<sha>.json`, optional compressed embedded commit maps, and canonical git-log-style field ordering for commit detail payloads.
+- v10.2.0: HTML reports now support sidecar table datasets (`relevant_commits.table.json`, `filtered_commits.table.json`), sharded per-commit detail JSON under `output/commits/aa/bb/<sha>.json`, optional compressed embedded commit maps, and canonical git-log-style field ordering for commit detail payloads.
+
+
+## Reporting updates
+
+Commit tabular reports include a **Profile Scores** column that serializes per-profile final scores as `profile:score` pairs for sorting and filtering. HTML sidecar detail panes also resolve commit detail JSON correctly when the index uses short and full commit identifiers.
+
+
+## End-to-end command test
+
+A realistic small command-flow regression test lives in `tests/test_full_pipeline_commands.py`. It uses repository-style configuration, sample cache files, and the real command handlers (`validate`, `run`, `status`, `dropped`, `report`) while keeping fixtures intentionally compact.
+
+- `tests/test_full_pipeline_with_mini_inputs.py` uses miniature files stored under `tests/mini-sample/mini-kernel`, `tests/mini-sample/profiles`, and `tests/mini-sample/rules`, plus a dedicated `tests/mini-sample/configs/test-mini.json` config, to exercise early stages and command/report flow with test-local assets.

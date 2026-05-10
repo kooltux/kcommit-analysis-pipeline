@@ -1,0 +1,6 @@
+{
+  "description": "Mini security profile",
+  "rules": {
+    "mini_usb_rule": {"weight": 40}
+  }
+}

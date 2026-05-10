@@ -63,3 +63,34 @@ def test_stage07_writes_sidecar_tables_and_sharded_commit_details(tmp_path, monk
     assert os.path.exists(out / 'commits' / 'ab' / 'cd' / 'abcdef1234567890.json')
     data = json.load(open(out / 'relevant_commits.json'))
     assert list(data[0])[:6] == ['commit', 'subject', 'author_name', 'author_email', 'author_time', 'files']
+
+
+def test_sidecar_index_contains_full_commit(tmp_path):
+    import json
+    from lib.stages.st07_report import run
+    from lib.manifest import CACHE_FILES
+    outdir = tmp_path / 'out'
+    cache_dir = tmp_path / 'cache'
+    cache_dir.mkdir()
+    relevant = [{
+        'commit': 'c'*40, 'subject': 'usb fix', 'author_name': 'Bob', 'author_email': 'b@example.com',
+        'author_time': 1710000000, 'body': 'detail', 'files': ['drivers/usb/core.c'],
+        'score': 9, 'matched_profiles': ['p'], 'product_evidence': [],
+        'scoring': {'profiles': {'p': 9}, 'trace': {'profiles': {}}}
+    }]
+    (cache_dir / CACHE_FILES['relevant']).write_text(json.dumps(relevant), encoding='utf-8')
+    (cache_dir / CACHE_FILES['filtered']).write_text('[]', encoding='utf-8')
+    (cache_dir / CACHE_FILES['postfilter_dropped']).write_text('[]', encoding='utf-8')
+    cfg = {
+        'profiles': {'active': {'performance': 100}},
+        'paths': {
+            'profiles_dirs': [os.path.abspath('configs/profiles')],
+            'rules_dirs': [os.path.abspath('configs/rules')],
+        },
+        'reports': {'outputs': ['html'], 'html_detail_mode': 'sidecar'},
+    }
+    run(cfg, str(cache_dir), str(outdir))
+    idx = json.load(open(outdir / 'relevant_commits.table.json', encoding='utf-8'))
+    row = idx[0]
+    assert row['commit'] == 'c'*40
+    assert row['subject'] == 'usb fix'

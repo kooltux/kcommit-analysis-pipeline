@@ -60,6 +60,18 @@ def _profile_chips(profiles):
         f'<span class="profile-chip">{p}</span>' for p in (profiles or []))
 
 
+def _profile_scores_text(commit):
+    profiles = (((commit or {}).get('scoring') or {}).get('profiles') or {})
+    parts = []
+    for pname in sorted(profiles):
+        try:
+            score = float(profiles.get(pname, 0) or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        parts.append(f'{pname}:{score:g}')
+    return '; '.join(parts)
+
+
 def _th(label):
     return (f'<th><span class="col-label">{label}</span>'
             f'<i class="sort-icon">⇅</i></th>')
@@ -102,6 +114,7 @@ def _commit_row_html(i, c, with_reason=False):
         date = str(_ts)[:16]
     score  = c.get('score', 0) or 0
     profs  = c.get('matched_profiles') or []
+    prof_scores = _profile_scores_text(c)
     evid   = '; '.join(c.get('product_evidence') or [])
 
     sha_link = (
@@ -115,8 +128,9 @@ def _commit_row_html(i, c, with_reason=False):
         f'<td>{subj}</td>',
         f'<td>{author}</td>',
         f'<td class="num">{date}</td>',
-        f'<td class="num">{_score_pill(score)}</td>',
+        f'<td class="num" data-sort="{float(score or 0):.6f}">{_score_pill(score)}</td>',
         f'<td>{_profile_chips(profs)}</td>',
+        f'<td><small>{prof_scores}</small></td>',
         f'<td><small>{evid}</small></td>',
     ]
     if with_reason:

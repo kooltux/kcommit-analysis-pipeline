@@ -96,8 +96,8 @@ python3 kcommit_pipeline.py dropped  --config cfg.json --reason prefilter
 ```
 
 
-- v10.1.0: HTML commit details now expose a rule-by-rule scoring trace, including matched patterns/paths/SHA values, per-rule score, per-profile score, and final combined score.
+- v10.2.0: HTML commit details now expose a rule-by-rule scoring trace, including matched patterns/paths/SHA values, per-rule score, per-profile score, and final combined score.
 
-- v10.1.0: Non-HTML outputs now expose rule-analysis details too: JSON includes rule_trace.json, summary XLSX/ODS include a Rule Trace sheet, and JSON includes rule_trace.json.
+- v10.2.0: Non-HTML outputs now expose rule-analysis details too: JSON includes rule_trace.json and summary XLSX/ODS include a Rule Trace sheet.
 
-- v10.1.0: HTML reports now support sidecar table datasets (`relevant_commits.table.json`, `filtered_commits.table.json`), sharded per-commit detail JSON under `output/commits/aa/bb/<sha>.json`, optional compressed embedded commit maps, and canonical git-log-style field ordering for commit detail payloads.
+- v10.2.0: HTML reports now support sidecar table datasets (`relevant_commits.table.json`, `filtered_commits.table.json`), sharded per-commit detail JSON under `output/commits/aa/bb/<sha>.json`, optional compressed embedded commit maps, and canonical git-log-style field ordering for commit detail payloads.

@@ -1,16 +1,15 @@
 ## Unreleased
 
-## v10.1.2 — 2026-05-09
+## v10.2.1 — 2026-05-09
 
-### Example profile cleanup
-- Removed the temporary usb/boot/power example profiles so the shipped profiles directory matches the restored performance/security example config.
+### Reporting and test-harness alignment
+- Added a Profile Scores column to tabular report outputs and spreadsheet exports.
+- Improved HTML sidecar detail loading by accepting realistic sidecar table payloads and normalized detail lookups.
+- Added realistic end-to-end command and miniature-input regression tests under `tests/`.
+- Updated README, `docs/*`, and the example config comments to align with current config keys, shipped profiles, and test assets.
+- Full unit test suite passes: **422 tests, 0 failures**.
 
-## v10.1.1 — 2026-05-09
 
-### Example config alignment
-- Restored the example config's performance/security profile names to match the repository's existing shipped profile set.
-
-## v10.1.0 — 2026-05-09
 
 ### Report scaling and ordering
 - Added sidecar HTML table datasets and sharded per-commit detail JSON for scalable report loading.
@@ -751,3 +750,5 @@ profile weight multipliers.
 
 Global extras scoring (security_score, performance_score, stable_score,
 product_score). HTML report with basic CSS. Example ARM config.
+
+- Add miniature test-only pipeline assets under `tests/` (`tests/mini-sample/mini-kernel`, `tests/mini-sample/profiles`, `tests/mini-sample/rules`, and `tests/mini-sample/configs/test-mini.json`) plus `tests/test_full_pipeline_with_mini_inputs.py` for a fuller end-to-end regression.

@@ -7,7 +7,7 @@ A **profile** defines a relevance axis for commits. Each profile has a
 matches contribute to the final commit score.
 
 Profile files are JSON, one per profile name, placed in the directories
-listed under `profiles.profiles_dirs` (default: `<CONFIGDIR>/profiles/`).
+listed under `paths.profiles_dirs` (default: `<CONFIGDIR>/profiles/`).
 
 ### Profile file format
 
@@ -25,7 +25,7 @@ listed under `profiles.profiles_dirs` (default: `<CONFIGDIR>/profiles/`).
 
 `rules` maps rule-set names to their weight for this profile. Weight can be
 given as a plain integer or as an object with a `weight` key. Rule-set
-directories are resolved from `rules.rules_dirs`.
+directories are resolved from `paths.rules_dirs`.
 
 ### Scoring contribution
 
@@ -39,7 +39,7 @@ The final commit score is the sum of all active profile scores.
 ## Rules
 
 A **rule** is a named directory containing pattern files. Rules live under
-`rules.rules_dirs` (default: `<CONFIGDIR>/rules/`). The directory name is
+`paths.rules_dirs` (default: `<CONFIGDIR>/rules/`). The directory name is
 the rule key referenced in profile files.
 
 ### Rule directory structure

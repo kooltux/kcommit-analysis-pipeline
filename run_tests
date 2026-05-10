@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# we must be in top dir...
+cd $(dirname $0) 
+
+# to run pytest correctly . path matters :)
+python3 -m pytest 

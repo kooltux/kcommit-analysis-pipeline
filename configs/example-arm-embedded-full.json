@@ -24,6 +24,15 @@
 
   "paths": {
     "work_dir": "${WORKSPACE}/work"
+    // Optional: override cache/output locations individually.
+    // "cache_dir":  "${WORKSPACE}/work/cache",
+    // "output_dir": "${WORKSPACE}/work/output",
+    // Optional: override profile/rule search paths.
+    // Profiles and rules are searched in order; names must be unique across all listed directories.
+    // "profiles_dirs": ["${CONFIGDIR}/profiles", "/shared/team/profiles"],
+    // "rules_dirs":    ["${CONFIGDIR}/rules", "/shared/team/rules"],
+    // Optional: override HTML template directory.
+    // "templates_dir": "${CONFIGDIR}/html"
   },
 
   // ── Kernel source and build inputs ────────────────────────────────────────
@@ -63,28 +72,15 @@
       "performance":        70,
       "security_fixes":    100,
       "security_features":  90
-    }
-    // Optional: override the profiles search path.
-    // Single directory (default):
-    //   "profiles_dirs": ["${CONFIGDIR}/profiles"]
-    // Multiple directories — profiles are searched in order;
-    // a profile name must be unique across all listed directories (error if duplicated):
-    //   "profiles_dirs": ["${CONFIGDIR}/profiles", "/shared/team/profiles"]
-    // Default when neither key is present: ${CONFIGDIR}/profiles
-  },
+    }  },
 
   // ── Rules ─────────────────────────────────────────────────────────────────
-  // Optional: override the rules search path.
+  // Rule directories are configured via paths.rules_dirs.
   // Each sub-directory of a rules directory is one rule set; every rule set
   // may contain: keywords_whitelist.txt, keywords_blacklist.txt,
   //              path_whitelist.txt, path_blacklist.txt,
   //              commit_whitelist.txt, commit_blacklist.txt
-  //
-  // Single directory (default):
-  //   "rules": { "rules_dir": "${CONFIGDIR}/rules" }
-  // Multiple directories — rule names must be unique across all listed directories:
-  //   "rules": { "rules_dirs": ["${CONFIGDIR}/rules", "/shared/team/rules"] }
-  // Default when neither key is present: ${CONFIGDIR}/rules
+  // Default search path when paths.rules_dirs is omitted: ${CONFIGDIR}/rules
 
   // Commits that cannot possibly receive a non-zero score are dropped before
   "filter": {
@@ -170,10 +166,11 @@
     // Accepted: integer > 0. Default: 5000
     "top_n":   500
 
-    // templates_dir: override the HTML template directory.
-    // Accepted: absolute path, or path relative to this config file.
-    // Default: <pipeline_root>/configs/html/
-    // Useful when maintaining custom report templates outside the pipeline repo.
-    // "templates_dir": "${CONFIGDIR}/html"
+    // css_override: optional extra stylesheet appended to the HTML report.
+    // Useful for light branding or local presentation tweaks.
+    // "css_override": "${CONFIGDIR}/html/local-overrides.css",
+
+    // templates_dir is configured via paths.templates_dir when you need to
+    // override the built-in HTML template directory.
   }
 }
