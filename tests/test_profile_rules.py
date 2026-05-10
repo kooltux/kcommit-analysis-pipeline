@@ -207,3 +207,39 @@ def test_compile_rules_accepts_singular_paths_profiles_dir_alias(tmp_path):
     out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
     assert 'myprof' in out
     assert 'r1' in out['myprof']['rules']
+
+
+
+def test_compile_rules_builtin_profile_uses_builtin_rule_dirs(tmp_path):
+    cfg = {
+        'profiles': {'active': {'performance': 100}},
+        'paths': {
+            'profiles_dirs': [str(tmp_path / 'profiles')],
+            'rules_dirs': [str(tmp_path / 'rules')],
+        },
+        '_meta': {'config_dir': str(tmp_path)},
+    }
+    (tmp_path / 'profiles').mkdir()
+    (tmp_path / 'rules').mkdir()
+    out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
+    assert 'performance' in out
+    assert 'generic' in out['performance']['rules']
+
+
+def test_compile_rules_external_profile_can_use_builtin_rule_fallback(tmp_path):
+    profiles = tmp_path / 'profiles'
+    rules = tmp_path / 'rules'
+    profiles.mkdir(); rules.mkdir()
+    _write_profile(profiles, 'performance', {'generic': 10, 'performance_general': 70})
+    cfg = {
+        'profiles': {'active': {'performance': 100}},
+        'paths': {
+            'profiles_dirs': [str(profiles)],
+            'rules_dirs': [str(rules)],
+        },
+        '_meta': {'config_dir': str(tmp_path)},
+    }
+    out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
+    assert 'performance' in out
+    assert 'generic' in out['performance']['rules']
+    assert 'performance_general' in out['performance']['rules']

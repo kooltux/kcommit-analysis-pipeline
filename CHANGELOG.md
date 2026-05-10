@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.2.2 - 2026-05-10
+
+### Fixed
+- Always include shipped built-in rule directories as fallback during stage-0 rule compilation, so external profile overrides can still reference built-in rule folders such as `artemis_generic`.
+
+### Tests
+- Added regression tests covering built-in profile fallback and external profile overrides that continue to use shipped built-in rule folders.
+
 ## v11.2.1 - 2026-05-10
 
 ### Fixed

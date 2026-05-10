@@ -48,7 +48,8 @@ A **rule** is a named directory containing pattern files. Rules live under
 mapping, and is normalized to the same internal list form. The directory name is the rule key referenced in
 profile files. If a rule directory is not found in the configured external
 paths, the pipeline also falls back to the built-in shipped rule directories
-under the tool's own `configs/rules/`.
+under the tool's own `configs/rules/`. This also covers externally overridden
+profiles that still reference shipped built-in rule folders.
 
 ### Rule directory structure
 

@@ -174,6 +174,11 @@ def compile_rules_for_config(cfg, cache_dir):
             raise RuntimeError(
                 f'profile {name!r} not found in any profiles directory ({searched})')
 
+        rule_search_dirs = list(rules_dirs)
+        for d in builtin_rules_dirs:
+            if d not in rule_search_dirs:
+                rule_search_dirs.append(d)
+
         pdata = _load_json_config(prof_path)
         if not pdata:
             raise RuntimeError(f'profile {name!r} not found or empty at {prof_path}')
@@ -217,7 +222,7 @@ def compile_rules_for_config(cfg, cache_dir):
             if rname not in rule_bodies:
                 rdir = _find_preferred(rname, rules_dirs, builtin_rules_dirs)
                 if rdir is None:
-                    searched = ', '.join(rules_dirs)
+                    searched = ', '.join(rule_search_dirs)
                     raise RuntimeError(
                         f'rule folder {rname!r} for profile {name!r} not found '
                         f'in any rules directory ({searched})')
