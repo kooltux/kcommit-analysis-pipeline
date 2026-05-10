@@ -1,3 +1,16 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## v11.1.0 - 2026-05-10
+
+### Fixed
+- Added fallback profile/rule lookup so external config trees can reuse built-in shipped profiles and rules without copying them locally.
+- Preserved precedence of external profiles/rules over built-in shipped ones, avoiding false name-collision failures during stage 0 compilation.
+
+### Tests
+- Added coverage for built-in rule fallback and override precedence, and revalidated targeted QA including the mini full-pipeline test.
+
 ## Unreleased
 
 ## v10.2.1 — 2026-05-09

@@ -92,6 +92,19 @@ def _find_unique(name, dirs, suffix=''):
     return found[0] if found else None
 
 
+def _find_preferred(name, primary_dirs, fallback_dirs, suffix=''):
+    """Find *name* with preference order: primary dirs first, fallback dirs second.
+
+    Uniqueness is enforced within each tier, but a primary hit cleanly overrides a
+    fallback hit with the same name. This is used for D.1 fallback behavior so
+    external config trees can override shipped built-in profiles/rules.
+    """
+    primary = _find_unique(name, primary_dirs, suffix=suffix) if primary_dirs else None
+    if primary is not None:
+        return primary
+    return _find_unique(name, fallback_dirs, suffix=suffix) if fallback_dirs else None
+
+
 def _merged_patterns(pdata):
     """Return the merged pattern dict from a profile data entry (safe, never None)."""
     if not isinstance(pdata, dict):
@@ -127,10 +140,17 @@ def compile_rules_for_config(cfg, cache_dir):
     profiles_dirs = _resolve_dirs(cfg, 'profiles_dirs', 'profiles')
     rules_dirs    = _resolve_dirs(cfg, 'rules_dirs',    'rules')
 
-    for d in profiles_dirs:
+    # D.1: search the tool's built-in shipped configs as fallback roots after
+    # any external config directories. External entries take precedence; built-in
+    # entries are only used when no external match exists.
+    _tool_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    builtin_profiles_dirs = [os.path.join(_tool_root, 'configs', 'profiles')]
+    builtin_rules_dirs    = [os.path.join(_tool_root, 'configs', 'rules')]
+
+    for d in profiles_dirs + builtin_profiles_dirs:
         if not os.path.isdir(d):
             raise RuntimeError(f'profiles directory not found: {d}')
-    for d in rules_dirs:
+    for d in rules_dirs + builtin_rules_dirs:
         if not os.path.isdir(d):
             raise RuntimeError(f'rules directory not found: {d}')
 
@@ -140,7 +160,7 @@ def compile_rules_for_config(cfg, cache_dir):
     profiles_mem  = {}
 
     for name in active:
-        prof_path = _find_unique(name, profiles_dirs, suffix='.json')
+        prof_path = _find_preferred(name, profiles_dirs, builtin_profiles_dirs, suffix='.json')
         if prof_path is None:
             searched = ', '.join(profiles_dirs)
             raise RuntimeError(
@@ -187,7 +207,7 @@ def compile_rules_for_config(cfg, cache_dir):
 
             # ── load pattern files only once per rule name ──────────────────
             if rname not in rule_bodies:
-                rdir = _find_unique(rname, rules_dirs)
+                rdir = _find_preferred(rname, rules_dirs, builtin_rules_dirs)
                 if rdir is None:
                     searched = ', '.join(rules_dirs)
                     raise RuntimeError(

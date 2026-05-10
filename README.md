@@ -116,7 +116,10 @@ Key sections:
 
 Profiles and rules live in directories referenced by `paths.profiles_dirs`
 and `paths.rules_dirs` (defaulting to `<CONFIGDIR>/profiles/` and
-`<CONFIGDIR>/rules/`). See `docs/PROFILES_AND_RULES.md` for the full format.
+`<CONFIGDIR>/rules/`). When a requested profile or rule is not found in the
+external config tree, the pipeline automatically falls back to the built-in
+shipped `configs/profiles/` and `configs/rules/` directories. See
+`docs/PROFILES_AND_RULES.md` for the full format.
 
 ## Outputs
 

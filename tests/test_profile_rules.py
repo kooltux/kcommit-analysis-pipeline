@@ -141,3 +141,30 @@ def test_load_profile_rules_uses_compiled_cache(tmp_path):
 
     result2 = load_profile_rules(cfg)
     assert 'security_fixes' in result2
+
+
+def test_compile_rules_falls_back_to_builtin_rule_dirs(tmp_path):
+    """D.1: external configs may reference shipped shared rules without copying
+    them into the external rules tree."""
+    pd = tmp_path / 'profiles'; pd.mkdir()
+    rd = tmp_path / 'rules';    rd.mkdir()
+    (tmp_path / 'cache').mkdir()
+    _write_profile(pd, 'performance', ['generic'])
+    cfg = _cfg(tmp_path, {'performance': 100}, pd, rd)
+    result = compile_rules_for_config(cfg, str(tmp_path))
+    assert 'performance' in result
+    assert 'generic' in result['performance']['rules']
+
+
+def test_compile_rules_prefers_external_rule_dir_before_builtin(tmp_path):
+    """D.1: if a custom rules tree defines the same rule name, it wins."""
+    pd = tmp_path / 'profiles'; pd.mkdir()
+    rd = tmp_path / 'rules';    rd.mkdir()
+    (tmp_path / 'cache').mkdir()
+    _write_rule(rd, 'generic', ['artemis-only-keyword'])
+    _write_profile(pd, 'performance', ['generic'])
+    cfg = _cfg(tmp_path, {'performance': 100}, pd, rd)
+    result = compile_rules_for_config(cfg, str(tmp_path))
+    kw = result['performance']['merged'].get('keywords_whitelist', [])
+    kw_strs = [p if isinstance(p, str) else p.pattern for p in kw]
+    assert any('artemis-only-keyword' in k for k in kw_strs)

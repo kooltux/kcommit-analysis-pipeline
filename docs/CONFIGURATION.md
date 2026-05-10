@@ -59,7 +59,7 @@ storage (e.g. a RAM disk for the cache). Only `work_dir`, `cache_dir`, and
 ```
 `active` maps profile names to weights (0–100). Weight scales that profile's
 rule contributions: 100 = full, 0 = disabled. Profiles are loaded from
-`profiles_dirs` (defaults to `<CONFIGDIR>/profiles/`).
+`profiles_dirs` (defaults to `<CONFIGDIR>/profiles/`). If a requested profile is not found there, built-in fallback profiles from the tool's own `configs/profiles/` are searched automatically.
 
 ### `rules`
 ```json
@@ -67,7 +67,7 @@ rule contributions: 100 = full, 0 = disabled. Profiles are loaded from
   "rules_dirs": ["${CONFIGDIR}/rules"]
 }
 ```
-Rule-set directories to search (defaults to `<CONFIGDIR>/rules/`).
+Rule-set directories to search (defaults to `<CONFIGDIR>/rules/`). If a requested rule folder is not found there, built-in fallback rules from the tool's own `configs/rules/` are searched automatically.
 
 ### `filter`
 Controls pre-score filtering (stage 04) and post-score filtering (stage 06).
