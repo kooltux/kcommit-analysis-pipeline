@@ -49,7 +49,9 @@ mapping, and is normalized to the same internal list form. The directory name is
 profile files. If a rule directory is not found in the configured external
 paths, the pipeline also falls back to the built-in shipped rule directories
 under the tool's own `configs/rules/`. This also covers externally overridden
-profiles that still reference shipped built-in rule folders.
+profiles that still reference shipped built-in rule folders. Legacy external
+rule names such as `artemis_generic` also fall back to shipped built-in
+equivalents when present.
 
 ### Rule directory structure
 

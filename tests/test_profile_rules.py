@@ -243,3 +243,43 @@ def test_compile_rules_external_profile_can_use_builtin_rule_fallback(tmp_path):
     assert 'performance' in out
     assert 'generic' in out['performance']['rules']
     assert 'performance_general' in out['performance']['rules']
+
+
+
+def test_compile_rules_builtin_rule_alias_artemis_generic_falls_back_to_generic(tmp_path):
+    profiles = tmp_path / 'profiles'
+    rules = tmp_path / 'rules'
+    profiles.mkdir(); rules.mkdir()
+    _write_profile(profiles, 'performance', {'artemis_generic': 10})
+    cfg = {
+        'profiles': {'active': {'performance': 100}},
+        'paths': {
+            'profiles_dirs': [str(profiles)],
+            'rules_dirs': [str(rules)],
+        },
+        '_meta': {'config_dir': str(tmp_path)},
+    }
+    out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
+    assert 'performance' in out
+    assert 'artemis_generic' in out['performance']['rules']
+    assert out['performance']['rules']['artemis_generic']['weight'] == 10
+
+
+def test_compile_rules_prefers_external_artemis_rule_over_builtin_alias(tmp_path):
+    profiles = tmp_path / 'profiles'
+    rules = tmp_path / 'rules'
+    profiles.mkdir(); rules.mkdir()
+    _write_profile(profiles, 'performance', {'artemis_generic': 10})
+    _write_rule(rules, 'artemis_generic', ['external-artemis-keyword'])
+    cfg = {
+        'profiles': {'active': {'performance': 100}},
+        'paths': {
+            'profiles_dirs': [str(profiles)],
+            'rules_dirs': [str(rules)],
+        },
+        '_meta': {'config_dir': str(tmp_path)},
+    }
+    out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
+    assert 'artemis_generic' in out['performance']['rules']
+    pats = out['performance']['rules']['artemis_generic'].get('keywords_whitelist', [])
+    assert any('external-artemis-keyword' in p for p in pats)

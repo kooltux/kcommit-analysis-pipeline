@@ -1,0 +1,7 @@
+{
+  "name": "mini_network",
+  "description": "Mini network profile loaded from the extra profiles directory.",
+  "rules": {
+    "mini_net_rule": 100
+  }
+}

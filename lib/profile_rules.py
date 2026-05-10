@@ -112,6 +112,16 @@ def _find_preferred(name, primary_dirs, fallback_dirs, suffix=''):
         return primary
     return _find_unique(name, fallback_dirs, suffix=suffix) if fallback_dirs else None
 
+def _rule_name_candidates(name):
+    """Return preferred fallback candidate names for legacy external rule names."""
+    candidates = [name]
+    if name.startswith('artemis_'):
+        stripped = name[len('artemis_'):]
+        if stripped and stripped not in candidates:
+            candidates.append(stripped)
+    return candidates
+
+
 
 def _merged_patterns(pdata):
     """Return the merged pattern dict from a profile data entry (safe, never None)."""
@@ -220,7 +230,13 @@ def compile_rules_for_config(cfg, cache_dir):
 
             # ── load pattern files only once per rule name ──────────────────
             if rname not in rule_bodies:
-                rdir = _find_preferred(rname, rules_dirs, builtin_rules_dirs)
+                rdir = None
+                resolved_rname = rname
+                for candidate_name in _rule_name_candidates(rname):
+                    rdir = _find_preferred(candidate_name, rules_dirs, builtin_rules_dirs)
+                    if rdir is not None:
+                        resolved_rname = candidate_name
+                        break
                 if rdir is None:
                     searched = ', '.join(rule_search_dirs)
                     raise RuntimeError(

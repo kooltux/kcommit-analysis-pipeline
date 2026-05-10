@@ -57,8 +57,14 @@ def _cfg_from_fixture(tmp_path):
     cfg['paths']['output_dir'] = str(root / 'output')
     cfg['kernel']['source_dir'] = os.path.abspath('tests/mini-sample/mini-kernel')
     cfg['kernel']['kernel_config'] = os.path.abspath('tests/mini-sample/mini-kernel/.config')
-    cfg['paths']['profiles_dirs'] = [os.path.abspath('tests/mini-sample/profiles')]
-    cfg['paths']['rules_dirs'] = [os.path.abspath('tests/mini-sample/rules')]
+    cfg['paths']['profiles_dirs'] = [
+        os.path.abspath('tests/mini-sample/profiles'),
+        os.path.abspath('tests/mini-sample/profiles-extra'),
+    ]
+    cfg['paths']['rules_dirs'] = [
+        os.path.abspath('tests/mini-sample/rules'),
+        os.path.abspath('tests/mini-sample/rules-extra'),
+    ]
     cfg['paths']['templates_dir'] = None
     cfg['reports'].pop('html_detail_mode', None)
     return cfg

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.2.3 - 2026-05-10
+
+### Fixed
+- Added compatibility fallback for legacy external rule names such as `artemis_generic`, mapping them to shipped built-in equivalents during stage-0 rule compilation when no exact rule folder exists.
+- Preserved precedence of exact external rule folders over built-in alias fallback.
+
+### Tests
+- Added regression coverage for `artemis_generic` fallback and for external exact-match precedence over the built-in alias fallback.
+
 ## v11.2.2 - 2026-05-10
 
 ### Fixed
