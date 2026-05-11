@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.2.8 - 2026-05-11
+
+### Added
+- HTML reports now show a waiter-style loading animation while table filters are being processed.
+- The filter UI sets `aria-busy` on the table wrapper during filter work and uses a visible overlay spinner with status text.
+- Filter execution is scheduled through `requestAnimationFrame` plus a zero-delay timeout so the browser can paint the loading state before heavy filtering starts.
+
+### Tests
+- Added regression coverage for the filter busy overlay in generated HTML, the busy-state scheduling logic in JS, and the spinner overlay styles in CSS.
+
 ## v11.2.7 - 2026-05-11
 
 ### Added

@@ -155,6 +155,18 @@
     var card = tbl.closest('.kc-card');
     var globalEl = card && card.querySelector('.kc-global-filter');
     var liveCountEl = card && card.querySelector('.kc-live-count');
+    var tableWrap = tbl.closest('.kc-table-wrap');
+    var busyEl = tableWrap && tableWrap.querySelector('.kc-table-busy');
+    var filterJob = 0;
+
+    function setBusy(isBusy) {
+      if (!tableWrap) return;
+      tableWrap.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+      if (busyEl) {
+        busyEl.classList.toggle('visible', !!isBusy);
+        busyEl.setAttribute('aria-hidden', isBusy ? 'false' : 'true');
+      }
+    }
 
     function updateLiveCount(visible) {
       if (!liveCountEl) return;
@@ -192,10 +204,25 @@
       updateLiveCount(visible);
     }
 
+    function scheduleApply() {
+      var ticket = ++filterJob;
+      setBusy(true);
+      requestAnimationFrame(function() {
+        setTimeout(function() {
+          if (ticket !== filterJob) return;
+          try {
+            apply();
+          } finally {
+            if (ticket === filterJob) setBusy(false);
+          }
+        }, 0);
+      });
+    }
+
     controls.forEach(function(c) {
-      c.addEventListener(c.tagName === 'SELECT' ? 'change' : 'input', apply);
+      c.addEventListener(c.tagName === 'SELECT' ? 'change' : 'input', scheduleApply);
     });
-    if (globalEl) globalEl.addEventListener('input', apply);
+    if (globalEl) globalEl.addEventListener('input', scheduleApply);
 
     var clearBtn = card && card.querySelector('.kc-clear-filters');
     if (clearBtn) clearBtn.addEventListener('click', function() {
@@ -205,7 +232,7 @@
         } else { c.value = ''; }
       });
       if (globalEl) globalEl.value = '';
-      apply();
+      scheduleApply();
     });
 
     apply();

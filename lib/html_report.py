@@ -248,7 +248,8 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         '<button type="button" class="kc-clear-filters">Clear all</button>'
         '<button type="button" class="kc-export-filtered-csv">↓ Export filtered CSV</button>'
         '</div>'
-        '<div class="kc-table-wrap">'
+        '<div class="kc-table-wrap" aria-busy="false">'
+        + '<div class="kc-table-busy" aria-hidden="true"><div class="spinner"></div><div class="label">Filtering commits…</div></div>'
         + _table(commit_headers, c_rows, table_id='tbl-commits')
         + '</div>'
     )

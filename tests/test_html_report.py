@@ -209,3 +209,39 @@ def test_summary_css_has_theme_override_blocks():
     assert '[data-theme="dark"]' in css
     assert '[data-theme="light"]' in css
     assert 'kc-theme-btn' in css
+
+
+def test_html_report_includes_filter_busy_overlay(tmp_path):
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'a'*40, 'subject': 'usb fix', 'author_name': 'Alice',
+        'author_time': 1710000000, 'score': 42,
+        'matched_profiles': ['mini_security'], 'product_evidence': []
+    }]
+    generate_html_report(commits, {}, {}, str(out))
+    txt = out.read_text(encoding='utf-8')
+    assert 'kc-table-busy' in txt
+    assert 'Filtering commits…' in txt
+    assert 'aria-busy="false"' in txt
+
+
+def test_summary_js_has_filter_busy_scheduler():
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    assert 'function setBusy(isBusy)' in js
+    assert 'requestAnimationFrame(function()' in js
+    assert 'setTimeout(function()' in js
+    assert "tableWrap.setAttribute('aria-busy'" in js
+    assert "busyEl.classList.toggle('visible'" in js
+
+
+def test_summary_css_has_filter_busy_overlay_styles():
+    css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                            'configs', 'html', 'summary.css')
+    with open(css_path, encoding='utf-8') as f:
+        css = f.read()
+    assert '.kc-table-busy' in css
+    assert '@keyframes kc-spin' in css
+    assert '.kc-table-busy.visible' in css

@@ -247,3 +247,39 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI'
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/* ── Filter processing overlay ── */
+.kc-table-wrap { position: relative; }
+.kc-table-busy {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: .55rem;
+  background: color-mix(in srgb, var(--bg2) 78%, transparent);
+  backdrop-filter: blur(2px);
+  z-index: 30;
+}
+.kc-table-busy.visible { display: flex; }
+.kc-table-busy .spinner {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: kc-spin .8s linear infinite;
+}
+.kc-table-busy .label {
+  font-size: .76rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+@keyframes kc-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kc-table-busy .spinner { animation-duration: 1.6s; }
+}
