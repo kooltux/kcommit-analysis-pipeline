@@ -148,3 +148,29 @@ def test_summary_js_has_firefox_safe_download_and_zlib_fallback():
     assert "type:'text/csv;charset=utf-8'" in js
     assert 'window.__KC_COMMITS_FALLBACK__' in js
     assert 'decodeEmbeddedCommitStore()' in js
+
+
+def test_html_report_embeds_fallback_commit_map_when_compressed(tmp_path):
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'abc123456789deadbeef', 'subject': 'subj', 'body': 'body',
+        'author_name': 'A', 'author_time': 1700000000,
+        'score': 10, 'matched_profiles': ['p'], 'product_evidence': []
+    }]
+    generate_html_report(commits, {}, {}, str(out), embed_compression='zlib')
+    txt = out.read_text(encoding='utf-8')
+    assert 'window.__KC_COMMITS_COMPRESSED__' in txt
+    assert 'window.__KC_COMMITS_FALLBACK__' in txt
+    assert 'abc123456789' in txt
+
+
+def test_summary_js_has_detail_pane_fallbacks_for_firefox():
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    assert "openPanel(a.getAttribute('data-sha')" in js
+    assert 'stopImmediatePropagation' in js
+    assert 'return false;' in js
+    assert '.catch(function(err)' in js
+    assert 'Unable to load commit details:' in js

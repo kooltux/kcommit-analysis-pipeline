@@ -268,15 +268,23 @@
   var closeBtn  = document.getElementById('kc-detail-close');
 
   function openPanel(sha) {
-    if (!overlay || !panel) return;
+    if (!overlay || !panel || !sha) return false;
     overlay.classList.add('open');
     panel.classList.add('open');
     if (panelH3) panelH3.textContent = sha;
     if (panelBody) panelBody.innerHTML = '<p style="color:var(--text-muted);font-size:.75rem">Loading…</p>';
     loadCommitStore().then(function(map) {
       map = (map && typeof map === 'object') ? map : {};
-      renderCommit(map[sha] || null, sha);
+      renderCommit(map[sha] || map[String(sha)] || null, sha);
+    }).catch(function(err) {
+      var msg = (err && err.message) ? err.message : String(err || 'unknown error');
+      if (panelBody) {
+        panelBody.innerHTML = field('SHA', esc(sha), 'mono')
+          + '<p style="color:var(--text-muted);margin-top:.75rem;font-size:.75rem">'
+          + 'Unable to load commit details: ' + esc(msg) + '</p>';
+      }
     });
+    return true;
   }
 
   function closePanel() {
@@ -354,9 +362,26 @@
 
   /* D.5 fix-2: event delegation — works after filter/sort reorders rows */
   document.addEventListener('click', function(e) {
-    var a = e.target.closest && e.target.closest('a.sha-link');
-    if (a) { e.preventDefault(); openPanel(a.dataset.sha); }
-  });
+    var target = e.target;
+    var a = null;
+    if (target && target.closest) {
+      a = target.closest('a.sha-link');
+    } else {
+      while (target && target !== document) {
+        if (target.tagName && target.tagName.toLowerCase() === 'a' && /(^|\s)sha-link(\s|$)/.test(target.className || '')) {
+          a = target;
+          break;
+        }
+        target = target.parentNode;
+      }
+    }
+    if (!a) return;
+    if (e.preventDefault) e.preventDefault();
+    if (e.stopPropagation) e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    openPanel(a.getAttribute('data-sha') || a.dataset && a.dataset.sha || a.getAttribute('data-full-sha') || '');
+    return false;
+  }, true);
 
   /* ── Bootstrap ────────────────────────────────────────────────────────── */
   document.querySelectorAll('table.kc-table').forEach(function(tbl) {

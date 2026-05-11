@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.2.6 - 2026-05-11
+
+### Fixed
+- Fixed HTML commit detail side pane opening and rendering across Chrome and Firefox by hardening delegated click handling and adding a fallback embedded commit-detail map for compressed reports.
+- Added explicit error rendering in the side pane when commit-detail loading fails instead of leaving the pane blank.
+
+### Tests
+- Added regression coverage for compressed-report commit-detail fallback data and for cross-browser detail-pane event/error handling.
+
 ## v11.2.5 - 2026-05-11
 
 ### Fixed

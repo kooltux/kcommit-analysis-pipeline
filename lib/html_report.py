@@ -278,6 +278,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
             compressed = base64.b64encode(zlib.compress(commits_json.encode('utf-8'), 9)).decode('ascii')
             boot.append('window.__KC_COMMITS_COMPRESSED__=' + json.dumps(compressed) + ';')
             boot.append('window.__KC_COMMITS_COMPRESSION__=' + json.dumps('zlib') + ';')
+            boot.append('window.__KC_COMMITS_FALLBACK__=' + commits_json + ';')
         else:
             boot.append('window.__KC_COMMITS__=' + commits_json + ';')
     inline_data = '<script>' + ''.join(boot) + '</script>'
