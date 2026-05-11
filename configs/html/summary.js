@@ -105,7 +105,7 @@
   function distinctVals(rows, ci) {
     var seen = Object.create(null), vals = [];
     rows.forEach(function(r) {
-      var text = r.cells[ci] ? r.cells[ci].textContent.trim() : '';
+      var text = r.cells[ci] ? String(r.cells[ci]).trim() : '';
       text.split(/[;,]\s*/).forEach(function(p) {
         p = p.trim();
         if (p && !seen[p]) { seen[p] = true; vals.push(p); }
@@ -144,9 +144,18 @@
     var filterRow = tbl.querySelector('tr.kc-filters');
     if (!filterRow) return;
 
+    var rowData = rows.map(function(row) {
+      return {
+        row: row,
+        cells: Array.from(row.cells).map(function(cell) {
+          return (cell.textContent || '').trim();
+        })
+      };
+    });
+
     var controls = [];
     Array.from(filterRow.querySelectorAll('th')).forEach(function(th, ci) {
-      var vals = distinctVals(rows, ci);
+      var vals = distinctVals(rowData, ci);
       var ctrl;
       if (vals.length > 0 && vals.length <= MULTISELECT_MAX) {
         ctrl = buildSelect(vals);
@@ -192,20 +201,21 @@
         return c.value.trim().toLowerCase() || null;
       });
       var global = globalEl ? globalEl.value.trim().toLowerCase() : '';
+      var globalNeedles = global ? global.split(/\s+/).filter(Boolean) : null;
       var visible = 0;
-      rows.forEach(function(row) {
-        var cells = Array.from(row.cells);
+      rowData.forEach(function(entry) {
         var colOk = colFilters.every(function(f, ci) {
           if (!f) return true;
-          var text = cells[ci] ? cells[ci].textContent.trim().toLowerCase() : '';
+          var text = (entry.cells[ci] || '').toLowerCase();
           if (Array.isArray(f)) return f.some(function(v){ return text.includes(v); });
           return f.split(/\s+/).every(function(tok){ return matchesToken(text, tok); });
         });
-        var glOk = !global || cells.some(function(c){
-          return c.textContent.toLowerCase().includes(global);
+        var glOk = !globalNeedles || globalNeedles.every(function(tok){
+          var hay = entry._haystack || (entry._haystack = entry.cells.join(' ').toLowerCase());
+          return hay.includes(tok);
         });
         var show = colOk && glOk;
-        row.classList.toggle('hidden', !show);
+        entry.row.classList.toggle('hidden', !show);
         if (show) visible++;
       });
       if (noMatch) noMatch.classList.toggle('visible', visible === 0);

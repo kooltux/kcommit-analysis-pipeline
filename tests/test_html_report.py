@@ -265,3 +265,15 @@ def test_summary_js_has_firefox_download_click_fallback():
     assert "typeof MouseEvent === 'function'" in js
     assert "else if (typeof a.click === 'function')" in js
     assert 'catch (err)' in js
+
+
+def test_summary_js_uses_precomputed_row_data_for_filters():
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    assert 'var rowData = rows.map(function(row)' in js
+    assert 'var vals = distinctVals(rowData, ci);' in js
+    assert 'rowData.forEach(function(entry)' in js
+    assert "var hay = entry._haystack || (entry._haystack = entry.cells.join(' ').toLowerCase());" in js
+    assert "entry.row.classList.toggle('hidden', !show);" in js

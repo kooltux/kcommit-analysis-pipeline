@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.3.0 - 2026-05-11
+
+### Changed
+- Switched HTML report table filtering from DOM-driven text extraction to precomputed per-row data arrays.
+- Global search now reuses a cached lowercase haystack per row instead of rebuilding it from DOM cells on every filter pass.
+
+### Performance
+- This reduces repeated `textContent` reads during filtering and prepares the report UI for later pagination or worker-based filtering if needed.
+
+### Tests
+- Added regression coverage ensuring the report JS uses precomputed row data and cached haystacks for filtering.
+
 ## v11.2.9 - 2026-05-11
 
 ### Fixed
