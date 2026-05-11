@@ -192,30 +192,104 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     )
 
     # ── Sidebar ───────────────────────────────────────────────────────────
-    def stat_card(label, value):
+    def _srow(label, value, cls=''):
+        cls_attr = f' class="{cls}"' if cls else ''
         return (
-            f'<div class="kc-stat-card">'
-            f'<div class="stat-label">{label}</div>'
-            f'<div class="stat-value">{value}</div>'
+            f'<div class="kc-stat-row{cls_attr}">'
+            f'<span class="kc-stat-label">{label}</span>'
+            f'<span class="kc-stat-value">{value}</span>'
             f'</div>'
         )
 
+    def _stage_block(icon, title, rows_html, stage_id=''):
+        id_attr = f' id="sidebar-{stage_id}"' if stage_id else ''
+        return (
+            f'<div class="kc-stage-block"{id_attr}>'
+            f'<div class="kc-stage-header"><span class="kc-stage-icon">{icon}</span>'
+            f'<span class="kc-stage-title">{title}</span></div>'
+            + rows_html
+            + '</div>'
+        )
+
+    def _fmt_n(v, fallback='—'):
+        try:
+            n = int(v)
+            return f'{n:,}'
+        except (TypeError, ValueError):
+            return fallback if v is None else str(v)
+
+    def _fmt_score(v, fallback='—'):
+        try:
+            return f'{float(v):g}'
+        except (TypeError, ValueError):
+            return fallback if v is None else str(v)
+
+    # Stage 01 – Collection
+    collected   = rs.get('st01_collected')
+    collect_cfg = cfg.get('collect', {}) if 'cfg' in dir() else {}
+    pf_kept     = rs.get('st04_prefilter_kept')
+    pf_drop     = rs.get('st04_prefilter_dropped')
+    sc_total    = rs.get('st05_total_scored')
+    threshold   = rs.get('st06_threshold', rs.get('min_score_threshold'))
+    pf2_drop    = rs.get('st06_postfilter_dropped')
+    rep_total   = rs.get('total_scored_commits', len(commits))
+    top_n_val   = rs.get('top_n')
+    score_hi    = rs.get('score_highest')
+    score_lo    = rs.get('score_lowest')
+    score_avg   = rs.get('score_avg')
+    zero_prof   = rs.get('commits_matched_zero_profiles')
+    prod_evid   = rs.get('commits_with_product_evidence')
+
+    stage_collection = _stage_block('①', 'Collection',
+        _srow('Total commits',    _fmt_n(collected) if collected is not None else _fmt_n(rep_total)),
+        stage_id='collect')
+
+    stage_prefilter = _stage_block('②', 'Pre-filter',
+        (_srow('Kept',    _fmt_n(pf_kept))    if pf_kept    is not None else '')
+      + (_srow('Dropped', _fmt_n(pf_drop), 'dim') if pf_drop   is not None else ''),
+        stage_id='prefilter')
+
+    stage_scoring = _stage_block('③', 'Scoring',
+        (_srow('Scored',    _fmt_n(sc_total))  if sc_total is not None else _srow('Scored', _fmt_n(rep_total)))
+      + (_srow('Profiles',  str(n_profs)))
+      + (_srow('Coverage',  cov_pct)),
+        stage_id='scoring')
+
+    thr_label = f'Threshold ({_fmt_score(threshold)})' if threshold else 'Threshold'
+    stage_postfilter = _stage_block('④', 'Post-filter',
+        _srow(thr_label,   _fmt_score(threshold) if threshold else 'none')
+      + (_srow('Dropped',  _fmt_n(pf2_drop), 'dim') if pf2_drop is not None else ''),
+        stage_id='postfilter')
+
+    top_n_note = f' (top {top_n_val:,})' if top_n_val else ''
+    stage_report = _stage_block('⑤', f'Report{top_n_note}',
+        _srow('Commits',       _fmt_n(rep_total))
+      + (_srow('Score highest', _fmt_score(score_hi))   if score_hi  is not None else '')
+      + (_srow('Score lowest',  _fmt_score(score_lo))   if score_lo  is not None else '')
+      + (_srow('Score avg',     _fmt_score(score_avg))  if score_avg is not None else '')
+      + (_srow('No-profile',   _fmt_n(zero_prof), 'dim')  if zero_prof is not None else '')
+      + (_srow('With evidence', _fmt_n(prod_evid))        if prod_evid is not None else ''),
+        stage_id='report')
+
     sidebar_stats = (
-        '<div class="kc-sidebar-section"><h3>Run Stats</h3>'
-        + stat_card('Commits', total)
-        + stat_card('Min score', min_s)
-        + stat_card('Profiles', n_profs)
-        + stat_card('Coverage', cov_pct)
+        '<div class="kc-sidebar-section kc-pipeline-stats"><h3>Pipeline Run</h3>'
+        + stage_collection
+        + stage_prefilter
+        + stage_scoring
+        + stage_postfilter
+        + stage_report
         + '</div>'
     )
 
     prof_items = []
     for pname, pd in sorted((profile_summary or {}).items(),
                              key=lambda x: -x[1].get('total_score', 0)):
-        cnt = pd.get('commit_count', pd.get('count', 0))
+        cnt     = pd.get('commit_count', pd.get('count', 0))
+        avg_sc  = pd.get('avg_score', 0)
         prof_items.append(
             f'<li><span class="pname">{pname}</span>'
-            f'<span class="pbadge">{cnt} commits</span></li>'
+            f'<span class="pbadge">{cnt}</span>'
+            f'<span class="pavg" title="avg score">⌀{avg_sc:.0f}</span></li>'
         )
     sidebar_profiles = (
         '<div class="kc-sidebar-section"><h3>Profiles</h3>'

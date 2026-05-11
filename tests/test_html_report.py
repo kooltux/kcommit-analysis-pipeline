@@ -198,7 +198,7 @@ def test_summary_js_has_theme_toggle_logic():
     assert 'kc-theme-toggle' in js
     assert "setAttribute('data-theme'" in js
     assert 'prefers-color-scheme' in js
-    assert "SUN" in js and "MOON" in js
+    assert 'makeSunPaths' in js or 'SUN' in js
 
 
 def test_summary_css_has_theme_override_blocks():
@@ -277,3 +277,68 @@ def test_summary_js_uses_precomputed_row_data_for_filters():
     assert 'rowData.forEach(function(entry)' in js
     assert "var hay = entry._haystack || (entry._haystack = entry.cells.join(' ').toLowerCase());" in js
     assert "entry.row.classList.toggle('hidden', !show);" in js
+
+
+def test_summary_js_theme_toggle_uses_dom_api():
+    """Theme toggle must not use innerHTML for SVG (breaks in Firefox)."""
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    theme_start = js.find('/* \u2500\u2500 Theme toggle')
+    theme_end   = js.find('/* \u2500\u2500 Bootstrap', theme_start)
+    theme_block = js[theme_start:theme_end]
+    assert 'createElementNS' in theme_block, "SVG must be built with createElementNS in Firefox-safe way"
+    assert "innerHTML" not in theme_block, "innerHTML for SVG is broken in Firefox; use createElementNS"
+    assert "SVG_NS = 'http://www.w3.org/2000/svg'" in theme_block
+    assert "e.preventDefault" in theme_block
+
+
+def test_html_report_sidebar_has_pipeline_hierarchy(tmp_path):
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'a'*40, 'subject': 'net fix', 'author_name': 'Dev',
+        'author_time': 1710000000, 'score': 55,
+        'matched_profiles': ['security'], 'product_evidence': ['CONFIG_USB'],
+        'scoring': {'profiles': {'security': 55}},
+    }]
+    rs = {
+        'st01_collected': 5000,
+        'st04_prefilter_kept': 3200,
+        'st04_prefilter_dropped': 1800,
+        'st05_total_scored': 3200,
+        'st06_threshold': 10.0,
+        'st06_postfilter_dropped': 120,
+        'total_scored_commits': 1,
+        'score_highest': 55.0,
+        'score_lowest': 55.0,
+        'score_avg': 55.0,
+        'commits_matched_zero_profiles': 0,
+        'commits_with_product_evidence': 1,
+    }
+    generate_html_report(commits, {'security': {'commit_count': 1, 'total_score': 55, 'avg_score': 55}}, rs, str(out))
+    txt = out.read_text(encoding='utf-8')
+    assert 'kc-stage-block' in txt
+    assert 'Pipeline Run' in txt
+    assert 'Collection' in txt
+    assert 'Pre-filter' in txt
+    assert 'Scoring' in txt
+    assert 'Post-filter' in txt
+    assert '5,000' in txt
+    assert '3,200' in txt
+    assert '1,800' in txt
+    assert 'Score highest' in txt
+
+
+def test_html_report_sidebar_handles_missing_stage_counts(tmp_path):
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'b'*40, 'subject': 'fix', 'author_name': 'Dev',
+        'author_time': 1710000000, 'score': 30,
+        'matched_profiles': [], 'product_evidence': [],
+    }]
+    generate_html_report(commits, {}, {}, str(out))
+    txt = out.read_text(encoding='utf-8')
+    assert 'kc-stage-block' in txt
+    assert 'Pipeline Run' in txt
+    assert 'Collection' in txt

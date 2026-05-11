@@ -258,9 +258,30 @@ def run(cfg, cache, outdir):
     filtered      = list(prefiltered) + list(postfiltered)
     profile_rules = load_profile_rules(cfg)
 
+    # Stage counts for the hierarchical sidebar (D.12)
+    _all_scored  = load_json(os.path.join(cache, CACHE_FILES['scored']), default=[]) or []
+    _collected   = load_json(os.path.join(cache, CACHE_FILES['commits']), default=[]) or []
+    _pf_kept     = load_json(os.path.join(cache, CACHE_FILES['prefilter_kept']), default=[]) or []
+    _threshold   = (lambda filt: float(filt.get('min_score', 0) or 0))(cfg.get('filter', {}) or {})
+    _scores_all  = [float(c.get('score', 0) or 0) for c in scored]
+
     report_stats = {
-        'total_scored_commits': len(scored),
-        'top_n': top_n,
+        # Stage 01 — collection
+        'st01_collected':           len(_collected),
+        # Stage 04 — prefilter
+        'st04_prefilter_kept':      len(_pf_kept),
+        'st04_prefilter_dropped':   len(_collected) - len(_pf_kept),
+        # Stage 05 — scoring
+        'st05_total_scored':        len(_all_scored),
+        # Stage 06 — postfilter
+        'st06_threshold':           _threshold,
+        'st06_postfilter_dropped':  len(postfiltered),
+        # Stage 07 — report
+        'total_scored_commits':     len(scored),
+        'top_n':                    top_n,
+        'score_highest':            max(_scores_all) if _scores_all else 0,
+        'score_lowest':             min(_scores_all) if _scores_all else 0,
+        'score_avg':                round(sum(_scores_all) / len(_scores_all), 1) if _scores_all else 0,
         **_coverage_metrics(scored),
     }
     prof_summary      = _profile_summary(scored, profile_rules)

@@ -431,22 +431,45 @@
 
   /* ── Theme toggle ──────────────────────────────────────────────────────── */
   (function(){
+    var SVG_NS = 'http://www.w3.org/2000/svg';
+
+    function makeSunPaths(svg) {
+      var c = document.createElementNS(SVG_NS, 'circle');
+      c.setAttribute('cx', '12'); c.setAttribute('cy', '12'); c.setAttribute('r', '5');
+      svg.appendChild(c);
+      ['M12 1v2','M12 21v2','M4.22 4.22l1.42 1.42','M18.36 18.36l1.42 1.42',
+       'M1 12h2','M21 12h2','M4.22 19.78l1.42-1.42','M18.36 5.64l1.42-1.42'].forEach(function(d) {
+        var path = document.createElementNS(SVG_NS, 'path'); path.setAttribute('d', d);
+        svg.appendChild(path);
+      });
+    }
+
+    function makeMoonPaths(svg) {
+      var path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z');
+      svg.appendChild(path);
+    }
+
+    function setIcon(svg, isDark) {
+      if (!svg) return;
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      if (isDark) makeSunPaths(svg); else makeMoonPaths(svg);
+    }
+
     var html  = document.documentElement;
     var btn   = document.getElementById('kc-theme-toggle');
     var icon  = document.getElementById('kc-theme-icon');
 
-    var SUN  = '<circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>';
-    var MOON = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
-
     var theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     html.setAttribute('data-theme', theme);
-    if (icon) icon.innerHTML = theme === 'dark' ? SUN : MOON;
+    setIcon(icon, theme === 'dark');
 
     if (btn) {
-      btn.addEventListener('click', function() {
+      btn.addEventListener('click', function(e) {
+        if (e && e.preventDefault) e.preventDefault();
         theme = (html.getAttribute('data-theme') === 'dark') ? 'light' : 'dark';
         html.setAttribute('data-theme', theme);
-        if (icon) icon.innerHTML = theme === 'dark' ? SUN : MOON;
+        setIcon(icon, theme === 'dark');
         btn.setAttribute('aria-label', 'Switch to ' + (theme === 'dark' ? 'light' : 'dark') + ' theme');
       });
     }

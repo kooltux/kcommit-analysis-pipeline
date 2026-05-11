@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.3.1 - 2026-05-11
+
+### Fixed
+- HTML report theme toggle button now works correctly in Firefox.
+- Replaced SVG `innerHTML` injection with `createElementNS`-based DOM construction for the sun/moon icons, which is required for correct SVG manipulation in Firefox.
+- Added `e.preventDefault()` to the theme button click handler to prevent spurious form/anchor interactions in strict-mode Firefox documents.
+
+### Tests
+- Added regression coverage verifying the theme toggle block uses `createElementNS` and not `innerHTML` for SVG icon updates.
+
 ## v11.3.0 - 2026-05-11
 
 ### Changed
