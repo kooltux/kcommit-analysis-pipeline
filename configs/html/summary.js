@@ -383,6 +383,30 @@
     return false;
   }, true);
 
+
+  /* ── Theme toggle ──────────────────────────────────────────────────────── */
+  (function(){
+    var html  = document.documentElement;
+    var btn   = document.getElementById('kc-theme-toggle');
+    var icon  = document.getElementById('kc-theme-icon');
+
+    var SUN  = '<circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>';
+    var MOON = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+
+    var theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    html.setAttribute('data-theme', theme);
+    if (icon) icon.innerHTML = theme === 'dark' ? SUN : MOON;
+
+    if (btn) {
+      btn.addEventListener('click', function() {
+        theme = (html.getAttribute('data-theme') === 'dark') ? 'light' : 'dark';
+        html.setAttribute('data-theme', theme);
+        if (icon) icon.innerHTML = theme === 'dark' ? SUN : MOON;
+        btn.setAttribute('aria-label', 'Switch to ' + (theme === 'dark' ? 'light' : 'dark') + ' theme');
+      });
+    }
+  })();
+
   /* ── Bootstrap ────────────────────────────────────────────────────────── */
   document.querySelectorAll('table.kc-table').forEach(function(tbl) {
     initTable(tbl);

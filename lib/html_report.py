@@ -187,6 +187,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         '</div>'
         '<div class="kc-header-spacer"></div>'
         '<nav class="kc-nav"><a href="#commits">Commits</a></nav>'
+        + '<button class="kc-theme-btn" id="kc-theme-toggle" aria-label="Toggle light/dark theme" title="Toggle theme"><svg viewBox="0 0 24 24" aria-hidden="true" id="kc-theme-icon"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>Theme</button>'
         '</header>'
     )
 

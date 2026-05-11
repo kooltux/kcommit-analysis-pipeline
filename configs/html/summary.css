@@ -195,3 +195,55 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI'
 .kc-analysis-empty { color: var(--text-muted); font-style: italic; }
 .kc-rule-card { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
 @media (max-width: 900px) { .kc-detail-split { grid-template-rows: auto auto; } .kc-analysis-grid, .kc-detail-grid { grid-template-columns: 1fr; } }
+
+/* ── Manual theme override (data-theme toggle) ── */
+[data-theme="dark"] {
+  --bg:#0d1117; --bg2:#161b22; --bg3:#1c2230; --border:#30363d;
+  --accent:#58a6ff; --accent-dim:#1c2d3e; --accent-dark:#79c0ff;
+  --text:#e6edf3; --text-muted:#8b949e; --text-code:#79c0ff;
+  --danger:#ff7b72; --success:#3fb950;
+  --score-hi-bg:#1a3a26; --score-hi-fg:#56d364;
+  --score-mid-bg:#2d2208; --score-mid-fg:#e3b341;
+  --score-low-bg:#2d1117; --score-low-fg:#ff7b72;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.3); --shadow-md:0 4px 16px rgba(0,0,0,.5);
+}
+[data-theme="light"] {
+  --bg:#f6f8fa; --bg2:#ffffff; --bg3:#eaeef2; --border:#d0d7de;
+  --accent:#0969da; --accent-dim:#dbeafe; --accent-dark:#0550ae;
+  --text:#1f2328; --text-muted:#57606a; --text-code:#0550ae;
+  --danger:#cf222e; --success:#1a7f37;
+  --score-hi-bg:#dafbe1; --score-hi-fg:#116329;
+  --score-mid-bg:#fff8c5; --score-mid-fg:#7d4e00;
+  --score-low-bg:#ffebe9; --score-low-fg:#82071e;
+  --shadow-sm:0 1px 3px rgba(31,35,40,.08); --shadow-md:0 4px 16px rgba(31,35,40,.12);
+}
+/* ── Theme toggle button ── */
+.kc-theme-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: .75rem;
+  line-height: 1;
+  padding: .28rem .55rem;
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+  transition: border-color .15s, color .15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.kc-theme-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.kc-theme-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

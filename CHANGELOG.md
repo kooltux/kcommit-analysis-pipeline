@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.2.7 - 2026-05-11
+
+### Added
+- HTML reports now support light and dark themes with a toggle button in the top header.
+- The theme initialises from the system `prefers-color-scheme` preference and can be switched at any time using the header button.
+- CSS `[data-theme]` overrides cover all colour tokens so the entire report — table, sidebar, detail pane, score pills — adapts consistently.
+
+### Tests
+- Added regression coverage for the theme toggle button in generated HTML, the JS toggle logic, and the CSS `[data-theme]` blocks.
+
 ## v11.2.6 - 2026-05-11
 
 ### Fixed

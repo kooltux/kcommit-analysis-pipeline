@@ -174,3 +174,38 @@ def test_summary_js_has_detail_pane_fallbacks_for_firefox():
     assert 'return false;' in js
     assert '.catch(function(err)' in js
     assert 'Unable to load commit details:' in js
+
+
+def test_html_report_includes_theme_toggle_button(tmp_path):
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'a'*40, 'subject': 'usb fix', 'author_name': 'Alice',
+        'author_time': 1710000000, 'score': 42,
+        'matched_profiles': ['mini_security'], 'product_evidence': []
+    }]
+    generate_html_report(commits, {}, {}, str(out))
+    txt = out.read_text(encoding='utf-8')
+    assert 'kc-theme-toggle' in txt
+    assert 'kc-theme-btn' in txt
+    assert 'data-theme' in txt
+
+
+def test_summary_js_has_theme_toggle_logic():
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    assert 'kc-theme-toggle' in js
+    assert "setAttribute('data-theme'" in js
+    assert 'prefers-color-scheme' in js
+    assert "SUN" in js and "MOON" in js
+
+
+def test_summary_css_has_theme_override_blocks():
+    css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                            'configs', 'html', 'summary.css')
+    with open(css_path, encoding='utf-8') as f:
+        css = f.read()
+    assert '[data-theme="dark"]' in css
+    assert '[data-theme="light"]' in css
+    assert 'kc-theme-btn' in css
