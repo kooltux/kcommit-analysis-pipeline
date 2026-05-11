@@ -258,9 +258,23 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI'
   justify-content: center;
   flex-direction: column;
   gap: .55rem;
-  background: color-mix(in srgb, var(--bg2) 78%, transparent);
+  background: rgba(246,248,250,.82);
+  background: var(--busy-overlay-bg, rgba(246,248,250,.82));
   backdrop-filter: blur(2px);
   z-index: 30;
+}
+[data-theme="dark"] .kc-table-busy {
+  background: rgba(22,27,34,.82);
+  background: var(--busy-overlay-bg, rgba(22,27,34,.82));
+}
+[data-theme="light"] .kc-table-busy {
+  background: rgba(246,248,250,.82);
+  background: var(--busy-overlay-bg, rgba(246,248,250,.82));
+}
+@supports (background: color-mix(in srgb, black 50%, transparent)) {
+  .kc-table-busy {
+    background: color-mix(in srgb, var(--bg2) 78%, transparent);
+  }
 }
 .kc-table-busy.visible { display: flex; }
 .kc-table-busy .spinner {

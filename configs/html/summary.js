@@ -53,7 +53,15 @@
     a.style.display = 'none';
     a.setAttribute('rel', 'noopener');
     document.body.appendChild(a);
-    a.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+    try {
+      if (typeof MouseEvent === 'function') {
+        a.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+      } else if (typeof a.click === 'function') {
+        a.click();
+      }
+    } catch (err) {
+      if (typeof a.click === 'function') a.click();
+    }
     setTimeout(function(){
       if (a.parentNode) a.parentNode.removeChild(a);
       URL.revokeObjectURL(url);

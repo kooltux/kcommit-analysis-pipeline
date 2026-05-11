@@ -245,3 +245,23 @@ def test_summary_css_has_filter_busy_overlay_styles():
     assert '.kc-table-busy' in css
     assert '@keyframes kc-spin' in css
     assert '.kc-table-busy.visible' in css
+
+
+def test_summary_css_has_color_mix_fallback_for_busy_overlay():
+    css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                            'configs', 'html', 'summary.css')
+    with open(css_path, encoding='utf-8') as f:
+        css = f.read()
+    assert 'background: rgba(246,248,250,.82);' in css
+    assert '@supports (background: color-mix(in srgb, black 50%, transparent))' in css
+    assert '[data-theme="dark"] .kc-table-busy' in css
+
+
+def test_summary_js_has_firefox_download_click_fallback():
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    assert "typeof MouseEvent === 'function'" in js
+    assert "else if (typeof a.click === 'function')" in js
+    assert 'catch (err)' in js

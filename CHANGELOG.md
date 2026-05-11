@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.2.9 - 2026-05-11
+
+### Fixed
+- Improved Firefox compatibility for HTML reports by replacing the filter busy overlay's direct `color-mix()` dependency with a solid RGBA fallback plus guarded `@supports` enhancement.
+- Hardened the client-side CSV download path with a fallback from synthetic `MouseEvent` dispatch to plain `a.click()` for browsers or sandbox contexts where synthetic click dispatch is unreliable.
+
+### Tests
+- Added regression coverage for the busy-overlay CSS fallback and the download click fallback logic.
+
 ## v11.2.8 - 2026-05-11
 
 ### Added
