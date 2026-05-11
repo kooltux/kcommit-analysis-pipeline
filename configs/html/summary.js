@@ -17,12 +17,14 @@
 
   function loadCommitStore() {
     if (window.__KC_COMMITS__) return Promise.resolve(window.__KC_COMMITS__);
-    if (window.__KC_COMMITS_COMPRESSED__ && window.__KC_COMMITS_COMPRESSION__ === 'zlib' && typeof DecompressionStream !== 'undefined') {
-      var ds = new DecompressionStream('deflate');
-      var blob = new Blob([b64ToBytes(window.__KC_COMMITS_COMPRESSED__)]);
-      return new Response(blob.stream().pipeThrough(ds)).text().then(function(txt){
-        window.__KC_COMMITS__ = JSON.parse(txt);
-        return window.__KC_COMMITS__;
+    if (window.__KC_COMMITS_COMPRESSED__ && window.__KC_COMMITS_COMPRESSION__ === 'zlib') {
+      return decodeEmbeddedCommitStore().then(function(map){
+        if (map && Object.keys(map).length) return map;
+        if (window.__KC_COMMITS_FALLBACK__) {
+          window.__KC_COMMITS__ = window.__KC_COMMITS_FALLBACK__;
+          return window.__KC_COMMITS__;
+        }
+        return {};
       });
     }
     if (window.__KC_COMMITS_INDEX__ && window.__KC_COMMITS_INDEX__.mode === 'sidecar') {
@@ -41,6 +43,40 @@
     }
     window.__KC_COMMITS__ = {};
     return Promise.resolve(window.__KC_COMMITS__);
+  }
+
+  function triggerDownload(blob, filename) {
+    var a = document.createElement('a');
+    var url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    a.setAttribute('rel', 'noopener');
+    document.body.appendChild(a);
+    a.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));
+    setTimeout(function(){
+      if (a.parentNode) a.parentNode.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 1000);
+  }
+
+  function inflateZlibPayload(b64) {
+    if (typeof DecompressionStream === 'undefined') return Promise.resolve(null);
+    var ds = new DecompressionStream('deflate');
+    var blob = new Blob([b64ToBytes(b64)]);
+    return new Response(blob.stream().pipeThrough(ds)).text().catch(function(){
+      return null;
+    });
+  }
+
+  function decodeEmbeddedCommitStore() {
+    if (window.__KC_COMMITS__) return Promise.resolve(window.__KC_COMMITS__);
+    if (!window.__KC_COMMITS_COMPRESSED__) return Promise.resolve({});
+    return inflateZlibPayload(window.__KC_COMMITS_COMPRESSED__).then(function(txt){
+      if (!txt) return {};
+      window.__KC_COMMITS__ = JSON.parse(txt);
+      return window.__KC_COMMITS__;
+    });
   }
 
   function fmtDate(ts) {
@@ -219,11 +255,8 @@
           return '"'+td.textContent.trim().replace(/"/g,'""')+'"';
         }).join(','));
       });
-      var blob = new Blob([lines.join('\r\n')], {type:'text/csv'});
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob); a.download = 'kcommit-export.csv';
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 10000);
+      var blob = new Blob([lines.join('\r\n')], {type:'text/csv;charset=utf-8'});
+      triggerDownload(blob, 'kcommit-export.csv');
     });
   }
 

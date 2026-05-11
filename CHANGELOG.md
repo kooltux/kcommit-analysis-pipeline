@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.2.5 - 2026-05-11
+
+### Fixed
+- Improved HTML report compatibility with Firefox by using a safer client-side CSV download trigger and a fallback path for compressed embedded commit data when zlib decompression is unavailable or fails.
+
+### Tests
+- Added HTML report regression coverage for the Firefox-safe download path and embedded zlib fallback handling.
+
 ## v11.2.4 - 2026-05-10
 
 ### Added

@@ -136,3 +136,15 @@ def test_summary_js_updates_live_count_and_exports_visible_rows():
     assert "Showing ' + visible + ' of ' + rows.length + ' commits" in js
     assert "querySelector('.kc-export-filtered-csv')" in js
     assert 'tbody tr:not(.hidden)' in js
+
+
+def test_summary_js_has_firefox_safe_download_and_zlib_fallback():
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    assert 'function triggerDownload(blob, filename)' in js
+    assert "dispatchEvent(new MouseEvent('click'" in js
+    assert "type:'text/csv;charset=utf-8'" in js
+    assert 'window.__KC_COMMITS_FALLBACK__' in js
+    assert 'decodeEmbeddedCommitStore()' in js
