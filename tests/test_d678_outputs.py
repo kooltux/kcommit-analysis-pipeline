@@ -39,10 +39,11 @@ def test_generate_html_report_supports_sidecar_and_compressed_modes(tmp_path):
     (tpl / 'summary.js').write_text('')
     (tpl / 'logo.svg').write_text('')
     out1 = tmp_path / 'sidecar.html'
-    generate_html_report([_commit()], {}, {}, str(out1), templates_dir=str(tpl), detail_mode='sidecar', commit_index_path='./relevant_commits.table.json', commit_detail_root='./commits')
+    generate_html_report([_commit()], {}, {}, str(out1), templates_dir=str(tpl), detail_mode='sidecar', commit_index_path='./relevant_commits.table.json', commit_detail_root='./commits', metadata_path='./report_metadata.json')
     txt1 = out1.read_text()
     assert '__KC_COMMITS_INDEX__' in txt1
     assert '__KC_COMMIT_DETAIL_ROOT__' in txt1
+    assert 'KCOMMIT_REPORT_METADATA_URL' in txt1
     out2 = tmp_path / 'embedded.html'
     generate_html_report([_commit()], {}, {}, str(out2), templates_dir=str(tpl), detail_mode='embedded', embed_compression='zlib')
     txt2 = out2.read_text()
@@ -60,6 +61,7 @@ def test_stage07_writes_sidecar_tables_and_sharded_commit_details(tmp_path, monk
     st07_report.run(_cfg(tmp_path, {'html_detail_mode': 'sidecar'}), str(cache), str(out))
     assert os.path.exists(out / 'relevant_commits.table.json')
     assert os.path.exists(out / 'filtered_commits.table.json')
+    assert os.path.exists(out / 'report_metadata.json')
     assert os.path.exists(out / 'commits' / 'ab' / 'cd' / 'abcdef1234567890.json')
     data = json.load(open(out / 'relevant_commits.json'))
     assert list(data[0])[:6] == ['commit', 'subject', 'author_name', 'author_email', 'author_time', 'files']
@@ -94,3 +96,4 @@ def test_sidecar_index_contains_full_commit(tmp_path):
     row = idx[0]
     assert row['commit'] == 'c'*40
     assert row['subject'] == 'usb fix'
+    assert 'product_evidence' not in row

@@ -138,3 +138,24 @@ def test_ods_summary_written(tmp_path):
     cache, outdir, cfg = _setup(tmp_path, outputs=['ods'])
     run(cfg, cache, outdir)
     assert os.path.exists(os.path.join(outdir, 'summary.ods'))
+
+
+def test_stage7_writes_metadata_sidecar(tmp_path):
+    import json
+    from lib.stages import st07_report
+    cache = tmp_path / 'cache'; out = tmp_path / 'out'; cache.mkdir(); out.mkdir()
+    from lib.manifest import CACHE_FILES
+    commit = {'commit': 'b'*40, 'subject': 'fix', 'author_name': 'dev', 'author_time': 1, 'score': 10, 'matched_profiles': ['p1'], 'product_evidence': ['pe']}
+    (cache / CACHE_FILES['relevant']).write_text(json.dumps([commit]))
+    (cache / CACHE_FILES['filtered']).write_text('[]')
+    (cache / CACHE_FILES['postfilter_dropped']).write_text('[]')
+    (cache / CACHE_FILES['scored']).write_text(json.dumps([commit]))
+    (cache / CACHE_FILES['commits']).write_text(json.dumps([commit]))
+    (cache / CACHE_FILES['prefilter_kept']).write_text(json.dumps([commit]))
+    cfg = {'paths': {'templates_dir': None}, 'git': {'repo_url': 'u', 'branch': 'main', 'base_rev': '111', 'head_rev': '222'}, 'reports': {'outputs': ['html'], 'top_n': 0, 'html_detail_mode': 'sidecar'}, 'profiles': {'active': {'p1': 100}}, '_meta': {'config_dir': str(tmp_path)}}
+    st07_report.run(cfg, str(cache), str(out))
+    meta = json.loads((out / 'report_metadata.json').read_text())
+    assert meta['git']['branch'] == 'main'
+    assert 'active_profiles' in meta['analysis']
+    rows = json.loads((out / 'relevant_commits.table.json').read_text())
+    assert 'product_evidence' not in rows[0]

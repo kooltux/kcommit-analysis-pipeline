@@ -170,3 +170,8 @@ Configuration rejects unknown top-level sections and validates known section key
 A realistic small command-flow regression test lives in `tests/test_full_pipeline_commands.py`. It uses repository-style configuration, sample cache files, and the real command handlers (`validate`, `run`, `status`, `dropped`, `report`) while keeping fixtures intentionally compact.
 
 - `tests/test_full_pipeline_with_mini_inputs.py` uses miniature files stored under `tests/mini-sample/mini-kernel`, `tests/mini-sample/profiles`, and `tests/mini-sample/rules`, plus a dedicated `tests/mini-sample/configs/test-mini.json` config, to exercise early stages and command/report flow with test-local assets.
+
+
+## Validation
+
+Current baseline: 465 tests passing, 85% `lib/` coverage.

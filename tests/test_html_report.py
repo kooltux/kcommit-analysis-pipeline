@@ -342,3 +342,15 @@ def test_html_report_sidebar_handles_missing_stage_counts(tmp_path):
     assert 'kc-stage-block' in txt
     assert 'Pipeline Run' in txt
     assert 'Collection' in txt
+
+
+def test_html_report_uses_metadata_sidecar_and_hides_product_evidence(tmp_path):
+    from lib.html_report import generate_html_report
+    out = tmp_path / 'report.html'
+    generate_html_report([{'commit': 'a'*40, 'subject': 'subj', 'author_name': 'dev', 'author_time': 1, 'score': 7, 'matched_profiles': ['p'], 'product_evidence': ['x']}], {'p': {'commit_count': 1}}, {'relevant_commit_count': 1}, str(out), detail_mode='sidecar', commit_index_path='./relevant_commits.table.json', commit_detail_root='./commits', metadata_path='./report_metadata.json')
+    s = out.read_text()
+    assert 'KCOMMIT_REPORT_METADATA_URL' in s
+    assert 'evaluation-details' in s
+    assert '<th>Product evidence</th>' not in s
+    assert '<h4>Product evidence</h4>' not in s
+    assert '<h4>Evidence</h4>' in s

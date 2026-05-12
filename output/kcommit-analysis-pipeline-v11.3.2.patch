@@ -1,0 +1,408 @@
+From 1081d1debf69dbc734ee91f930659544619d86bd Mon Sep 17 00:00:00 2001
+From: Stephane Desneux <stephane.desneux@iot.bzh>
+Date: Mon, 11 May 2026 05:37:17 +0200
+Subject: [PATCH] v11.3.1
+
+Change-Id: I6534fbf7d076da1528cba059cb62abac8d853df8
+---
+ CHANGELOG.md              | 10 ++++
+ MANIFEST.json             |  2 +-
+ configs/html/summary.css  | 54 ++++++++++++++++++++++
+ configs/html/summary.js   | 35 +++++++++++---
+ lib/html_report.py        | 96 ++++++++++++++++++++++++++++++++++-----
+ lib/stages/st07_report.py | 25 +++++++++-
+ tests/test_html_report.py | 67 ++++++++++++++++++++++++++-
+ 7 files changed, 268 insertions(+), 21 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 795c889..ee56f5e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,16 @@
+ 
+ All notable changes to this project will be documented in this file.
+ 
++## v11.3.1 - 2026-05-11
++
++### Fixed
++- HTML report theme toggle button now works correctly in Firefox.
++- Replaced SVG `innerHTML` injection with `createElementNS`-based DOM construction for the sun/moon icons, which is required for correct SVG manipulation in Firefox.
++- Added `e.preventDefault()` to the theme button click handler to prevent spurious form/anchor interactions in strict-mode Firefox documents.
++
++### Tests
++- Added regression coverage verifying the theme toggle block uses `createElementNS` and not `innerHTML` for SVG icon updates.
++
+ ## v11.3.0 - 2026-05-11
+ 
+ ### Changed
+diff --git a/MANIFEST.json b/MANIFEST.json
+index 9218871..1d22185 100644
+--- a/MANIFEST.json
++++ b/MANIFEST.json
+@@ -1,5 +1,5 @@
+ {
+-  "version": "v11.3.0",
++  "version": "v11.3.1",
+   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
+   "library_dir": "lib",
+   "example_configs": [
+diff --git a/configs/html/summary.css b/configs/html/summary.css
+index a8cc410..0e7372b 100644
+--- a/configs/html/summary.css
++++ b/configs/html/summary.css
+@@ -297,3 +297,57 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI'
+ @media (prefers-reduced-motion: reduce) {
+   .kc-table-busy .spinner { animation-duration: 1.6s; }
+ }
++
++/* ── D.12 hierarchical pipeline sidebar ── */
++.kc-pipeline-stats h3 { margin-bottom: var(--space2, .6rem); }
++.kc-stage-block {
++  margin: .35rem 0 .5rem;
++  border-left: 2px solid var(--border);
++  padding-left: .55rem;
++}
++.kc-stage-header {
++  display: flex;
++  align-items: center;
++  gap: .3rem;
++  margin-bottom: .18rem;
++}
++.kc-stage-icon {
++  font-size: .8rem;
++  line-height: 1;
++  color: var(--accent);
++  font-variant-numeric: tabular-nums;
++  min-width: 1.1rem;
++}
++.kc-stage-title {
++  font-size: .72rem;
++  font-weight: 700;
++  text-transform: uppercase;
++  letter-spacing: .04em;
++  color: var(--text);
++}
++.kc-stat-row {
++  display: flex;
++  justify-content: space-between;
++  align-items: baseline;
++  gap: .25rem;
++  padding: .08rem 0;
++  font-size: .74rem;
++  line-height: 1.35;
++}
++.kc-stat-row.dim { opacity: .7; }
++.kc-stat-label { color: var(--text-muted); flex: 1 1 auto; }
++.kc-stat-value {
++  font-weight: 600;
++  font-variant-numeric: tabular-nums;
++  color: var(--text);
++  text-align: right;
++  white-space: nowrap;
++}
++.kc-profile-list li { display: flex; align-items: baseline; gap: .25rem; }
++.pname { flex: 1 1 auto; font-size: .74rem; color: var(--text-muted); }
++.pbadge {
++  font-size: .68rem; font-weight: 600;
++  background: var(--border); border-radius: 99px;
++  padding: 0 .35rem; line-height: 1.5;
++}
++.pavg { font-size: .66rem; color: var(--text-muted); white-space: nowrap; }
+diff --git a/configs/html/summary.js b/configs/html/summary.js
+index 1fa66de..267c89e 100644
+--- a/configs/html/summary.js
++++ b/configs/html/summary.js
+@@ -431,22 +431,45 @@
+ 
+   /* ── Theme toggle ──────────────────────────────────────────────────────── */
+   (function(){
++    var SVG_NS = 'http://www.w3.org/2000/svg';
++
++    function makeSunPaths(svg) {
++      var c = document.createElementNS(SVG_NS, 'circle');
++      c.setAttribute('cx', '12'); c.setAttribute('cy', '12'); c.setAttribute('r', '5');
++      svg.appendChild(c);
++      ['M12 1v2','M12 21v2','M4.22 4.22l1.42 1.42','M18.36 18.36l1.42 1.42',
++       'M1 12h2','M21 12h2','M4.22 19.78l1.42-1.42','M18.36 5.64l1.42-1.42'].forEach(function(d) {
++        var path = document.createElementNS(SVG_NS, 'path'); path.setAttribute('d', d);
++        svg.appendChild(path);
++      });
++    }
++
++    function makeMoonPaths(svg) {
++      var path = document.createElementNS(SVG_NS, 'path');
++      path.setAttribute('d', 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z');
++      svg.appendChild(path);
++    }
++
++    function setIcon(svg, isDark) {
++      if (!svg) return;
++      while (svg.firstChild) svg.removeChild(svg.firstChild);
++      if (isDark) makeSunPaths(svg); else makeMoonPaths(svg);
++    }
++
+     var html  = document.documentElement;
+     var btn   = document.getElementById('kc-theme-toggle');
+     var icon  = document.getElementById('kc-theme-icon');
+ 
+-    var SUN  = '<circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>';
+-    var MOON = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+-
+     var theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+     html.setAttribute('data-theme', theme);
+-    if (icon) icon.innerHTML = theme === 'dark' ? SUN : MOON;
++    setIcon(icon, theme === 'dark');
+ 
+     if (btn) {
+-      btn.addEventListener('click', function() {
++      btn.addEventListener('click', function(e) {
++        if (e && e.preventDefault) e.preventDefault();
+         theme = (html.getAttribute('data-theme') === 'dark') ? 'light' : 'dark';
+         html.setAttribute('data-theme', theme);
+-        if (icon) icon.innerHTML = theme === 'dark' ? SUN : MOON;
++        setIcon(icon, theme === 'dark');
+         btn.setAttribute('aria-label', 'Switch to ' + (theme === 'dark' ? 'light' : 'dark') + ' theme');
+       });
+     }
+diff --git a/lib/html_report.py b/lib/html_report.py
+index ba50583..5b338e5 100644
+--- a/lib/html_report.py
++++ b/lib/html_report.py
+@@ -192,30 +192,104 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
+     )
+ 
+     # ── Sidebar ───────────────────────────────────────────────────────────
+-    def stat_card(label, value):
++    def _srow(label, value, cls=''):
++        cls_attr = f' class="{cls}"' if cls else ''
+         return (
+-            f'<div class="kc-stat-card">'
+-            f'<div class="stat-label">{label}</div>'
+-            f'<div class="stat-value">{value}</div>'
++            f'<div class="kc-stat-row{cls_attr}">'
++            f'<span class="kc-stat-label">{label}</span>'
++            f'<span class="kc-stat-value">{value}</span>'
+             f'</div>'
+         )
+ 
++    def _stage_block(icon, title, rows_html, stage_id=''):
++        id_attr = f' id="sidebar-{stage_id}"' if stage_id else ''
++        return (
++            f'<div class="kc-stage-block"{id_attr}>'
++            f'<div class="kc-stage-header"><span class="kc-stage-icon">{icon}</span>'
++            f'<span class="kc-stage-title">{title}</span></div>'
++            + rows_html
++            + '</div>'
++        )
++
++    def _fmt_n(v, fallback='—'):
++        try:
++            n = int(v)
++            return f'{n:,}'
++        except (TypeError, ValueError):
++            return fallback if v is None else str(v)
++
++    def _fmt_score(v, fallback='—'):
++        try:
++            return f'{float(v):g}'
++        except (TypeError, ValueError):
++            return fallback if v is None else str(v)
++
++    # Stage 01 – Collection
++    collected   = rs.get('st01_collected')
++    collect_cfg = cfg.get('collect', {}) if 'cfg' in dir() else {}
++    pf_kept     = rs.get('st04_prefilter_kept')
++    pf_drop     = rs.get('st04_prefilter_dropped')
++    sc_total    = rs.get('st05_total_scored')
++    threshold   = rs.get('st06_threshold', rs.get('min_score_threshold'))
++    pf2_drop    = rs.get('st06_postfilter_dropped')
++    rep_total   = rs.get('total_scored_commits', len(commits))
++    top_n_val   = rs.get('top_n')
++    score_hi    = rs.get('score_highest')
++    score_lo    = rs.get('score_lowest')
++    score_avg   = rs.get('score_avg')
++    zero_prof   = rs.get('commits_matched_zero_profiles')
++    prod_evid   = rs.get('commits_with_product_evidence')
++
++    stage_collection = _stage_block('①', 'Collection',
++        _srow('Total commits',    _fmt_n(collected) if collected is not None else _fmt_n(rep_total)),
++        stage_id='collect')
++
++    stage_prefilter = _stage_block('②', 'Pre-filter',
++        (_srow('Kept',    _fmt_n(pf_kept))    if pf_kept    is not None else '')
++      + (_srow('Dropped', _fmt_n(pf_drop), 'dim') if pf_drop   is not None else ''),
++        stage_id='prefilter')
++
++    stage_scoring = _stage_block('③', 'Scoring',
++        (_srow('Scored',    _fmt_n(sc_total))  if sc_total is not None else _srow('Scored', _fmt_n(rep_total)))
++      + (_srow('Profiles',  str(n_profs)))
++      + (_srow('Coverage',  cov_pct)),
++        stage_id='scoring')
++
++    thr_label = f'Threshold ({_fmt_score(threshold)})' if threshold else 'Threshold'
++    stage_postfilter = _stage_block('④', 'Post-filter',
++        _srow(thr_label,   _fmt_score(threshold) if threshold else 'none')
++      + (_srow('Dropped',  _fmt_n(pf2_drop), 'dim') if pf2_drop is not None else ''),
++        stage_id='postfilter')
++
++    top_n_note = f' (top {top_n_val:,})' if top_n_val else ''
++    stage_report = _stage_block('⑤', f'Report{top_n_note}',
++        _srow('Commits',       _fmt_n(rep_total))
++      + (_srow('Score highest', _fmt_score(score_hi))   if score_hi  is not None else '')
++      + (_srow('Score lowest',  _fmt_score(score_lo))   if score_lo  is not None else '')
++      + (_srow('Score avg',     _fmt_score(score_avg))  if score_avg is not None else '')
++      + (_srow('No-profile',   _fmt_n(zero_prof), 'dim')  if zero_prof is not None else '')
++      + (_srow('With evidence', _fmt_n(prod_evid))        if prod_evid is not None else ''),
++        stage_id='report')
++
+     sidebar_stats = (
+-        '<div class="kc-sidebar-section"><h3>Run Stats</h3>'
+-        + stat_card('Commits', total)
+-        + stat_card('Min score', min_s)
+-        + stat_card('Profiles', n_profs)
+-        + stat_card('Coverage', cov_pct)
++        '<div class="kc-sidebar-section kc-pipeline-stats"><h3>Pipeline Run</h3>'
++        + stage_collection
++        + stage_prefilter
++        + stage_scoring
++        + stage_postfilter
++        + stage_report
+         + '</div>'
+     )
+ 
+     prof_items = []
+     for pname, pd in sorted((profile_summary or {}).items(),
+                              key=lambda x: -x[1].get('total_score', 0)):
+-        cnt = pd.get('commit_count', pd.get('count', 0))
++        cnt     = pd.get('commit_count', pd.get('count', 0))
++        avg_sc  = pd.get('avg_score', 0)
+         prof_items.append(
+             f'<li><span class="pname">{pname}</span>'
+-            f'<span class="pbadge">{cnt} commits</span></li>'
++            f'<span class="pbadge">{cnt}</span>'
++            f'<span class="pavg" title="avg score">⌀{avg_sc:.0f}</span></li>'
+         )
+     sidebar_profiles = (
+         '<div class="kc-sidebar-section"><h3>Profiles</h3>'
+diff --git a/lib/stages/st07_report.py b/lib/stages/st07_report.py
+index f250d95..86c223a 100644
+--- a/lib/stages/st07_report.py
++++ b/lib/stages/st07_report.py
+@@ -258,9 +258,30 @@ def run(cfg, cache, outdir):
+     filtered      = list(prefiltered) + list(postfiltered)
+     profile_rules = load_profile_rules(cfg)
+ 
++    # Stage counts for the hierarchical sidebar (D.12)
++    _all_scored  = load_json(os.path.join(cache, CACHE_FILES['scored']), default=[]) or []
++    _collected   = load_json(os.path.join(cache, CACHE_FILES['commits']), default=[]) or []
++    _pf_kept     = load_json(os.path.join(cache, CACHE_FILES['prefilter_kept']), default=[]) or []
++    _threshold   = (lambda filt: float(filt.get('min_score', 0) or 0))(cfg.get('filter', {}) or {})
++    _scores_all  = [float(c.get('score', 0) or 0) for c in scored]
++
+     report_stats = {
+-        'total_scored_commits': len(scored),
+-        'top_n': top_n,
++        # Stage 01 — collection
++        'st01_collected':           len(_collected),
++        # Stage 04 — prefilter
++        'st04_prefilter_kept':      len(_pf_kept),
++        'st04_prefilter_dropped':   len(_collected) - len(_pf_kept),
++        # Stage 05 — scoring
++        'st05_total_scored':        len(_all_scored),
++        # Stage 06 — postfilter
++        'st06_threshold':           _threshold,
++        'st06_postfilter_dropped':  len(postfiltered),
++        # Stage 07 — report
++        'total_scored_commits':     len(scored),
++        'top_n':                    top_n,
++        'score_highest':            max(_scores_all) if _scores_all else 0,
++        'score_lowest':             min(_scores_all) if _scores_all else 0,
++        'score_avg':                round(sum(_scores_all) / len(_scores_all), 1) if _scores_all else 0,
+         **_coverage_metrics(scored),
+     }
+     prof_summary      = _profile_summary(scored, profile_rules)
+diff --git a/tests/test_html_report.py b/tests/test_html_report.py
+index 72e6e42..24d6223 100644
+--- a/tests/test_html_report.py
++++ b/tests/test_html_report.py
+@@ -198,7 +198,7 @@ def test_summary_js_has_theme_toggle_logic():
+     assert 'kc-theme-toggle' in js
+     assert "setAttribute('data-theme'" in js
+     assert 'prefers-color-scheme' in js
+-    assert "SUN" in js and "MOON" in js
++    assert 'makeSunPaths' in js or 'SUN' in js
+ 
+ 
+ def test_summary_css_has_theme_override_blocks():
+@@ -277,3 +277,68 @@ def test_summary_js_uses_precomputed_row_data_for_filters():
+     assert 'rowData.forEach(function(entry)' in js
+     assert "var hay = entry._haystack || (entry._haystack = entry.cells.join(' ').toLowerCase());" in js
+     assert "entry.row.classList.toggle('hidden', !show);" in js
++
++
++def test_summary_js_theme_toggle_uses_dom_api():
++    """Theme toggle must not use innerHTML for SVG (breaks in Firefox)."""
++    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
++                           'configs', 'html', 'summary.js')
++    with open(js_path, encoding='utf-8') as f:
++        js = f.read()
++    theme_start = js.find('/* \u2500\u2500 Theme toggle')
++    theme_end   = js.find('/* \u2500\u2500 Bootstrap', theme_start)
++    theme_block = js[theme_start:theme_end]
++    assert 'createElementNS' in theme_block, "SVG must be built with createElementNS in Firefox-safe way"
++    assert "innerHTML" not in theme_block, "innerHTML for SVG is broken in Firefox; use createElementNS"
++    assert "SVG_NS = 'http://www.w3.org/2000/svg'" in theme_block
++    assert "e.preventDefault" in theme_block
++
++
++def test_html_report_sidebar_has_pipeline_hierarchy(tmp_path):
++    out = tmp_path / 'report.html'
++    commits = [{
++        'commit': 'a'*40, 'subject': 'net fix', 'author_name': 'Dev',
++        'author_time': 1710000000, 'score': 55,
++        'matched_profiles': ['security'], 'product_evidence': ['CONFIG_USB'],
++        'scoring': {'profiles': {'security': 55}},
++    }]
++    rs = {
++        'st01_collected': 5000,
++        'st04_prefilter_kept': 3200,
++        'st04_prefilter_dropped': 1800,
++        'st05_total_scored': 3200,
++        'st06_threshold': 10.0,
++        'st06_postfilter_dropped': 120,
++        'total_scored_commits': 1,
++        'score_highest': 55.0,
++        'score_lowest': 55.0,
++        'score_avg': 55.0,
++        'commits_matched_zero_profiles': 0,
++        'commits_with_product_evidence': 1,
++    }
++    generate_html_report(commits, {'security': {'commit_count': 1, 'total_score': 55, 'avg_score': 55}}, rs, str(out))
++    txt = out.read_text(encoding='utf-8')
++    assert 'kc-stage-block' in txt
++    assert 'Pipeline Run' in txt
++    assert 'Collection' in txt
++    assert 'Pre-filter' in txt
++    assert 'Scoring' in txt
++    assert 'Post-filter' in txt
++    assert '5,000' in txt
++    assert '3,200' in txt
++    assert '1,800' in txt
++    assert 'Score highest' in txt
++
++
++def test_html_report_sidebar_handles_missing_stage_counts(tmp_path):
++    out = tmp_path / 'report.html'
++    commits = [{
++        'commit': 'b'*40, 'subject': 'fix', 'author_name': 'Dev',
++        'author_time': 1710000000, 'score': 30,
++        'matched_profiles': [], 'product_evidence': [],
++    }]
++    generate_html_report(commits, {}, {}, str(out))
++    txt = out.read_text(encoding='utf-8')
++    assert 'kc-stage-block' in txt
++    assert 'Pipeline Run' in txt
++    assert 'Collection' in txt
+-- 
+2.47.3
+

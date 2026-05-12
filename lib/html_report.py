@@ -149,7 +149,8 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
                          title='kcommit-analysis-pipeline',
                          is_filtered=False, templates_dir=None,
                          detail_mode='embedded', commit_index_path=None,
-                         commit_detail_root=None, embed_compression='none'):
+                         commit_detail_root=None, embed_compression='none',
+                         metadata_path=None):
     """Write HTML report to *output_path*.
 
     Section order: Run Stats → Profile Summary → Commits table.
@@ -297,15 +298,17 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         '</div>'
     ) if prof_items else ''
 
+    eval_details = '<div id="evaluation-details"></div>'
     sidebar = (
         '<aside class="kc-sidebar">'
+        + eval_details
         + sidebar_stats
         + sidebar_profiles
         + '</aside>'
     )
 
     # ── Commits table ─────────────────────────────────────────────────────
-    commit_headers = list(COMMIT_COLS)
+    commit_headers = [h for h in list(COMMIT_COLS) if str(h).lower() != 'product evidence']
     if is_filtered:
         commit_headers = commit_headers + ['Filter reason']
 
@@ -348,6 +351,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         boot.append('window.__KC_COMMIT_DETAIL_ROOT__=' + json.dumps(commit_detail_root) + ';')
     if detail_mode == 'sidecar' and commit_index_path:
         boot.append('window.__KC_COMMITS_INDEX__=' + json.dumps({'mode': 'sidecar', 'path': commit_index_path}) + ';')
+        boot.append('window.KCOMMIT_REPORT_METADATA_URL=' + json.dumps(metadata_path or '') + ';')
     else:
         commits_json = json.dumps(commit_map, default=str, separators=(',', ':'))
         if embed_compression == 'zlib':

@@ -385,7 +385,7 @@
       html += '</div>';
     }
     if (c.product_evidence && c.product_evidence.length) {
-      html += '<div class="kc-detail-section"><h4>Product evidence</h4>'
+      html += '<div class="kc-detail-section"><h4>Evidence</h4>'
         + '<ul style="padding-left:1.1rem;font-size:.75rem">';
       c.product_evidence.forEach(function(p){
         html += '<li><code>'+esc(p)+'</code></li>';

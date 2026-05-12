@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## v11.3.2 — report fixes, tests, and measured coverage (2026-05-12)
+
+- HTML report sidecar flow refined: report metadata sidecar, sidecar table JSON, sharded commit details, and detail label normalization to `Evidence`.
+- Main HTML report table no longer shows the `Product Evidence` column; commit detail views keep the shorter `Evidence` label.
+- Added targeted regression tests for report generation, command behavior, manifest assertions, and stage-1 commit collection normalization.
+- Measured test baseline established with coverage tooling: **465 tests passing**, **85%** total `lib/` coverage.
+- Documentation updated in `docs/PIPELINE.md` for v11.3.2 report behavior and test/coverage status.
 ## v11.3.1 - 2026-05-11
 
 ### Fixed

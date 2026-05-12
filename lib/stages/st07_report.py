@@ -13,7 +13,7 @@ from lib.manifest import CACHE_FILES
 from lib.manifest import COMMIT_COLS as _MC, COMMIT_COLS_FILTERED as _MCF
 # Use lowercase keys for CSV row construction; headers come from manifest
 _COMMIT_KEYS          = ["rank", "sha", "subject", "author", "date",
-                         "score", "profiles", "product_evidence"]
+                         "score", "profiles"]
 _COMMIT_KEYS_FILTERED = _COMMIT_KEYS + ["filter_reason"]
 
 
@@ -94,8 +94,9 @@ def _canonical_commit(commit):
 
 
 def _write_commit_details(root, commits):
+    written = 0
     if not commits:
-        return
+        return written
     os.makedirs(root, exist_ok=True)
     seen = set()
     for c in commits:
@@ -106,6 +107,8 @@ def _write_commit_details(root, commits):
         shard = os.path.join(root, full[:2], full[2:4])
         os.makedirs(shard, exist_ok=True)
         _save_ordered_json(os.path.join(shard, full + '.json'), _canonical_commit(c))
+        written += 1
+    return written
 
 
 def _write_table_json(path, commits, include_reason=False):
@@ -118,7 +121,6 @@ def _write_table_json(path, commits, include_reason=False):
             'author_time': c.get('author_time', ''),
             'score': c.get('score', 0) or 0,
             'matched_profiles': list(c.get('matched_profiles') or []),
-            'product_evidence': list(c.get('product_evidence') or []),
         }
         if include_reason and c.get('_filter_reason', ''):
             row['_filter_reason'] = c.get('_filter_reason', '')
@@ -238,6 +240,7 @@ def run(cfg, cache, outdir):
     reports_cfg = cfg.get('reports', {}) or {}
     html_detail_mode = reports_cfg.get('html_detail_mode', 'sidecar')
     html_embed_compression = reports_cfg.get('html_embed_compression', 'none')
+    stage_state_path = os.path.join(outdir, 'runtime_status.json')
     os.makedirs(outdir, exist_ok=True)
     _written = []  # every file actually written this run
 
@@ -264,6 +267,20 @@ def run(cfg, cache, outdir):
     _pf_kept     = load_json(os.path.join(cache, CACHE_FILES['prefilter_kept']), default=[]) or []
     _threshold   = (lambda filt: float(filt.get('min_score', 0) or 0))(cfg.get('filter', {}) or {})
     _scores_all  = [float(c.get('score', 0) or 0) for c in scored]
+
+
+    def _update_stage7_progress(current, total, message):
+        payload = {
+            'current': int(current),
+            'total': max(1, int(total)),
+            'message': message,
+        }
+        save_json(stage_state_path, {
+            'stage': 'report_commits',
+            'stage_number': 7,
+            'stage_total': 7,
+            'progress': payload,
+        })
 
     report_stats = {
         # Stage 01 — collection
@@ -336,13 +353,35 @@ def run(cfg, cache, outdir):
                 w.writerows(_commit_rows(filtered, include_reason=True))
             _emit(flt_path)
 
+    metadata = {
+        'report_title': title,
+        'git': cfg.get('git', {}) or {},
+        'analysis': {
+            'top_n': top_n,
+            'outputs': sorted(outputs),
+            'html_detail_mode': html_detail_mode,
+            'html_embed_compression': html_embed_compression,
+            'filter': cfg.get('filter', {}) or {},
+            'reports': reports_cfg,
+            'active_profiles': sorted((cfg.get('profiles', {}) or {}).get('active', {}).keys()),
+        },
+        'report_stats': report_stats,
+        'profile_summary': prof_summary,
+    }
+
     # HTML
     if 'html' in outputs:
         try:
+            _update_stage7_progress(1, 4, 'Writing report metadata')
+            _save_ordered_json(os.path.join(outdir, 'report_metadata.json'), metadata)
+            _emit(os.path.join(outdir, 'report_metadata.json'))
+            _update_stage7_progress(2, 4, 'Writing report index JSON')
             _hp = os.path.join(outdir, 'relevant_commits.html')
             _tp = os.path.join(outdir, 'relevant_commits.table.json')
             _write_table_json(_tp, scored, include_reason=False)
             _emit(_tp)
+            _update_stage7_progress(3, 4, 'Writing per-commit detail JSON')
+            _update_stage7_progress(4, 4, 'Generating HTML pages')
             generate_html_report(
                 scored, prof_summary, report_stats, _hp,
                 title=title,
