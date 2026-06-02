@@ -6,6 +6,16 @@ from scoring.trace when present.
 
 Column definitions (COMMIT_COLS, SUMMARY_COLS, MATRIX_COLS) are the
 canonical source in lib.manifest and imported here via lib.spreadsheet.
+
+Changes:
+  v12.0.0 (A.1) — _commit_row_html() no longer emits a Product Evidence
+                  <td> cell; the column is filtered from headers at report
+                  time, so rows and headers must match in width.
+  v12.0.0 (A.2) — Dead `cfg` local variable reference removed from
+                  generate_html_report(); collect_cfg was always {} due to
+                  the `'cfg' in dir()` guard masking the NameError.
+  v12.0.0 (A.4) — Sidebar now renders an Evaluation section when
+                  report_stats['evaluation'] is present.
 """
 import base64
 import json
@@ -95,7 +105,15 @@ def _table(headers, rows_html, table_id=''):
 
 
 def _commit_row_html(i, c, with_reason=False):
-    """Build a <tr> for a commit.  Matches COMMIT_COLS (from lib.manifest)."""
+    """Build a <tr> for a commit.
+
+    Matches the visible columns of the HTML report table:
+      Rank | SHA | Subject | Author | Date | Score | Profiles | Profile Scores
+
+    The 'Product Evidence' column is intentionally excluded from the HTML
+    table (A.1 / D.16) — the data remains available in sidecar JSON files
+    and in the commit detail panel.
+    """
     sha    = (c.get('commit') or '')
     sha12  = sha[:12]
     subj   = c.get('subject') or ''
@@ -109,13 +127,14 @@ def _commit_row_html(i, c, with_reason=False):
     score  = c.get('score', 0) or 0
     profs  = c.get('matched_profiles') or []
     prof_scores = _profile_scores_text(c)
-    evid   = '; '.join(c.get('product_evidence') or [])
 
     sha_link = (
         f'<a class="sha-link" data-sha="{sha12}" data-full-sha="{sha}" href="#"'
         f' title="Show commit details">{sha12}</a>'
     )
 
+    # A.1 / D.16: Product Evidence column removed from HTML table rows.
+    # Evidence remains in sidecar JSON and the commit detail panel.
     cells = [
         f'<td class="rank">{i}</td>',
         f'<td class="sha">{sha_link}</td>',
@@ -125,7 +144,6 @@ def _commit_row_html(i, c, with_reason=False):
         f'<td class="num" data-sort="{float(score or 0):.6f}">{_score_pill(score)}</td>',
         f'<td>{_profile_chips(profs)}</td>',
         f'<td><small>{prof_scores}</small></td>',
-        f'<td><small>{evid}</small></td>',
     ]
     if with_reason:
         reason = c.get('_filter_reason', '')
@@ -145,6 +163,27 @@ def _section(title, badge, content, anchor):
     )
 
 
+def _kv_rows(items):
+    """Build sidebar key-value rows from (label, value) pairs.
+
+    Skips items whose value is None, empty string, empty list, or empty
+    dict so the section only shows meaningful data.
+    """
+    rows = []
+    for label, value in items:
+        if value in (None, '', [], {}):
+            continue
+        if isinstance(value, list):
+            value = ', '.join(str(v) for v in value)
+        rows.append(
+            '<div class="kc-stat-row">'
+            f'<span class="kc-stat-label">{_esc(label)}</span>'
+            f'<span class="kc-stat-value">{_esc(str(value))}</span>'
+            '</div>'
+        )
+    return ''.join(rows)
+
+
 def generate_html_report(commits, profile_summary, report_stats, output_path,
                          title='kcommit-analysis-pipeline',
                          is_filtered=False, templates_dir=None,
@@ -154,7 +193,9 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     """Write HTML report to *output_path*.
 
     Section order: Run Stats → Profile Summary → Commits table.
-    Commit table columns match COMMIT_COLS imported from lib.manifest.
+    Commit table columns match the visible subset of COMMIT_COLS:
+      Rank | SHA | Subject | Author | Date | Score | Profiles | Profile Scores
+    (Product Evidence is excluded from the HTML table; see A.1 / D.16.)
     """
     if templates_dir is None:
         templates_dir = os.path.join(
@@ -174,7 +215,6 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     # ── Header ────────────────────────────────────────────────────────────
     rs      = report_stats or {}
     total   = rs.get('total_scored_commits', len(commits))
-    min_s   = rs.get('min_score_threshold', '—')
     n_profs = len(profile_summary or {})
     cov     = rs.get('profile_coverage', {})
     cov_pct = f'{cov.get("pct", 0):.0f}%' if isinstance(cov, dict) else str(cov)
@@ -227,7 +267,6 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
 
     # Stage 01 – Collection
     collected   = rs.get('st01_collected')
-    collect_cfg = cfg.get('collect', {}) if 'cfg' in dir() else {}
     pf_kept     = rs.get('st04_prefilter_kept')
     pf_drop     = rs.get('st04_prefilter_dropped')
     sc_total    = rs.get('st05_total_scored')
@@ -282,6 +321,28 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         + '</div>'
     )
 
+    # A.4 / D.14: Evaluation section from report_stats['evaluation']
+    eval_info = rs.get('evaluation') or {}
+    if eval_info:
+        sidebar_evaluation = (
+            '<div class="kc-sidebar-section" id="evaluation-details"><h3>Evaluation</h3>'
+            + _kv_rows([
+                ('Git source',       eval_info.get('git_source')),
+                ('Git baseline',     eval_info.get('git_baseline')),
+                ('Git range',        eval_info.get('git_range')),
+                ('Kernel revision',  eval_info.get('kernel_revision')),
+                ('Profiles',         eval_info.get('profiles')),
+                ('Top N',            eval_info.get('top_n')),
+                ('Min score',        eval_info.get('min_score')),
+                ('HTML detail mode', eval_info.get('html_detail_mode')),
+                ('Outputs',          eval_info.get('outputs')),
+            ])
+            + '</div>'
+        )
+    else:
+        # Empty placeholder preserved for JS async population via metadata sidecar
+        sidebar_evaluation = '<div id="evaluation-details"></div>'
+
     prof_items = []
     for pname, pd in sorted((profile_summary or {}).items(),
                              key=lambda x: -x[1].get('total_score', 0)):
@@ -298,16 +359,17 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         '</div>'
     ) if prof_items else ''
 
-    eval_details = '<div id="evaluation-details"></div>'
     sidebar = (
         '<aside class="kc-sidebar">'
-        + eval_details
+        + sidebar_evaluation
         + sidebar_stats
         + sidebar_profiles
         + '</aside>'
     )
 
     # ── Commits table ─────────────────────────────────────────────────────
+    # A.1 / D.16: 'Product Evidence' excluded from HTML table headers
+    # (and from <td> cells in _commit_row_html above).
     commit_headers = [h for h in list(COMMIT_COLS) if str(h).lower() != 'product evidence']
     if is_filtered:
         commit_headers = commit_headers + ['Filter reason']
