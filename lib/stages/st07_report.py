@@ -1,5 +1,23 @@
 from lib.scoring import fmt_profiles, fmt_evidence, order_commit_details
-"""Stage 07 logic: generate all output formats."""
+"""Stage 07 logic: generate all output formats.
+
+Changes:
+  v12.0.0 (A.3) — update_stage_progress() from lib.pipeline_runtime is
+                  now called with the correct signature:
+                    update_stage_progress(stage_index, stage_total,
+                                          frac, label,
+                                          n_done=current, n_total=total)
+                  Previously the call passed `current` as `frac` and
+                  `total` as `label`, which produced a TypeError on TTYs
+                  and sent meaningless values to the progress bar.
+  v12.0.0 (A.4) — report_stats['evaluation'] is now populated from cfg
+                  before being passed to generate_html_report(), enabling
+                  the Evaluation sidebar section in the HTML report.
+  v12.0.0 (A.5) — _commit_rows() docstring clarified: the function still
+                  appends a product_evidence cell for CSV/XLSX/ODS output
+                  (COMMIT_COLS includes that column). Only the HTML table
+                  hides the column (handled in html_report.py / A.1).
+"""
 import csv
 import json
 import logging
@@ -16,6 +34,10 @@ _COMMIT_KEYS          = ["rank", "sha", "subject", "author", "date",
                          "score", "profiles"]
 _COMMIT_KEYS_FILTERED = _COMMIT_KEYS + ["filter_reason"]
 
+# Total number of progress milestones emitted by run().
+# Used both in _update_stage7_progress() and in the final finish call.
+_STAGE7_MILESTONES = 6
+
 
 def _fmt_date(ts):
     """Format a Unix timestamp or ISO string as YYYY-MM-DD HH:MM."""
@@ -29,8 +51,25 @@ def _fmt_date(ts):
 
 
 def _commit_rows(commits, include_reason=False):
+    """Build list-of-lists rows for CSV / XLSX / ODS output.
+
+    Column order matches COMMIT_COLS:
+      Rank | SHA | Subject | Author | Date | Score | Profiles | Profile Scores
+                                                               | Product Evidence
+
+    The Product Evidence cell is included here for tabular file formats
+    (CSV/XLSX/ODS) because COMMIT_COLS includes it.  The HTML table uses
+    a narrower column set that excludes Product Evidence — that exclusion
+    is handled in html_report.py (_commit_row_html) per A.1 / D.16.
+    """
     rows = []
     for c in commits:
+        sc       = (c.get('scoring') or {})
+        profiles = (sc.get('profiles') or {})
+        prof_scores = '; '.join(
+            '%s:%g' % (p, profiles.get(p, 0))
+            for p in sorted(profiles)
+        )
         row = [
             c.get('_rank', ''),
             (c.get('commit') or '')[:12],
@@ -39,6 +78,7 @@ def _commit_rows(commits, include_reason=False):
             _fmt_date(c.get('author_time', '')),
             c.get('score', 0) or 0,
             fmt_profiles(c),
+            prof_scores,
             fmt_evidence(c),
         ]
         if include_reason:
@@ -127,7 +167,7 @@ def _write_table_json(path, commits, include_reason=False):
         rows.append(order_commit_details(row))
     _save_ordered_json(path, rows)
 
-# ── Per-profile statistics ────────────────────────────────────────────────────
+# ── Per-profile statistics ────────────────────────────────────────────────
 
 def _profile_summary(scored, profile_rules):
     """Per-profile commit count, total score, and average score."""
@@ -162,7 +202,7 @@ def _profile_matrix(scored):
     return header, rows
 
 
-# ── Coverage metrics (promoted to report_stats) ───────────────────────────────
+# ── Coverage metrics (promoted to report_stats) ────────────────────────────────
 
 def _coverage_metrics(scored):
     """Return diagnostic coverage counters included in report_stats.json.
@@ -179,6 +219,34 @@ def _coverage_metrics(scored):
     }
 
 
+def _build_evaluation_block(cfg, outputs, html_detail_mode, top_n, threshold):
+    """A.4 / D.14: Build the evaluation metadata block for report_stats.
+
+    This dict is rendered in the Evaluation sidebar section of the HTML
+    report via generate_html_report().  All values are optional strings;
+    missing / empty fields are omitted by the sidebar renderer.
+    """
+    git       = cfg.get('git', {}) or {}
+    reports   = cfg.get('reports', {}) or {}
+    active    = sorted((cfg.get('profiles', {}) or {}).get('active', {}).keys())
+
+    repo_url  = git.get('repo_url') or git.get('remote_url') or ''
+    branch    = git.get('branch') or ''
+    base_rev  = git.get('base_rev') or ''
+    head_rev  = git.get('head_rev') or ''
+    git_range = f'{base_rev}..{head_rev}' if base_rev and head_rev else ''
+
+    return {
+        'git_source':       f'{repo_url} ({branch})' if repo_url and branch else repo_url or branch or None,
+        'git_baseline':     base_rev or None,
+        'git_range':        git_range or None,
+        'kernel_revision':  git.get('kernel_version') or git.get('kernel_revision') or None,
+        'profiles':         ', '.join(active) if active else None,
+        'top_n':            str(top_n) if top_n else 'unlimited',
+        'min_score':        str(threshold) if threshold else None,
+        'html_detail_mode': html_detail_mode,
+        'outputs':          ', '.join(sorted(outputs)),
+    }
 
 
 def _save_ordered_json(path, data):
@@ -187,7 +255,7 @@ def _save_ordered_json(path, data):
         json.dump(data, f, indent=2)
         f.write('\n')
 
-# ── Output helpers ────────────────────────────────────────────────────────────
+# ── Output helpers ───────────────────────────────────────────────────────────
 
 def _resolve_outputs(cfg):
     """Return the set of output format names to produce.
@@ -220,10 +288,20 @@ def _report_title(cfg):
     return tmpl.get('title', 'kcommit Analysis Report')
 
 
-# ── Stage entry point ─────────────────────────────────────────────────────────
+# ── Stage entry point ─────────────────────────────────────────────────────
 
 def run(cfg, cache, outdir):
     from lib.profile_rules import load_profile_rules
+    # A.3: import real TTY progress bar with the correct call signature:
+    #   update_stage_progress(stage_index, stage_total, frac, label,
+    #                         n_done=current, n_total=total)
+    # Falls back gracefully if pipeline_runtime is not importable (unit tests).
+    try:
+        from lib.pipeline_runtime import update_stage_progress as _rt_progress
+        from lib.pipeline_runtime import finish_progress_line  as _rt_finish_line
+    except Exception:
+        _rt_progress   = None
+        _rt_finish_line = None
     try:
         from lib.spreadsheet import (
             write_xlsx, write_ods,
@@ -251,7 +329,40 @@ def run(cfg, cache, outdir):
         except ValueError:
             _written.append(path)
 
+    def _update_stage7_progress(current, total, message):
+        """A.3: write runtime_status.json AND call the TTY progress bar.
 
+        The real update_stage_progress() signature is:
+          update_stage_progress(index, stage_total, frac, label,
+                                n_done=None, n_total=None)
+        where:
+          index       = this stage's 1-based position (7)
+          stage_total = total number of stages (7)
+          frac        = float 0.0–1.0 completion fraction
+          label       = human-readable milestone string
+          n_done      = current milestone number (optional)
+          n_total     = total milestones (optional)
+        """
+        payload = {
+            'current': int(current),
+            'total': max(1, int(total)),
+            'message': message,
+        }
+        save_json(stage_state_path, {
+            'stage': 'report_commits',
+            'stage_number': 7,
+            'stage_total': 7,
+            'progress': payload,
+        })
+        if _rt_progress is not None:
+            try:
+                frac = float(current) / max(1, float(total))
+                _rt_progress(
+                    7, 7, frac, message,
+                    n_done=int(current), n_total=int(total),
+                )
+            except Exception as _e:
+                logging.debug('update_stage_progress (st07) failed: %s', _e)
 
     scored        = (load_json(os.path.join(cache, CACHE_FILES['relevant']), default=[]) or [])
     if top_n is not None:
@@ -267,20 +378,6 @@ def run(cfg, cache, outdir):
     _pf_kept     = load_json(os.path.join(cache, CACHE_FILES['prefilter_kept']), default=[]) or []
     _threshold   = (lambda filt: float(filt.get('min_score', 0) or 0))(cfg.get('filter', {}) or {})
     _scores_all  = [float(c.get('score', 0) or 0) for c in scored]
-
-
-    def _update_stage7_progress(current, total, message):
-        payload = {
-            'current': int(current),
-            'total': max(1, int(total)),
-            'message': message,
-        }
-        save_json(stage_state_path, {
-            'stage': 'report_commits',
-            'stage_number': 7,
-            'stage_total': 7,
-            'progress': payload,
-        })
 
     report_stats = {
         # Stage 01 — collection
@@ -300,6 +397,9 @@ def run(cfg, cache, outdir):
         'score_lowest':             min(_scores_all) if _scores_all else 0,
         'score_avg':                round(sum(_scores_all) / len(_scores_all), 1) if _scores_all else 0,
         **_coverage_metrics(scored),
+        # A.4 / D.14: Evaluation block for HTML sidebar
+        'evaluation': _build_evaluation_block(
+            cfg, outputs, html_detail_mode, top_n, _threshold),
     }
     prof_summary      = _profile_summary(scored, profile_rules)
     mat_hdr, mat_rows = _profile_matrix(scored)
@@ -307,6 +407,7 @@ def run(cfg, cache, outdir):
     _write_commit_details(details_root, list(scored) + list(filtered))
 
     # JSON outputs (always written)
+    _update_stage7_progress(1, _STAGE7_MILESTONES, 'Writing relevant_commits.json')
     _p = os.path.join(outdir, 'relevant_commits.json')
     _save_ordered_json(_p, [_canonical_commit(c) for c in scored]);  _emit(_p)
     _p = os.path.join(outdir, 'profile_summary.json')
@@ -320,6 +421,7 @@ def run(cfg, cache, outdir):
         _p = os.path.join(outdir, 'filtered_commits.json')
         _save_ordered_json(_p, [_canonical_commit(c) for c in filtered]);  _emit(_p)
 
+    _update_stage7_progress(2, _STAGE7_MILESTONES, 'Writing CSV outputs')
     # CSV
     if 'csv' in outputs:
         csv_path = os.path.join(outdir, 'relevant_commits.csv')
@@ -369,51 +471,7 @@ def run(cfg, cache, outdir):
         'profile_summary': prof_summary,
     }
 
-    # HTML
-    if 'html' in outputs:
-        try:
-            _update_stage7_progress(1, 4, 'Writing report metadata')
-            _save_ordered_json(os.path.join(outdir, 'report_metadata.json'), metadata)
-            _emit(os.path.join(outdir, 'report_metadata.json'))
-            _update_stage7_progress(2, 4, 'Writing report index JSON')
-            _hp = os.path.join(outdir, 'relevant_commits.html')
-            _tp = os.path.join(outdir, 'relevant_commits.table.json')
-            _write_table_json(_tp, scored, include_reason=False)
-            _emit(_tp)
-            _update_stage7_progress(3, 4, 'Writing per-commit detail JSON')
-            _update_stage7_progress(4, 4, 'Generating HTML pages')
-            generate_html_report(
-                scored, prof_summary, report_stats, _hp,
-                title=title,
-                templates_dir=cfg['paths'].get('templates_dir'),
-                detail_mode=html_detail_mode,
-                commit_index_path='./relevant_commits.table.json' if html_detail_mode == 'sidecar' else None,
-                commit_detail_root='./commits',
-                embed_compression=html_embed_compression,
-            )
-            _emit(_hp)
-        except Exception as e:
-            logging.warning('HTML report failed: %s', e)
-        if filtered:
-            try:
-                _fhp = os.path.join(outdir, 'filtered_commits.html')
-                _ftp = os.path.join(outdir, 'filtered_commits.table.json')
-                _write_table_json(_ftp, filtered, include_reason=True)
-                _emit(_ftp)
-                generate_html_report(
-                    filtered, {}, {'total_scored_commits': len(filtered)},
-                    _fhp, title=title + ' — Filtered Commits',
-                    is_filtered=True,
-                    templates_dir=cfg['paths'].get('templates_dir'),
-                    detail_mode=html_detail_mode,
-                    commit_index_path='./filtered_commits.table.json' if html_detail_mode == 'sidecar' else None,
-                    commit_detail_root='./commits',
-                    embed_compression=html_embed_compression,
-                )
-                _emit(_fhp)
-            except Exception as e:
-                logging.warning('HTML filtered report failed: %s', e)
-
+    _update_stage7_progress(3, _STAGE7_MILESTONES, 'Writing XLSX / ODS outputs')
     # XLSX
     if 'xlsx' in outputs:
         if write_xlsx:
@@ -493,6 +551,61 @@ def run(cfg, cache, outdir):
                 logging.warning('ODS summary failed: %s', e)
         else:
             logging.warning("'ods' output requested but lib.spreadsheet not available")
+
+    # HTML
+    _update_stage7_progress(4, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
+    if 'html' in outputs:
+        try:
+            _save_ordered_json(os.path.join(outdir, 'report_metadata.json'), metadata)
+            _emit(os.path.join(outdir, 'report_metadata.json'))
+            _update_stage7_progress(5, _STAGE7_MILESTONES, 'Writing HTML commit index JSON')
+            _hp = os.path.join(outdir, 'relevant_commits.html')
+            _tp = os.path.join(outdir, 'relevant_commits.table.json')
+            _write_table_json(_tp, scored, include_reason=False)
+            _emit(_tp)
+            _update_stage7_progress(6, _STAGE7_MILESTONES, 'Generating HTML report')
+            generate_html_report(
+                scored, prof_summary, report_stats, _hp,
+                title=title,
+                templates_dir=cfg['paths'].get('templates_dir'),
+                detail_mode=html_detail_mode,
+                commit_index_path='./relevant_commits.table.json' if html_detail_mode == 'sidecar' else None,
+                commit_detail_root='./commits',
+                embed_compression=html_embed_compression,
+                metadata_path='./report_metadata.json' if html_detail_mode == 'sidecar' else None,
+            )
+            _emit(_hp)
+        except Exception as e:
+            logging.warning('HTML report failed: %s', e)
+        if filtered:
+            try:
+                _fhp = os.path.join(outdir, 'filtered_commits.html')
+                _ftp = os.path.join(outdir, 'filtered_commits.table.json')
+                _write_table_json(_ftp, filtered, include_reason=True)
+                _emit(_ftp)
+                generate_html_report(
+                    filtered, {}, {'total_scored_commits': len(filtered)},
+                    _fhp, title=title + ' — Filtered Commits',
+                    is_filtered=True,
+                    templates_dir=cfg['paths'].get('templates_dir'),
+                    detail_mode=html_detail_mode,
+                    commit_index_path='./filtered_commits.table.json' if html_detail_mode == 'sidecar' else None,
+                    commit_detail_root='./commits',
+                    embed_compression=html_embed_compression,
+                    metadata_path='./report_metadata.json' if html_detail_mode == 'sidecar' else None,
+                )
+                _emit(_fhp)
+            except Exception as e:
+                logging.warning('HTML filtered report failed: %s', e)
+
+    # Emit final progress milestone and terminate the TTY bar line
+    _update_stage7_progress(_STAGE7_MILESTONES, _STAGE7_MILESTONES, 'Done')
+    if _rt_finish_line is not None:
+        try:
+            _rt_finish_line()
+        except Exception as _e:
+            logging.debug('finish_progress_line (st07) failed: %s', _e)
+
     # Embed generated_files list, then write report_stats.json last
     report_stats['generated_files'] = sorted(set(
         f for f in _written if f != 'report_stats.json'))

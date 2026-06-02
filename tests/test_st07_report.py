@@ -210,3 +210,138 @@ def test_filtered_outputs_merge_prefilter_and_postfilter_drops(tmp_path):
     with open(os.path.join(outdir, 'filtered_commits.json')) as f:
         data = json.load(f)
     assert [c['commit'] for c in data] == ['pre', 'post']
+
+
+# ── B: update_stage_progress call-signature regression (A.3 fix) ───────────
+
+class _ProgressCapture:
+    """Captures all calls made to the mocked _rt_progress."""
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, *args, **kwargs):
+        self.calls.append({'args': args, 'kwargs': kwargs})
+
+
+def test_update_stage7_progress_calls_rt_progress_with_correct_signature(tmp_path, monkeypatch):
+    """B — A.3 regression: _update_stage7_progress() must call
+    update_stage_progress() with the correct positional and keyword args.
+
+    Expected call shape for milestone (current=3, total=6, message='foo'):
+        args   = (7, 7, 0.5, 'foo')
+        kwargs = {'n_done': 3, 'n_total': 6}
+
+    Verifies:
+      B.1  index     == 7            (this stage's position)
+      B.2  stage_total == 7          (total number of stages)
+      B.3  frac is float in [0.0, 1.0]
+      B.4  label is a str
+      B.5  n_done  == current (int)
+      B.6  n_total == total   (int)
+    """
+    import lib.stages.st07_report as _mod
+
+    cap = _ProgressCapture()
+    monkeypatch.setattr(_mod, '_rt_progress_for_test', cap, raising=False)
+
+    # Directly exercise the inner helper by reconstructing it with a
+    # monkeypatched _rt_progress.  We replace the module-level import
+    # reference used inside run() by patching at import time via a
+    # controlled wrapper.
+    #
+    # Strategy: run() with a minimal setup so it reaches _update_stage7_progress,
+    # but replace lib.pipeline_runtime.update_stage_progress before run() imports it.
+    import lib.pipeline_runtime as _rt_mod
+    monkeypatch.setattr(_rt_mod, 'update_stage_progress', cap)
+
+    cache, outdir, cfg = _setup(tmp_path)
+    run(cfg, cache, outdir)
+
+    assert cap.calls, 'update_stage_progress was never called'
+
+    for call in cap.calls:
+        args   = call['args']
+        kwargs = call['kwargs']
+
+        # B.1 — first positional arg must be stage index 7
+        assert args[0] == 7, (
+            f'Expected stage index 7, got {args[0]!r} in call {call}')
+
+        # B.2 — second positional arg must be total stages 7
+        assert args[1] == 7, (
+            f'Expected stage_total 7, got {args[1]!r} in call {call}')
+
+        # B.3 — third positional arg must be a float fraction in [0.0, 1.0]
+        frac = args[2]
+        assert isinstance(frac, float), (
+            f'Expected frac to be float, got {type(frac).__name__!r} in call {call}')
+        assert 0.0 <= frac <= 1.0, (
+            f'frac={frac!r} outside [0.0, 1.0] in call {call}')
+
+        # B.4 — fourth positional arg must be a non-empty string label
+        label = args[3]
+        assert isinstance(label, str) and label, (
+            f'Expected non-empty str label, got {label!r} in call {call}')
+
+        # B.5 — n_done keyword must be present and be an int
+        assert 'n_done' in kwargs, (
+            f'n_done keyword missing in call {call}')
+        assert isinstance(kwargs['n_done'], int), (
+            f'n_done must be int, got {type(kwargs["n_done"]).__name__!r}')
+
+        # B.6 — n_total keyword must be present and be an int
+        assert 'n_total' in kwargs, (
+            f'n_total keyword missing in call {call}')
+        assert isinstance(kwargs['n_total'], int), (
+            f'n_total must be int, got {type(kwargs["n_total"]).__name__!r}')
+
+
+def test_update_stage7_progress_frac_monotonically_increases(tmp_path, monkeypatch):
+    """B.7 — frac values across successive milestones must be non-decreasing."""
+    import lib.pipeline_runtime as _rt_mod
+    from lib.stages.st07_report import _STAGE7_MILESTONES
+
+    cap = _ProgressCapture()
+    monkeypatch.setattr(_rt_mod, 'update_stage_progress', cap)
+
+    cache, outdir, cfg = _setup(tmp_path)
+    run(cfg, cache, outdir)
+
+    fracs = [c['args'][2] for c in cap.calls]
+    assert fracs, 'No progress calls recorded'
+    for i in range(1, len(fracs)):
+        assert fracs[i] >= fracs[i - 1], (
+            f'frac decreased from {fracs[i-1]} to {fracs[i]} at step {i}')
+
+
+def test_update_stage7_progress_final_frac_is_one(tmp_path, monkeypatch):
+    """B.8 — the last milestone call must emit frac == 1.0 (Done)."""
+    import lib.pipeline_runtime as _rt_mod
+
+    cap = _ProgressCapture()
+    monkeypatch.setattr(_rt_mod, 'update_stage_progress', cap)
+
+    cache, outdir, cfg = _setup(tmp_path)
+    run(cfg, cache, outdir)
+
+    assert cap.calls, 'No progress calls recorded'
+    last_frac = cap.calls[-1]['args'][2]
+    assert last_frac == 1.0, (
+        f'Expected final frac == 1.0, got {last_frac!r}')
+
+
+def test_update_stage7_progress_survives_rt_progress_exception(tmp_path, monkeypatch):
+    """B.9 — if _rt_progress raises, run() must still complete successfully
+    and write its outputs (graceful degradation guard added in A.3)."""
+    import lib.pipeline_runtime as _rt_mod
+
+    def _boom(*a, **kw):
+        raise RuntimeError('simulated TTY error')
+
+    monkeypatch.setattr(_rt_mod, 'update_stage_progress', _boom)
+
+    cache, outdir, cfg = _setup(tmp_path)
+    # Must not raise
+    stats = run(cfg, cache, outdir)
+    assert os.path.exists(os.path.join(outdir, 'relevant_commits.json'))
+    assert 'generated_files' in stats

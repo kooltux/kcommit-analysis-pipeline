@@ -99,6 +99,52 @@
     return String(ts).slice(0,16);
   }
 
+  /* ── A.5 / D.14: metadata sidecar → #evaluation-details ──────────────── */
+  function loadReportMetadata() {
+    var url = window.KCOMMIT_REPORT_METADATA_URL;
+    if (!url) return;
+    var el = document.getElementById('evaluation-details');
+    // Only populate when the server-side block is empty (sidecar mode).
+    // If generate_html_report() already rendered content (embedded mode),
+    // the div is non-empty and we skip the fetch.
+    if (!el || el.children.length > 0) return;
+    fetch(url)
+      .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(meta) {
+        var rs  = (meta && meta.report_stats) || {};
+        var ev  = rs.evaluation || {};
+        var git = (meta && meta.git) || {};
+        var an  = (meta && meta.analysis) || {};
+        var pairs = [
+          ['Git source',       ev.git_source       || (git.repo_url  ? git.repo_url + (git.branch ? ' (' + git.branch + ')' : '') : null)],
+          ['Git baseline',     ev.git_baseline     || git.base_rev || null],
+          ['Git range',        ev.git_range        || (git.base_rev && git.head_rev ? git.base_rev + '..' + git.head_rev : null)],
+          ['Kernel revision',  ev.kernel_revision  || null],
+          ['Profiles',         ev.profiles         || (an.active_profiles && an.active_profiles.join(', ')) || null],
+          ['Top N',            ev.top_n            || (an.top_n != null ? String(an.top_n) : null)],
+          ['Min score',        ev.min_score        || ((an.filter && an.filter.min_score) ? String(an.filter.min_score) : null)],
+          ['HTML detail mode', ev.html_detail_mode || an.html_detail_mode || null],
+          ['Outputs',          ev.outputs          || (an.outputs && an.outputs.join(', ')) || null],
+        ];
+        var html = '<h3>Evaluation</h3>';
+        pairs.forEach(function(pair) {
+          var label = pair[0], value = pair[1];
+          if (value == null || value === '') return;
+          html += '<div class="kc-stat-row">'
+               +  '<span class="kc-stat-label">' + esc(label) + '</span>'
+               +  '<span class="kc-stat-value">' + esc(String(value)) + '</span>'
+               +  '</div>';
+        });
+        el.innerHTML = html;
+      })
+      .catch(function(err) {
+        // Silently ignore — evaluation details are optional
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('[kcommit] Could not load report metadata:', err);
+        }
+      });
+  }
+
   /* ── Per-column filters + global search ──────────────────────────────── */
   var MULTISELECT_MAX = 20;
 
@@ -317,7 +363,7 @@
     overlay.classList.add('open');
     panel.classList.add('open');
     if (panelH3) panelH3.textContent = sha;
-    if (panelBody) panelBody.innerHTML = '<p style="color:var(--text-muted);font-size:.75rem">Loading…</p>';
+    if (panelBody) panelBody.innerHTML = '<p style="color:var(--text-muted);font-size:.75rem">Loading\u2026</p>';
     loadCommitStore().then(function(map) {
       map = (map && typeof map === 'object') ? map : {};
       renderCommit(map[sha] || map[String(sha)] || null, sha);
@@ -481,5 +527,8 @@
     initSort(tbl);
     initCsvExport(tbl);
   });
+
+  // A.5 / D.14: load evaluation metadata from sidecar after DOM is ready
+  loadReportMetadata();
 
 })();
