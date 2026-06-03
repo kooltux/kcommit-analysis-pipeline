@@ -14,7 +14,7 @@ def _write(path, data):
         json.dump(data, f)
 
 
-# ── _derive_config_dirs ───────────────────────────────────────────────────────
+# ── _derive_config_dirs ─────────────────────────────────────────────────────────
 def test_derive_config_dirs_basic():
     c2p = {'CONFIG_USB': ['drivers/usb/hub.c', 'drivers/usb/core.c']}
     dirs = _derive_config_dirs(c2p)
@@ -48,7 +48,7 @@ def test_derive_config_dirs_no_dirname():
     assert dirs == []
 
 
-# ── _extract_log_objects ──────────────────────────────────────────────────────
+# ── _extract_log_objects ────────────────────────────────────────────────────────
 def test_extract_log_objects_basic():
     lines = ['  CC      drivers/net/core.o', '  LD      vmlinux']
     objs = _extract_log_objects(lines)
@@ -80,7 +80,60 @@ def test_extract_log_objects_sorted():
     assert objs == sorted(objs)
 
 
-# ── run() ─────────────────────────────────────────────────────────────────────
+# ── C: built-in.o / built-in.a must be excluded from log objects ─────────────
+
+def test_extract_log_objects_excludes_builtin_o():
+    """'built-in.o' from a build log line must not enter built_objects_from_log.
+
+    If included, the stem 'built-in' would appear in log_basenames (stage 04)
+    and cause every commit touching a file named built-in.* to be spuriously
+    kept by the L2½ artifact check.
+    """
+    lines = [
+        '  LD      drivers/gpu/drm/built-in.o',
+        '  CC      drivers/gpu/drm/drm_drv.o',
+    ]
+    objs = _extract_log_objects(lines)
+    assert 'built-in.o' not in objs, 'built-in.o must be excluded from log objects'
+    assert 'drm_drv.o' in objs, 'real object must still be included'
+
+
+def test_extract_log_objects_excludes_builtin_a():
+    """'built-in.a' (newer kbuild format) must also be excluded."""
+    lines = [
+        '  AR      net/core/built-in.a',
+        '  CC      net/core/skbuff.o',
+    ]
+    objs = _extract_log_objects(lines)
+    assert 'built-in.a' not in objs
+    assert 'skbuff.o' in objs
+
+
+def test_extract_log_objects_builtin_only_returns_empty():
+    """A log containing only placeholder lines yields an empty result."""
+    lines = [
+        '  LD      drivers/built-in.o',
+        '  AR      net/built-in.a',
+    ]
+    assert _extract_log_objects(lines) == []
+
+
+def test_extract_log_objects_builtin_mixed_with_real():
+    """Mixed log: only real objects survive; all placeholder basenames dropped."""
+    lines = [
+        '  LD      drivers/gpu/built-in.o',
+        '  CC      drivers/gpu/drm/drm_mode.o',
+        '  AR      drivers/net/built-in.a',
+        '  CC      drivers/net/core/skbuff.o',
+    ]
+    objs = _extract_log_objects(lines)
+    assert 'built-in.o' not in objs
+    assert 'built-in.a' not in objs
+    assert 'drm_mode.o' in objs
+    assert 'skbuff.o' in objs
+
+
+# ── run() ───────────────────────────────────────────────────────────────────
 def _build_context(kernel_config=None, build_log=None, artifacts=None,
                    kbuild_files=None):
     return {
@@ -176,3 +229,35 @@ def test_run_history_map_error_graceful(tmp_path, monkeypatch):
                side_effect=RuntimeError('git not available')):
         pm = run(cfg, cache)
     assert pm['history_info']['mode'] == 'error'
+
+
+def test_run_builtin_o_excluded_from_log_objects(tmp_path):
+    """run() must not include built-in.o in built_objects_from_log.
+
+    This is the end-to-end regression for the C fix: a build log line such as
+    '  LD  drivers/gpu/drm/built-in.o' must not produce the stem 'built-in'
+    in log_basenames, which would cause the stage-04 prefilter to spuriously
+    keep commits via the L2½ artifact check.
+    """
+    ctx = _build_context(build_log=[
+        '  LD      drivers/gpu/drm/built-in.o',
+        '  CC      drivers/gpu/drm/drm_drv.o',
+    ])
+    cache, cfg = _setup(tmp_path, ctx=ctx)
+    pm = run(cfg, cache)
+    assert 'built-in.o' not in pm['built_objects_from_log'], \
+        'built-in.o must not appear in built_objects_from_log'
+    assert 'drm_drv.o' in pm['built_objects_from_log'], \
+        'real object drm_drv.o must still appear'
+
+
+def test_run_builtin_a_excluded_from_log_objects(tmp_path):
+    """built-in.a must also be excluded from built_objects_from_log."""
+    ctx = _build_context(build_log=[
+        '  AR      net/core/built-in.a',
+        '  CC      net/core/skbuff.o',
+    ])
+    cache, cfg = _setup(tmp_path, ctx=ctx)
+    pm = run(cfg, cache)
+    assert 'built-in.a' not in pm['built_objects_from_log']
+    assert 'skbuff.o' in pm['built_objects_from_log']

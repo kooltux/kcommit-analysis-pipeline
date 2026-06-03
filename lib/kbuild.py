@@ -6,6 +6,10 @@ v7.18 changes vs v7.17:
     both the Makefile list and the config_to_paths mapping only traverse the
     source tree once.
   - Python 3.6 compatible.
+
+v12.0.2 changes:
+  - KBUILD_PLACEHOLDER_NAMES exported here as the single authoritative
+    definition, shared by st02 (_scan_build_dir) and st03 (_extract_log_objects).
 """
 import os
 
@@ -15,6 +19,20 @@ try:
     import kconfiglib
 except Exception:
     kconfiglib = None
+
+
+# Kbuild directory-aggregator basenames that must never enter the product map
+# as build-artifact evidence.  These are synthetic intermediate linker inputs
+# produced automatically by kbuild to merge directory-level objects for upward
+# linking; they have no 1-to-1 correspondence with any source file.
+#
+# Used by:
+#   lib/stages/st02_build_context._scan_build_dir()    -- filesystem scan
+#   lib/stages/st03_product_map._extract_log_objects() -- build-log scan
+KBUILD_PLACEHOLDER_NAMES = frozenset({
+    'built-in.o',
+    'built-in.a',
+})
 
 
 def load_kernel_config_symbols(config_path, source_dir=None):

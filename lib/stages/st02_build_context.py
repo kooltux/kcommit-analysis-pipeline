@@ -8,22 +8,19 @@ linking.  They carry no source-level meaning and must not enter the product
 map as build-artifact evidence — doing so causes every commit that touches any
 file in the directory to be incorrectly kept by the L2½ artifact check in
 stage 04.  _scan_build_dir() therefore skips these files at collection time.
+The authoritative set of placeholder names is KBUILD_PLACEHOLDER_NAMES in
+lib.kbuild, shared with st03_product_map._extract_log_objects().
 """
 import os
 
 from lib.config import save_json
-from lib.kbuild import load_kernel_config_symbols
+from lib.kbuild import load_kernel_config_symbols, KBUILD_PLACEHOLDER_NAMES
 from lib.parse_kconfig import parse_kernel_config, scan_kbuild_tree
 from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.manifest import CACHE_FILES, NSTAGES
 
-# Kbuild directory-aggregator basenames that must never appear in the product
-# map.  These are intermediate linker inputs produced automatically by kbuild;
-# they have no 1-to-1 correspondence with any source file.
-_KBUILD_PLACEHOLDER_NAMES = frozenset({
-    'built-in.o',
-    'built-in.a',
-})
+# Re-export for backwards compatibility and independent testing.
+_KBUILD_PLACEHOLDER_NAMES = KBUILD_PLACEHOLDER_NAMES
 
 
 def _read_lines(path):
@@ -37,7 +34,7 @@ def _scan_build_dir(build_dir):
     """Walk *build_dir* and return relative paths of compiled objects.
 
     Only ``.o`` and ``.ko`` files are collected.  Kbuild directory-aggregator
-    placeholders listed in ``_KBUILD_PLACEHOLDER_NAMES`` (``built-in.o``,
+    placeholders listed in ``KBUILD_PLACEHOLDER_NAMES`` (``built-in.o``,
     ``built-in.a``) are excluded because they are synthetic linker inputs with
     no 1-to-1 source-file correspondence and would cause spurious
     build-artifact hits in the stage-04 prefilter.
@@ -47,7 +44,7 @@ def _scan_build_dir(build_dir):
         return objects
     for root, _, files in os.walk(build_dir):
         for name in files:
-            if name in _KBUILD_PLACEHOLDER_NAMES:
+            if name in KBUILD_PLACEHOLDER_NAMES:
                 continue
             if name.endswith('.o') or name.endswith('.ko'):
                 objects.append(

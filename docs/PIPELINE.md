@@ -24,6 +24,8 @@
   they have no 1-to-1 correspondence with any source file and must not
   contribute artifact evidence in stage 04.
 - Parses `kernel_build_log` and `yocto_build_log` for compiled object names.
+  Kbuild placeholder basenames are also excluded from log-derived objects
+  (stage 03 `_extract_log_objects`).
 - Parses DTS roots for device-tree source paths.
 - Outputs `build_context.json` and `kbuild_map.json`.
 
@@ -31,17 +33,28 @@
 - Combines `build_context.json` with the static Kbuild map.
 - Optionally walks historical Makefiles via `lib/history_map.py` to extend
   the `CONFIG_* → source file` mapping across the revision range.
+- Build-log derived objects (`built_objects_from_log`) have Kbuild placeholder
+  basenames removed before saving to `product_map.json`.
 - Outputs `product_map.json`.
 
 ### Stage 04 — prefilter_commits
 - Loads compiled rules and applies the multi-level filter hierarchy.
-- Kept commits → `filtered_commits.json` (input for scoring).
-- Dropped commits → same file with `_filter_reason`.
+- **L2½ artifact evidence** uses two sources:
+  1. `artifact_stems` — full-path stems from `built_artifacts_from_dir`
+     (e.g. `drivers/usb/core/hub`).  Precise; no extra qualification needed.
+  2. `log_basenames` — bare filename stems from build-log tokens
+     (e.g. `hub` from `hub.o`).  **Directory-scoped**: a log-basename hit is
+     only accepted when the file’s parent directory is in `compiled_dirs` or
+     the file itself is in `compiled_files`.  This prevents a build-log entry
+     for `drivers/usb/hub.o` from spuriously matching `sound/usb/hub.c`,
+     `net/hub.c`, etc. anywhere else in the tree.
+- Kept commits → `prefilter_kept_commits.json` (input for scoring).
+- Dropped commits → `filtered_commits.json` with `_filter_reason`.
 - Also writes `output/filtered_commits.{json,csv,html,xlsx,ods}` for each
   format enabled in `reports.outputs`.
 
 ### Stage 05 — score_commits
-- Reads `filtered_commits.json`.
+- Reads `prefilter_kept_commits.json`.
 - Evaluates all rules of all active profiles for each commit.
 - Supports parallel scoring via multiprocessing (`collect.score_workers`).
 - Outputs `scored_commits.json` with `score`, `matched_profiles`,
@@ -84,7 +97,7 @@
 ```
 
 Rule pattern bodies are stored once; each profile entry contains only weights
-and the merged union of all its rules' patterns.
+and the merged union of all its rules’ patterns.
 
 ## State tracking
 
@@ -106,7 +119,7 @@ stale cache files before re-running.
 | `lib/spreadsheet.py` | XLSX (openpyxl) and ODS export |
 | `lib/gitutils.py` | `git log` parsing |
 | `lib/history_map.py` | Historical Makefile walking |
-| `lib/kbuild.py` | Kbuild static map |
+| `lib/kbuild.py` | Kbuild static map; exports `KBUILD_PLACEHOLDER_NAMES` |
 | `lib/parse_kconfig.py` | `.config` parsing |
 | `lib/validation.py` | Config validation |
 | `lib/manifest.py` | Version and manifest loading |
@@ -114,15 +127,20 @@ stale cache files before re-running.
 | `lib/stages/` | Stage business logic (one module per stage) |
 
 
-- v10.2.0: HTML commit details now expose a rule-by-rule scoring trace, including matched patterns/paths/SHA values, per-rule score, per-profile score, and final combined score.
+## v12.0.2 changes
 
-- v10.2.0: Non-HTML outputs now expose rule-analysis details too: JSON includes rule_trace.json and summary XLSX/ODS include a Rule Trace sheet.
-
-- v10.2.0: HTML reports now support sidecar table datasets (`relevant_commits.table.json`, `filtered_commits.table.json`), sharded per-commit detail JSON under `output/commits/aa/bb/<sha>.json`, optional compressed embedded commit maps, and canonical git-log-style field ordering for commit detail payloads.
-
-## Miniature test fixture
-
-A test-only miniature pipeline fixture lives under `tests/`. It includes a tiny kernel-like tree in `tests/mini-sample/mini-kernel`, dedicated test profiles/rules in `tests/mini-sample/`, and a sample config at `tests/mini-sample/configs/test-mini.json`. The regression test `tests/test_full_pipeline_with_mini_inputs.py` uses these assets to exercise stage preparation, build-context capture, and command/report flow without depending on external repositories.
+- `_file_has_artifact()` in stage 04 now scopes **log-basename evidence** to
+  the file’s parent directory.
+  Previously, a bare stem such as `hub` (from `drivers/usb/hub.o` in the
+  build log) would match any file named `hub.*` anywhere in the tree
+  (`sound/usb/hub.c`, `net/hub.c`, …), causing massive over-keeping.
+  The fix: a log-basename hit is accepted only when
+  `os.path.dirname(file) in compiled_dirs` **or** the file itself is in
+  `compiled_files`.  Full-path `artifact_stems` matches are unaffected.
+- `lib/kbuild.py` now exports `KBUILD_PLACEHOLDER_NAMES` as the single
+  authoritative definition, imported by both `st02` and `st03`.
+- `st02._scan_build_dir()` updated to import the shared constant instead
+  of defining a private copy.
 
 
 ## v12.0.1 changes
@@ -133,8 +151,10 @@ A test-only miniature pipeline fixture lives under `tests/`. It includes a tiny 
   by kbuild; treating them as real build evidence caused the stage-04 L2½
   artifact check to keep commits that should have been eliminated by the
   prefilter, resulting in insufficient commit reduction.
-  The set of excluded names is exposed as `_KBUILD_PLACEHOLDER_NAMES` for
-  testing and future extension.
+  The set of excluded names is exposed as `KBUILD_PLACEHOLDER_NAMES` in
+  `lib/kbuild.py` for testing and future extension.
+- Stage 03 (`_extract_log_objects`) also excludes the same placeholder
+  basenames from `built_objects_from_log`.
 
 
 ## v11.4.0 report changes
@@ -151,3 +171,8 @@ A test-only miniature pipeline fixture lives under `tests/`. It includes a tiny 
 - HTML reports load evaluation metadata from `report_metadata.json`.
 - Main HTML tables hide `Product Evidence`; commit detail views show the shorter `Evidence` label.
 - Current validated baseline: 465 tests passing, 85% `lib/` coverage.
+
+
+## Miniature test fixture
+
+A test-only miniature pipeline fixture lives under `tests/`. It includes a tiny kernel-like tree in `tests/mini-sample/mini-kernel`, dedicated test profiles/rules in `tests/mini-sample/`, and a sample config at `tests/mini-sample/configs/test-mini.json`. The regression test `tests/test_full_pipeline_with_mini_inputs.py` uses these assets to exercise stage preparation, build-context capture, and command/report flow without depending on external repositories.

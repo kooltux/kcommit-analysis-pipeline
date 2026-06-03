@@ -6,6 +6,7 @@ import os
 
 from lib.config import load_json, save_json
 from lib.history_map import build_history_config_map
+from lib.kbuild import KBUILD_PLACEHOLDER_NAMES
 from lib.parse_kconfig import scan_makefile_config_map
 from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.manifest import CACHE_FILES, NSTAGES
@@ -22,11 +23,23 @@ def _derive_config_dirs(config_to_paths):
 
 
 def _extract_log_objects(lines):
+    """Extract compiled object basenames from build log lines.
+
+    Kbuild directory-aggregator placeholders (``built-in.o``, ``built-in.a``)
+    are excluded.  These are synthetic intermediate linker inputs produced
+    automatically by kbuild with no 1-to-1 source-file correspondence; including
+    them would add the stem ``built-in`` to ``log_basenames``, causing the
+    stage-04 L2½ artifact check to spuriously keep every commit whose filename
+    starts with ``built-in``.
+    """
     objs = set()
     for line in (lines or []):
         for tok in line.split():
             if tok.endswith('.o') or tok.endswith('.ko'):
-                objs.add(os.path.basename(tok))
+                bn = os.path.basename(tok)
+                if bn in KBUILD_PLACEHOLDER_NAMES:
+                    continue
+                objs.add(bn)
     return sorted(objs)
 
 
