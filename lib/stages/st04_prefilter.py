@@ -108,11 +108,41 @@ def build_compiled_sets(product_map):
 
 
 def _file_has_artifact(f, cs):
+    """Return True if *f* has build-artifact evidence.
+
+    Two evidence sources are checked in order:
+
+    1. ``artifact_stems`` — full path stems derived from ``built_artifacts_from_dir``
+       (e.g. ``'drivers/usb/core/hub'``).  A full-path stem match is precise and
+       needs no further qualification.
+
+    2. ``log_basenames`` — bare filename stems derived from build-log tokens
+       (e.g. ``'hub'`` from ``hub.o``).  These are intentionally basename-only
+       because the build log rarely includes the full source path.  However,
+       matching on basename alone would be far too broad: the stem ``'hub'``
+       would match ``drivers/usb/hub.c``, ``sound/usb/hub.c``,
+       ``net/hub.c``, etc. indiscriminately.
+
+       To prevent this false-positive explosion, a log-basename hit is only
+       accepted when the file's **parent directory** is also in
+       ``compiled_dirs`` (i.e. the directory is known to produce compiled
+       objects for an enabled kconfig symbol) **or** the file itself is in
+       ``compiled_files``.  This scopes the match to "same compiled directory"
+       rather than "anywhere in the tree".
+    """
+    # Source 1: full-path artifact stem (precise, no extra qualification needed)
     stem, _ = os.path.splitext(f)
     if stem in cs['artifact_stems']:
         return True
+
+    # Source 2: log basename stem — only valid when directory is compiled
     bn_stem, _ = os.path.splitext(os.path.basename(f))
-    return bn_stem in cs['log_basenames']
+    if bn_stem not in cs['log_basenames']:
+        return False
+    return (
+        os.path.dirname(f) in cs['compiled_dirs']
+        or f in cs['compiled_files']
+    )
 
 
 def _file_is_kconfig_covered(f, cs):
@@ -210,7 +240,7 @@ def run(cfg, cache):
     precompile_rules(profile_rules)
     lists         = build_merged_lists(profile_rules)
     compiled_sets = build_compiled_sets(product_map)
-    kconfig_enabled = compiled_sets.get('available', False)
+    kconfig_active = compiled_sets.get('available', False)
 
     print(f'  compiled_files  : {len(compiled_sets["compiled_files"])}')
     print(f'  compiled_dirs   : {len(compiled_sets["compiled_dirs"])}')
@@ -222,13 +252,13 @@ def run(cfg, cache):
     print(f'  path_bl         : {len(lists["path_bl"])} patterns')
     print(f'  keywords_wl     : {len(lists["kw_wl"])} patterns')
     print(f'  keywords_bl     : {len(lists["kw_bl"])} patterns')
-    print(f'  kconfig_active  : {kconfig_enabled}')
+    print(f'  kconfig_active  : {kconfig_active}')
 
     kept            = []
     dropped_commits = []
     reasons         = {}
     for i, c in enumerate(commits):
-        action, reason = filter_decision(c, lists, compiled_sets, filter_cfg, kconfig_enabled)
+        action, reason = filter_decision(c, lists, compiled_sets, filter_cfg, kconfig_active)
         if action == 'drop':
             c['_filter_reason'] = reason
             reasons[reason] = reasons.get(reason, 0) + 1
@@ -285,8 +315,7 @@ def write_outputs(cfg, dropped_commits, outdir):
             hp = os.path.join(outdir, 'filtered_commits.html')
             title = reports.get('title', 'kcommit Analysis Report') + ' — Filtered'
             generate_html_report(dropped_commits, {}, {}, hp, title=title, is_filtered=True,
-                          templates_dir=cfg['paths'].get('templates_dir',
-                          templates_dir=cfg['paths'].get('templates_dir')))
+                          templates_dir=cfg['paths'].get('templates_dir'))
             print(f'  filtered HTML: {hp}')
         except Exception as e:
             logging.warning('filtered HTML failed: %s', e)

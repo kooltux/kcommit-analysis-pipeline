@@ -3,6 +3,7 @@ import os, re
 
 from lib.stages.st04_prefilter import (
     filter_decision, build_merged_lists, build_compiled_sets,
+    _file_has_artifact,
 )
 
 _EMPTY_CS = dict(compiled_files=set(), compiled_dirs=set(),
@@ -134,18 +135,14 @@ def test_build_compiled_sets_builtin_o_not_in_artifact_stems():
     compiled_files and proceed past its early-exit guard.  We therefore provide
     one real enabled symbol so the artifact loop runs, then verify:
       - the real object stem is present (drm_drv)
-      - the placeholder stem 'built-in' does NOT appear
-    This is the defensive check for a stale or hand-crafted product_map that
-    still contains built-in.o (should not happen with the fixed st02).
+      - the test is meaningful (available=True, artifact loop ran)
     """
     pm = {
-        # One real enabled symbol so compiled_files is non-empty and the
-        # function does not bail out before populating artifact_stems.
         'config_to_paths': {'CONFIG_DRM': ['drivers/gpu/drm/drm_drv.c']},
         'enabled_configs':  ['CONFIG_DRM=y'],
         'built_artifacts_from_dir': [
-            'drivers/gpu/drm/built-in.o',   # placeholder — stem must NOT appear
-            'drivers/gpu/drm/drm_drv.o',    # real object — stem must appear
+            'drivers/gpu/drm/built-in.o',
+            'drivers/gpu/drm/drm_drv.o',
         ],
         'built_objects_from_log': [],
     }
@@ -153,35 +150,24 @@ def test_build_compiled_sets_builtin_o_not_in_artifact_stems():
     assert cs['available'] is True
     assert 'drivers/gpu/drm/drm_drv' in cs['artifact_stems'], \
         'real object stem must be present'
-    # Note: build_compiled_sets does not itself filter built-in.o — that is
-    # st02's job.  This test documents that the stem 'built-in' (from the
-    # path drivers/gpu/drm/built-in) CAN appear in artifact_stems when a stale
-    # cache is used; the primary protection is st02's _KBUILD_PLACEHOLDER_NAMES
-    # exclusion.  The assertion below confirms the real stem is present so the
-    # test is meaningful; a future guard in build_compiled_sets can be added
-    # here if needed.
+    # Note: build_compiled_sets does not filter built-in.o from artifact_stems;
+    # that is st02's job (_scan_build_dir exclusion). The primary guard is that
+    # the full-path stem 'drivers/gpu/drm/built-in' can only match a file
+    # literally named built-in.* in that exact directory, which never happens
+    # in real commits. The st02 fix ensures it never enters the list at all.
     assert 'drivers/gpu/drm/drm_drv' in cs['artifact_stems']
 
 
 def test_builtin_o_only_commit_not_kept_by_artifact_evidence():
-    """A commit whose only file is built-in.o must NOT be kept via build_artifact.
-
-    Stage 02 now excludes built-in.o from build_artifacts, so artifact_stems
-    will not contain 'built-in'.  This end-to-end check verifies that a commit
-    touching only such a placeholder file reaches the kconfig coverage check
-    (or falls through to default) rather than being saved by L2½ artifact.
-    """
-    # Compiled sets as produced after the fix: no 'built-in' stem present.
+    """A commit whose only file is built-in.o must NOT be kept via build_artifact."""
     cs = dict(
         compiled_files=set(),
-        compiled_dirs={'drivers/gpu/drm'},  # dir still covered via real files
-        artifact_stems={'drivers/gpu/drm/drm_drv'},  # only real objects
+        compiled_dirs={'drivers/gpu/drm'},
+        artifact_stems={'drivers/gpu/drm/drm_drv'},
         log_basenames=set(),
         available=True,
     )
     c = _commit(files=['drivers/gpu/drm/built-in.o'])
-    # With require_kconfig_coverage=False we reach L0 default (keep), but the
-    # reason must NOT be 'build_artifact'.
     action, reason = filter_decision(c, _lists(), cs, {'require_kconfig_coverage': False}, True)
     assert reason != 'build_artifact', (
         'built-in.o must not trigger build_artifact keep; got reason=%r' % reason
@@ -190,30 +176,119 @@ def test_builtin_o_only_commit_not_kept_by_artifact_evidence():
 
 def test_builtin_o_only_commit_dropped_when_kconfig_required():
     """With kconfig coverage required and no kconfig hit, a built-in.o-only
-    commit is dropped even though the directory is compiled.
-
-    Before the fix, if 'built-in' appeared in artifact_stems the commit would
-    be saved by L2½ build_artifact before reaching the kconfig check.
-    After the fix, artifact check finds no stem match and the commit falls
-    through to the kconfig check, which drops it.
-    """
+    commit is dropped even though the directory is compiled."""
     cs = dict(
         compiled_files={'drivers/gpu/drm/drm_drv.c'},
         compiled_dirs={'drivers/gpu/drm'},
-        artifact_stems={'drivers/gpu/drm/drm_drv'},  # no 'built-in' stem
+        artifact_stems={'drivers/gpu/drm/drm_drv'},
         log_basenames=set(),
         available=True,
     )
     c = _commit(files=['drivers/gpu/drm/built-in.o'])
     action, reason = filter_decision(
         c, _lists(), cs, {'require_kconfig_coverage': True}, True)
-    # built-in.o is NOT in compiled_files and its stem is not in artifact_stems,
-    # but its parent dir IS in compiled_dirs, so _file_is_kconfig_covered
-    # returns True via the dir check — meaning this particular file is still
-    # considered "covered" by directory proximity.  The real gain from the fix
-    # is that the commit is no longer prematurely saved by artifact evidence;
-    # it now goes through the proper kconfig coverage path.
     assert reason != 'build_artifact'
+
+
+# ── C: log_basenames must be directory-scoped to prevent cross-tree false positives ──
+
+def test_file_has_artifact_log_match_requires_compiled_dir():
+    """A log-basename hit ('hub') must NOT match a file in a non-compiled dir.
+
+    Before the C fix, log_basenames contained bare stems so 'hub' from
+    drivers/usb/hub.o would also match sound/usb/hub.c, net/hub.c, etc.
+    After the fix, the match is only accepted when the file's parent directory
+    is in compiled_dirs OR the file itself is in compiled_files.
+    """
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/usb'},      # only this dir is compiled
+        artifact_stems=set(),
+        log_basenames={'hub'},              # from 'drivers/usb/hub.o' in build log
+        available=True,
+    )
+    # Same basename, DIFFERENT directory — must NOT match
+    assert not _file_has_artifact('sound/usb/hub.c', cs), \
+        'hub in sound/usb must not match log stem from drivers/usb'
+    assert not _file_has_artifact('net/hub.c', cs), \
+        'hub in net must not match log stem from drivers/usb'
+    # Same basename, SAME compiled directory — must match
+    assert _file_has_artifact('drivers/usb/hub.c', cs), \
+        'hub in drivers/usb must match: dir is compiled'
+
+
+def test_file_has_artifact_log_match_requires_compiled_dir_deep():
+    """Directory-scoped match works for deeper paths."""
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/net/ethernet/intel'},
+        artifact_stems=set(),
+        log_basenames={'e1000e'},
+        available=True,
+    )
+    assert _file_has_artifact('drivers/net/ethernet/intel/e1000e.c', cs)
+    assert not _file_has_artifact('drivers/net/ethernet/broadcom/e1000e.c', cs)
+
+
+def test_file_has_artifact_log_match_via_compiled_files():
+    """log-basename hit is also accepted when the file itself is in compiled_files."""
+    cs = dict(
+        compiled_files={'drivers/usb/hub.c'},
+        compiled_dirs=set(),
+        artifact_stems=set(),
+        log_basenames={'hub'},
+        available=True,
+    )
+    assert _file_has_artifact('drivers/usb/hub.c', cs)
+
+
+def test_file_has_artifact_no_log_no_stem_returns_false():
+    """File with neither log nor artifact stem match returns False."""
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/usb'},
+        artifact_stems=set(),
+        log_basenames={'hub'},
+        available=True,
+    )
+    assert not _file_has_artifact('drivers/usb/core.c', cs)
+
+
+def test_log_basename_cross_tree_commit_not_kept():
+    """End-to-end: commit in uncompiled subsystem not spuriously kept by log stem.
+
+    Scenario: build log mentions 'drivers/usb/hub.o'.  A commit touches
+    'sound/usb/hub.c' — same basename, different tree.  Before the fix, the
+    'hub' stem in log_basenames would keep this commit via build_artifact.
+    After the fix it must NOT be kept by artifact evidence.
+    """
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/usb'},          # USB dir compiled, sound/usb is not
+        artifact_stems=set(),
+        log_basenames={'hub'},
+        available=True,
+    )
+    c = _commit(files=['sound/usb/hub.c'])
+    action, reason = filter_decision(c, _lists(), cs, {'require_kconfig_coverage': False}, True)
+    assert reason != 'build_artifact', (
+        'sound/usb/hub.c must not be kept by artifact evidence from drivers/usb/hub.o; '
+        'got reason=%r' % reason
+    )
+
+
+def test_log_basename_same_dir_commit_kept():
+    """End-to-end: commit in the compiled dir IS kept by log-basename evidence."""
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/usb'},
+        artifact_stems=set(),
+        log_basenames={'hub'},
+        available=True,
+    )
+    c = _commit(files=['drivers/usb/hub.c'])
+    action, reason = filter_decision(c, _lists(), cs, {}, False)
+    assert action == 'keep' and reason == 'build_artifact'
 
 
 # ── min_score threshold (E.1c / st06_postfilter) ───────────────────────────
@@ -246,11 +321,10 @@ def test_artifact_evidence_keeps_commit():
     cs = dict(
         compiled_files=set(),
         compiled_dirs=set(),
-        artifact_stems={'drivers/usb/core/hub'},   # stem matches hub.c
+        artifact_stems={'drivers/usb/core/hub'},
         log_basenames=set(),
         available=True,
     )
-    # No path_wl, no path_bl all-files-drop — falls through to L2½ artifact check
     action, reason = filter_decision(c, _lists(), cs, {}, False)
     assert action == 'keep'
     assert reason == 'build_artifact'

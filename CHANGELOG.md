@@ -2,6 +2,73 @@
 
 All notable changes to this project will be documented in this file.
 
+## v12.0.2 — prefilter: directory-scoped log-basename artifact evidence (2026-06-03)
+
+### Fixed (C)
+
+- `lib/stages/st04_prefilter.py` — `_file_has_artifact()` now scopes
+  **log-derived basename matches** (`log_basenames`) to the file’s parent
+  directory.
+
+  **Root cause.** `build_compiled_sets()` populates `log_basenames` from
+  `built_objects_from_log` by extracting *bare filename stems*
+  (e.g. `hub` from `drivers/usb/hub.o`).  The previous implementation
+  accepted any file whose basename stem was in that set, regardless of
+  directory:
+  ```python
+  # BEFORE — too broad
+  return bn_stem in cs['log_basenames']
+  ```
+  This meant a build-log entry for `drivers/usb/hub.o` also matched
+  `sound/usb/hub.c`, `net/hub.c`, etc., causing large spurious
+  over-keeping across unrelated subsystems.
+
+  **Fix.** A log-basename hit is accepted only when the file’s parent
+  directory is in `compiled_dirs` **or** the file itself is in
+  `compiled_files`:
+  ```python
+  # AFTER — directory-scoped
+  if bn_stem not in cs['log_basenames']:
+      return False
+  return (
+      os.path.dirname(f) in cs['compiled_dirs']
+      or f in cs['compiled_files']
+  )
+  ```
+  `artifact_stems` (full-path stem matches from `built_artifacts_from_dir`)
+  are precise and are not affected by this change.
+
+  A detailed docstring has been added to `_file_has_artifact()` explaining
+  both evidence sources, the scoping requirement, and the false-positive risk
+  of unscoped basename matching.
+
+### Tests (C)
+
+- `tests/test_prefilter.py` — added 7 regression tests for the directory-
+  scoped log-basename fix:
+
+  | Test | Assertion |
+  |---|---|
+  | `test_file_has_artifact_log_match_requires_compiled_dir` | `sound/usb/hub.c` and `net/hub.c` NOT matched; `drivers/usb/hub.c` IS matched |
+  | `test_file_has_artifact_log_match_requires_compiled_dir_deep` | Deeper paths scoped correctly |
+  | `test_file_has_artifact_log_match_via_compiled_files` | Match accepted when file is in `compiled_files` |
+  | `test_file_has_artifact_no_log_no_stem_returns_false` | File not in log_basenames returns False |
+  | `test_log_basename_cross_tree_commit_not_kept` | End-to-end: `sound/usb/hub.c` reason ≠ `build_artifact` |
+  | `test_log_basename_same_dir_commit_kept` | End-to-end: `drivers/usb/hub.c` reason == `build_artifact` |
+  | `test_builtin_o_only_commit_dropped_when_kconfig_required` | Built-in.o commit not kept via artifact with kconfig active |
+
+### Documentation (C)
+
+- `docs/PIPELINE.md` — Stage 04 bullet updated to document both artifact
+  evidence sources and the directory-scoping requirement; v12.0.2 changes
+  section added.
+
+### Version
+
+- `MANIFEST.json` version bumped from `v12.0.1` → `v12.0.2`.
+
+---
+
 ## v12.0.1 — prefilter: exclude kbuild placeholder aggregators (2026-06-03)
 
 ### Fixed (A)
@@ -11,7 +78,7 @@ All notable changes to this project will be documented in this file.
   by kbuild to merge directory-level objects for upward linking; they have no
   1-to-1 correspondence with any source file.
   Previously they entered `build_artifacts` in `build_context.json`, which
-  caused stage 04's L2½ `build_artifact` check to keep commits that should
+  caused stage 04’s L2½ `build_artifact` check to keep commits that should
   have been eliminated by the prefilter — resulting in insufficient commit
   reduction when a real build tree was provided.
 - The set of excluded names is defined in the new constant
@@ -38,6 +105,8 @@ All notable changes to this project will be documented in this file.
 
 ### Version
 - `MANIFEST.json` version bumped from `v12.0.0` → `v12.0.1`.
+
+---
 
 ## v12.0.0 — stage-7 progress fix + evaluation sidebar (2026-06-02)
 
@@ -84,6 +153,8 @@ All notable changes to this project will be documented in this file.
 ### Version
 - `MANIFEST.json` version bumped from `v11.3.2` → `v12.0.0`.
 
+---
+
 ## v11.3.2 — report fixes, tests, and measured coverage (2026-05-12)
 
 - HTML report sidecar flow refined: report metadata sidecar, sidecar table JSON, sharded commit details, and detail label normalization to `Evidence`.
@@ -91,6 +162,7 @@ All notable changes to this project will be documented in this file.
 - Added targeted regression tests for report generation, command behavior, manifest assertions, and stage-1 commit collection normalization.
 - Measured test baseline established with coverage tooling: **465 tests passing**, **85%** total `lib/` coverage.
 - Documentation updated in `docs/PIPELINE.md` for v11.3.2 report behavior and test/coverage status.
+
 ## v11.3.1 - 2026-05-11
 
 ### Fixed
@@ -116,7 +188,7 @@ All notable changes to this project will be documented in this file.
 ## v11.2.9 - 2026-05-11
 
 ### Fixed
-- Improved Firefox compatibility for HTML reports by replacing the filter busy overlay's direct `color-mix()` dependency with a solid RGBA fallback plus guarded `@supports` enhancement.
+- Improved Firefox compatibility for HTML reports by replacing the filter busy overlay’s direct `color-mix()` dependency with a solid RGBA fallback plus guarded `@supports` enhancement.
 - Hardened the client-side CSV download path with a fallback from synthetic `MouseEvent` dispatch to plain `a.click()` for browsers or sandbox contexts where synthetic click dispatch is unreliable.
 
 ### Tests
@@ -221,8 +293,6 @@ All notable changes to this project will be documented in this file.
 - Updated README, `docs/*`, and the example config comments to align with current config keys, shipped profiles, and test assets.
 - Full unit test suite passes: **422 tests, 0 failures**.
 
-
-
 ### Report scaling and ordering
 - Added sidecar HTML table datasets and sharded per-commit detail JSON for scalable report loading.
 - Added optional compressed embedded HTML commit payloads.
@@ -271,16 +341,3 @@ All notable changes to this project will be documented in this file.
 
 ### Test suite — Tier 1 / 2 / 3 (T.5 – T.13)
 - 23 test files, **399 tests, 0 failures**, ~80 % line coverage.
-- **Tier 1** (173 tests): `test_config`, `test_pipeline_runtime`,
-  `test_prefilter`, `test_scoring`, `test_spreadsheet`, `test_st04_prefilter_run`,
-  `test_st05_score_run`, `test_st06_postfilter`, `test_st07_report`,
-  `test_parse_kconfig`, `test_kbuild`, `test_logsetup`, `test_validation`.
-- **Tier 2** (57 tests): `test_st02_build_context`, `test_spreadsheet_extra`,
-  `test_scoring_extra`, `test_st07_report_extra`.
-- **Tier 3** (81 tests): `test_gitutils` (all git helpers via mocked subprocess),
-  `test_st03_product_map`, `test_history_map` (gitshow disk-cache roundtrip +
-  `build_history_config_map`), `test_commands` (`cmd_validate`, `cmd_status`,
-  `cmd_dropped`, `cmd_report`, base helpers).
-- Deferred (T.14): `datetime.utcfromtimestamp()` deprecation warnings in
-  `spreadsheet.py`, `st07_report.py`, `html_report.py` — non-blocking, logged
-  for next maintenance cycle.
