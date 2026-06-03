@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## v12.0.1 — prefilter: exclude kbuild placeholder aggregators (2026-06-03)
+
+### Fixed (A)
+- `lib/stages/st02_build_context.py` — `_scan_build_dir()` now skips
+  **Kbuild directory-aggregator placeholders** (`built-in.o`, `built-in.a`).
+  These files are synthetic intermediate linker inputs automatically produced
+  by kbuild to merge directory-level objects for upward linking; they have no
+  1-to-1 correspondence with any source file.
+  Previously they entered `build_artifacts` in `build_context.json`, which
+  caused stage 04's L2½ `build_artifact` check to keep commits that should
+  have been eliminated by the prefilter — resulting in insufficient commit
+  reduction when a real build tree was provided.
+- The set of excluded names is defined in the new constant
+  `_KBUILD_PLACEHOLDER_NAMES` (currently `{'built-in.o', 'built-in.a'}`) so
+  it can be extended and independently tested.
+
+### Tests (A.2, A.3)
+- `tests/test_st02_build_context.py` — added 6 regression tests:
+  - `test_scan_build_dir_excludes_builtin_o` — `built-in.o` absent, real `.o` present
+  - `test_scan_build_dir_excludes_builtin_a` — `built-in.a` absent, real `.o` present
+  - `test_scan_build_dir_excludes_builtin_o_at_root` — exclusion at every depth
+  - `test_scan_build_dir_only_builtin_returns_empty` — placeholder-only dir yields `[]`
+  - `test_kbuild_placeholder_names_constant_contains_expected` — constant coverage
+  - `test_run_builtin_o_excluded_from_build_artifacts` — end-to-end: JSON on disk clean
+- `tests/test_prefilter.py` — added 4 regression tests:
+  - `test_build_compiled_sets_builtin_o_not_in_artifact_stems` — documents artifact_stems behaviour
+  - `test_builtin_o_only_commit_not_kept_by_artifact_evidence` — reason != `build_artifact`
+  - `test_builtin_o_only_commit_dropped_when_kconfig_required` — reason != `build_artifact` after fix
+  - `test_build_compiled_sets_builtin_o_not_in_artifact_stems` — stale-cache defensive check
+
+### Documentation (A.4)
+- `docs/PIPELINE.md` — Stage 02 bullet updated to explain placeholder exclusion;
+  v12.0.1 changes section added.
+
+### Version
+- `MANIFEST.json` version bumped from `v12.0.0` → `v12.0.1`.
+
 ## v12.0.0 — stage-7 progress fix + evaluation sidebar (2026-06-02)
 
 ### Fixed (A.3)
@@ -208,7 +245,7 @@ All notable changes to this project will be documented in this file.
 ### Validation and schema tightening
 - Added `lib/schema.py` to validate filtered and scored commit cache artifact shapes.
 - Tightened configuration handling and validation toward the v10 strict-contract model, including rejection of unknown top-level keys.
-- Updated stage tests and validation tests to cover the new cache contract and stricter config behavior.
+- Updated stage tests and validation tests to cover the new cache split and stricter config behavior.
 
 ### Reporting and timestamp handling
 - Updated report-generation paths to use the new cache split consistently.
