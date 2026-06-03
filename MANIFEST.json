@@ -1,5 +1,5 @@
 {
-  "version": "v12.0.2",
+  "version": "v12.0.3",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
   "library_dir": "lib",
   "example_configs": [
@@ -40,7 +40,9 @@
       "index": 4,
       "key": "prefilter_commits",
       "outputs": [
-        "cache/filtered_commits.json"
+        "cache/filtered_commits.json",
+        "cache/prefilter_kept_commits.json",
+        "cache/prefilter_debug.json"
       ]
     },
     {

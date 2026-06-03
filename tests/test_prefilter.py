@@ -1,9 +1,15 @@
-"""Tests for lib.stages.prefilter — filter_decision and helpers."""
-import os, re
+"""Tests for lib.stages.st04_prefilter — filter_decision and helpers.
+
+v12.0.0 (A.1): filter_decision() now returns a 3-tuple
+  (action, reason, debug_detail)
+All callers updated; new test block covers debug_detail content.
+"""
+import os
+import re
 
 from lib.stages.st04_prefilter import (
     filter_decision, build_merged_lists, build_compiled_sets,
-    _file_has_artifact,
+    _file_has_artifact, _build_prefilter_debug_entry,
 )
 
 _EMPTY_CS = dict(compiled_files=set(), compiled_dirs=set(),
@@ -16,7 +22,7 @@ def _commit(sha='aaa', subject='', body='', files=None):
 
 
 def _lists(**kw):
-    base = {k: [] for k in ('commit_wl','commit_bl','path_wl','path_bl','kw_wl','kw_bl')}
+    base = {k: [] for k in ('commit_wl', 'commit_bl', 'path_wl', 'path_bl', 'kw_wl', 'kw_bl')}
     base.update(kw)
     return base
 
@@ -24,79 +30,79 @@ def _lists(**kw):
 # ── L3 absolute ──────────────────────────────────────────────────────────────
 def test_commit_whitelist_wins():
     c = _commit(sha='deadbeef')
-    action, reason = filter_decision(c, _lists(commit_wl=['deadbeef']),
-                                     _EMPTY_CS, {}, False)
+    action, reason, dbg = filter_decision(c, _lists(commit_wl=['deadbeef']),
+                                          _EMPTY_CS, {}, False)
     assert action == 'keep' and reason == 'commit_whitelist'
 
 
 def test_commit_blacklist_drops():
     c = _commit(sha='deadbeef')
-    action, reason = filter_decision(c, _lists(commit_bl=['deadbeef']),
-                                     _EMPTY_CS, {}, False)
+    action, reason, dbg = filter_decision(c, _lists(commit_bl=['deadbeef']),
+                                          _EMPTY_CS, {}, False)
     assert action == 'drop' and reason == 'commit_blacklist'
 
 
 def test_commit_whitelist_beats_blacklist():
     c = _commit(sha='deadbeef')
-    action, _ = filter_decision(c,
-                                _lists(commit_wl=['deadbeef'], commit_bl=['deadbeef']),
-                                _EMPTY_CS, {}, False)
+    action, _, _dbg = filter_decision(
+        c, _lists(commit_wl=['deadbeef'], commit_bl=['deadbeef']),
+        _EMPTY_CS, {}, False)
     assert action == 'keep'
 
 
-# ── L2 path ───────────────────────────────────────────────────────────────
+# ── L2 path ──────────────────────────────────────────────────────────────────
 def test_path_blacklist_all_drops():
     c = _commit(files=['Documentation/foo.rst', 'Documentation/bar.rst'])
-    action, reason = filter_decision(c, _lists(path_bl=['Documentation/']),
-                                     _EMPTY_CS, {}, False)
+    action, reason, dbg = filter_decision(c, _lists(path_bl=['Documentation/']),
+                                          _EMPTY_CS, {}, False)
     assert action == 'drop' and 'path_blacklist' in reason
 
 
 def test_path_blacklist_partial_does_not_drop():
     c = _commit(files=['Documentation/foo.rst', 'drivers/usb/hub.c'])
-    action, _ = filter_decision(c, _lists(path_bl=['Documentation/']),
-                                _EMPTY_CS, {}, False)
+    action, _, _dbg = filter_decision(c, _lists(path_bl=['Documentation/']),
+                                      _EMPTY_CS, {}, False)
     assert action == 'keep'
 
 
 def test_path_whitelist_keeps():
     c = _commit(files=['drivers/usb/hub.c'])
-    action, reason = filter_decision(c, _lists(path_wl=['drivers/usb/']),
-                                     _EMPTY_CS, {}, False)
+    action, reason, dbg = filter_decision(c, _lists(path_wl=['drivers/usb/']),
+                                          _EMPTY_CS, {}, False)
     assert action == 'keep' and reason == 'path_whitelist'
 
 
 # ── L1 keywords ──────────────────────────────────────────────────────────────
 def test_keyword_whitelist_keeps():
     c = _commit(subject='net: fix skb use-after-free')
-    action, reason = filter_decision(c, _lists(kw_wl=['use-after-free']),
-                                     _EMPTY_CS, {}, False)
+    action, reason, dbg = filter_decision(c, _lists(kw_wl=['use-after-free']),
+                                          _EMPTY_CS, {}, False)
     assert action == 'keep' and reason == 'keywords_whitelist'
 
 
 def test_keyword_blacklist_drops():
     c = _commit(subject='Documentation: update grammar')
-    action, reason = filter_decision(c, _lists(kw_bl=['Documentation']),
-                                     _EMPTY_CS, {}, False)
+    action, reason, dbg = filter_decision(c, _lists(kw_bl=['Documentation']),
+                                          _EMPTY_CS, {}, False)
     assert action == 'drop' and reason == 'keywords_blacklist'
 
 
 # ── L0 default ────────────────────────────────────────────────────────────────
 def test_default_keep():
     c = _commit(subject='net: fix something random')
-    action, reason = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
+    action, reason, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
     assert action == 'keep' and reason == 'default'
 
 
-# ── filter_disabled ──────────────────────────────────────────────────────────────
+# ── filter_disabled ───────────────────────────────────────────────────────────
 def test_filter_disabled_bypasses_path_bl():
     c = _commit(files=['Documentation/foo.rst', 'Documentation/bar.rst'])
-    action, reason = filter_decision(c, _lists(path_bl=['Documentation/']),
-                                     _EMPTY_CS, {'enabled': False}, False)
+    action, reason, dbg = filter_decision(c, _lists(path_bl=['Documentation/']),
+                                          _EMPTY_CS, {'enabled': False}, False)
     assert action == 'keep' and reason == 'filter_disabled'
 
 
-# ── build_merged_lists ────────────────────────────────────────────────────────────
+# ── build_merged_lists ────────────────────────────────────────────────────────
 def test_build_merged_lists_dedup():
     profile_rules = {
         'p1': {'merged': {'path_whitelist': ['drivers/usb/', 'drivers/usb/']}},
@@ -106,7 +112,7 @@ def test_build_merged_lists_dedup():
     assert len(lists['path_wl']) == 2  # deduped to 2
 
 
-# ── build_compiled_sets ────────────────────────────────────────────────────────────
+# ── build_compiled_sets ───────────────────────────────────────────────────────
 def test_build_compiled_sets_empty_no_product_map():
     cs = build_compiled_sets(None)
     assert cs['available'] is False
@@ -126,17 +132,8 @@ def test_build_compiled_sets_with_data():
     assert 'drivers/usb/core/hub' in cs['artifact_stems']
 
 
-# ── A: built-in.o must NOT appear as artifact evidence in build_compiled_sets ──
-
+# ── A: built-in.o ────────────────────────────────────────────────────────────
 def test_build_compiled_sets_builtin_o_not_in_artifact_stems():
-    """built-in.o must not produce a meaningful artifact_stem.
-
-    build_compiled_sets() requires at least one enabled config/path to populate
-    compiled_files and proceed past its early-exit guard.  We therefore provide
-    one real enabled symbol so the artifact loop runs, then verify:
-      - the real object stem is present (drm_drv)
-      - the test is meaningful (available=True, artifact loop ran)
-    """
     pm = {
         'config_to_paths': {'CONFIG_DRM': ['drivers/gpu/drm/drm_drv.c']},
         'enabled_configs':  ['CONFIG_DRM=y'],
@@ -148,18 +145,10 @@ def test_build_compiled_sets_builtin_o_not_in_artifact_stems():
     }
     cs = build_compiled_sets(pm)
     assert cs['available'] is True
-    assert 'drivers/gpu/drm/drm_drv' in cs['artifact_stems'], \
-        'real object stem must be present'
-    # Note: build_compiled_sets does not filter built-in.o from artifact_stems;
-    # that is st02's job (_scan_build_dir exclusion). The primary guard is that
-    # the full-path stem 'drivers/gpu/drm/built-in' can only match a file
-    # literally named built-in.* in that exact directory, which never happens
-    # in real commits. The st02 fix ensures it never enters the list at all.
     assert 'drivers/gpu/drm/drm_drv' in cs['artifact_stems']
 
 
 def test_builtin_o_only_commit_not_kept_by_artifact_evidence():
-    """A commit whose only file is built-in.o must NOT be kept via build_artifact."""
     cs = dict(
         compiled_files=set(),
         compiled_dirs={'drivers/gpu/drm'},
@@ -168,15 +157,14 @@ def test_builtin_o_only_commit_not_kept_by_artifact_evidence():
         available=True,
     )
     c = _commit(files=['drivers/gpu/drm/built-in.o'])
-    action, reason = filter_decision(c, _lists(), cs, {'require_kconfig_coverage': False}, True)
+    action, reason, dbg = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': False}, True)
     assert reason != 'build_artifact', (
         'built-in.o must not trigger build_artifact keep; got reason=%r' % reason
     )
 
 
 def test_builtin_o_only_commit_dropped_when_kconfig_required():
-    """With kconfig coverage required and no kconfig hit, a built-in.o-only
-    commit is dropped even though the directory is compiled."""
     cs = dict(
         compiled_files={'drivers/gpu/drm/drm_drv.c'},
         compiled_dirs={'drivers/gpu/drm'},
@@ -185,40 +173,26 @@ def test_builtin_o_only_commit_dropped_when_kconfig_required():
         available=True,
     )
     c = _commit(files=['drivers/gpu/drm/built-in.o'])
-    action, reason = filter_decision(
+    action, reason, dbg = filter_decision(
         c, _lists(), cs, {'require_kconfig_coverage': True}, True)
     assert reason != 'build_artifact'
 
 
-# ── C: log_basenames must be directory-scoped to prevent cross-tree false positives ──
-
+# ── C: log_basenames directory-scoped ────────────────────────────────────────
 def test_file_has_artifact_log_match_requires_compiled_dir():
-    """A log-basename hit ('hub') must NOT match a file in a non-compiled dir.
-
-    Before the C fix, log_basenames contained bare stems so 'hub' from
-    drivers/usb/hub.o would also match sound/usb/hub.c, net/hub.c, etc.
-    After the fix, the match is only accepted when the file's parent directory
-    is in compiled_dirs OR the file itself is in compiled_files.
-    """
     cs = dict(
         compiled_files=set(),
-        compiled_dirs={'drivers/usb'},      # only this dir is compiled
+        compiled_dirs={'drivers/usb'},
         artifact_stems=set(),
-        log_basenames={'hub'},              # from 'drivers/usb/hub.o' in build log
+        log_basenames={'hub'},
         available=True,
     )
-    # Same basename, DIFFERENT directory — must NOT match
-    assert not _file_has_artifact('sound/usb/hub.c', cs), \
-        'hub in sound/usb must not match log stem from drivers/usb'
-    assert not _file_has_artifact('net/hub.c', cs), \
-        'hub in net must not match log stem from drivers/usb'
-    # Same basename, SAME compiled directory — must match
-    assert _file_has_artifact('drivers/usb/hub.c', cs), \
-        'hub in drivers/usb must match: dir is compiled'
+    assert not _file_has_artifact('sound/usb/hub.c', cs)
+    assert not _file_has_artifact('net/hub.c', cs)
+    assert _file_has_artifact('drivers/usb/hub.c', cs)
 
 
 def test_file_has_artifact_log_match_requires_compiled_dir_deep():
-    """Directory-scoped match works for deeper paths."""
     cs = dict(
         compiled_files=set(),
         compiled_dirs={'drivers/net/ethernet/intel'},
@@ -231,7 +205,6 @@ def test_file_has_artifact_log_match_requires_compiled_dir_deep():
 
 
 def test_file_has_artifact_log_match_via_compiled_files():
-    """log-basename hit is also accepted when the file itself is in compiled_files."""
     cs = dict(
         compiled_files={'drivers/usb/hub.c'},
         compiled_dirs=set(),
@@ -243,7 +216,6 @@ def test_file_has_artifact_log_match_via_compiled_files():
 
 
 def test_file_has_artifact_no_log_no_stem_returns_false():
-    """File with neither log nor artifact stem match returns False."""
     cs = dict(
         compiled_files=set(),
         compiled_dirs={'drivers/usb'},
@@ -255,22 +227,16 @@ def test_file_has_artifact_no_log_no_stem_returns_false():
 
 
 def test_log_basename_cross_tree_commit_not_kept():
-    """End-to-end: commit in uncompiled subsystem not spuriously kept by log stem.
-
-    Scenario: build log mentions 'drivers/usb/hub.o'.  A commit touches
-    'sound/usb/hub.c' — same basename, different tree.  Before the fix, the
-    'hub' stem in log_basenames would keep this commit via build_artifact.
-    After the fix it must NOT be kept by artifact evidence.
-    """
     cs = dict(
         compiled_files=set(),
-        compiled_dirs={'drivers/usb'},          # USB dir compiled, sound/usb is not
+        compiled_dirs={'drivers/usb'},
         artifact_stems=set(),
         log_basenames={'hub'},
         available=True,
     )
     c = _commit(files=['sound/usb/hub.c'])
-    action, reason = filter_decision(c, _lists(), cs, {'require_kconfig_coverage': False}, True)
+    action, reason, dbg = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': False}, True)
     assert reason != 'build_artifact', (
         'sound/usb/hub.c must not be kept by artifact evidence from drivers/usb/hub.o; '
         'got reason=%r' % reason
@@ -278,7 +244,6 @@ def test_log_basename_cross_tree_commit_not_kept():
 
 
 def test_log_basename_same_dir_commit_kept():
-    """End-to-end: commit in the compiled dir IS kept by log-basename evidence."""
     cs = dict(
         compiled_files=set(),
         compiled_dirs={'drivers/usb'},
@@ -287,11 +252,11 @@ def test_log_basename_same_dir_commit_kept():
         available=True,
     )
     c = _commit(files=['drivers/usb/hub.c'])
-    action, reason = filter_decision(c, _lists(), cs, {}, False)
+    action, reason, dbg = filter_decision(c, _lists(), cs, {}, False)
     assert action == 'keep' and reason == 'build_artifact'
 
 
-# ── min_score threshold (E.1c / st06_postfilter) ───────────────────────────
+# ── min_score threshold (E.1c / st06_postfilter) ─────────────────────────────
 from lib.stages.st06_postfilter import _get_threshold
 
 
@@ -304,19 +269,16 @@ def test_get_threshold_from_filter():
 
 
 def test_get_threshold_ignores_reports():
-    """reports.min_score is no longer the canonical key."""
     assert _get_threshold({'reports': {'min_score': 99}}) == 0.0
 
 
 def test_get_threshold_filter_wins():
-    """filter.min_score takes priority over reports.min_score."""
     cfg = {'filter': {'min_score': 10}, 'reports': {'min_score': 99}}
     assert _get_threshold(cfg) == 10.0
 
 
-# ── L2½: build-artifact evidence keeps commit ─────────────────────────────────
+# ── L2½: artifact / kconfig evidence ────────────────────────────────────────
 def test_artifact_evidence_keeps_commit():
-    """Commit whose file stem is in artifact_stems is kept at L2½ (before path_bl drop)."""
     c = _commit(files=['drivers/usb/core/hub.c'])
     cs = dict(
         compiled_files=set(),
@@ -325,42 +287,35 @@ def test_artifact_evidence_keeps_commit():
         log_basenames=set(),
         available=True,
     )
-    action, reason = filter_decision(c, _lists(), cs, {}, False)
+    action, reason, dbg = filter_decision(c, _lists(), cs, {}, False)
     assert action == 'keep'
     assert reason == 'build_artifact'
 
 
-# ── L2½: kconfig coverage miss drops commit ─────────────────────────────────
 def test_kconfig_miss_drops_commit():
-    """require_kconfig_coverage=True + kconfig_enabled=True: no covered file → drop."""
     c = _commit(files=['drivers/usb/core/hub.c'])
     cs = dict(
-        compiled_files=set(),
-        compiled_dirs=set(),
-        artifact_stems=set(),
-        log_basenames=set(),
-        available=True,
+        compiled_files=set(), compiled_dirs=set(),
+        artifact_stems=set(), log_basenames=set(), available=True,
     )
-    action, reason = filter_decision(
+    action, reason, dbg = filter_decision(
         c, _lists(), cs, {'require_kconfig_coverage': True}, True)
     assert action == 'drop'
     assert 'kconfig' in reason
 
 
 def test_kconfig_coverage_not_required_keeps():
-    """require_kconfig_coverage=False: kconfig miss does not drop."""
     c = _commit(files=['drivers/usb/core/hub.c'])
     cs = dict(
         compiled_files=set(), compiled_dirs=set(),
-        artifact_stems=set(), log_basenames=set(),
-        available=True,
+        artifact_stems=set(), log_basenames=set(), available=True,
     )
-    action, _ = filter_decision(
+    action, _, _dbg = filter_decision(
         c, _lists(), cs, {'require_kconfig_coverage': False}, True)
     assert action == 'keep'
 
 
-# ── build_merged_lists: multiple profiles merged correctly ───────────────────
+# ── build_merged_lists: multiple profiles merged correctly ────────────────────
 def test_build_merged_lists_multiple_profiles():
     profile_rules = {
         'net':  {'merged': {'path_whitelist': ['drivers/net/'], 'path_blacklist': [],
@@ -373,3 +328,124 @@ def test_build_merged_lists_multiple_profiles():
     lists = build_merged_lists(profile_rules)
     assert 'drivers/net/' in lists['path_wl']
     assert 'drivers/usb/' in lists['path_wl']
+
+
+# ══ A.1: debug_detail content tests ══════════════════════════════════════════════════════
+
+def test_debug_detail_is_dict_with_required_keys():
+    """filter_decision() always returns a dict with the documented keys."""
+    c = _commit(subject='net: fix skb')
+    _, _, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
+    for key in ('sha', 'files', 'l3_commit_wl_match', 'l3_commit_bl_match',
+                'l2a_path_bl_matches', 'l2b_path_wl_matches',
+                'l2half_artifact_files',
+                'l2half_kconfig_covered_files', 'l2half_kconfig_uncovered_files',
+                'l1a_kw_wl_matches', 'l1b_kw_bl_matches',
+                'filter_enabled', 'kconfig_required'):
+        assert key in dbg, f'debug_detail missing key: {key!r}'
+
+
+def test_debug_detail_sha_populated():
+    c = _commit(sha='abc123', subject='foo')
+    _, _, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
+    assert dbg['sha'] == 'abc123'
+
+
+def test_debug_detail_l3_commit_bl_match_populated():
+    c = _commit(sha='deadbeef')
+    _, _, dbg = filter_decision(c, _lists(commit_bl=['deadbeef']), _EMPTY_CS, {}, False)
+    assert dbg['l3_commit_bl_match'] is not None
+    assert dbg['l3_commit_bl_match']['pattern'] == 'deadbeef'
+    assert dbg['l3_commit_bl_match']['value'] == 'deadbeef'
+
+
+def test_debug_detail_l3_commit_bl_none_on_miss():
+    c = _commit(sha='xyz')
+    _, _, dbg = filter_decision(c, _lists(commit_bl=['deadbeef']), _EMPTY_CS, {}, False)
+    assert dbg['l3_commit_bl_match'] is None
+
+
+def test_debug_detail_l2a_path_bl_matches_on_drop():
+    c = _commit(files=['Documentation/foo.rst', 'Documentation/bar.rst'])
+    _, _, dbg = filter_decision(c, _lists(path_bl=['Documentation/']), _EMPTY_CS, {}, False)
+    assert len(dbg['l2a_path_bl_matches']) >= 1
+    patterns = [m['pattern'] for m in dbg['l2a_path_bl_matches']]
+    assert any('Documentation' in p for p in patterns)
+
+
+def test_debug_detail_l2b_path_wl_matches_on_keep():
+    c = _commit(files=['drivers/usb/hub.c'])
+    _, _, dbg = filter_decision(c, _lists(path_wl=['drivers/usb/']), _EMPTY_CS, {}, False)
+    assert len(dbg['l2b_path_wl_matches']) >= 1
+    patterns = [m['pattern'] for m in dbg['l2b_path_wl_matches']]
+    assert any('drivers/usb' in p for p in patterns)
+
+
+def test_debug_detail_l1a_kw_wl_matches_on_keyword_keep():
+    c = _commit(subject='net: fix skb use-after-free')
+    _, _, dbg = filter_decision(c, _lists(kw_wl=['use-after-free']), _EMPTY_CS, {}, False)
+    assert len(dbg['l1a_kw_wl_matches']) >= 1
+    assert any('use-after-free' in m['pattern'] for m in dbg['l1a_kw_wl_matches'])
+
+
+def test_debug_detail_l1b_kw_bl_matches_on_keyword_drop():
+    c = _commit(subject='Documentation: update grammar')
+    _, _, dbg = filter_decision(c, _lists(kw_bl=['Documentation']), _EMPTY_CS, {}, False)
+    assert len(dbg['l1b_kw_bl_matches']) >= 1
+
+
+def test_debug_detail_kconfig_covered_populated():
+    c = _commit(files=['drivers/usb/core/hub.c'])
+    cs = dict(
+        compiled_files={'drivers/usb/core/hub.c'},
+        compiled_dirs=set(), artifact_stems=set(), log_basenames=set(), available=True,
+    )
+    _, _, dbg = filter_decision(c, _lists(), cs, {}, True)
+    assert 'drivers/usb/core/hub.c' in dbg['l2half_kconfig_covered_files']
+    assert dbg['l2half_kconfig_uncovered_files'] == []
+
+
+def test_debug_detail_kconfig_uncovered_populated():
+    c = _commit(files=['net/unrelated.c'])
+    cs = dict(
+        compiled_files={'drivers/usb/core/hub.c'},
+        compiled_dirs=set(), artifact_stems=set(), log_basenames=set(), available=True,
+    )
+    _, _, dbg = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': True}, True)
+    assert 'net/unrelated.c' in dbg['l2half_kconfig_uncovered_files']
+
+
+def test_debug_detail_filter_enabled_flag():
+    c = _commit()
+    _, _, dbg = filter_decision(c, _lists(), _EMPTY_CS, {'enabled': False}, False)
+    assert dbg['filter_enabled'] is False
+
+
+# ══ A.1: _build_prefilter_debug_entry ═════════════════════════════════════════════════════
+
+def test_build_prefilter_debug_entry_structure():
+    c = _commit(sha='abc123', subject='treewide: cleanup', files=['mm/slab.c'])
+    c['author_name'] = 'Alice'
+    dbg = {'sha': 'abc123', 'filter_enabled': True}
+    entry = _build_prefilter_debug_entry(c, 'path_blacklist_all', dbg)
+    assert entry['sha12'] == 'abc123'
+    assert entry['drop_reason'] == 'path_blacklist_all'
+    assert entry['subject'] == 'treewide: cleanup'
+    assert entry['author'] == 'Alice'
+    assert 'mm/slab.c' in entry['files']
+    assert entry['debug'] is dbg
+
+
+def test_build_prefilter_debug_entry_sha_truncated():
+    sha = 'a' * 50  # longer than 40
+    c = _commit(sha=sha)
+    entry = _build_prefilter_debug_entry(c, 'keywords_blacklist', {})
+    assert len(entry['sha']) == 40
+
+
+def test_build_prefilter_debug_entry_sha12_truncated():
+    sha = 'a' * 50
+    c = _commit(sha=sha)
+    entry = _build_prefilter_debug_entry(c, 'keywords_blacklist', {})
+    assert len(entry['sha12']) == 12
