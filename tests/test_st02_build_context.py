@@ -2,7 +2,9 @@
 import json, os
 import pytest
 
-from lib.stages.st02_build_context import _read_lines, _scan_build_dir, run
+from lib.stages.st02_build_context import (
+    _read_lines, _scan_build_dir, run, _KBUILD_PLACEHOLDER_NAMES,
+)
 from lib.manifest import CACHE_FILES
 
 
@@ -68,6 +70,59 @@ def test_scan_build_dir_sorted(tmp_path):
     (d / 'a.o').write_text('')
     result = _scan_build_dir(str(d))
     assert result == sorted(result)
+
+
+# ── A: built-in.o / built-in.a exclusion (kbuild placeholder aggregators) ────
+
+def test_scan_build_dir_excludes_builtin_o(tmp_path):
+    """built-in.o is a kbuild directory aggregator and must NOT appear in results."""
+    d = tmp_path / 'build' / 'drivers' / 'gpu' / 'drm'
+    d.mkdir(parents=True)
+    (d / 'built-in.o').write_text('')
+    (d / 'drm_drv.o').write_text('')
+    result = _scan_build_dir(str(tmp_path / 'build'))
+    names = [os.path.basename(p) for p in result]
+    assert 'built-in.o' not in names, 'built-in.o must be excluded (kbuild placeholder)'
+    assert 'drm_drv.o' in names, 'real object files must still be included'
+
+
+def test_scan_build_dir_excludes_builtin_a(tmp_path):
+    """built-in.a (newer kbuild format) is also a placeholder and must be excluded."""
+    d = tmp_path / 'build' / 'net' / 'core'
+    d.mkdir(parents=True)
+    (d / 'built-in.a').write_text('')
+    (d / 'skbuff.o').write_text('')
+    result = _scan_build_dir(str(tmp_path / 'build'))
+    names = [os.path.basename(p) for p in result]
+    assert 'built-in.a' not in names
+    assert 'skbuff.o' in names
+
+
+def test_scan_build_dir_excludes_builtin_o_at_root(tmp_path):
+    """Exclusion applies at every directory depth, including the build root."""
+    bd = tmp_path / 'build'
+    bd.mkdir()
+    (bd / 'built-in.o').write_text('')
+    (bd / 'init.o').write_text('')
+    result = _scan_build_dir(str(bd))
+    names = [os.path.basename(p) for p in result]
+    assert 'built-in.o' not in names
+    assert 'init.o' in names
+
+
+def test_scan_build_dir_only_builtin_returns_empty(tmp_path):
+    """A build dir containing only placeholder aggregators yields no artifacts."""
+    d = tmp_path / 'build' / 'drivers' / 'usb'
+    d.mkdir(parents=True)
+    (d / 'built-in.o').write_text('')
+    result = _scan_build_dir(str(tmp_path / 'build'))
+    assert result == []
+
+
+def test_kbuild_placeholder_names_constant_contains_expected():
+    """_KBUILD_PLACEHOLDER_NAMES must cover both the .o and .a aggregator forms."""
+    assert 'built-in.o' in _KBUILD_PLACEHOLDER_NAMES
+    assert 'built-in.a' in _KBUILD_PLACEHOLDER_NAMES
 
 
 # ── run() ─────────────────────────────────────────────────────────────────────
@@ -161,3 +216,21 @@ def test_run_with_kbuild_source_tree(tmp_path):
     ctx, c2p = run(cfg, cache)
     assert 'CONFIG_USB' in c2p
     assert len(ctx['kbuild_files']) == 1
+
+
+def test_run_builtin_o_excluded_from_build_artifacts(tmp_path):
+    """run() must not include built-in.o in build_artifacts in the cached context."""
+    bd = tmp_path / 'build'
+    drm = bd / 'drivers' / 'gpu' / 'drm'
+    drm.mkdir(parents=True)
+    (drm / 'built-in.o').write_text('')
+    (drm / 'drm_drv.o').write_text('')
+    cache, cfg = _make_cfg(tmp_path, build_dir=bd)
+    ctx, _ = run(cfg, cache)
+    basenames = [os.path.basename(p) for p in ctx['build_artifacts']]
+    assert 'built-in.o' not in basenames
+    assert 'drm_drv.o' in basenames
+    # Verify the JSON on disk is also clean
+    data = json.load(open(os.path.join(cache, CACHE_FILES['build_context'])))
+    disk_basenames = [os.path.basename(p) for p in data['build_artifacts']]
+    assert 'built-in.o' not in disk_basenames

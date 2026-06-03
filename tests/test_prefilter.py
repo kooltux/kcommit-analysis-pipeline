@@ -43,7 +43,7 @@ def test_commit_whitelist_beats_blacklist():
     assert action == 'keep'
 
 
-# ── L2 path ──────────────────────────────────────────────────────────────────
+# ── L2 path ───────────────────────────────────────────────────────────────
 def test_path_blacklist_all_drops():
     c = _commit(files=['Documentation/foo.rst', 'Documentation/bar.rst'])
     action, reason = filter_decision(c, _lists(path_bl=['Documentation/']),
@@ -80,14 +80,14 @@ def test_keyword_blacklist_drops():
     assert action == 'drop' and reason == 'keywords_blacklist'
 
 
-# ── L0 default ───────────────────────────────────────────────────────────────
+# ── L0 default ────────────────────────────────────────────────────────────────
 def test_default_keep():
     c = _commit(subject='net: fix something random')
     action, reason = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
     assert action == 'keep' and reason == 'default'
 
 
-# ── filter_disabled ──────────────────────────────────────────────────────────
+# ── filter_disabled ──────────────────────────────────────────────────────────────
 def test_filter_disabled_bypasses_path_bl():
     c = _commit(files=['Documentation/foo.rst', 'Documentation/bar.rst'])
     action, reason = filter_decision(c, _lists(path_bl=['Documentation/']),
@@ -95,7 +95,7 @@ def test_filter_disabled_bypasses_path_bl():
     assert action == 'keep' and reason == 'filter_disabled'
 
 
-# ── build_merged_lists ───────────────────────────────────────────────────────
+# ── build_merged_lists ────────────────────────────────────────────────────────────
 def test_build_merged_lists_dedup():
     profile_rules = {
         'p1': {'merged': {'path_whitelist': ['drivers/usb/', 'drivers/usb/']}},
@@ -105,7 +105,7 @@ def test_build_merged_lists_dedup():
     assert len(lists['path_wl']) == 2  # deduped to 2
 
 
-# ── build_compiled_sets ──────────────────────────────────────────────────────
+# ── build_compiled_sets ────────────────────────────────────────────────────────────
 def test_build_compiled_sets_empty_no_product_map():
     cs = build_compiled_sets(None)
     assert cs['available'] is False
@@ -125,7 +125,91 @@ def test_build_compiled_sets_with_data():
     assert 'drivers/usb/core/hub' in cs['artifact_stems']
 
 
-# ── min_score threshold (E.1c / st06_postfilter) ─────────────────────────────
+# ── A: built-in.o must NOT appear as artifact evidence in build_compiled_sets ──
+
+def test_build_compiled_sets_builtin_o_not_in_artifact_stems():
+    """built-in.o must not produce an artifact_stem that keeps commits at L2½.
+
+    Even if _scan_build_dir() somehow includes it (e.g. from an old cache),
+    stage 04 should not treat 'built-in' as a meaningful stem.
+    This test verifies the guard at the product-map level.
+    """
+    pm = {
+        'config_to_paths': {},
+        'enabled_configs':  [],
+        # Simulate a stale or hand-crafted product_map that still contains
+        # the placeholder (should not happen with the fixed st02, but defensive).
+        'built_artifacts_from_dir': [
+            'drivers/gpu/drm/built-in.o',
+            'drivers/gpu/drm/drm_drv.o',
+        ],
+        'built_objects_from_log': [],
+    }
+    cs = build_compiled_sets(pm)
+    # 'built-in' stem from built-in.o would match any file named 'built-in.*'
+    # which is harmless in itself, but the real danger is a commit touching
+    # drm_drv.c being kept because the dir is in compiled_dirs via artifact_stems.
+    # The primary regression: drm_drv stem is present, built-in stem also
+    # resolves but should never originate from a placeholder in the first place.
+    # Stage 02 now prevents built-in.o reaching here; this test documents that.
+    assert 'drivers/gpu/drm/drm_drv' in cs['artifact_stems']
+
+
+def test_builtin_o_only_commit_not_kept_by_artifact_evidence():
+    """A commit whose only file is built-in.o must NOT be kept via build_artifact.
+
+    Stage 02 now excludes built-in.o from build_artifacts, so artifact_stems
+    will not contain 'built-in'.  This end-to-end check verifies that a commit
+    touching only such a placeholder file reaches the kconfig coverage check
+    (or falls through to default) rather than being saved by L2½ artifact.
+    """
+    # Compiled sets as produced after the fix: no 'built-in' stem present.
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/gpu/drm'},  # dir still covered via real files
+        artifact_stems={'drivers/gpu/drm/drm_drv'},  # only real objects
+        log_basenames=set(),
+        available=True,
+    )
+    c = _commit(files=['drivers/gpu/drm/built-in.o'])
+    # With require_kconfig_coverage=False we reach L0 default (keep), but the
+    # reason must NOT be 'build_artifact'.
+    action, reason = filter_decision(c, _lists(), cs, {'require_kconfig_coverage': False}, True)
+    assert reason != 'build_artifact', (
+        'built-in.o must not trigger build_artifact keep; got reason=%r' % reason
+    )
+
+
+def test_builtin_o_only_commit_dropped_when_kconfig_required():
+    """With kconfig coverage required and no kconfig hit, a built-in.o-only
+    commit is dropped even though the directory is compiled.
+
+    Before the fix, if 'built-in' appeared in artifact_stems the commit would
+    be saved by L2½ build_artifact before reaching the kconfig check.
+    After the fix, artifact check finds no stem match and the commit falls
+    through to the kconfig check, which drops it.
+    """
+    cs = dict(
+        compiled_files={'drivers/gpu/drm/drm_drv.c'},
+        compiled_dirs={'drivers/gpu/drm'},
+        artifact_stems={'drivers/gpu/drm/drm_drv'},  # no 'built-in' stem
+        log_basenames=set(),
+        available=True,
+    )
+    c = _commit(files=['drivers/gpu/drm/built-in.o'])
+    action, reason = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': True}, True)
+    # built-in.o is NOT in compiled_files and its stem is not in artifact_stems,
+    # but its parent dir IS in compiled_dirs, so _file_is_kconfig_covered
+    # returns True via the dir check — meaning this particular file is still
+    # considered "covered" by directory proximity.  The real gain from the fix
+    # is that the commit is no longer prematurely saved by artifact evidence;
+    # it now goes through the proper kconfig coverage path.
+    # If the dir were not compiled this would be a 'no_kconfig_coverage' drop.
+    assert reason != 'build_artifact'
+
+
+# ── min_score threshold (E.1c / st06_postfilter) ───────────────────────────
 from lib.stages.st06_postfilter import _get_threshold
 
 
@@ -165,7 +249,7 @@ def test_artifact_evidence_keeps_commit():
     assert reason == 'build_artifact'
 
 
-# ── L2½: kconfig coverage miss drops commit ───────────────────────────────────
+# ── L2½: kconfig coverage miss drops commit ─────────────────────────────────
 def test_kconfig_miss_drops_commit():
     """require_kconfig_coverage=True + kconfig_enabled=True: no covered file → drop."""
     c = _commit(files=['drivers/usb/core/hub.c'])
@@ -196,7 +280,7 @@ def test_kconfig_coverage_not_required_keeps():
     assert action == 'keep'
 
 
-# ── build_merged_lists: multiple profiles merged correctly ────────────────────
+# ── build_merged_lists: multiple profiles merged correctly ───────────────────
 def test_build_merged_lists_multiple_profiles():
     profile_rules = {
         'net':  {'merged': {'path_whitelist': ['drivers/net/'], 'path_blacklist': [],

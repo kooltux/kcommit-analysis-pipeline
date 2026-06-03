@@ -1,6 +1,13 @@
 """Stage 02: Gather kernel build context (.config, artifacts, logs, Kbuild).
 
 Stage 02 of the kcommit pipeline (absorbed into lib/stages in v9.13).
+
+Kbuild placeholder aggregators (e.g. built-in.o, built-in.a) are produced by
+the kernel build system to concatenate directory-level objects for upward
+linking.  They carry no source-level meaning and must not enter the product
+map as build-artifact evidence — doing so causes every commit that touches any
+file in the directory to be incorrectly kept by the L2½ artifact check in
+stage 04.  _scan_build_dir() therefore skips these files at collection time.
 """
 import os
 
@@ -9,6 +16,14 @@ from lib.kbuild import load_kernel_config_symbols
 from lib.parse_kconfig import parse_kernel_config, scan_kbuild_tree
 from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.manifest import CACHE_FILES, NSTAGES
+
+# Kbuild directory-aggregator basenames that must never appear in the product
+# map.  These are intermediate linker inputs produced automatically by kbuild;
+# they have no 1-to-1 correspondence with any source file.
+_KBUILD_PLACEHOLDER_NAMES = frozenset({
+    'built-in.o',
+    'built-in.a',
+})
 
 
 def _read_lines(path):
@@ -19,11 +34,21 @@ def _read_lines(path):
 
 
 def _scan_build_dir(build_dir):
+    """Walk *build_dir* and return relative paths of compiled objects.
+
+    Only ``.o`` and ``.ko`` files are collected.  Kbuild directory-aggregator
+    placeholders listed in ``_KBUILD_PLACEHOLDER_NAMES`` (``built-in.o``,
+    ``built-in.a``) are excluded because they are synthetic linker inputs with
+    no 1-to-1 source-file correspondence and would cause spurious
+    build-artifact hits in the stage-04 prefilter.
+    """
     objects = []
     if not build_dir or not os.path.isdir(build_dir):
         return objects
     for root, _, files in os.walk(build_dir):
         for name in files:
+            if name in _KBUILD_PLACEHOLDER_NAMES:
+                continue
             if name.endswith('.o') or name.endswith('.ko'):
                 objects.append(
                     os.path.relpath(os.path.join(root, name), build_dir))
@@ -53,7 +78,7 @@ def run(cfg, cache):
     kernel_build_log = _read_lines(kernel.get('kernel_build_log'))
     yocto_build_log  = _read_lines(kernel.get('yocto_build_log'))
 
-    # 4. Build artifacts
+    # 4. Build artifacts (built-in.o / built-in.a placeholders excluded)
     update_stage_progress(2, NSTAGES, 0.55, 'scanning build dir')
     build_artifacts = _scan_build_dir(build_dir)
 
