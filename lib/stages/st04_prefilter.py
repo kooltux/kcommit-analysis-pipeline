@@ -10,6 +10,22 @@ Filter hierarchy (higher level wins):
   L1a keywords_whitelist       → KEEP
   L1b keywords_blacklist       → DROP
   L0  default                  → KEEP
+
+Changes:
+  v12.0.0 (A.1) — filter_decision() now returns a third value: a
+                  `_prefilter_debug` dict with:
+                    reason        -- same short reason string as before
+                    matched_rule  -- the pattern/list that triggered the decision
+                    files_checked -- commit files evaluated
+                    text_snippet  -- first 300 chars of subject+body used for kw match
+                    kw_hits       -- list of {pattern, value} for kw matches
+                    path_hits     -- list of {pattern, file} for path matches
+                    sha_hit       -- sha that matched a whitelist/blacklist entry
+                  All dropped commits carry this field in the cache and in the
+                  prefilter_debug.json output file.
+                  run() now writes CACHE_FILES['prefilter_debug'] with one
+                  entry per dropped commit, plus a summary section, for
+                  human inspection.
 """
 import csv
 import json
@@ -33,6 +49,8 @@ from lib.manifest import CACHE_FILES, NSTAGES
 from lib.schema import validate_commit_list, validate_filtered_commit_list
 
 _BUILD_SYS_NAMES = frozenset({'Makefile', 'Kbuild', 'Kconfig'})
+
+_DEBUG_TEXT_SNIPPET_LEN = 300
 
 
 def _is_build_system_file(path):
@@ -127,8 +145,8 @@ def _file_has_artifact(f, cs):
        accepted when the file's **parent directory** is also in
        ``compiled_dirs`` (i.e. the directory is known to produce compiled
        objects for an enabled kconfig symbol) **or** the file itself is in
-       ``compiled_files``.  This scopes the match to "same compiled directory"
-       rather than "anywhere in the tree".
+       ``compiled_files``.  This scopes the match to \"same compiled directory\"
+       rather than \"anywhere in the tree\".
     """
     # Source 1: full-path artifact stem (precise, no extra qualification needed)
     stem, _ = os.path.splitext(f)
@@ -154,11 +172,62 @@ def _file_is_kconfig_covered(f, cs):
     return _is_build_system_file(f)
 
 
+# ── Pattern repr helper ────────────────────────────────────────────────────────
+
+def _pat_repr(pat):
+    """Return a human-readable string for a pattern (compiled or raw)."""
+    return getattr(pat, 'pattern', str(pat))
+
+
+def _collect_hits(patterns, values):
+    """Return list of {pattern, value} for each matching (pattern, value) pair."""
+    hits = []
+    seen = set()
+    for pat in (patterns or []):
+        for val in (values or []):
+            if _match(pat, val):
+                key = (_pat_repr(pat), val)
+                if key not in seen:
+                    seen.add(key)
+                    hits.append({'pattern': _pat_repr(pat), 'value': val})
+    return hits
+
+
+def _collect_file_hits(patterns, files):
+    """Return list of {pattern, file} for each matching (pattern, file) pair."""
+    hits = []
+    seen = set()
+    for pat in (patterns or []):
+        for f in (files or []):
+            if _match(pat, f):
+                key = (_pat_repr(pat), f)
+                if key not in seen:
+                    seen.add(key)
+                    hits.append({'pattern': _pat_repr(pat), 'file': f})
+    return hits
+
+
+# ── Main filter decision ───────────────────────────────────────────────────────
+
 def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
-    """Return (action, reason): action='keep'|'drop'."""
+    """Return (action, reason, debug): action='keep'|'drop'.
+
+    A.1: the third return value `debug` is a dict with full diagnostics:
+      reason         -- short reason token (same as before)
+      matched_rule   -- which list/check triggered the decision
+      files_checked  -- list of files evaluated
+      text_snippet   -- first 300 chars of subject+body used for kw matching
+      kw_hits        -- [{pattern, value}] for keyword matches (whitelist or blacklist)
+      path_hits      -- [{pattern, file}] for path matches (whitelist or blacklist)
+      sha_hit        -- str sha that matched a wl/bl entry, or ''
+      kconfig_covered_files   -- files that passed kconfig coverage check
+      kconfig_uncovered_files -- files that failed kconfig coverage check
+    """
     sha   = commit.get('commit', '') or ''
     files = list(commit.get('files', []) or [])
-    text  = (commit.get('subject', '') or '') + '\n' + (commit.get('body', '') or '')
+    subj  = commit.get('subject', '') or ''
+    body  = commit.get('body', '') or ''
+    text  = subj + '\n' + body
 
     commit_wl = lists['commit_wl']
     commit_bl = lists['commit_bl']
@@ -167,52 +236,99 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
     kw_wl     = lists['kw_wl']
     kw_bl     = lists['kw_bl']
 
+    snippet = text[:_DEBUG_TEXT_SNIPPET_LEN]
+
+    def _debug(reason, matched_rule='', kw_hits=None, path_hits=None, sha_hit='',
+               kconfig_covered=None, kconfig_uncovered=None):
+        return {
+            'reason':                   reason,
+            'matched_rule':             matched_rule,
+            'files_checked':            files,
+            'text_snippet':             snippet,
+            'kw_hits':                  kw_hits or [],
+            'path_hits':                path_hits or [],
+            'sha_hit':                  sha_hit,
+            'kconfig_covered_files':    kconfig_covered or [],
+            'kconfig_uncovered_files':  kconfig_uncovered or [],
+        }
+
     # L3 absolute
     if commit_wl and _any_matches(commit_wl, sha):
-        return 'keep', 'commit_whitelist'
+        hits = _collect_hits(commit_wl, [sha])
+        return 'keep', 'commit_whitelist', _debug('commit_whitelist', 'commit_wl',
+                                                    sha_hit=hits[0]['value'] if hits else sha)
     if commit_bl and _any_matches(commit_bl, sha):
-        return 'drop', 'commit_blacklist'
+        hits = _collect_hits(commit_bl, [sha])
+        return 'drop', 'commit_blacklist', _debug('commit_blacklist', 'commit_bl',
+                                                   sha_hit=hits[0]['value'] if hits else sha)
 
     enabled = (filter_cfg or {}).get('enabled', True)
     if not enabled:
-        return 'keep', 'filter_disabled'
+        return 'keep', 'filter_disabled', _debug('filter_disabled')
 
     # L2a path blacklist (ALL files)
     if path_bl and files and _all_files_match(path_bl, files):
-        return 'drop', 'path_blacklist_all'
+        hits = _collect_file_hits(path_bl, files)
+        return 'drop', 'path_blacklist_all', _debug('path_blacklist_all', 'path_bl',
+                                                     path_hits=hits)
 
     # L2b path whitelist (ANY file)
     if path_wl and files and _any_file_matches(path_wl, files):
-        return 'keep', 'path_whitelist'
+        hits = _collect_file_hits(path_wl, files)
+        return 'keep', 'path_whitelist', _debug('path_whitelist', 'path_wl',
+                                                  path_hits=hits)
 
     # L2½ build artifact
     if files and any(_file_has_artifact(f, compiled_sets) for f in files):
-        return 'keep', 'build_artifact'
+        artifact_files = [f for f in files if _file_has_artifact(f, compiled_sets)]
+        return 'keep', 'build_artifact', _debug('build_artifact',
+                                                  path_hits=[{'pattern': 'artifact_match', 'file': f}
+                                                              for f in artifact_files])
 
     # L2½ kconfig coverage
+    kconfig_covered   = []
+    kconfig_uncovered = []
     if kconfig_enabled:
         require = (filter_cfg or {}).get('require_kconfig_coverage', None)
         if require is None:
             require = compiled_sets.get('available', False)
         if require:
-            any_covered = any(
-                _file_is_kconfig_covered(f, compiled_sets) for f in files
-            ) if files else False
+            for f in files:
+                if _file_is_kconfig_covered(f, compiled_sets):
+                    kconfig_covered.append(f)
+                else:
+                    kconfig_uncovered.append(f)
+            any_covered = bool(kconfig_covered)
             if not any_covered:
                 if kw_wl and _any_matches(kw_wl, text):
-                    pass  # keywords_whitelist saves it
+                    hits = _collect_hits(kw_wl, [subj, body])
+                    # keyword whitelist saves it — fall through to L1a
                 else:
-                    return 'drop', 'no_kconfig_coverage'
+                    return 'drop', 'no_kconfig_coverage', _debug(
+                        'no_kconfig_coverage', 'kconfig_check',
+                        kconfig_covered=kconfig_covered,
+                        kconfig_uncovered=kconfig_uncovered,
+                    )
 
     # L1a keywords whitelist
     if kw_wl and _any_matches(kw_wl, text):
-        return 'keep', 'keywords_whitelist'
+        hits = _collect_hits(kw_wl, [subj, body])
+        return 'keep', 'keywords_whitelist', _debug('keywords_whitelist', 'kw_wl',
+                                                     kw_hits=hits,
+                                                     kconfig_covered=kconfig_covered,
+                                                     kconfig_uncovered=kconfig_uncovered)
 
     # L1b keywords blacklist
     if kw_bl and _any_matches(kw_bl, text):
-        return 'drop', 'keywords_blacklist'
+        hits = _collect_hits(kw_bl, [subj, body])
+        return 'drop', 'keywords_blacklist', _debug('keywords_blacklist', 'kw_bl',
+                                                     kw_hits=hits,
+                                                     kconfig_covered=kconfig_covered,
+                                                     kconfig_uncovered=kconfig_uncovered)
 
-    return 'keep', 'default'
+    return 'keep', 'default', _debug('default',
+                                      kconfig_covered=kconfig_covered,
+                                      kconfig_uncovered=kconfig_uncovered)
 
 
 def run(cfg, cache):
@@ -257,12 +373,24 @@ def run(cfg, cache):
     kept            = []
     dropped_commits = []
     reasons         = {}
+    debug_entries   = []   # A.1: per-dropped-commit debug records
+
     for i, c in enumerate(commits):
-        action, reason = filter_decision(c, lists, compiled_sets, filter_cfg, kconfig_active)
+        action, reason, dbg = filter_decision(c, lists, compiled_sets, filter_cfg, kconfig_active)
         if action == 'drop':
             c['_filter_reason'] = reason
+            c['_prefilter_debug'] = dbg          # A.1: attach debug to commit
             reasons[reason] = reasons.get(reason, 0) + 1
             dropped_commits.append(c)
+            # A.1: collect lightweight debug record for the debug output file
+            debug_entries.append({
+                'sha':          (c.get('commit') or '')[:12],
+                'full_sha':     c.get('commit') or '',
+                'subject':      c.get('subject', '') or '',
+                'author':       c.get('author_name', '') or '',
+                'filter_reason': reason,
+                'debug':        dbg,
+            })
         else:
             kept.append(c)
         if i % step == 0 or i == total - 1:
@@ -274,6 +402,34 @@ def run(cfg, cache):
     validate_filtered_commit_list(dropped_commits)
     save_json(os.path.join(cache, CACHE_FILES['prefilter_kept']), kept)
     save_json(os.path.join(cache, CACHE_FILES['filtered']), dropped_commits)
+
+    # A.1: write prefilter_debug.json — human-readable diagnostics for dropped commits
+    reason_summary = {}
+    for r, cnt in sorted(reasons.items(), key=lambda kv: -kv[1]):
+        reason_summary[r] = cnt
+    debug_output = {
+        'summary': {
+            'total_commits':   total,
+            'kept':            len(kept),
+            'dropped':         len(dropped_commits),
+            'reason_counts':   reason_summary,
+            'pattern_counts': {
+                'commit_wl':  len(lists['commit_wl']),
+                'commit_bl':  len(lists['commit_bl']),
+                'path_wl':    len(lists['path_wl']),
+                'path_bl':    len(lists['path_bl']),
+                'kw_wl':      len(lists['kw_wl']),
+                'kw_bl':      len(lists['kw_bl']),
+            },
+            'kconfig_active':  kconfig_active,
+            'compiled_files':  len(compiled_sets['compiled_files']),
+            'compiled_dirs':   len(compiled_sets['compiled_dirs']),
+        },
+        'dropped_commits': debug_entries,
+    }
+    save_json(os.path.join(cache, CACHE_FILES['prefilter_debug']), debug_output)
+    logging.debug('prefilter_debug.json: %d dropped commit entries written', len(debug_entries))
+
     return kept, dropped_commits, reasons
 
 

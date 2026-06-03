@@ -345,3 +345,104 @@ def test_update_stage7_progress_survives_rt_progress_exception(tmp_path, monkeyp
     stats = run(cfg, cache, outdir)
     assert os.path.exists(os.path.join(outdir, 'relevant_commits.json'))
     assert 'generated_files' in stats
+
+
+# ══ A.1 (v12.0.3): prefilter_debug.json export + rule_trace.csv ═════════════════════
+
+def test_prefilter_debug_json_copied_to_outdir_when_present(tmp_path):
+    """A.1 — when cache/prefilter_debug.json exists, run() copies it to outdir."""
+    cache, outdir, cfg = _setup(tmp_path)
+    debug_records = [
+        {'sha': 'aabbccdd', 'drop_reason': 'path_blacklist_all',
+         'subject': 'docs: update readme', 'files': ['Documentation/foo.rst'],
+         'debug': {}}
+    ]
+    _write_json(os.path.join(cache, CACHE_FILES['prefilter_debug']), debug_records)
+    run(cfg, cache, outdir)
+    out_path = os.path.join(outdir, 'prefilter_debug.json')
+    assert os.path.exists(out_path), 'prefilter_debug.json was not copied to outdir'
+    data = json.load(open(out_path))
+    assert data == debug_records
+
+
+def test_prefilter_debug_json_in_generated_files_when_present(tmp_path):
+    """A.1 — prefilter_debug.json must appear in report_stats['generated_files']."""
+    cache, outdir, cfg = _setup(tmp_path)
+    _write_json(os.path.join(cache, CACHE_FILES['prefilter_debug']), [{'sha': 'x'}])
+    stats = run(cfg, cache, outdir)
+    assert any('prefilter_debug' in f for f in stats['generated_files']), (
+        f"prefilter_debug.json not in generated_files: {stats['generated_files']}")
+
+
+def test_prefilter_debug_json_not_created_when_cache_absent(tmp_path):
+    """A.1 — when cache/prefilter_debug.json does not exist, outdir must not
+    contain the file (no empty placeholder created)."""
+    cache, outdir, cfg = _setup(tmp_path)
+    # Confirm the cache file is absent
+    assert not os.path.exists(os.path.join(cache, CACHE_FILES['prefilter_debug']))
+    run(cfg, cache, outdir)
+    assert not os.path.exists(os.path.join(outdir, 'prefilter_debug.json')), (
+        'prefilter_debug.json must not be created when absent from cache')
+
+
+def test_rule_trace_csv_written_when_csv_output_enabled(tmp_path):
+    """A.1 — rule_trace.csv must be written alongside rule_trace.json when
+    CSV is in the outputs list."""
+    cache, outdir, cfg = _setup(tmp_path)
+    assert 'csv' in cfg['reports']['outputs']
+    run(cfg, cache, outdir)
+    csv_path = os.path.join(outdir, 'rule_trace.csv')
+    assert os.path.exists(csv_path), 'rule_trace.csv was not written'
+
+
+def test_rule_trace_csv_has_expected_headers(tmp_path):
+    """A.1 — rule_trace.csv first row must be the canonical TRACE_COLS header."""
+    from lib.stages.st07_report import TRACE_COLS
+    cache, outdir, cfg = _setup(tmp_path)
+    run(cfg, cache, outdir)
+    with open(os.path.join(outdir, 'rule_trace.csv')) as f:
+        reader = csv.reader(f)
+        headers = next(reader)
+    assert headers == list(TRACE_COLS)
+
+
+def test_rule_trace_csv_in_generated_files(tmp_path):
+    """A.1 — rule_trace.csv must appear in report_stats['generated_files']."""
+    cache, outdir, cfg = _setup(tmp_path)
+    stats = run(cfg, cache, outdir)
+    assert any('rule_trace.csv' in f for f in stats['generated_files']), (
+        f"rule_trace.csv not in generated_files: {stats['generated_files']}")
+
+
+def test_rule_trace_csv_not_written_when_csv_disabled(tmp_path):
+    """A.1 — rule_trace.csv must NOT be written when CSV output is not enabled."""
+    cache, outdir, cfg = _setup(tmp_path)
+    cfg['reports']['outputs'] = ['html']
+    run(cfg, cache, outdir)
+    assert not os.path.exists(os.path.join(outdir, 'rule_trace.csv')), (
+        'rule_trace.csv must not be written when CSV output is disabled')
+
+
+def test_rule_trace_json_always_written(tmp_path):
+    """A.1 — rule_trace.json (JSON twin) is always written regardless of outputs."""
+    cache, outdir, cfg = _setup(tmp_path)
+    cfg['reports']['outputs'] = []  # no CSV, no HTML
+    run(cfg, cache, outdir)
+    assert os.path.exists(os.path.join(outdir, 'rule_trace.json')), (
+        'rule_trace.json must always be written')
+
+
+def test_manifest_cache_files_has_prefilter_debug_key():
+    """A.1 — CACHE_FILES['prefilter_debug'] must be defined in manifest."""
+    from lib.manifest import CACHE_FILES
+    assert 'prefilter_debug' in CACHE_FILES, (
+        "CACHE_FILES missing 'prefilter_debug' key")
+    assert CACHE_FILES['prefilter_debug'].endswith('.json')
+
+
+def test_manifest_stage4_outputs_include_prefilter_debug():
+    """A.1 — MANIFEST.json stage 4 outputs must list prefilter_debug.json."""
+    from lib.manifest import STAGE_OUTPUTS
+    outputs = STAGE_OUTPUTS.get('prefilter_commits', [])
+    assert any('prefilter_debug' in o for o in outputs), (
+        f'prefilter_debug.json missing from stage 4 MANIFEST outputs: {outputs}')

@@ -33,6 +33,7 @@ CACHE_FILES = {
     'kbuild_map':     'kbuild_map.json',
     'product_map':    'product_map.json',
     'prefilter_kept': 'prefilter_kept_commits.json',
+    'prefilter_debug': 'prefilter_debug.json',   # A.1 — per-dropped-commit debug detail
     'filtered':       'filtered_commits.json',
     'scored':         'scored_commits.json',
     'relevant':       'relevant_commits.json',

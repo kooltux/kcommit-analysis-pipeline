@@ -1,8 +1,22 @@
-/* kcommit-analysis-pipeline — filter/sort/export + commit detail panel */
+/* kcommit-analysis-pipeline — filter/sort/export + commit detail panel
+ *
+ * Changes:
+ *   v12.0.0 (B)   — openPanel() now resolves commit details in sidecar mode
+ *                   by fetching the per-commit sidecar JSON from the
+ *                   commits/<aa>/<bb>/<fullsha>.json tree when the commit is
+ *                   not found in the in-memory index (window.__KC_COMMITS__).
+ *                   This fixes the "Failed to fetch" error that appeared when
+ *                   clicking a SHA link in sidecar-mode HTML reports.
+ *
+ *   v12.0.0 (A.2) — renderCommit() now renders the full scoring trace:
+ *                   per-profile multiplier, raw/capped/final score formula,
+ *                   per-rule weight + matched patterns, and a prefilter debug
+ *                   section when _prefilter_debug is present on the commit.
+ */
 (function () {
   'use strict';
 
-  /* ── Helpers ──────────────────────────────────────────────────────────── */
+  /* ── Helpers ───────────────────────────────────────────────────── */
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -13,6 +27,34 @@
     var bin = atob(b64), out = new Uint8Array(bin.length), i;
     for (i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
+  }
+
+  /* B: resolve the per-commit sidecar path from a full SHA.
+   *    Pattern: commits/<first2>/<next2>/<fullsha>.json
+   *    root is window.__KC_COMMIT_DETAIL_ROOT__ (e.g. './commits'). */
+  function _sidecarPath(fullSha) {
+    if (!fullSha || fullSha.length < 4) return null;
+    var root = (window.__KC_COMMIT_DETAIL_ROOT__ || './commits').replace(/\/+$/, '');
+    return root + '/' + fullSha.slice(0, 2) + '/' + fullSha.slice(2, 4) + '/' + fullSha + '.json';
+  }
+
+  /* B: fetch a per-commit sidecar JSON, caching result in __KC_COMMITS__.
+   *    Tries full SHA first, then 12-char sha12 as a fallback key lookup. */
+  function _fetchCommitSidecar(sha12, fullSha) {
+    var path = fullSha ? _sidecarPath(fullSha) : null;
+    if (!path) return Promise.resolve(null);
+    return fetch(path)
+      .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' for ' + path);
+        return r.json();
+      })
+      .then(function(data) {
+        // Cache by both full SHA and sha12 so future lookups are instant
+        if (!window.__KC_COMMITS__) window.__KC_COMMITS__ = {};
+        if (fullSha) window.__KC_COMMITS__[fullSha] = data;
+        if (sha12)   window.__KC_COMMITS__[sha12]   = data;
+        return data;
+      });
   }
 
   function loadCommitStore() {
@@ -145,7 +187,7 @@
       });
   }
 
-  /* ── Per-column filters + global search ──────────────────────────────── */
+  /* ── Per-column filters + global search ───────────────────────────────── */
   var MULTISELECT_MAX = 20;
 
   function distinctVals(rows, ci) {
@@ -302,7 +344,7 @@
     apply();
   }
 
-  /* ── Column sort ──────────────────────────────────────────────────────── */
+  /* ── Column sort ───────────────────────────────────────────────────── */
   function initSort(tbl) {
     var tbody   = tbl.querySelector('tbody');
     var rows    = Array.from(tbody.querySelectorAll('tr'));
@@ -330,7 +372,7 @@
     });
   }
 
-  /* ── CSV export ───────────────────────────────────────────────────────── */
+  /* ── CSV export ───────────────────────────────────────────────────── */
   function initCsvExport(tbl) {
     var card = tbl.closest('.kc-card');
     if (!card) return;
@@ -339,7 +381,7 @@
     btn.title = 'Export visible rows as CSV';
     btn.addEventListener('click', function() {
       var hdrs = Array.from(tbl.querySelectorAll('tr.kc-col-headers th'))
-        .map(function(th){ return '"'+th.textContent.replace(/[⇅▲▼]/g,'').trim().replace(/"/g,'""')+'"'; });
+        .map(function(th){ return '"'+th.textContent.replace(/[\u21c5\u25b2\u25bc]/g,'').trim().replace(/"/g,'""')+'"'; });
       var lines = [hdrs.join(',')];
       Array.from(tbl.querySelectorAll('tbody tr:not(.hidden)')).forEach(function(r) {
         lines.push(Array.from(r.cells).map(function(td){
@@ -351,30 +393,68 @@
     });
   }
 
-  /* ── Detail panel ─────────────────────────────────────────────────────── */
+  /* ── Detail panel ────────────────────────────────────────────────────── */
   var overlay   = document.getElementById('kc-detail-overlay');
   var panel     = document.getElementById('kc-detail-panel');
   var panelH3   = document.getElementById('kc-detail-sha');
   var panelBody = document.getElementById('kc-detail-body');
   var closeBtn  = document.getElementById('kc-detail-close');
 
-  function openPanel(sha) {
-    if (!overlay || !panel || !sha) return false;
+  /*
+   * B: openPanel() resolution order:
+   *
+   *  1. Look up sha12 (and fullSha) in the in-memory store populated by
+   *     loadCommitStore().  In embedded mode this always has full detail.
+   *     In sidecar mode the index only has summary rows (no scoring.trace).
+   *
+   *  2. If the object found in the index lacks scoring detail (no
+   *     scoring.trace), AND we have a fullSha AND __KC_COMMIT_DETAIL_ROOT__
+   *     is set, fetch the per-commit sidecar JSON.
+   *     The sidecar contains the complete commit object including
+   *     scoring.trace and product_evidence.
+   *
+   *  3. Fall back to whatever is in the store, even if incomplete.
+   */
+  function openPanel(sha12, fullSha) {
+    if (!overlay || !panel || !sha12) return false;
     overlay.classList.add('open');
     panel.classList.add('open');
-    if (panelH3) panelH3.textContent = sha;
-    if (panelBody) panelBody.innerHTML = '<p style="color:var(--text-muted);font-size:.75rem">Loading\u2026</p>';
-    loadCommitStore().then(function(map) {
-      map = (map && typeof map === 'object') ? map : {};
-      renderCommit(map[sha] || map[String(sha)] || null, sha);
-    }).catch(function(err) {
-      var msg = (err && err.message) ? err.message : String(err || 'unknown error');
-      if (panelBody) {
-        panelBody.innerHTML = field('SHA', esc(sha), 'mono')
-          + '<p style="color:var(--text-muted);margin-top:.75rem;font-size:.75rem">'
-          + 'Unable to load commit details: ' + esc(msg) + '</p>';
-      }
-    });
+    if (panelH3) panelH3.textContent = fullSha || sha12;
+    if (panelBody) panelBody.innerHTML = '<p style="color:var(--color-text-muted,#888);font-size:.75rem">Loading…</p>';
+
+    loadCommitStore()
+      .then(function(map) {
+        map = (map && typeof map === 'object') ? map : {};
+        var c = map[sha12] || map[String(sha12)] || (fullSha ? map[fullSha] : null) || null;
+
+        // B: if we have a fullSha and the sidecar root is configured, always
+        // fetch the richer sidecar (it contains scoring.trace + full body).
+        // We skip the sidecar fetch only when already in embedded mode (no
+        // __KC_COMMIT_DETAIL_ROOT__) or when the index object already has
+        // full trace data.
+        var hasSidecar = !!window.__KC_COMMIT_DETAIL_ROOT__;
+        var hasFullDetail = c && c.scoring && c.scoring.trace;
+
+        if (hasSidecar && !hasFullDetail && (fullSha || sha12)) {
+          return _fetchCommitSidecar(sha12, fullSha || sha12)
+            .then(function(sidecar) {
+              return sidecar || c;
+            })
+            .catch(function() { return c; }); // sidecar not found → use index data
+        }
+        return c;
+      })
+      .then(function(c) {
+        renderCommit(c, fullSha || sha12);
+      })
+      .catch(function(err) {
+        var msg = (err && err.message) ? err.message : String(err || 'unknown error');
+        if (panelBody) {
+          panelBody.innerHTML = field('SHA', esc(fullSha || sha12), 'mono')
+            + '<p style="color:var(--color-text-muted,#888);margin-top:.75rem;font-size:.75rem">'
+            + 'Unable to load commit details: ' + esc(msg) + '</p>';
+        }
+      });
     return true;
   }
 
@@ -402,11 +482,101 @@
       + '</div>';
   }
 
+  /* A.2: render a pattern-match list as compact inline badges */
+  function _matchBadges(matches) {
+    if (!matches || !matches.length) return '<em style="color:var(--color-text-faint,#aaa)">none</em>';
+    return matches.map(function(m) {
+      var p = esc(m.pattern || ''), v = esc(m.value || '');
+      return '<span style="display:inline-block;margin:.1rem .2rem;padding:.1rem .35rem;'
+           + 'background:var(--color-primary-highlight,#cde);border-radius:3px;'
+           + 'font-size:.7rem;font-family:monospace" title="matched value: ' + v + '">'
+           + p + '</span>';
+    }).join('');
+  }
+
+  /* A.2: render the full scoring trace for one profile */
+  function _renderProfileTrace(pname, ptrace) {
+    var html = '';
+    var blocked   = ptrace.blocked;
+    var mult      = ptrace.multiplier != null ? ptrace.multiplier : 1.0;
+    var rawTotal  = ptrace.raw_rule_total || 0;
+    var capped    = ptrace.raw_rule_total_capped || 0;
+    var final     = ptrace.final_score || 0;
+    var blockReason = ptrace.block_reason || '';
+
+    // Profile header with score formula
+    var formula = 'min(' + rawTotal + ',100) × ' + (mult * 100).toFixed(0) + '% = ' + final;
+    var pillCls = scoreClass(final);
+    html += '<div class="kc-detail-section" style="margin-top:.5rem">';
+    html += '<h4 style="display:flex;align-items:center;gap:.4rem">';
+    html += '<span class="profile-chip">' + esc(pname) + '</span>';
+    html += '<span class="score-pill ' + pillCls + '">' + final + '</span>';
+    if (blocked) {
+      html += '<span style="font-size:.7rem;color:var(--color-error,#c33);font-weight:600">⛔ BLOCKED</span>';
+      if (blockReason) html += '<span style="font-size:.68rem;color:var(--color-text-muted,#888)">(' + esc(blockReason) + ')</span>';
+    } else {
+      html += '<span style="font-size:.68rem;color:var(--color-text-muted,#888)">' + esc(formula) + '</span>';
+    }
+    html += '</h4>';
+
+    // Merged-pattern matches (profile-level blacklists that blocked)
+    if (blocked) {
+      var mm = ptrace.merged_matches || {};
+      var blHits = (mm.keywords_blacklist || []).concat(mm.path_blacklist || []).concat(mm.commit_blacklist || []);
+      if (blHits.length) {
+        html += '<div style="font-size:.72rem;margin:.2rem 0 .4rem 0">';
+        html += '<span style="color:var(--color-error,#c33);font-weight:600">Blacklist hits: </span>';
+        html += _matchBadges(blHits);
+        html += '</div>';
+      }
+    }
+
+    // Per-rule detail
+    var rules = ptrace.rules || {};
+    var rnames = Object.keys(rules).sort();
+    if (rnames.length) {
+      html += '<table style="width:100%;font-size:.7rem;border-collapse:collapse;margin-top:.25rem">';
+      html += '<tr style="color:var(--color-text-muted,#888);border-bottom:1px solid var(--color-divider,#ddd)">';
+      html += '<th style="text-align:left;padding:.1rem .25rem">Rule</th>';
+      html += '<th style="text-align:right;padding:.1rem .25rem">Wt</th>';
+      html += '<th style="text-align:center;padding:.1rem .25rem">Match</th>';
+      html += '<th style="text-align:right;padding:.1rem .25rem">Pts</th>';
+      html += '<th style="text-align:left;padding:.1rem .25rem">Patterns matched</th>';
+      html += '</tr>';
+      rnames.forEach(function(rname) {
+        var rd = rules[rname] || {};
+        var matched = rd.matched;
+        var level   = rd.matched_level || '';
+        var rScore  = rd.score || 0;
+        var rWeight = rd.weight || 0;
+        var matches = rd.matches || {};
+        var allHits = (matches.keywords_whitelist || [])
+                    .concat(matches.path_whitelist || [])
+                    .concat(matches.commit_whitelist || []);
+        var rowCls = matched ? 'color:var(--color-text)' : 'color:var(--color-text-faint,#aaa)';
+        var matchIcon = blocked ? '\u25a0' : (matched ? '\u2714' : '\u2715');
+        var matchColor = blocked
+          ? 'color:var(--color-text-faint,#aaa)'
+          : (matched ? 'color:var(--color-success,green);font-weight:700' : 'color:var(--color-text-faint,#aaa)');
+        html += '<tr style="border-bottom:1px solid var(--color-divider,#eee);' + rowCls + '">';
+        html += '<td style="padding:.15rem .25rem;font-family:monospace">' + esc(rname) + '</td>';
+        html += '<td style="text-align:right;padding:.15rem .25rem">' + rWeight + '</td>';
+        html += '<td style="text-align:center;padding:.15rem .25rem;' + matchColor + '">' + matchIcon + '</td>';
+        html += '<td style="text-align:right;padding:.15rem .25rem;font-weight:600">' + (matched ? rScore : '—') + '</td>';
+        html += '<td style="padding:.15rem .25rem">' + (allHits.length ? _matchBadges(allHits) : '<span style="color:var(--color-text-faint,#aaa)">—</span>') + '</td>';
+        html += '</tr>';
+      });
+      html += '</table>';
+    }
+    html += '</div>';
+    return html;
+  }
+
   function renderCommit(c, sha) {
     if (!panelBody) return;
     if (!c) {
       panelBody.innerHTML = field('SHA', esc(sha), 'mono')
-        + '<p style="color:var(--text-muted);margin-top:.75rem;font-size:.75rem">'
+        + '<p style="color:var(--color-text-muted,#888);margin-top:.75rem;font-size:.75rem">'
         + 'No detail data available for this commit.</p>';
       return;
     }
@@ -423,13 +593,28 @@
           return '<span class="profile-chip">'+esc(p)+'</span>';
         }).join(' '));
     }
-    if (sc.profiles && Object.keys(sc.profiles).length) {
+
+    /* A.2: Full scoring trace — one section per profile */
+    var traceProfiles = sc.trace && sc.trace.profiles;
+    if (traceProfiles && Object.keys(traceProfiles).length) {
+      html += '<div class="kc-detail-section"><h4>Scoring trace</h4>';
+      html += '<p style="font-size:.7rem;color:var(--color-text-muted,#888);margin-bottom:.3rem">';
+      html += 'Formula per profile: <code>min(sum_of_matched_rule_weights, 100) × profile_multiplier</code>. '
+            + 'Combined score = sum of all profile scores.';
+      html += '</p>';
+      Object.keys(traceProfiles).sort().forEach(function(pname) {
+        html += _renderProfileTrace(pname, traceProfiles[pname] || {});
+      });
+      html += '</div>';
+    } else if (sc.profiles && Object.keys(sc.profiles).length) {
+      /* Fallback: only per-profile scores available (index row, no trace) */
       html += '<div class="kc-detail-section"><h4>Profile scores</h4>';
       Object.keys(sc.profiles).sort().forEach(function(p) {
         html += field(p, '<span class="score-pill">'+esc(String(sc.profiles[p]))+'</span>');
       });
       html += '</div>';
     }
+
     if (c.product_evidence && c.product_evidence.length) {
       html += '<div class="kc-detail-section"><h4>Evidence</h4>'
         + '<ul style="padding-left:1.1rem;font-size:.75rem">';
@@ -470,12 +655,15 @@
     if (e.preventDefault) e.preventDefault();
     if (e.stopPropagation) e.stopPropagation();
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-    openPanel(a.getAttribute('data-sha') || a.dataset && a.dataset.sha || a.getAttribute('data-full-sha') || '');
+    /* B: pass both sha12 and fullSha so openPanel can fetch the sidecar */
+    var sha12   = a.getAttribute('data-sha') || (a.dataset && a.dataset.sha) || '';
+    var fullSha = a.getAttribute('data-full-sha') || (a.dataset && a.dataset.fullSha) || sha12;
+    openPanel(sha12, fullSha);
     return false;
   }, true);
 
 
-  /* ── Theme toggle ──────────────────────────────────────────────────────── */
+  /* ── Theme toggle ────────────────────────────────────────────────────── */
   (function(){
     var SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -521,7 +709,7 @@
     }
   })();
 
-  /* ── Bootstrap ────────────────────────────────────────────────────────── */
+  /* ── Bootstrap ────────────────────────────────────────────────────── */
   document.querySelectorAll('table.kc-table').forEach(function(tbl) {
     initTable(tbl);
     initSort(tbl);

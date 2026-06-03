@@ -17,6 +17,10 @@ Changes:
                   appends a product_evidence cell for CSV/XLSX/ODS output
                   (COMMIT_COLS includes that column). Only the HTML table
                   hides the column (handled in html_report.py / A.1).
+  v12.0.0 (A.3) — rule_trace.csv is now written alongside rule_trace.json
+                  so human analysts can open it directly in a spreadsheet.
+                  _STAGE7_MILESTONES bumped from 6 to 7 to account for the
+                  extra CSV milestone.
 """
 import csv
 import json
@@ -36,7 +40,7 @@ _COMMIT_KEYS_FILTERED = _COMMIT_KEYS + ["filter_reason"]
 
 # Total number of progress milestones emitted by run().
 # Used both in _update_stage7_progress() and in the final finish call.
-_STAGE7_MILESTONES = 6
+_STAGE7_MILESTONES = 7
 
 
 def _fmt_date(ts):
@@ -167,7 +171,7 @@ def _write_table_json(path, commits, include_reason=False):
         rows.append(order_commit_details(row))
     _save_ordered_json(path, rows)
 
-# ── Per-profile statistics ────────────────────────────────────────────────
+# ── Per-profile statistics ──────────────────────────────────────────────────────────────
 
 def _profile_summary(scored, profile_rules):
     """Per-profile commit count, total score, and average score."""
@@ -202,7 +206,7 @@ def _profile_matrix(scored):
     return header, rows
 
 
-# ── Coverage metrics (promoted to report_stats) ────────────────────────────────
+# ── Coverage metrics (promoted to report_stats) ────────────────────────────────────────────
 
 def _coverage_metrics(scored):
     """Return diagnostic coverage counters included in report_stats.json.
@@ -255,7 +259,7 @@ def _save_ordered_json(path, data):
         json.dump(data, f, indent=2)
         f.write('\n')
 
-# ── Output helpers ───────────────────────────────────────────────────────────
+# ── Output helpers ───────────────────────────────────────────────────────────────
 
 def _resolve_outputs(cfg):
     """Return the set of output format names to produce.
@@ -288,7 +292,7 @@ def _report_title(cfg):
     return tmpl.get('title', 'kcommit Analysis Report')
 
 
-# ── Stage entry point ─────────────────────────────────────────────────────
+# ── Stage entry point ──────────────────────────────────────────────────────────────
 
 def run(cfg, cache, outdir):
     from lib.profile_rules import load_profile_rules
@@ -421,7 +425,19 @@ def run(cfg, cache, outdir):
         _p = os.path.join(outdir, 'filtered_commits.json')
         _save_ordered_json(_p, [_canonical_commit(c) for c in filtered]);  _emit(_p)
 
-    _update_stage7_progress(2, _STAGE7_MILESTONES, 'Writing CSV outputs')
+    # A.3: rule_trace.csv — spreadsheet-friendly version of rule_trace.json
+    _update_stage7_progress(2, _STAGE7_MILESTONES, 'Writing rule_trace.csv')
+    _rtcsv = os.path.join(outdir, 'rule_trace.csv')
+    try:
+        with open(_rtcsv, 'w', newline='', encoding='utf-8') as _fh:
+            _w = csv.writer(_fh)
+            _w.writerow(trace_hdr)
+            _w.writerows(trace_rows)
+        _emit(_rtcsv)
+    except Exception as _e:
+        logging.warning('rule_trace.csv write failed: %s', _e)
+
+    _update_stage7_progress(3, _STAGE7_MILESTONES, 'Writing CSV outputs')
     # CSV
     if 'csv' in outputs:
         csv_path = os.path.join(outdir, 'relevant_commits.csv')
@@ -471,7 +487,7 @@ def run(cfg, cache, outdir):
         'profile_summary': prof_summary,
     }
 
-    _update_stage7_progress(3, _STAGE7_MILESTONES, 'Writing XLSX / ODS outputs')
+    _update_stage7_progress(4, _STAGE7_MILESTONES, 'Writing XLSX / ODS outputs')
     # XLSX
     if 'xlsx' in outputs:
         if write_xlsx:
@@ -553,17 +569,17 @@ def run(cfg, cache, outdir):
             logging.warning("'ods' output requested but lib.spreadsheet not available")
 
     # HTML
-    _update_stage7_progress(4, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
+    _update_stage7_progress(5, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
     if 'html' in outputs:
         try:
             _save_ordered_json(os.path.join(outdir, 'report_metadata.json'), metadata)
             _emit(os.path.join(outdir, 'report_metadata.json'))
-            _update_stage7_progress(5, _STAGE7_MILESTONES, 'Writing HTML commit index JSON')
+            _update_stage7_progress(6, _STAGE7_MILESTONES, 'Writing HTML commit index JSON')
             _hp = os.path.join(outdir, 'relevant_commits.html')
             _tp = os.path.join(outdir, 'relevant_commits.table.json')
             _write_table_json(_tp, scored, include_reason=False)
             _emit(_tp)
-            _update_stage7_progress(6, _STAGE7_MILESTONES, 'Generating HTML report')
+            _update_stage7_progress(7, _STAGE7_MILESTONES, 'Generating HTML report')
             generate_html_report(
                 scored, prof_summary, report_stats, _hp,
                 title=title,

@@ -1,4 +1,10 @@
-"""Tests for lib.stages.st04_prefilter.run() — the stage entry point."""
+"""Tests for lib.stages.st04_prefilter.run() — the stage entry point.
+
+v12.0.0 (A.1):
+  run() now also writes CACHE_FILES['prefilter_debug'] (prefilter_debug.json)
+  with a 'summary' block and a 'dropped' list.  Each entry is built by
+  _build_prefilter_debug_entry() and carries per-level filter debug info.
+"""
 import json, os
 import pytest
 
@@ -81,13 +87,6 @@ def test_run_writes_filtered_cache(tmp_path):
     assert isinstance(kept, list)
 
 
-def test_run_writes_filtered_cache(tmp_path):
-    cache, cfg = _setup(tmp_path, commits=[_commit('a')])
-    run(cfg, cache)
-    path = os.path.join(cache, CACHE_FILES['filtered'])
-    assert os.path.exists(path)
-
-
 def test_run_empty_commits(tmp_path):
     cache, cfg = _setup(tmp_path, commits=[])
     kept, dropped, reasons = run(cfg, cache)
@@ -100,7 +99,6 @@ def test_run_path_blacklist_drops(tmp_path):
     sha = 'deadbeef'
     commits = [_commit(sha, files=['Documentation/foo.rst', 'Documentation/bar.rst'])]
     cache, cfg = _setup(tmp_path, commits=commits)
-    # Inject path_blacklist into the compiled_rules merged section
     import json
     cr_path = os.path.join(str(tmp_path / 'cache'), CACHE_FILES['compiled_rules'])
     cr = json.load(open(cr_path))
@@ -167,3 +165,105 @@ def test_run_writes_kept_and_filtered_caches(tmp_path, monkeypatch):
     assert [c['commit'] for c in dropped] == ['drop1']
     assert [c['commit'] for c in kept_cache] == ['keep1']
     assert [c['commit'] for c in dropped_cache] == ['drop1']
+
+
+# ══ A.1: prefilter_debug.json tests ══════════════════════════════════════
+
+def test_run_writes_prefilter_debug_json(tmp_path):
+    """run() writes CACHE_FILES['prefilter_debug'] after each run."""
+    cache, cfg = _setup(tmp_path, commits=[_commit('abc')])
+    run(cfg, cache)
+    dbg_path = os.path.join(cache, CACHE_FILES['prefilter_debug'])
+    assert os.path.exists(dbg_path), 'prefilter_debug.json must be written by run()'
+
+
+def test_run_prefilter_debug_has_summary_block(tmp_path):
+    cache, cfg = _setup(tmp_path, commits=[_commit('abc'), _commit('xyz')])
+    run(cfg, cache)
+    dbg = _read(os.path.join(cache, CACHE_FILES['prefilter_debug']))
+    assert 'summary' in dbg
+    s = dbg['summary']
+    for key in ('total_commits', 'kept', 'dropped', 'drop_reasons'):
+        assert key in s, f'summary missing key: {key!r}'
+    assert s['total_commits'] == 2
+
+
+def test_run_prefilter_debug_has_dropped_list(tmp_path):
+    cache, cfg = _setup(tmp_path, commits=[_commit('abc')])
+    run(cfg, cache)
+    dbg = _read(os.path.join(cache, CACHE_FILES['prefilter_debug']))
+    assert 'dropped' in dbg
+    assert isinstance(dbg['dropped'], list)
+
+
+def test_run_prefilter_debug_dropped_entry_has_required_keys(tmp_path):
+    """Each entry in 'dropped' list has sha, sha12, subject, author, files, drop_reason, debug."""
+    import json
+    sha = 'cafebabe'
+    commits = [_commit(sha, files=['Documentation/a.rst', 'Documentation/b.rst'])]
+    cache, cfg = _setup(tmp_path, commits=commits)
+    cr_path = os.path.join(str(tmp_path / 'cache'), CACHE_FILES['compiled_rules'])
+    cr = json.load(open(cr_path))
+    cr['profiles']['networking']['merged']['path_blacklist'] = ['Documentation/']
+    json.dump(cr, open(cr_path, 'w'))
+    run(cfg, cache)
+    dbg = _read(os.path.join(cache, CACHE_FILES['prefilter_debug']))
+    assert len(dbg['dropped']) == 1
+    entry = dbg['dropped'][0]
+    for key in ('sha', 'sha12', 'subject', 'author', 'files', 'drop_reason', 'debug'):
+        assert key in entry, f'dropped entry missing key: {key!r}'
+    assert entry['sha'] == sha
+    assert entry['sha12'] == sha[:12]
+    assert entry['drop_reason'] in ('path_blacklist_all',)
+
+
+def test_run_prefilter_debug_debug_block_has_filter_level_keys(tmp_path):
+    """The 'debug' sub-dict carries all expected filter-level keys."""
+    import json
+    commits = [_commit('d00d', files=['Documentation/a.rst', 'Documentation/b.rst'])]
+    cache, cfg = _setup(tmp_path, commits=commits)
+    cr_path = os.path.join(str(tmp_path / 'cache'), CACHE_FILES['compiled_rules'])
+    cr = json.load(open(cr_path))
+    cr['profiles']['networking']['merged']['path_blacklist'] = ['Documentation/']
+    json.dump(cr, open(cr_path, 'w'))
+    run(cfg, cache)
+    dbg = _read(os.path.join(cache, CACHE_FILES['prefilter_debug']))
+    inner = dbg['dropped'][0]['debug']
+    for key in ('sha', 'files', 'filter_enabled', 'kconfig_required',
+                'l3_commit_wl_match', 'l3_commit_bl_match',
+                'l2a_path_bl_matches', 'l2b_path_wl_matches',
+                'l2half_artifact_files',
+                'l2half_kconfig_covered_files', 'l2half_kconfig_uncovered_files',
+                'l1a_kw_wl_matches', 'l1b_kw_bl_matches'):
+        assert key in inner, f'debug block missing key: {key!r}'
+
+
+def test_run_prefilter_debug_no_dropped_when_all_kept(tmp_path):
+    """'dropped' list is empty when no commits are filtered."""
+    cache, cfg = _setup(tmp_path, commits=[_commit('abc')])
+    run(cfg, cache)
+    dbg = _read(os.path.join(cache, CACHE_FILES['prefilter_debug']))
+    assert dbg['dropped'] == []
+    assert dbg['summary']['dropped'] == 0
+
+
+def test_run_prefilter_debug_summary_counts_match_actual(tmp_path):
+    """summary.kept + summary.dropped == summary.total_commits."""
+    import json
+    commits = [
+        _commit('d1', files=['Documentation/a.rst', 'Documentation/b.rst']),
+        _commit('d2', files=['Documentation/c.rst', 'Documentation/d.rst']),
+        _commit('k1'),   # kept
+    ]
+    cache, cfg = _setup(tmp_path, commits=commits)
+    cr_path = os.path.join(str(tmp_path / 'cache'), CACHE_FILES['compiled_rules'])
+    cr = json.load(open(cr_path))
+    cr['profiles']['networking']['merged']['path_blacklist'] = ['Documentation/']
+    json.dump(cr, open(cr_path, 'w'))
+    run(cfg, cache)
+    dbg = _read(os.path.join(cache, CACHE_FILES['prefilter_debug']))
+    s = dbg['summary']
+    assert s['total_commits'] == 3
+    assert s['dropped'] == 2
+    assert s['kept'] == 1
+    assert s['kept'] + s['dropped'] == s['total_commits']
