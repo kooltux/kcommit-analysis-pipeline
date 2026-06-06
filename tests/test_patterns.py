@@ -1,9 +1,41 @@
-"""Tests for lib.patterns — match, anymatches, anyfilematches, allfilesmatch."""
-import re, os
+"""Tests for lib.patterns -- match, anymatches, anyfilematches, allfilesmatch.
+
+v13.0.0 (E.3): added test confirming lib.patterns can be imported without
+  triggering a circular import from lib.profile_rules.
+"""
+import re
+import os
 
 from lib.patterns import match, anymatches, anyfilematches, allfilesmatch, precompile_rules, compilepat
 
 
+# == E.3: no circular import ===================================================
+
+def test_patterns_import_no_circular_import():
+    """E.3: importing lib.patterns standalone must not raise ImportError or
+    trigger any circular import with lib.profile_rules.
+
+    This test deliberately reimports the module in a subprocess-free way by
+    verifying that the module-level import already succeeded (if we got here,
+    the import at the top of this file worked) and that re-importing it via
+    importlib does not raise.
+    """
+    import importlib
+    import lib.patterns
+    # Re-importing must be a no-op (cached module), not raise.
+    mod = importlib.import_module('lib.patterns')
+    assert mod is lib.patterns
+
+
+def test_profile_rules_importable_after_patterns():
+    """E.3: after importing lib.patterns, importing lib.profile_rules must
+    also succeed without circular-import errors.
+    """
+    import lib.patterns  # noqa: F401
+    import lib.profile_rules  # noqa: F401  -- must not raise
+
+
+# -- match: plain substring ----------------------------------------------------
 def test_match_plain_substring():
     assert match('usb', 'usb: fix bulk transfer') is True
 
@@ -74,7 +106,7 @@ def test_precompile_rules_idempotent():
     precompile_rules(rules)
 
 
-# ── glob branch ───────────────────────────────────────────────────────────────
+# -- glob branch ---------------------------------------------------------------
 def test_match_glob_star():
     assert match('drivers/usb/*', 'drivers/usb/core/hub.c') is True
 
@@ -91,7 +123,7 @@ def test_match_glob_brackets():
     assert match('[Uu][Ss][Bb]*', 'USB driver fix') is True
 
 
-# ── re: prefix ────────────────────────────────────────────────────────────────
+# -- re: prefix ----------------------------------------------------------------
 def test_match_re_prefix_case_sensitive():
     assert match('re:CVE-\\d{4}-\\d+', 'CVE-2024-12345') is True
 
@@ -105,45 +137,39 @@ def test_match_re_prefix_explicit_ignore_case():
 
 
 def test_match_re_prefix_invalid_regex_no_crash():
-    # Invalid regex should not raise — returns False
+    # Invalid regex should not raise -- returns False
     assert match('re:[invalid(', 'anything') is False
 
 
-# ── compilepat ────────────────────────────────────────────────────────────────
+# -- compilepat ----------------------------------------------------------------
 def test_compilepat_keyword_returns_pattern():
-    import re as _re
     result = compilepat('usb')
-    assert isinstance(result, _re.Pattern)
+    assert isinstance(result, re.Pattern)
 
 
 def test_compilepat_glob_returns_string():
-    import re as _re
     result = compilepat('drivers/usb/*')
     assert isinstance(result, str)
 
 
 def test_compilepat_re_prefix_returns_pattern():
-    import re as _re
     result = compilepat('re:CVE-\\d{4}')
-    assert isinstance(result, _re.Pattern)
+    assert isinstance(result, re.Pattern)
 
 
 def test_compilepat_idempotent():
     """Calling compilepat on an already-compiled pattern returns it unchanged."""
-    import re as _re
-    p = _re.compile(r'usb')
+    p = re.compile(r'usb')
     assert compilepat(p) is p
 
 
 def test_compilepat_escaped_glob_char_is_keyword():
-    """'CVE-\\*' has an escaped glob char → treated as keyword, not glob."""
-    import re as _re
+    """'CVE-\\*' has an escaped glob char -> treated as keyword, not glob."""
     result = compilepat('CVE-\\*')
-    # Should compile to a regex (keyword path), not stay as a string
-    assert isinstance(result, _re.Pattern)
+    assert isinstance(result, re.Pattern)
 
 
-# ── escaped glob in match() ───────────────────────────────────────────────────
+# -- escaped glob in match() ---------------------------------------------------
 def test_match_escaped_star_literal():
     """Escaped \\* matches literal asterisk, not glob."""
     assert match('CVE-\\*', 'CVE-*') is True
@@ -154,7 +180,7 @@ def test_match_escaped_star_not_glob():
     assert match('CVE-\\*', 'CVE-2024-12345') is False
 
 
-# ── allfilesmatch edge cases ──────────────────────────────────────────────────
+# -- allfilesmatch edge cases --------------------------------------------------
 def test_allfilesmatch_empty_files():
     """Empty file list: allfilesmatch returns False (no file matched any pattern)."""
     assert allfilesmatch(['Documentation/'], []) is False

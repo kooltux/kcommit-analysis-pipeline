@@ -1,5 +1,5 @@
 {
-  "version": "v12.0.3",
+  "version": "v13.0.0",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
   "library_dir": "lib",
   "example_configs": [
@@ -56,7 +56,9 @@
       "index": 6,
       "key": "postfilter_commits",
       "outputs": [
-        "cache/relevant_commits.json"
+        "cache/relevant_commits.json",
+        "cache/postfilter_dropped_commits.json",
+        "cache/postfilter_debug.json"
       ]
     },
     {

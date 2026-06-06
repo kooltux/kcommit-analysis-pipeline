@@ -1,15 +1,18 @@
-from lib.profile_rules import _merged_patterns
 """Pattern matching primitives for kcommit-analysis-pipeline.
 
 v9.3 semantics:
   keyword  (no glob metacharacters, or glob-chars escaped with backslash)
-             → case-insensitive whole-word match (\\b boundaries).
+             -> case-insensitive whole-word match (\\b boundaries).
              Backslash-escaped glob chars (\\*, \\?, \\[) are treated as
              literals in the keyword, not as glob wildcards.
   glob     (contains unescaped * ? or [ )
-             → case-insensitive fnmatch (entire string against pattern).
-  re:EXPR  → regex search, case-SENSITIVE by default.
+             -> case-insensitive fnmatch (entire string against pattern).
+  re:EXPR  -> regex search, case-SENSITIVE by default.
              Use re:(?i)EXPR for case-insensitive regex.
+
+E.3 (v13.0.0): removed stale module-level 'from lib.profile_rules import
+_merged_patterns' that created a circular import with profile_rules.py.
+_merged_patterns is not used anywhere in this module.
 """
 import fnmatch
 import re
@@ -18,19 +21,18 @@ import re
 _COMPILED_SENTINEL = object()
 
 
-
 # Characters that trigger glob mode when unescaped
 _GLOB_CHARS = frozenset('*?[')
 # Regex that detects an unescaped glob metacharacter
 _UNESCAPED_GLOB_RE = re.compile(r'(?<!\\)[*?\[]')
 
 
-def _is_glob(pattern: str) -> bool:
+def _is_glob(pattern):  # type: (str) -> bool
     """Return True if *pattern* contains unescaped glob metacharacters."""
     return bool(_UNESCAPED_GLOB_RE.search(pattern))
 
 
-def _unescape_glob(pattern: str) -> str:
+def _unescape_glob(pattern):  # type: (str) -> str
     """Remove backslash escapes from glob metacharacters.
 
     '\\*' -> '*',  '\\?' -> '?',  '\\[' -> '['
@@ -53,7 +55,7 @@ def compilepat(p):
     # Keywords (no unescaped glob chars): compile to a regex.
     # If the unescaped literal is bounded by word-chars on both sides, use \b
     # for whole-word matching.  If the literal itself starts/ends with a
-    # non-word character (e.g. escaped "CVE-*" → literal "CVE-*"), fall back
+    # non-word character (e.g. escaped "CVE-*" -> literal "CVE-*"), fall back
     # to a plain case-insensitive search (no boundary anchors needed).
     if not _is_glob(p):
         literal = _unescape_glob(p)
@@ -68,14 +70,14 @@ def compilepat(p):
     return p
 
 
-def match(pattern, text: str) -> bool:
+def match(pattern, text):  # type: (object, str) -> bool
     """Match *pattern* against *text*.
 
     Dispatch order:
-      1. re.Pattern (pre-compiled)    → pattern.search(text)
-      2. 're:EXPR'  (string literal)  → re.search(EXPR, text) — case-sensitive
-      3. glob (unescaped * ? [)       → fnmatch.fnmatch(lower, lower)
-      4. keyword                      → case-insensitive whole-word regex
+      1. re.Pattern (pre-compiled)    -> pattern.search(text)
+      2. 're:EXPR'  (string literal)  -> re.search(EXPR, text) -- case-sensitive
+      3. glob (unescaped * ? [)       -> fnmatch.fnmatch(lower, lower)
+      4. keyword                      -> case-insensitive whole-word regex
     """
     text = text or ''
     if isinstance(pattern, re.Pattern):
@@ -101,16 +103,16 @@ def match(pattern, text: str) -> bool:
         return pattern.lower() in text.lower()
 
 
-def anymatches(patterns, text: str) -> bool:
+def anymatches(patterns, text):  # type: (list, str) -> bool
     return any(match(p, text) for p in (patterns or []))
 
 
-def anyfilematches(patterns, files) -> bool:
+def anyfilematches(patterns, files):  # type: (list, list) -> bool
     files = files or []
     return any(match(p, f) for p in (patterns or []) for f in files)
 
 
-def allfilesmatch(patterns, files) -> bool:
+def allfilesmatch(patterns, files):  # type: (list, list) -> bool
     """Return True iff ALL files match at least one pattern."""
     files = files or []
     if not patterns or not files:
@@ -135,6 +137,8 @@ def precompile_rules(profile_rules):
     for pdata in (profile_rules or {}).values():
         if not isinstance(pdata, dict):
             continue
+        # _merged_patterns imported locally to avoid circular import at module level
+        from lib.profile_rules import _merged_patterns
         merged = _merged_patterns(pdata)
         for key in keys:
             merged[key] = [compilepat(p) for p in merged.get(key, [])]

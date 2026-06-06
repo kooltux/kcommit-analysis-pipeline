@@ -1,7 +1,7 @@
 """Manifest loader for kcommit-analysis-pipeline.
 
 NSTAGES and STAGE_OUTPUTS are derived from pipeline_stages at load time so
-that MANIFEST.json is the single source of truth — no manual sync needed.
+that MANIFEST.json is the single source of truth -- no manual sync needed.
 """
 import json
 import os
@@ -18,30 +18,31 @@ LIBRARY_DIR     = MANIFEST.get('library_dir', 'lib')
 PIPELINE_STAGES = MANIFEST.get('pipeline_stages', [])
 TOOLS           = MANIFEST.get('tools', [])
 
-# Derived — never hardcode these; edit MANIFEST.json instead.
+# Derived -- never hardcode these; edit MANIFEST.json instead.
 NSTAGES      = len(PIPELINE_STAGES)
 STAGE_OUTPUTS = {s['key']: s.get('outputs', []) for s in PIPELINE_STAGES}
 
 
-# Canonical cache filenames — single source of truth for all stages.
+# Canonical cache filenames -- single source of truth for all stages.
 # Import via: from lib.manifest import CACHE_FILES
 CACHE_FILES = {
-    'compiled_rules': 'compiled_rules.json',
-    'prepare_summary': 'prepare_summary.json',
-    'commits':        'commits.json',
-    'build_context':  'build_context.json',
-    'kbuild_map':     'kbuild_map.json',
-    'product_map':    'product_map.json',
-    'prefilter_kept': 'prefilter_kept_commits.json',
-    'prefilter_debug': 'prefilter_debug.json',   # A.1 — per-dropped-commit debug detail
-    'filtered':       'filtered_commits.json',
-    'scored':         'scored_commits.json',
-    'relevant':       'relevant_commits.json',
+    'compiled_rules':     'compiled_rules.json',
+    'prepare_summary':    'prepare_summary.json',
+    'commits':            'commits.json',
+    'build_context':      'build_context.json',
+    'kbuild_map':         'kbuild_map.json',
+    'product_map':        'product_map.json',
+    'prefilter_kept':     'prefilter_kept_commits.json',
+    'prefilter_debug':    'prefilter_debug.json',          # A.1: per-dropped-commit debug detail
+    'filtered':           'filtered_commits.json',
+    'scored':             'scored_commits.json',
+    'relevant':           'relevant_commits.json',
     'postfilter_dropped': 'postfilter_dropped_commits.json',
+    'postfilter_debug':   'postfilter_debug.json',         # E.7: post-filter observability summary
 }
 
 
-# ── Column definitions — single source of truth ───────────────────────────────
+# -- Column definitions -- single source of truth ----------------------------
 # Import via: from lib.manifest import COMMIT_COLS, COMMIT_COLS_FILTERED, ...
 COMMIT_COLS          = ["Rank", "SHA", "Subject", "Author", "Date",
                         "Score", "Profiles", "Profile Scores", "Product Evidence"]

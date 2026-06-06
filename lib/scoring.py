@@ -67,7 +67,7 @@ def _pattern_repr(pat):
 
 
 def _first_match(patterns, values):
-    """Return first {pattern, value} match across patterns×values, or None."""
+    """Return first {pattern, value} match across patterns x values, or None."""
     for pat in (patterns or []):
         for val in (values or []):
             if _pat_match(pat, val):
@@ -76,7 +76,7 @@ def _first_match(patterns, values):
 
 
 def _all_matches(patterns, values):
-    """Return all unique {pattern, value} matches across patterns×values."""
+    """Return all unique {pattern, value} matches across patterns x values."""
     out, seen = [], set()
     for pat in (patterns or []):
         for val in (values or []):
@@ -93,7 +93,7 @@ def extract_commit_meta(commit):
     """Linux kernel commit annotation flags (informational metadata only).
 
     These are structural properties defined by Linux kernel commit conventions.
-    They do NOT contribute to the score — profiles and rules are the sole
+    They do NOT contribute to the score -- profiles and rules are the sole
     source of score points.
 
     Returned keys (all boolean):
@@ -114,20 +114,20 @@ def extract_commit_meta(commit):
 
 
 def _collect_product_evidence(commit, product_map):
-    """Informational product-coverage evidence tags (set by scoring, not prefilter).
+    """Collect informational product-coverage evidence tags for *commit*.
+
+    Purely informational -- evidence tags appear in the report but do NOT
+    contribute to the score. Scoring is entirely the responsibility of
+    profile rules.
 
     prefilter's build_compiled_sets() serves filtering decisions only.
     This function produces the 'product_evidence' field in scored commit dicts
     for display in reports. Both use product_map but for different purposes.
-    """
-    # (docstring replaces old one below)
-    """Collect informational product-coverage evidence tags for *commit*.
-
-    Purely informational — evidence tags appear in the report but do NOT
-    contribute to the score. Scoring is entirely the responsibility of
-    profile rules.
 
     Returns a sorted, deduplicated list of 'type:detail' tag strings.
+
+    E.5 (v13.0.0): removed duplicate docstring that was immediately overwriting
+    the first one (Python only sees the last consecutive docstring).
     """
     commit_files  = set(commit.get('files', []) or [])
     touched       = set(commit.get('touched_paths_guess') or [])
@@ -321,4 +321,3 @@ def fmt_profiles(commit):
 def fmt_evidence(commit):
     """Return product_evidence as a semicolon-separated string."""
     return '; '.join(commit.get('product_evidence') or [])
-
