@@ -1,16 +1,19 @@
 """Kernel config and Kbuild-style parsing helpers.
 
-v7.18 changes vs v7.17:
-  - scan_kbuild_makefiles() now delegates to parse_kconfig.scan_kbuild_tree()
-    instead of performing its own os.walk so that stage 02 callers that need
-    both the Makefile list and the config_to_paths mapping only traverse the
-    source tree once.
+v7.18 changes:
+  - scan_kbuild_makefiles() delegates to parse_kconfig.scan_kbuild_tree()
+    instead of performing its own os.walk.
   - Python 3.6 compatible.
 
 v12.0.2 changes:
   - KBUILD_PLACEHOLDER_NAMES exported here as the single authoritative
     definition, shared by st02 (_scan_build_dir) and st03 (_extract_log_objects).
+
+v13.0.0 changes (E.9):
+  - Removed redundant 'import os as _os' inside infer_touched_paths();
+    the module-level 'import os' is used throughout.
 """
+import functools as _functools
 import os
 
 from lib.parse_kconfig import scan_kbuild_tree
@@ -76,9 +79,7 @@ def scan_kbuild_makefiles(source_dir):
     return kbuild_files
 
 
-# ── Subsystem path inference (moved from lib/scoring.py in v9.12) ─────────────
-
-import functools as _functools
+# ── Subsystem path inference (moved from lib/scoring.py in v9.12) ────────────
 
 @_functools.lru_cache(maxsize=8)
 def _load_hints_from_path(hints_path):
@@ -96,21 +97,22 @@ def infer_touched_paths(subject, cfg=None):
 
     Uses configs/scoring/subsystem_path_hints.json.
     Returns a sorted, deduplicated list of path prefix strings.
+
+    E.9 (v13.0.0): removed inner 'import os as _os'; uses module-level os.
     """
-    import os as _os
     if not cfg:
         return []
-    paths      = cfg.get('paths', {}) or {}
-    scoring_dir = paths.get('scoring_dir') or _os.path.join(
-        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+    paths = cfg.get('paths', {}) or {}
+    scoring_dir = paths.get('scoring_dir') or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         'configs', 'scoring')
-    hints_path = _os.path.join(scoring_dir, 'subsystem_path_hints.json')
-    if not _os.path.exists(hints_path):
+    hints_path = os.path.join(scoring_dir, 'subsystem_path_hints.json')
+    if not os.path.exists(hints_path):
         return []
-    hints = _load_hints_from_path(_os.path.abspath(hints_path))
-    low   = (subject or '').lower()
+    hints = _load_hints_from_path(os.path.abspath(hints_path))
+    low = (subject or '').lower()
     result = []
-    for keyword, paths in hints.items():
+    for keyword, kpaths in hints.items():
         if keyword.lower() in low:
-            result.extend(paths if isinstance(paths, list) else [str(paths)])
+            result.extend(kpaths if isinstance(kpaths, list) else [str(kpaths)])
     return sorted(set(result))
