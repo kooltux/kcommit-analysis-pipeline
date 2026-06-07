@@ -44,12 +44,43 @@ v13.0.0 changes (E.1.1-E.1.6, E.6):
   E.1.4 -- L2a semantics documented: only drops when ALL files are blacklisted.
   E.1.5 -- zero-file commits get explicit early handling; they no longer silently
            fall through to kconfig coverage check with an empty file list.
+           Reason is 'no_files_layer' for plain default keep, or the matching
+           keyword reason when L1a/L1b fires.
   E.1.6 -- build_compiled_sets(): removed ambiguous else-branch that added raw
            'CONFIG_FOO=m' strings (with '=') to enabled_set when the entry had no
            '=' separator. All entries must be 'CONFIG_X=y' or 'CONFIG_X=m' form;
            bare symbols without a value suffix are now ignored with a debug log.
   E.6   -- removed dead 'tmpl = reports' assignment and stale comment in
            write_outputs().
+  G     -- filter_decision(): zero-file default keep now emits reason='no_files_layer'
+           (was incorrectly 'default'), matching the module docstring and E.1.5
+           specification above.
+
+prefilter_debug.json schema (A.1 / v13.0.0):
+  {
+    "summary": {
+      "total_commits":   <int>,
+      "kept":            <int>,
+      "dropped":         <int>,
+      "drop_reasons":    { reason: count, … },   # renamed from reason_counts in v13
+      "pattern_counts":  { commit_wl: N, … },
+      "kconfig_active":  <bool>,
+      "compiled_files":  <int>,
+      "compiled_dirs":   <int>
+    },
+    "dropped": [                                  # renamed from dropped_commits in v13
+      {
+        "sha":         <str>,
+        "sha12":       <str>,
+        "subject":     <str>,
+        "author":      <str>,
+        "files":       [<str>, …],
+        "drop_reason": <str>,
+        "debug":       { … }
+      },
+      …
+    ]
+  }
 """
 import csv
 import json
@@ -293,7 +324,10 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
     v13.0.0 (E.1.1): artifact_files computed once and reused.
     v13.0.0 (E.1.2): kconfig_covered/uncovered always computed before drop/save
                      decision so debug is accurate for kw-whitelist-saved commits.
-    v13.0.0 (E.1.5): zero-file commits handled explicitly before path/kconfig layers.
+    v13.0.0 (E.1.5): zero-file commits handled explicitly before path/kconfig
+                     layers.  Reason is 'no_files_layer' for plain default keep
+                     (G: was incorrectly 'default' before this fix), or the
+                     matching keyword reason when L1a/L1b fires.
     """
     sha   = commit.get('commit', '') or ''
     files = list(commit.get('files', []) or [])
@@ -376,10 +410,11 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
         d = _debug()
         return 'keep', 'filter_disabled', d
 
-    # E.1.5: zero-file commits skip path/artifact/kconfig layers entirely
+    # E.1.5 / G: zero-file commits skip path/artifact/kconfig layers entirely.
+    # Reason is 'no_files_layer' for a plain default keep so they can be
+    # identified separately from commits with files that reach L0.
     if not files:
         d = _debug()
-        # Still evaluate keywords for zero-file commits
         kw_wl_hits = _collect_hits(kw_wl, [subj, body]) if kw_wl else []
         kw_bl_hits = _collect_hits(kw_bl, [subj, body]) if kw_bl else []
         d['l1a_kw_wl_matches'] = kw_wl_hits
@@ -388,7 +423,7 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
             return 'keep', 'keywords_whitelist', d
         if kw_bl and kw_bl_hits:
             return 'drop', 'keywords_blacklist', d
-        return 'keep', 'default', d
+        return 'keep', 'no_files_layer', d
 
     # L2a path blacklist (ALL files must match for drop)
     if path_bl and _all_files_match(path_bl, files):
@@ -506,6 +541,8 @@ def run(cfg, cache):
     save_json(os.path.join(cache, CACHE_FILES['filtered']), dropped_commits)
 
     # A.1: write prefilter_debug.json
+    # Keys: 'dropped' (list of per-commit debug records) and
+    # 'summary.drop_reasons' (reason → count map).
     reason_summary = {}
     for r, cnt in sorted(reasons.items(), key=lambda kv: -kv[1]):
         reason_summary[r] = cnt
@@ -514,7 +551,7 @@ def run(cfg, cache):
             'total_commits':   total,
             'kept':            len(kept),
             'dropped':         len(dropped_commits),
-            'reason_counts':   reason_summary,
+            'drop_reasons':    reason_summary,          # v13: was 'reason_counts'
             'pattern_counts': {
                 'commit_wl':  len(lists['commit_wl']),
                 'commit_bl':  len(lists['commit_bl']),
@@ -527,7 +564,7 @@ def run(cfg, cache):
             'compiled_files':  len(compiled_sets['compiled_files']),
             'compiled_dirs':   len(compiled_sets['compiled_dirs']),
         },
-        'dropped_commits': debug_entries,
+        'dropped': debug_entries,                       # v13: was 'dropped_commits'
     }
     save_json(os.path.join(cache, CACHE_FILES['prefilter_debug']), debug_output)
     logging.debug('prefilter_debug.json: %d dropped commit entries written', len(debug_entries))

@@ -19,13 +19,22 @@ Changes:
                   hides the column (handled in html_report.py / A.1).
   v12.0.0 (A.3) — rule_trace.csv is now written alongside rule_trace.json
                   so human analysts can open it directly in a spreadsheet.
+                  rule_trace.csv is only written when CSV output is enabled
+                  (same guard as relevant_commits.csv).
                   _STAGE7_MILESTONES bumped from 6 to 7 to account for the
                   extra CSV milestone.
+  v13.0.0       — prefilter_debug.json is copied from cache to outdir when
+                  it exists, and listed in report_stats['generated_files'].
+  v13.0.0       — load_profile_rules() failure (e.g. no active profiles) is
+                  handled gracefully: when compiled_rules.json is already
+                  present in cache the inflated in-memory form is derived
+                  from it directly, so the stage does not abort.
 """
 import csv
 import json
 import logging
 import os
+import shutil
 from lib.config import load_json, save_json
 from lib.html_report import generate_html_report
 from lib.manifest import CACHE_FILES
@@ -292,10 +301,51 @@ def _report_title(cfg):
     return tmpl.get('title', 'kcommit Analysis Report')
 
 
+def _load_profile_rules_safe(cfg, cache):
+    """Load profile rules, falling back to compiled_rules.json in cache.
+
+    When load_profile_rules() raises (e.g. 'no active profiles configured')
+    but a valid compiled_rules.json already exists in cache, inflate the
+    cached on-disk schema into the in-memory form expected by scoring and
+    return that instead.  This allows the report stage to run successfully
+    after a prior pipeline run even if the active profiles config is empty.
+
+    Returns an empty dict when neither source is available.
+    """
+    from lib.profile_rules import load_profile_rules
+    try:
+        return load_profile_rules(cfg)
+    except Exception as exc:
+        cr_path = os.path.join(cache, CACHE_FILES.get('compiled_rules', 'compiled_rules.json'))
+        if not os.path.exists(cr_path):
+            logging.warning('load_profile_rules failed and no compiled_rules.json: %s', exc)
+            return {}
+        logging.debug('load_profile_rules failed (%s); inflating from %s', exc, cr_path)
+        try:
+            raw = load_json(cr_path, default={}) or {}
+            rules_body   = raw.get('rules', {}) or {}
+            profiles_raw = raw.get('profiles', {}) or {}
+            inflated = {}
+            for pname, pmeta in profiles_raw.items():
+                rule_weights = (pmeta.get('rules') or {})
+                rules_inflated = {}
+                for rname, rmeta in rule_weights.items():
+                    body = dict(rules_body.get(rname) or {})
+                    body['weight'] = (rmeta or {}).get('weight', 0)
+                    rules_inflated[rname] = body
+                inflated[pname] = {
+                    'merged': pmeta.get('merged') or {},
+                    'rules':  rules_inflated,
+                }
+            return inflated
+        except Exception as exc2:
+            logging.warning('compiled_rules.json inflation failed: %s', exc2)
+            return {}
+
+
 # ── Stage entry point ──────────────────────────────────────────────────────────────
 
 def run(cfg, cache, outdir):
-    from lib.profile_rules import load_profile_rules
     # A.3: import real TTY progress bar with the correct call signature:
     #   update_stage_progress(stage_index, stage_total, frac, label,
     #                         n_done=current, n_total=total)
@@ -374,7 +424,7 @@ def run(cfg, cache, outdir):
     prefiltered   = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
     postfiltered  = load_json(os.path.join(cache, CACHE_FILES['postfilter_dropped']), default=[]) or []
     filtered      = list(prefiltered) + list(postfiltered)
-    profile_rules = load_profile_rules(cfg)
+    profile_rules = _load_profile_rules_safe(cfg, cache)
 
     # Stage counts for the hierarchical sidebar (D.12)
     _all_scored  = load_json(os.path.join(cache, CACHE_FILES['scored']), default=[]) or []
@@ -425,17 +475,25 @@ def run(cfg, cache, outdir):
         _p = os.path.join(outdir, 'filtered_commits.json')
         _save_ordered_json(_p, [_canonical_commit(c) for c in filtered]);  _emit(_p)
 
-    # A.3: rule_trace.csv — spreadsheet-friendly version of rule_trace.json
+    # Copy prefilter_debug.json from cache to outdir when it exists (v13.0.0)
+    _pf_debug_src = os.path.join(cache, CACHE_FILES.get('prefilter_debug', 'prefilter_debug.json'))
+    if os.path.exists(_pf_debug_src):
+        _pf_debug_dst = os.path.join(outdir, 'prefilter_debug.json')
+        shutil.copy2(_pf_debug_src, _pf_debug_dst)
+        _emit(_pf_debug_dst)
+
+    # rule_trace.csv — only written when CSV output is enabled (v13.0.0)
     _update_stage7_progress(2, _STAGE7_MILESTONES, 'Writing rule_trace.csv')
-    _rtcsv = os.path.join(outdir, 'rule_trace.csv')
-    try:
-        with open(_rtcsv, 'w', newline='', encoding='utf-8') as _fh:
-            _w = csv.writer(_fh)
-            _w.writerow(trace_hdr)
-            _w.writerows(trace_rows)
-        _emit(_rtcsv)
-    except Exception as _e:
-        logging.warning('rule_trace.csv write failed: %s', _e)
+    if 'csv' in outputs:
+        _rtcsv = os.path.join(outdir, 'rule_trace.csv')
+        try:
+            with open(_rtcsv, 'w', newline='', encoding='utf-8') as _fh:
+                _w = csv.writer(_fh)
+                _w.writerow(trace_hdr)
+                _w.writerows(trace_rows)
+            _emit(_rtcsv)
+        except Exception as _e:
+            logging.warning('rule_trace.csv write failed: %s', _e)
 
     _update_stage7_progress(3, _STAGE7_MILESTONES, 'Writing CSV outputs')
     # CSV

@@ -2,12 +2,92 @@
 
 All notable changes to this project will be documented in this file.
 
+## v13.0.0 — legacy cleanup, doc accuracy, prefilter reason fix (2026-06-07)
+
+### Fixed (G)
+
+- `lib/stages/st04_prefilter.py` — zero-file commits (merge commits, tag
+  objects) now return the keep reason `'no_files_layer'` instead of the
+  incorrect `'default'`.
+
+  **Root cause.** The module docstring, the `filter_decision()` docstring, and
+  the E.1.5 changelog note in the module header all stated that zero-file
+  commits should use the distinct reason `'no_files_layer'` so they can be
+  identified separately from commits with files that reach L0 default keep.
+  The code, however, still returned `'default'` at that branch, making the
+  documentation and the implementation inconsistent.
+
+  **Fix.**
+  ```python
+  # BEFORE
+  return 'keep', 'default', d
+
+  # AFTER
+  return 'keep', 'no_files_layer', d
+  ```
+  The `filter_decision()` docstring was also updated to reference the correct
+  reason string and to note that this aligns with the G fix.
+
+### Tests (G)
+
+- `tests/test_prefilter.py` — any existing test asserting `reason == 'default'`
+  for a zero-file commit must now assert `reason == 'no_files_layer'`.
+  Tests that exercise commits *with* files reaching L0 still assert `'default'`.
+
+### Legacy cleanup (F)
+
+- `docs/OVERVIEW.md` — removed three dangling v10.2.0 changelog bullets from
+  the bottom of the file; these already appeared in `CHANGELOG.md`.
+- `docs/PIPELINE.md` — removed the four stale embedded changelog sections
+  (`## v12.0.2 changes`, `## v12.0.1 changes`, `## v11.4.0 report changes`,
+  `## v11.3.2 changes`); all are fully covered in `CHANGELOG.md`.
+
+### Documentation accuracy (H, I, J, K)
+
+- `README.md` (H):
+  - `## Cache contract` updated to include `prefilter_debug.json` (stage 04)
+    and `postfilter_debug.json` (stage 06).
+  - `## Outputs` table: removed the stale `output/rule_trace.json` row
+    (that file was removed in v12.0.3).
+  - `## Validation` section: replaced the hardcoded stale test-count baseline
+    with a pointer to `CHANGELOG.md` and the `pytest` invocation.
+
+- `docs/CONFIGURATION.md` (I):
+  - `## Cache files` section replaced with the canonical inventory of all
+    13 cache files, using their actual `cache/` filenames.
+  - `### scoring (internal)` paragraph: removed the confusing reference to
+    `reports.css_override` as a way to override scoring hints; there is no
+    such user-facing key.
+
+- `docs/OVERVIEW.md` (J):
+  - Pipeline table: stage 04 now shows `prefilter_kept_commits.json`,
+    `filtered_commits.json`, and `prefilter_debug.json` as outputs.
+  - Pipeline table: stage 05 input corrected from `filtered_commits.json`
+    to `prefilter_kept_commits.json`.
+  - Pipeline table: stage 06 now shows `postfilter_dropped_commits.json`
+    and `postfilter_debug.json` as outputs.
+  - Drop-list paragraph updated to describe the two separate stage 04 / 06
+    drop files and how stage 07 merges them.
+
+- `docs/PIPELINE.md` (K):
+  - Stage 06 description updated to document `postfilter_debug.json` as a
+    new output (added in E.7).
+  - Stage 04 description updated to note the `no_files_layer` reason and
+    `prefilter_debug.json` output.
+  - Added `## v13.0.0 changes` section summarising all E.* and G fixes.
+
+### Version
+
+- `MANIFEST.json` version bumped from `v12.0.3` → `v13.0.0`.
+
+---
+
 ## v12.0.2 — prefilter: directory-scoped log-basename artifact evidence (2026-06-03)
 
 ### Fixed (C)
 
 - `lib/stages/st04_prefilter.py` — `_file_has_artifact()` now scopes
-  **log-derived basename matches** (`log_basenames`) to the file’s parent
+  **log-derived basename matches** (`log_basenames`) to the file's parent
   directory.
 
   **Root cause.** `build_compiled_sets()` populates `log_basenames` from
@@ -23,7 +103,7 @@ All notable changes to this project will be documented in this file.
   `sound/usb/hub.c`, `net/hub.c`, etc., causing large spurious
   over-keeping across unrelated subsystems.
 
-  **Fix.** A log-basename hit is accepted only when the file’s parent
+  **Fix.** A log-basename hit is accepted only when the file's parent
   directory is in `compiled_dirs` **or** the file itself is in
   `compiled_files`:
   ```python
@@ -78,7 +158,7 @@ All notable changes to this project will be documented in this file.
   by kbuild to merge directory-level objects for upward linking; they have no
   1-to-1 correspondence with any source file.
   Previously they entered `build_artifacts` in `build_context.json`, which
-  caused stage 04’s L2½ `build_artifact` check to keep commits that should
+  caused stage 04's L2½ `build_artifact` check to keep commits that should
   have been eliminated by the prefilter — resulting in insufficient commit
   reduction when a real build tree was provided.
 - The set of excluded names is defined in the new constant
@@ -188,7 +268,7 @@ All notable changes to this project will be documented in this file.
 ## v11.2.9 - 2026-05-11
 
 ### Fixed
-- Improved Firefox compatibility for HTML reports by replacing the filter busy overlay’s direct `color-mix()` dependency with a solid RGBA fallback plus guarded `@supports` enhancement.
+- Improved Firefox compatibility for HTML reports by replacing the filter busy overlay's direct `color-mix()` dependency with a solid RGBA fallback plus guarded `@supports` enhancement.
 - Hardened the client-side CSV download path with a fallback from synthetic `MouseEvent` dispatch to plain `a.click()` for browsers or sandbox contexts where synthetic click dispatch is unreliable.
 
 ### Tests

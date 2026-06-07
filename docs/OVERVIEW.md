@@ -23,14 +23,17 @@ Stage  Module                      Input → Output (cache/)
                                    → product_map.json
 
   04   lib/stages/st04_prefilter.py     commits.json + product_map.json
-                                   → filtered_commits.json
+                                   → prefilter_kept_commits.json
+                                     filtered_commits.json
+                                     prefilter_debug.json
 
-  05   lib/stages/st05_score.py         filtered_commits.json
+  05   lib/stages/st05_score.py         prefilter_kept_commits.json
                                    → scored_commits.json
 
   06   lib/stages/st06_postfilter.py    scored_commits.json
                                    → relevant_commits.json
-                                     filtered_commits.json (+ low-score drops)
+                                     postfilter_dropped_commits.json
+                                     postfilter_debug.json
 
   07   lib/stages/st07_report.py        relevant_commits.json
                                    → output/relevant_commits.{json,csv,html,xlsx,ods}
@@ -79,8 +82,9 @@ Level 1 — Keyword-based
 Level 0 — Default → KEEP
 ```
 
-Dropped commits are recorded with a reason in `filtered_commits.json`.
-After stage 06, commits dropped for low score are appended to `filtered_commits.json`.
+Stage 04 records prefilter drops with a reason in `filtered_commits.json`.
+Stage 06 records threshold drops separately in `postfilter_dropped_commits.json`;
+stage 07 merges both drop lists only for filtered report outputs.
 
 ## Running the pipeline
 
@@ -94,10 +98,3 @@ python3 kcommit_pipeline.py status   --config cfg.json
 python3 kcommit_pipeline.py report   --config cfg.json --format html
 python3 kcommit_pipeline.py dropped  --config cfg.json --reason prefilter
 ```
-
-
-- v10.2.0: HTML commit details now expose a rule-by-rule scoring trace, including matched patterns/paths/SHA values, per-rule score, per-profile score, and final combined score.
-
-- v10.2.0: Non-HTML outputs now expose rule-analysis details too: JSON includes rule_trace.json and summary XLSX/ODS include a Rule Trace sheet.
-
-- v10.2.0: HTML reports now support sidecar table datasets (`relevant_commits.table.json`, `filtered_commits.table.json`), sharded per-commit detail JSON under `output/commits/aa/bb/<sha>.json`, optional compressed embedded commit maps, and canonical git-log-style field ordering for commit detail payloads.

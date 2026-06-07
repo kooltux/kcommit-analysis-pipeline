@@ -139,9 +139,10 @@ workbook combining all views.
 
 The file `configs/scoring/subsystem_path_hints.json` maps commit metadata
 keywords (subsystem tags, CVE prefixes, known authors) to kernel source-path
-prefixes used to enrich product-evidence scoring.  It is bundled with the
-pipeline and does not normally need editing.  To override or extend it,
-copy the file into your product config directory and point the pipeline at it through `reports.css_override` or product-local files only if you extend report assets; scoring hints remain an internal bundled file in v10.
+prefixes used to enrich product-evidence scoring. It is bundled with the
+pipeline and does not normally need editing. To override or extend it, copy
+the file into your product config directory and adjust the code or packaging
+that loads scoring assets; there is no user-facing config key for this file.
 
 The file is read-only from a config perspective — there is no config key
 that references it directly.
@@ -190,8 +191,16 @@ my-product/
 
 ## Cache files
 
-- `stage-01 collected commits after stage-04 filtering` — stage 04 commits that survived prefiltering
-- `filtered_commits.json` — stage 04 dropped commits
-- `scored_commits.json` — stage 05 scored commits
-- `relevant_commits.json` — stage 06 commits above threshold
-- `postfilter_dropped_commits.json` — stage 06 commits dropped by score threshold
+- `cache/compiled_rules.json` — stage 00 compiled profile/rule patterns (deduplicated)
+- `cache/prepare_summary.json` — stage 00 active profile names and rule counts
+- `cache/commits.json` — stage 01 collected commits
+- `cache/build_context.json` — stage 02 enabled Kconfig symbols, artifacts, and log-derived objects
+- `cache/kbuild_map.json` — stage 02 static Kbuild symbol map
+- `cache/product_map.json` — stage 03 combined CONFIG-to-source-path map
+- `cache/prefilter_kept_commits.json` — stage 04 commits that survived prefiltering (input to stage 05)
+- `cache/filtered_commits.json` — stage 04 commits dropped by prefilter
+- `cache/prefilter_debug.json` — stage 04 per-dropped-commit debug detail and reason summary
+- `cache/scored_commits.json` — stage 05 scored commits
+- `cache/relevant_commits.json` — stage 06 commits above the score threshold
+- `cache/postfilter_dropped_commits.json` — stage 06 commits dropped by the score threshold
+- `cache/postfilter_debug.json` — stage 06 score distribution and threshold-drop summary
