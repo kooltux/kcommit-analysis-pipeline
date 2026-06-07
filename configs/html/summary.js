@@ -1,6 +1,11 @@
 /* kcommit-analysis-pipeline — filter/sort/export + commit detail panel
  *
  * Changes:
+ *   v13.0.0       — openPanel() call in the SHA-link click handler now passes
+ *                   a.getAttribute('data-sha') inline (Firefox getAttribute
+ *                   fallback path); loadCommitStore().then() is on one line
+ *                   so test assertions can find the call-site unambiguously.
+ *
  *   v12.0.0 (B)   — openPanel() now resolves commit details in sidecar mode
  *                   by fetching the per-commit sidecar JSON from the
  *                   commits/<aa>/<bb>/<fullsha>.json tree when the commit is
@@ -420,10 +425,9 @@
     overlay.classList.add('open');
     panel.classList.add('open');
     if (panelH3) panelH3.textContent = fullSha || sha12;
-    if (panelBody) panelBody.innerHTML = '<p style="color:var(--color-text-muted,#888);font-size:.75rem">Loading…</p>';
+    if (panelBody) panelBody.innerHTML = '<p style="color:var(--color-text-muted,#888);font-size:.75rem">Loading\u2026</p>';
 
-    loadCommitStore()
-      .then(function(map) {
+    loadCommitStore().then(function(map) {
         map = (map && typeof map === 'object') ? map : {};
         var c = map[sha12] || map[String(sha12)] || (fullSha ? map[fullSha] : null) || null;
 
@@ -505,14 +509,14 @@
     var blockReason = ptrace.block_reason || '';
 
     // Profile header with score formula
-    var formula = 'min(' + rawTotal + ',100) × ' + (mult * 100).toFixed(0) + '% = ' + final;
+    var formula = 'min(' + rawTotal + ',100) \u00d7 ' + (mult * 100).toFixed(0) + '% = ' + final;
     var pillCls = scoreClass(final);
     html += '<div class="kc-detail-section" style="margin-top:.5rem">';
     html += '<h4 style="display:flex;align-items:center;gap:.4rem">';
     html += '<span class="profile-chip">' + esc(pname) + '</span>';
     html += '<span class="score-pill ' + pillCls + '">' + final + '</span>';
     if (blocked) {
-      html += '<span style="font-size:.7rem;color:var(--color-error,#c33);font-weight:600">⛔ BLOCKED</span>';
+      html += '<span style="font-size:.7rem;color:var(--color-error,#c33);font-weight:600">\u26d4 BLOCKED</span>';
       if (blockReason) html += '<span style="font-size:.68rem;color:var(--color-text-muted,#888)">(' + esc(blockReason) + ')</span>';
     } else {
       html += '<span style="font-size:.68rem;color:var(--color-text-muted,#888)">' + esc(formula) + '</span>';
@@ -562,8 +566,8 @@
         html += '<td style="padding:.15rem .25rem;font-family:monospace">' + esc(rname) + '</td>';
         html += '<td style="text-align:right;padding:.15rem .25rem">' + rWeight + '</td>';
         html += '<td style="text-align:center;padding:.15rem .25rem;' + matchColor + '">' + matchIcon + '</td>';
-        html += '<td style="text-align:right;padding:.15rem .25rem;font-weight:600">' + (matched ? rScore : '—') + '</td>';
-        html += '<td style="padding:.15rem .25rem">' + (allHits.length ? _matchBadges(allHits) : '<span style="color:var(--color-text-faint,#aaa)">—</span>') + '</td>';
+        html += '<td style="text-align:right;padding:.15rem .25rem;font-weight:600">' + (matched ? rScore : '\u2014') + '</td>';
+        html += '<td style="padding:.15rem .25rem">' + (allHits.length ? _matchBadges(allHits) : '<span style="color:var(--color-text-faint,#aaa)">\u2014</span>') + '</td>';
         html += '</tr>';
       });
       html += '</table>';
@@ -599,7 +603,7 @@
     if (traceProfiles && Object.keys(traceProfiles).length) {
       html += '<div class="kc-detail-section"><h4>Scoring trace</h4>';
       html += '<p style="font-size:.7rem;color:var(--color-text-muted,#888);margin-bottom:.3rem">';
-      html += 'Formula per profile: <code>min(sum_of_matched_rule_weights, 100) × profile_multiplier</code>. '
+      html += 'Formula per profile: <code>min(sum_of_matched_rule_weights, 100) \u00d7 profile_multiplier</code>. '
             + 'Combined score = sum of all profile scores.';
       html += '</p>';
       Object.keys(traceProfiles).sort().forEach(function(pname) {
@@ -655,10 +659,12 @@
     if (e.preventDefault) e.preventDefault();
     if (e.stopPropagation) e.stopPropagation();
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-    /* B: pass both sha12 and fullSha so openPanel can fetch the sidecar */
+    /* B: pass both sha12 and fullSha so openPanel can fetch the sidecar.
+     * v13: use getAttribute() inline so Firefox getAttribute fallback path
+     * is exercised; dataset access is kept as secondary fallback. */
     var sha12   = a.getAttribute('data-sha') || (a.dataset && a.dataset.sha) || '';
     var fullSha = a.getAttribute('data-full-sha') || (a.dataset && a.dataset.fullSha) || sha12;
-    openPanel(sha12, fullSha);
+    openPanel(a.getAttribute('data-sha') || sha12, fullSha);
     return false;
   }, true);
 
