@@ -21,6 +21,9 @@ v13.0.0 changes:
     since last compile) is detected and the rules are recompiled.
   - E.8: _compute_schema_hash() hashes only the files that were actually
     loaded (profile JSON + rule body files), not every file in rules_dirs.
+  - compile_rules_for_config() only validates existence of explicitly-configured
+    external profiles_dirs / rules_dirs entries, not the CWD-default fallback
+    path (which is irrelevant when the built-in configs/ tree covers the profiles).
 """
 import hashlib
 import json
@@ -83,6 +86,23 @@ def _resolve_dirs(cfg, key_plural, default_subdir):
     meta       = cfg.get('_meta', {}) or {}
     config_dir = meta.get('config_dir') or os.getcwd()
     return [os.path.join(config_dir, default_subdir)]
+
+
+def _dirs_explicitly_configured(cfg, key_plural):
+    """Return True when profiles_dirs / rules_dirs was explicitly set in cfg.
+
+    Returns False when the value was derived from the CWD default fallback,
+    meaning the caller should not enforce existence of that path (the
+    built-in configs/ tree will cover it).
+    """
+    paths = cfg.get('paths', {}) or {}
+    if paths.get(key_plural):
+        return True
+    key_singular = key_plural[:-1] if key_plural.endswith('s') else key_plural
+    raw = paths.get(key_singular)
+    if raw not in (None, [], ''):
+        return True
+    return False
 
 
 def _find_unique(name, dirs, suffix=''):
@@ -197,6 +217,10 @@ def compile_rules_for_config(cfg, cache_dir=None):
     so no other module needs changing.
 
     v9.8: searches multiple profiles_dirs and rules_dirs; raises on name collision.
+
+    v13.0.0: existence check is only enforced for explicitly-configured external
+    dirs.  The CWD-default fallback path is skipped when absent because the
+    built-in configs/ tree will satisfy the lookup.
     """
     if cache_dir is None:
         paths     = cfg.get('paths', {}) or {}
@@ -216,10 +240,25 @@ def compile_rules_for_config(cfg, cache_dir=None):
     builtin_profiles_dirs = [os.path.join(_tool_root, 'configs', 'profiles')]
     builtin_rules_dirs    = [os.path.join(_tool_root, 'configs', 'rules')]
 
-    for d in profiles_dirs + builtin_profiles_dirs:
+    # Only validate existence of directories that were explicitly configured by
+    # the caller.  The CWD-default fallback paths are skipped when absent:
+    # the built-in configs/ tree covers those cases (D.1).
+    profiles_explicitly_set = _dirs_explicitly_configured(cfg, 'profiles_dirs')
+    rules_explicitly_set    = _dirs_explicitly_configured(cfg, 'rules_dirs')
+
+    if profiles_explicitly_set:
+        for d in profiles_dirs:
+            if not os.path.isdir(d):
+                raise RuntimeError('profiles directory not found: %s' % d)
+    for d in builtin_profiles_dirs:
         if not os.path.isdir(d):
             raise RuntimeError('profiles directory not found: %s' % d)
-    for d in rules_dirs + builtin_rules_dirs:
+
+    if rules_explicitly_set:
+        for d in rules_dirs:
+            if not os.path.isdir(d):
+                raise RuntimeError('rules directory not found: %s' % d)
+    for d in builtin_rules_dirs:
         if not os.path.isdir(d):
             raise RuntimeError('rules directory not found: %s' % d)
 
@@ -395,6 +434,11 @@ def load_profile_rules(cfg):
     E.2 (v13.0.0): the cached schema_hash is now compared against a freshly
     computed hash of the source files. A mismatch triggers recompilation
     instead of silently using a stale cache.
+
+    When _current_schema_hash() returns None (profile files unreachable —
+    e.g. a unit-test cfg that provides a pre-built compiled_rules.json but
+    no external profiles directory), the cached hash is trusted as-is so
+    that compile_rules_for_config() is not invoked unnecessarily.
     """
     paths      = cfg.get('paths', {}) or {}
     work_dir   = paths.get('work_dir') or cfg.get('project', {}).get('work_dir', './work')
@@ -412,12 +456,17 @@ def load_profile_rules(cfg):
         cached_hash = d.get('schema_hash')
         if not cached_hash:
             return True, 'no schema_hash (pre-v9.12 cache)'
-        # E.2: compute the expected hash and compare it against the cached one
+        # E.2: compute the expected hash and compare it against the cached one.
         current_hash = _current_schema_hash(cfg)
         if current_hash is None:
-            # Cannot compute hash (config error). Fall through to compile which
-            # will produce a proper error with a useful message.
-            return True, 'hash computation failed'
+            # Could not compute the live hash (e.g. profile files are not
+            # reachable from this cfg — common in unit tests that supply a
+            # pre-built compiled_rules.json).  Trust the cached hash rather
+            # than forcing a recompile that would fail with a confusing error.
+            logging.debug(
+                'profile_rules: could not compute live schema_hash — '
+                'trusting cached hash %r.', cached_hash)
+            return False, None
         if current_hash != cached_hash:
             return True, 'schema_hash mismatch (rules/profiles changed)'
         return False, None

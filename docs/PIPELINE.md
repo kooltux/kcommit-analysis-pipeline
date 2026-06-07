@@ -44,12 +44,17 @@
      (e.g. `drivers/usb/core/hub`).  Precise; no extra qualification needed.
   2. `log_basenames` — bare filename stems from build-log tokens
      (e.g. `hub` from `hub.o`).  **Directory-scoped**: a log-basename hit is
-     only accepted when the file’s parent directory is in `compiled_dirs` or
+     only accepted when the file's parent directory is in `compiled_dirs` or
      the file itself is in `compiled_files`.  This prevents a build-log entry
      for `drivers/usb/hub.o` from spuriously matching `sound/usb/hub.c`,
      `net/hub.c`, etc. anywhere else in the tree.
+- Zero-file commits (merge commits, tag objects) bypass path/artifact/kconfig
+  layers and use the distinct keep reason `no_files_layer` when they reach
+  the default path without keyword matches.
 - Kept commits → `prefilter_kept_commits.json` (input for scoring).
 - Dropped commits → `filtered_commits.json` with `_filter_reason`.
+- Debug output → `prefilter_debug.json` with per-dropped-commit detail and
+  a reason-count summary.
 - Also writes `output/filtered_commits.{json,csv,html,xlsx,ods}` for each
   format enabled in `reports.outputs`.
 
@@ -64,7 +69,9 @@
 - Sorts scored commits descending by score.
 - Drops commits below `filter.min_score`.
 - Dropped commits get `_filter_reason: score_below_threshold` and are
-  appended to `filtered_commits.json`.
+  written to `postfilter_dropped_commits.json`.
+- Writes `postfilter_debug.json` with threshold-drop summary and score
+  distribution data.
 - Assigns `_rank` (1-based) to kept commits.
 - Outputs `relevant_commits.json`.
 
@@ -75,6 +82,8 @@
     column-visibility toggle, CSV export, URL-hash filter state, dark mode
   - `profile_summary.json` and `profile_matrix.json` / `.csv`
   - `report_stats.json`
+- Stage 07 merges prefilter and postfilter dropped commits only when
+  generating filtered output reports.
 
 ## compiled_rules.json schema
 
@@ -97,7 +106,7 @@
 ```
 
 Rule pattern bodies are stored once; each profile entry contains only weights
-and the merged union of all its rules’ patterns.
+and the merged union of all its rules' patterns.
 
 ## State tracking
 
@@ -127,50 +136,31 @@ stale cache files before re-running.
 | `lib/stages/` | Stage business logic (one module per stage) |
 
 
-## v12.0.2 changes
+## v13.0.0 changes
 
-- `_file_has_artifact()` in stage 04 now scopes **log-basename evidence** to
-  the file’s parent directory.
-  Previously, a bare stem such as `hub` (from `drivers/usb/hub.o` in the
-  build log) would match any file named `hub.*` anywhere in the tree
-  (`sound/usb/hub.c`, `net/hub.c`, …), causing massive over-keeping.
-  The fix: a log-basename hit is accepted only when
-  `os.path.dirname(file) in compiled_dirs` **or** the file itself is in
-  `compiled_files`.  Full-path `artifact_stems` matches are unaffected.
-- `lib/kbuild.py` now exports `KBUILD_PLACEHOLDER_NAMES` as the single
-  authoritative definition, imported by both `st02` and `st03`.
-- `st02._scan_build_dir()` updated to import the shared constant instead
-  of defining a private copy.
-
-
-## v12.0.1 changes
-
-- Stage 02 (`_scan_build_dir`) now excludes Kbuild directory-aggregator
-  placeholders (`built-in.o`, `built-in.a`) from `build_artifacts`.
-  These files are synthetic intermediate linker inputs produced automatically
-  by kbuild; treating them as real build evidence caused the stage-04 L2½
-  artifact check to keep commits that should have been eliminated by the
-  prefilter, resulting in insufficient commit reduction.
-  The set of excluded names is exposed as `KBUILD_PLACEHOLDER_NAMES` in
-  `lib/kbuild.py` for testing and future extension.
-- Stage 03 (`_extract_log_objects`) also excludes the same placeholder
-  basenames from `built_objects_from_log`.
-
-
-## v11.4.0 report changes
-
-- Stage 07 now emits incremental progress information while generating HTML sidecar assets and final pages.
-- HTML reports now load evaluation metadata from `report_metadata.json`, and the left pane shows repository revisions and analysis options.
-- Main HTML report tables no longer show the `product evidence` column; commit detail views keep the information under the shorter `Evidence` label.
-- HTML output is further externalized into `relevant_commits.table.json`, `filtered_commits.table.json`, `report_metadata.json`, and sharded `commits/<sha>.json` detail files.
-
-
-## v11.3.2 changes
-
-- Stage 07 emits incremental progress while generating report metadata, sidecar indexes, detail JSON, and HTML pages.
-- HTML reports load evaluation metadata from `report_metadata.json`.
-- Main HTML tables hide `Product Evidence`; commit detail views show the shorter `Evidence` label.
-- Current validated baseline: 465 tests passing, 85% `lib/` coverage.
+- Stage 04 (`filter_decision`): zero-file commits now return the distinct keep
+  reason `no_files_layer` (previously `default`), matching the module docstring
+  and making them identifiable in debug output and reason-count summaries (G).
+- Stage 04: artifact evidence computed once per commit and reused for both the
+  keep/drop guard and the debug capture, eliminating redundant work (E.1.1).
+- Stage 04: kconfig-covered and kconfig-uncovered file lists computed
+  unconditionally before the final decision so `prefilter_debug.json` is always
+  accurate, even for commits saved by a keyword whitelist (E.1.2).
+- Stage 04: L2a path-blacklist semantics documented and preserved — drops only
+  when **all** touched files are blacklisted (E.1.4).
+- Stage 04: `build_compiled_sets()` now ignores bare enabled-config entries
+  without a `=y`/`=m` value suffix instead of silently accepting them (E.1.6).
+- Stage 04 `write_outputs()`: removed a dead `tmpl = reports` assignment and
+  its stale comment (E.6).
+- Stage 06 now writes `postfilter_debug.json` with threshold-drop summary and
+  score distribution data alongside `postfilter_dropped_commits.json` (E.7).
+- The compiled-rule schema hash includes only rules that were actually loaded
+  for the active configuration (E.8).
+- Docs: `docs/OVERVIEW.md` pipeline table updated to reflect the current
+  stage 04 and stage 06 cache outputs; legacy version notes removed (F/J).
+- Docs: `docs/CONFIGURATION.md` cache-file section replaced with the canonical
+  inventory of all 13 cache files; scoring-hints paragraph corrected (I).
+- Docs: `README.md` cache contract and outputs table corrected (H).
 
 
 ## Miniature test fixture

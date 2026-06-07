@@ -136,8 +136,10 @@ full format.
 | `output/profile_summary.json`    | Per-profile commit count and average score |
 | `output/profile_matrix.json`     | Per-commit × per-profile score breakdown (JSON) |
 | `output/profile_matrix.csv`      | Per-commit × per-profile score breakdown (CSV) |
+| `output/rule_trace.json`         | Per-commit × per-rule match trace (JSON; always written) |
+| `output/rule_trace.csv`          | Per-commit × per-rule match trace (CSV; written when CSV output is enabled) |
+| `output/prefilter_debug.json`    | Per-dropped-commit debug detail from stage 04 (copied from cache when present) |
 | `output/report_stats.json`       | Pipeline run statistics and generated file list |
-| `output/rule_trace.json`         | Per-commit × per-rule scoring trace (JSON) |
 
 Optional XLSX/ODS: enable with `"reports": { "outputs": ["xlsx", "ods"] }`.
 Each enabled format produces both `relevant_commits.*` and `filtered_commits.*`
@@ -157,10 +159,14 @@ available options documented.
 
 ## Cache contract
 
-Stage 04 writes `prefilter_kept_commits.json` (kept) and `filtered_commits.json` (dropped).
-Stage 05 scores only `prefilter_kept_commits.json`.
-Stage 06 writes `relevant_commits.json` and `postfilter_dropped_commits.json`.
-Stage 07 merges dropped lists for report outputs only.
+Stage 04 writes `prefilter_kept_commits.json` (kept), `filtered_commits.json`
+(prefilter drops), and `prefilter_debug.json` (per-dropped-commit debug detail
+and reason-count summary).
+Stage 05 scores only `prefilter_kept_commits.json` and writes `scored_commits.json`.
+Stage 06 writes `relevant_commits.json`, `postfilter_dropped_commits.json`, and
+`postfilter_debug.json` (score distribution and threshold-drop summary).
+Stage 07 reads the stage caches and merges dropped lists only when generating
+filtered report outputs.
 
 Configuration rejects unknown top-level sections and validates known section keys/types.
 
@@ -174,4 +180,10 @@ A realistic small command-flow regression test lives in `tests/test_full_pipelin
 
 ## Validation
 
-Current baseline: 465 tests passing, 85% `lib/` coverage.
+Run the full test suite with:
+
+```bash
+python -m pytest tests/ -v --tb=short
+```
+
+See `CHANGELOG.md` for version history and per-release test counts.

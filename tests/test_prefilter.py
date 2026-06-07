@@ -4,12 +4,14 @@ v12.0.0 (A.1): filter_decision() now returns a 3-tuple
   (action, reason, debug_detail)
 All callers updated; new test block covers debug_detail content.
 
-v13.0.0 (E.1.x):
+v13.0.0 (E.1.x / G):
   E.1.1 -- artifact_files computed once, reused (behaviour unchanged; no test needed beyond E.1 below).
   E.1.2 -- kconfig_covered/uncovered populated in debug even for kw-whitelist-saved commits.
   E.1.3 -- build_merged_lists() deduplication is case-insensitive on string patterns.
   E.1.5 -- zero-file commits handled before path/kconfig layers.
   E.1.6 -- build_compiled_sets() ignores bare CONFIG entries without '=' suffix.
+  G     -- zero-file default keep reason is 'no_files_layer' (was 'default');
+           test_zero_file_commit_keeps_by_default updated accordingly.
 """
 import os
 import re
@@ -97,7 +99,8 @@ def test_keyword_blacklist_drops():
 
 # -- L0 default ----------------------------------------------------------------
 def test_default_keep():
-    c = _commit(subject='net: fix something random')
+    """Commits WITH files that reach L0 still get reason='default'."""
+    c = _commit(subject='net: fix something random', files=['net/core/sock.c'])
     action, reason, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
     assert action == 'keep' and reason == 'default'
 
@@ -416,15 +419,19 @@ def test_debug_kconfig_uncovered_populated_when_kw_wl_saves_commit():
     )
 
 
-# == E.1.5: zero-file commits handled explicitly ===============================
+# == E.1.5 / G: zero-file commits handled explicitly ==========================
 
-def test_zero_file_commit_keeps_by_default():
-    """E.1.5: a commit with no files skips path/kconfig layers and keeps by default."""
+def test_zero_file_commit_keeps_by_no_files_layer():
+    """G / E.1.5: a commit with no files skips path/kconfig layers and keeps
+    with reason='no_files_layer' (not 'default') so merge commits can be
+    distinguished from commits-with-files that reach L0.
+    """
     c = _commit(sha='merge001', subject='Merge branch x into y', files=[])
     action, reason, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
     assert action == 'keep'
-    # reason is 'default' (no kw matches, not blacklisted)
-    assert reason == 'default'
+    assert reason == 'no_files_layer', (
+        "Expected reason='no_files_layer' for zero-file default keep; got %r" % reason
+    )
 
 
 def test_zero_file_commit_kept_by_kw_whitelist():
@@ -480,7 +487,7 @@ def test_zero_file_commit_debug_has_empty_lists():
 
 def test_debug_detail_is_dict_with_required_keys():
     """filter_decision() always returns a dict with the documented keys."""
-    c = _commit(subject='net: fix skb')
+    c = _commit(subject='net: fix skb', files=['net/core/sock.c'])
     _, _, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
     for key in ('sha', 'files', 'l3_commit_wl_match', 'l3_commit_bl_match',
                 'l2a_path_bl_matches', 'l2b_path_wl_matches',
