@@ -67,6 +67,32 @@ v13.0.1 changes (Bug-1 fix):
            disabled CONFIG symbols could still slip through (e.g. CONFIG_BTRFS_FS
            appearing in config_to_paths despite being disabled in .config).
 
+v13.0.2 changes (Bug-2 fix):
+  I     -- build_compiled_sets(): removed the `if not compiled_files: return empty`
+           short-circuit that incorrectly set available=False whenever
+           config_enabled_map was present but empty (e.g. .config not provided).
+
+           Root cause: when the user does not provide a .config, st02 calls
+           load_kernel_config_symbols(None) which returns [], st03 stores
+           kernel_config=[] in build_context.json, and _filter_to_enabled({c2p},[])
+           returns {}.  build_compiled_sets() then found cem={} (present, not None),
+           skipped the pre-v13.0.1 warning, but hit `if not compiled_files: return
+           empty` which silently set available=False — disabling the kconfig filter
+           even when build artifacts or build-log objects were present and sufficient
+           to make reliable coverage decisions.
+
+           Fix: available is now set to True when ANY evidence source is non-empty
+           (config_enabled_map, built_artifacts_from_dir, or built_objects_from_log).
+           Only when all three are empty is available=False, meaning the pipeline
+           genuinely has no coverage data and must keep everything for scoring.
+
+           Design contract:
+             available=True  → at least one evidence source present; commits with
+                               zero coverage across all sources are confidently dropped.
+             available=False → no evidence at all; kconfig filter inactive; scoring
+                               resolves ambiguities (correct behaviour when the user
+                               provides kernel sources only, with no .config/logs/dir).
+
 prefilter_debug.json schema (A.1 / v13.0.0):
   {
     "summary": {
@@ -164,22 +190,31 @@ def build_compiled_sets(product_map):
     product_map instead of config_to_paths.  config_enabled_map is the
     enabled-symbol-only subset computed by st03 _filter_to_enabled(); it
     contains only CONFIG symbols that are =y or =m in the product .config.
-    The enabled-symbol join that was previously performed here (building
-    enabled_set and filtering c2p) is no longer needed -- config_enabled_map
-    is already filtered.  compiled_dirs is taken directly from
-    config_enabled_dirs rather than being re-derived from compiled_files.
 
-    Falls back to config_to_paths when config_enabled_map is absent (e.g.
-    caches produced before v13.0.1), so that re-running st04 alone without
-    re-running st03 produces a clear empty result rather than a silent
-    misclassification.
+    Falls back gracefully when config_enabled_map is absent (pre-v13.0.1 cache).
+
+    v13.0.2 (Bug-2 fix): available=True is set based on whether ANY evidence
+    source is non-empty (config_enabled_map, built_artifacts_from_dir, or
+    built_objects_from_log), not solely on config_enabled_map.
+
+    Design contract:
+      available=True  → at least one evidence source is non-empty; commits with
+                        zero coverage across all sources are confidently dropped.
+      available=False → all evidence sources empty; kconfig filter inactive;
+                        scoring resolves ambiguities (correct when the user
+                        provides kernel sources only, with no .config/logs/dir).
+
+    The previous `if not compiled_files: return empty` guard was the bug:
+    it returned available=False whenever .config was absent (cem={}), silently
+    disabling the coverage filter even when artifacts or log objects were present.
     """
     empty = dict(compiled_files=set(), compiled_dirs=set(),
                  artifact_stems=set(), log_basenames=set(), available=False)
     if not product_map:
         return empty
 
-    # v13.0.1 (H): prefer config_enabled_map; warn if falling back.
+    # config_enabled_map must be present (not just truthy).
+    # None means pre-v13.0.1 cache; warn and fall back to safe empty result.
     cem = product_map.get('config_enabled_map')
     if cem is None:
         logging.warning(
@@ -188,17 +223,15 @@ def build_compiled_sets(product_map):
             'Falling back to empty compiled set to avoid false-positive keeps.')
         return empty
 
+    # Build compiled_files and compiled_dirs from config_enabled_map.
+    # cem may be {} when .config was not provided — that is valid; it simply
+    # means no kconfig-based file coverage (artifact/log may still provide it).
     compiled_files = set()
     for paths in cem.values():
         compiled_files.update(paths)
 
-    if not compiled_files:
-        return empty
-
-    # Take config_enabled_dirs directly from product_map (pre-computed in st03).
     ced = product_map.get('config_enabled_dirs') or []
-    compiled_dirs = set(ced)
-    compiled_dirs.discard('')
+    compiled_dirs = set(d for d in ced if d)
 
     artifact_stems = set()
     for p in (product_map.get('built_artifacts_from_dir', []) or []):
@@ -211,8 +244,19 @@ def build_compiled_sets(product_map):
         stem, _ = os.path.splitext(bn)
         log_basenames.add(stem)
 
+    # v13.0.2 (Bug-2): available=True when ANY evidence source is non-empty.
+    # If all three are empty the pipeline has no coverage data and must keep
+    # everything — the scoring stage resolves ambiguities.
+    has_evidence = bool(compiled_files or artifact_stems or log_basenames)
+    if not has_evidence:
+        logging.info(
+            'build_compiled_sets: no compiled-file evidence found in product_map '
+            '(config_enabled_map={}, no build artifacts, no build log). '
+            'kconfig coverage filter will be inactive; scoring will resolve ambiguities.')
+
     return dict(compiled_files=compiled_files, compiled_dirs=compiled_dirs,
-                artifact_stems=artifact_stems, log_basenames=log_basenames, available=True)
+                artifact_stems=artifact_stems, log_basenames=log_basenames,
+                available=has_evidence)
 
 
 def _file_has_artifact(f, cs):
