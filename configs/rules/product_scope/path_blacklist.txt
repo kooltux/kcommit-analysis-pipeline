@@ -1,0 +1,87 @@
+# product_scope/path_blacklist.txt
+# ARM32 / Qualcomm SDX55 (sdxprairie) product scope — exhaustive mode.
+#
+# L2a: a commit where EVERY touched file matches one of these prefixes is DROPPED.
+# These are subsystems that are architecturally impossible to be compiled for
+# the SDX55 target and carry zero relevance for the analysis.
+#
+# Non-target architectures -----------------------------------------------
+arch/alpha/*
+arch/arc/*
+arch/arm64/*
+arch/c6x/*
+arch/h8300/*
+arch/hexagon/*
+arch/ia64/*
+arch/m32r/*
+arch/m68k/*
+arch/microblaze/*
+arch/mips/*
+arch/mn10300/*
+arch/nios2/*
+arch/openrisc/*
+arch/parisc/*
+arch/powerpc/*
+arch/riscv/*
+arch/s390/*
+arch/sh/*
+arch/sparc/*
+arch/tile/*
+arch/um/*
+arch/unicore32/*
+arch/x86/*
+arch/xtensa/*
+# Drivers with no SDX55 relevance ----------------------------------------
+drivers/acpi/*
+drivers/ata/*
+drivers/atm/*
+drivers/auxdisplay/*
+drivers/bcma/*
+drivers/cdrom/*
+drivers/char/agp/*
+drivers/edac/*
+drivers/firewire/*
+drivers/fmc/*
+drivers/fpga/*
+drivers/gpu/*
+drivers/hid/*
+drivers/hv/*
+drivers/hwtracing/*
+drivers/ide/*
+drivers/infiniband/*
+drivers/isdn/*
+drivers/media/*
+drivers/memstick/*
+drivers/message/*
+drivers/mmc/host/sdhci-pci*
+drivers/nfc/*
+drivers/ntb/*
+drivers/nvdimm/*
+drivers/nvme/*
+drivers/parport/*
+drivers/platform/x86/*
+drivers/platform/ia64/*
+drivers/ps2/*
+drivers/s390/*
+drivers/scsi/*
+drivers/ssb/*
+drivers/staging/*
+drivers/target/*
+drivers/thunderbolt/*
+drivers/vfio/*
+drivers/vhost/*
+drivers/video/*
+drivers/virtio/*
+drivers/w1/*
+drivers/xen/*
+# Documentation and non-code ---------------------------------------------
+Documentation/*
+tools/*
+scripts/*
+samples/*
+usr/*
+virt/*
+# Top-level noise files
+CREDITS
+COPYING
+MAINTAINERS

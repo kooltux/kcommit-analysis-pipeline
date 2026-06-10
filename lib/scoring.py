@@ -4,6 +4,12 @@ Scoring is exclusively driven by user-defined profiles and rules.
 Kernel annotation metadata (CVE, Fixes:, Cc:stable, syzbot) is extracted
 for informational display only and does not affect the score.
 Product-evidence tags are collected for display; they do not affect the score.
+
+v13.0.1 changes:
+  _collect_product_evidence(): reads config_enabled_map and config_enabled_dirs
+  from product_map instead of config_to_paths and config_dirs.  This ensures
+  that product_evidence tags reference only symbols that are actually enabled
+  in the product .config, not the full Kbuild universe.
 """
 import os
 import re
@@ -33,11 +39,11 @@ def order_commit_details(commit):
     return ordered
 
 
-# ── Kernel commit annotation regexes ─────────────────────────────────────────
+# -- Kernel commit annotation regexes -----------------------------------------
 _RE_FIXES  = re.compile(r'^fixes\s*:\s+[0-9a-f]{6,}', re.I | re.MULTILINE)
 _RE_CVE    = re.compile(r'CVE-\d{4}-\d{4,}', re.I)
 _RE_SYZBOT = re.compile(r'syzbot', re.I)
-_RE_STABLE = re.compile(r'cc\s*:.*stable', re.I)   # kept for has_stable_cc metadata only
+_RE_STABLE = re.compile(r'cc\s*:.*stable', re.I)
 
 
 def _profile_multipliers(cfg):
@@ -58,12 +64,10 @@ def _profile_multipliers(cfg):
     return out
 
 
-# ── Public helpers ────────────────────────────────────────────────────────────
-
+# -- Public helpers ------------------------------------------------------------
 
 def _pattern_repr(pat):
     return getattr(pat, 'pattern', pat)
-
 
 
 def _first_match(patterns, values):
@@ -87,7 +91,8 @@ def _all_matches(patterns, values):
                     out.append({'pattern': _pattern_repr(pat), 'value': val})
     return out
 
-# ── Public API ────────────────────────────────────────────────────────────────
+
+# -- Public API ----------------------------------------------------------------
 
 def extract_commit_meta(commit):
     """Linux kernel commit annotation flags (informational metadata only).
@@ -126,6 +131,12 @@ def _collect_product_evidence(commit, product_map):
 
     Returns a sorted, deduplicated list of 'type:detail' tag strings.
 
+    v13.0.1: reads config_enabled_map and config_enabled_dirs instead of
+    config_to_paths and config_dirs.  config_enabled_map contains only
+    symbols enabled (=y or =m) in the product .config, so evidence tags
+    such as 'config_map:CONFIG_BTRFS_FS' are no longer emitted for disabled
+    symbols.
+
     E.5 (v13.0.0): removed duplicate docstring that was immediately overwriting
     the first one (Python only sees the last consecutive docstring).
     """
@@ -134,16 +145,17 @@ def _collect_product_evidence(commit, product_map):
     full_lower    = ((commit.get('subject', '') or '') + '\n' +
                      (commit.get('body', '') or '')).lower()
 
-    c2p           = (product_map or {}).get('config_to_paths', {}) or {}
+    # v13.0.1: use config_enabled_map / config_enabled_dirs (enabled symbols only)
+    cem           = (product_map or {}).get('config_enabled_map', {}) or {}
+    ced           = list((product_map or {}).get('config_enabled_dirs', []) or [])
     enabled_cfgs  = set((product_map or {}).get('enabled_configs', []) or [])
-    config_dirs   = list((product_map or {}).get('config_dirs', []) or [])
     build_log_set = set((product_map or {}).get('built_objects_from_log', []) or [])
     artifact_set  = set((product_map or {}).get('built_artifacts_from_dir', []) or [])
 
     evidence     = []
     matched_syms = set()
 
-    for sym, sym_paths in c2p.items():
+    for sym, sym_paths in cem.items():
         for sp in (sym_paths or []):
             sp_dir = os.path.dirname(sp)
             if any(cf == sp or (sp_dir and cf.startswith(sp_dir + '/'))
@@ -154,7 +166,7 @@ def _collect_product_evidence(commit, product_map):
                 break
 
     for tp in touched:
-        for cd in config_dirs:
+        for cd in ced:
             if cd.startswith(tp) or tp.startswith(cd.rstrip('/')):
                 evidence.append('config_dir:%s' % cd)
                 break
@@ -212,24 +224,23 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     hints    = commit.get('meta') or extract_commit_meta(commit)
     evidence = _collect_product_evidence(commit, product_map)
 
-    # ── First pass: per-profile blacklist exclusions ──────────────────────────
-    commit_sha = commit.get('commit', '') or ''
+    commit_sha     = commit.get('commit', '') or ''
     message_values = [subject, body]
-    file_values = sorted(commit_files)
+    file_values    = sorted(commit_files)
     matched_profiles = []
-    profile_scores = {}
-    scoring_trace = {'profiles': {}}
+    profile_scores   = {}
+    scoring_trace    = {'profiles': {}}
 
     for pname, pdata in (profile_rules or {}).items():
         if not isinstance(pdata, dict):
             continue
         merged = _merged_patterns(pdata)
-        rules = (pdata or {}).get('rules', {}) or {}
-        pmult = prof_mults.get(pname, 1.0)
+        rules  = (pdata or {}).get('rules', {}) or {}
+        pmult  = prof_mults.get(pname, 1.0)
 
-        kw_black = _all_matches(merged.get('keywords_blacklist', []), message_values)
-        sha_black = _all_matches(merged.get('commit_blacklist', []), [commit_sha])
-        path_black = _all_matches(merged.get('path_blacklist', []), file_values)
+        kw_black   = _all_matches(merged.get('keywords_blacklist', []), message_values)
+        sha_black  = _all_matches(merged.get('commit_blacklist',   []), [commit_sha])
+        path_black = _all_matches(merged.get('path_blacklist',     []), file_values)
 
         blocked = bool(kw_black or sha_black or path_black)
         profile_trace = {
@@ -237,65 +248,66 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
             'merged_matches': {
                 'keywords_whitelist': _all_matches(merged.get('keywords_whitelist', []), message_values),
                 'keywords_blacklist': kw_black,
-                'path_whitelist': _all_matches(merged.get('path_whitelist', []), file_values),
-                'path_blacklist': path_black,
-                'commit_whitelist': _all_matches(merged.get('commit_whitelist', []), [commit_sha]),
-                'commit_blacklist': sha_black,
+                'path_whitelist':     _all_matches(merged.get('path_whitelist',     []), file_values),
+                'path_blacklist':     path_black,
+                'commit_whitelist':   _all_matches(merged.get('commit_whitelist',   []), [commit_sha]),
+                'commit_blacklist':   sha_black,
             },
-            'blocked': blocked,
+            'blocked':      blocked,
             'block_reason': 'profile_blacklist' if blocked else '',
-            'rules': {},
-            'raw_rule_total': 0,
-            'raw_rule_total_capped': 0,
-            'final_score': 0,
+            'rules':                  {},
+            'raw_rule_total':         0,
+            'raw_rule_total_capped':  0,
+            'final_score':            0,
         }
 
         per_rule_total = 0
         if not blocked:
             for rname, rdata in rules.items():
-                rw = int(rdata.get('weight', 50) or 0)
-                kw_hits = _all_matches(rdata.get('keywords_whitelist', []), message_values)
-                path_hits = _all_matches(rdata.get('path_whitelist', []), file_values)
-                sha_hits = _all_matches(rdata.get('commit_whitelist', []), [commit_sha])
-                r_hit = bool(kw_hits or path_hits or sha_hits)
+                rw       = int(rdata.get('weight', 50) or 0)
+                kw_hits  = _all_matches(rdata.get('keywords_whitelist', []), message_values)
+                path_hits = _all_matches(rdata.get('path_whitelist',    []), file_values)
+                sha_hits  = _all_matches(rdata.get('commit_whitelist',  []), [commit_sha])
+                r_hit     = bool(kw_hits or path_hits or sha_hits)
                 rule_score = rw if r_hit else 0
                 if r_hit:
                     per_rule_total += rw
                 profile_trace['rules'][rname] = {
-                    'weight': rw,
-                    'matched': r_hit,
+                    'weight':        rw,
+                    'matched':       r_hit,
                     'matched_level': 'matched' if r_hit else 'no-match',
-                    'score': rule_score,
+                    'score':         rule_score,
                     'matches': {
                         'keywords_whitelist': kw_hits,
-                        'path_whitelist': path_hits,
-                        'commit_whitelist': sha_hits,
+                        'path_whitelist':     path_hits,
+                        'commit_whitelist':   sha_hits,
                     },
                 }
         else:
             for rname, rdata in rules.items():
                 rw = int(rdata.get('weight', 50) or 0)
                 profile_trace['rules'][rname] = {
-                    'weight': rw,
-                    'matched': False,
+                    'weight':        rw,
+                    'matched':       False,
                     'matched_level': 'blocked',
-                    'score': 0,
+                    'score':         0,
                     'matches': {
                         'keywords_whitelist': [],
-                        'path_whitelist': [],
-                        'commit_whitelist': [],
+                        'path_whitelist':     [],
+                        'commit_whitelist':   [],
                     },
                 }
 
         capped = min(per_rule_total, 100)
-        final = int(capped * pmult)
-        profile_trace['raw_rule_total'] = per_rule_total
+        final  = int(capped * pmult)
+        profile_trace['raw_rule_total']        = per_rule_total
         profile_trace['raw_rule_total_capped'] = capped
-        profile_trace['final_score'] = final
-        scoring_trace['profiles'][pname] = profile_trace
-        profile_scores[pname] = final
+        profile_trace['final_score']           = final
+        scoring_trace['profiles'][pname]       = profile_trace
+        profile_scores[pname]                  = final
 
-        profile_hit = any(profile_trace['merged_matches'].get(k) for k in profile_trace['merged_matches'])
+        profile_hit = any(profile_trace['merged_matches'].get(k)
+                          for k in profile_trace['merged_matches'])
         if profile_hit or final > 0:
             matched_profiles.append(pname)
 
@@ -311,7 +323,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
     return result
 
 
-# ── Commit display helpers ────────────────────────────────────────────────────
+# -- Commit display helpers ----------------------------------------------------
 
 def fmt_profiles(commit):
     """Return matched_profiles as a semicolon-separated string."""

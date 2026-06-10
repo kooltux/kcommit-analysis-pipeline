@@ -1,0 +1,71 @@
+# product_scope/path_whitelist.txt
+# ARM32 / Qualcomm SDX55 (sdxprairie) product scope — exhaustive mode.
+#
+# L2b: a commit touching ANY of these paths is KEPT unconditionally.
+# In exhaustive mode (path_whitelist used together with a broad path_blacklist)
+# this is the positive gate: only commits that touch at least one of these
+# compiled subsystem prefixes are considered in scope.
+#
+# Qualcomm/ARM32 compiled subsystem tree -----------------------------------
+arch/arm/*
+# Qualcomm-specific drivers and platform code
+drivers/bus/*
+drivers/char/*
+drivers/clk/*
+drivers/clocksource/*
+drivers/cpufreq/*
+drivers/cpuidle/*
+drivers/crypto/*
+drivers/dma/*
+drivers/firmware/*
+drivers/gpio/*
+drivers/hwspinlock/*
+drivers/i2c/*
+drivers/iio/*
+drivers/input/*
+drivers/interconnect/*
+drivers/iommu/*
+drivers/irqchip/*
+drivers/mailbox/*
+drivers/memory/*
+drivers/mfd/*
+drivers/misc/*
+drivers/mmc/*
+drivers/mtd/*
+drivers/net/*
+drivers/of/*
+drivers/pci/*
+drivers/perf/*
+drivers/phy/*
+drivers/pinctrl/*
+drivers/power/*
+drivers/pwm/*
+drivers/regulator/*
+drivers/remoteproc/*
+drivers/reset/*
+drivers/rpmsg/*
+drivers/rtc/*
+drivers/soc/qcom/*
+drivers/spi/*
+drivers/spmi/*
+drivers/thermal/*
+drivers/tty/*
+drivers/uio/*
+drivers/usb/*
+drivers/watchdog/*
+# Core kernel subsystems always relevant
+kernel/*
+mm/*
+lib/*
+ipc/*
+block/*
+crypto/*
+security/*
+net/*
+fs/*
+sound/*
+# Headers
+include/linux/*
+include/uapi/linux/*
+include/asm-generic/*
+include/net/*

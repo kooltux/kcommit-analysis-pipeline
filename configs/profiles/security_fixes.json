@@ -3,12 +3,13 @@
   "name": "security_fixes",
   "description": "Security bug fixes, CVE backports, and stability-related security updates.",
   "rules": {
-    "security_general": 50,
-    "security_cve_bugs": 100,
-    "security_memory": 80,
-    "security_bounds": 60,
-    "security_auth_caps": 60,
+    "product_scope":       10,
+    "security_general":    50,
+    "security_cve_bugs":  100,
+    "security_memory":     80,
+    "security_bounds":     60,
+    "security_auth_caps":  60,
     "security_crypto_time": 50,
-    "security_syscalls": 50
+    "security_syscalls":   50
   }
 }

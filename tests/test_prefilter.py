@@ -5,13 +5,20 @@ v12.0.0 (A.1): filter_decision() now returns a 3-tuple
 All callers updated; new test block covers debug_detail content.
 
 v13.0.0 (E.1.x / G):
-  E.1.1 -- artifact_files computed once, reused (behaviour unchanged; no test needed beyond E.1 below).
+  E.1.1 -- artifact_files computed once, reused.
   E.1.2 -- kconfig_covered/uncovered populated in debug even for kw-whitelist-saved commits.
   E.1.3 -- build_merged_lists() deduplication is case-insensitive on string patterns.
   E.1.5 -- zero-file commits handled before path/kconfig layers.
   E.1.6 -- build_compiled_sets() ignores bare CONFIG entries without '=' suffix.
-  G     -- zero-file default keep reason is 'no_files_layer' (was 'default');
-           test_zero_file_commit_keeps_by_default updated accordingly.
+  G     -- zero-file default keep reason is 'no_files_layer'.
+
+v13.0.1 (H -- Bug-1 fix):
+  H     -- build_compiled_sets() reads config_enabled_map / config_enabled_dirs
+           from product_map instead of config_to_paths / enabled_configs.
+           All build_compiled_sets() tests updated to supply config_enabled_map
+           and config_enabled_dirs directly (pre-filtered by st03).
+           Added test_build_compiled_sets_missing_enabled_map_returns_empty()
+           to verify the fallback warning path.
 """
 import os
 import re
@@ -137,81 +144,81 @@ def test_build_merged_lists_multiple_profiles():
     assert 'drivers/usb/' in lists['path_wl']
 
 
-# -- build_compiled_sets -------------------------------------------------------
+# -- build_compiled_sets (v13.0.1: reads config_enabled_map/config_enabled_dirs) --
+
 def test_build_compiled_sets_empty_no_product_map():
     cs = build_compiled_sets(None)
     assert cs['available'] is False
 
 
-def test_build_compiled_sets_with_data():
+def test_build_compiled_sets_missing_enabled_map_returns_empty():
+    """H (v13.0.1): if config_enabled_map is absent, return empty and warn.
+    This guards against running st04 against a pre-v13.0.1 cache.
+    """
     pm = {
+        # Old-style cache: only config_to_paths, no config_enabled_map
         'config_to_paths': {'CONFIG_USB': ['drivers/usb/core/hub.c']},
         'enabled_configs':  ['CONFIG_USB=y'],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is False, (
+        'build_compiled_sets must return empty when config_enabled_map is absent '
+        '(pre-v13.0.1 cache); re-run st03 first'
+    )
+
+
+def test_build_compiled_sets_with_data():
+    """H (v13.0.1): product_map supplies pre-filtered config_enabled_map."""
+    pm = {
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/'],
         'built_artifacts_from_dir': ['drivers/usb/core/hub.o'],
         'built_objects_from_log':   [],
     }
     cs = build_compiled_sets(pm)
     assert cs['available'] is True
     assert 'drivers/usb/core/hub.c' in cs['compiled_files']
-    assert 'drivers/usb/core' in cs['compiled_dirs']
+    assert 'drivers/usb/core/' in cs['compiled_dirs']
     assert 'drivers/usb/core/hub' in cs['artifact_stems']
 
 
-def test_build_compiled_sets_enabled_y_and_m_accepted():
-    """Both '=y' and '=m' entries activate the symbol."""
+def test_build_compiled_sets_compiled_dirs_from_enabled_dirs():
+    """H: compiled_dirs is taken directly from config_enabled_dirs."""
     pm = {
-        'config_to_paths': {
-            'CONFIG_USB':  ['drivers/usb/core/hub.c'],
-            'CONFIG_VLAN': ['net/8021q/vlan.c'],
-        },
-        'enabled_configs': ['CONFIG_USB=y', 'CONFIG_VLAN=m'],
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/', 'drivers/usb/host/'],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert 'drivers/usb/core/' in cs['compiled_dirs']
+    assert 'drivers/usb/host/' in cs['compiled_dirs']
+
+
+def test_build_compiled_sets_disabled_symbol_absent():
+    """Bug-1 regression (v13.0.1): config_enabled_map already excludes disabled
+    symbols; build_compiled_sets must not see them at all.
+    """
+    pm = {
+        # CONFIG_BTRFS_FS absent from config_enabled_map (pre-filtered by st03)
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/'],
         'built_artifacts_from_dir': [],
         'built_objects_from_log':   [],
     }
     cs = build_compiled_sets(pm)
     assert cs['available'] is True
-    assert 'drivers/usb/core/hub.c' in cs['compiled_files']
-    assert 'net/8021q/vlan.c' in cs['compiled_files']
-
-
-def test_build_compiled_sets_bare_config_entry_ignored():
-    """E.1.6: entries without '=' (bare symbol names) are ignored.
-
-    Only 'CONFIG_X=y' or 'CONFIG_X=m' entries should activate symbols.
-    A bare 'CONFIG_USB' with no value is not produced by
-    load_kernel_config_symbols() under normal operation and must not
-    accidentally activate the symbol, which would be a false positive.
-    """
-    pm = {
-        'config_to_paths': {'CONFIG_USB': ['drivers/usb/core/hub.c']},
-        # bare entry -- no '=' suffix, should be ignored
-        'enabled_configs': ['CONFIG_USB'],
-        'built_artifacts_from_dir': [],
-        'built_objects_from_log':   [],
-    }
-    cs = build_compiled_sets(pm)
-    # No valid enabled configs => no compiled_files => available=False
-    assert cs['available'] is False
-    assert 'drivers/usb/core/hub.c' not in cs['compiled_files']
-
-
-def test_build_compiled_sets_config_n_ignored():
-    """E.1.6: '=n' entries do not activate the symbol."""
-    pm = {
-        'config_to_paths': {'CONFIG_USB': ['drivers/usb/core/hub.c']},
-        'enabled_configs': ['CONFIG_USB=n'],
-        'built_artifacts_from_dir': [],
-        'built_objects_from_log':   [],
-    }
-    cs = build_compiled_sets(pm)
-    assert cs['available'] is False
+    assert not any('btrfs' in f for f in cs['compiled_files'])
+    assert not any('btrfs' in d for d in cs['compiled_dirs'])
 
 
 # -- A: built-in.o exclusion ---------------------------------------------------
 def test_build_compiled_sets_builtin_o_not_in_artifact_stems():
     pm = {
-        'config_to_paths': {'CONFIG_DRM': ['drivers/gpu/drm/drm_drv.c']},
-        'enabled_configs':  ['CONFIG_DRM=y'],
+        'config_enabled_map':  {'CONFIG_DRM': ['drivers/gpu/drm/drm_drv.c']},
+        'config_enabled_dirs': ['drivers/gpu/drm/'],
         'built_artifacts_from_dir': [
             'drivers/gpu/drm/built-in.o',
             'drivers/gpu/drm/drm_drv.o',
@@ -234,9 +241,7 @@ def test_builtin_o_only_commit_not_kept_by_artifact_evidence():
     c = _commit(files=['drivers/gpu/drm/built-in.o'])
     action, reason, dbg = filter_decision(
         c, _lists(), cs, {'require_kconfig_coverage': False}, True)
-    assert reason != 'build_artifact', (
-        'built-in.o must not trigger build_artifact keep; got reason=%r' % reason
-    )
+    assert reason != 'build_artifact'
 
 
 def test_builtin_o_only_commit_dropped_when_kconfig_required():
@@ -312,10 +317,7 @@ def test_log_basename_cross_tree_commit_not_kept():
     c = _commit(files=['sound/usb/hub.c'])
     action, reason, dbg = filter_decision(
         c, _lists(), cs, {'require_kconfig_coverage': False}, True)
-    assert reason != 'build_artifact', (
-        'sound/usb/hub.c must not be kept by artifact evidence from drivers/usb/hub.o; '
-        'got reason=%r' % reason
-    )
+    assert reason != 'build_artifact'
 
 
 def test_log_basename_same_dir_commit_kept():
@@ -393,15 +395,11 @@ def test_kconfig_coverage_not_required_keeps():
 # == E.1.2: kconfig debug populated even for kw-whitelist-saved commits ========
 
 def test_debug_kconfig_uncovered_populated_when_kw_wl_saves_commit():
-    """E.1.2: kconfig_uncovered_files must be present in debug even when the
-    commit is saved by the keyword whitelist (not dropped).
-    """
     cs = dict(
         compiled_files={'drivers/usb/hub.c'},
         compiled_dirs={'drivers/usb'},
         artifact_stems=set(), log_basenames=set(), available=True,
     )
-    # File is NOT in compiled set => uncovered
     c = _commit(files=['arch/arm/mm/unrelated.c'], subject='arm: fix critical bug')
     action, reason, dbg = filter_decision(
         c,
@@ -412,30 +410,19 @@ def test_debug_kconfig_uncovered_populated_when_kw_wl_saves_commit():
     )
     assert action == 'keep'
     assert reason == 'keywords_whitelist'
-    # E.1.2: kconfig debug info must still be populated
-    assert 'arch/arm/mm/unrelated.c' in dbg['l2half_kconfig_uncovered_files'], (
-        'Expected uncovered file in debug even though commit was saved by kw_wl; '
-        'got: %r' % dbg['l2half_kconfig_uncovered_files']
-    )
+    assert 'arch/arm/mm/unrelated.c' in dbg['l2half_kconfig_uncovered_files']
 
 
 # == E.1.5 / G: zero-file commits handled explicitly ==========================
 
 def test_zero_file_commit_keeps_by_no_files_layer():
-    """G / E.1.5: a commit with no files skips path/kconfig layers and keeps
-    with reason='no_files_layer' (not 'default') so merge commits can be
-    distinguished from commits-with-files that reach L0.
-    """
     c = _commit(sha='merge001', subject='Merge branch x into y', files=[])
     action, reason, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
     assert action == 'keep'
-    assert reason == 'no_files_layer', (
-        "Expected reason='no_files_layer' for zero-file default keep; got %r" % reason
-    )
+    assert reason == 'no_files_layer'
 
 
 def test_zero_file_commit_kept_by_kw_whitelist():
-    """E.1.5: zero-file commit is still saved by keyword whitelist."""
     c = _commit(sha='zf001', subject='security: patch critical CVE', files=[])
     action, reason, dbg = filter_decision(c, _lists(kw_wl=['CVE']), _EMPTY_CS, {}, True)
     assert action == 'keep'
@@ -444,7 +431,6 @@ def test_zero_file_commit_kept_by_kw_whitelist():
 
 
 def test_zero_file_commit_dropped_by_kw_blacklist():
-    """E.1.5: zero-file commit is still dropped by keyword blacklist."""
     c = _commit(sha='zf002', subject='docs: typo fix in README', files=[])
     action, reason, dbg = filter_decision(c, _lists(kw_bl=['typo']), _EMPTY_CS, {}, True)
     assert action == 'drop'
@@ -452,7 +438,6 @@ def test_zero_file_commit_dropped_by_kw_blacklist():
 
 
 def test_zero_file_commit_not_dropped_by_path_blacklist():
-    """E.1.5: path blacklist cannot drop a commit that has no files."""
     c = _commit(sha='zf003', subject='Merge tag v5.15', files=[])
     action, reason, dbg = filter_decision(
         c, _lists(path_bl=['Documentation/']), _EMPTY_CS, {}, False)
@@ -460,7 +445,6 @@ def test_zero_file_commit_not_dropped_by_path_blacklist():
 
 
 def test_zero_file_commit_not_dropped_by_kconfig():
-    """E.1.5: kconfig coverage check cannot drop a zero-file commit."""
     cs = dict(
         compiled_files={'drivers/usb/hub.c'},
         compiled_dirs={'drivers/usb'},
@@ -473,7 +457,6 @@ def test_zero_file_commit_not_dropped_by_kconfig():
 
 
 def test_zero_file_commit_debug_has_empty_lists():
-    """E.1.5: debug_detail for zero-file commits must have empty path/kconfig lists."""
     c = _commit(sha='zf005', subject='Merge tag', files=[])
     _, _, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, True)
     assert dbg['l2a_path_bl_matches'] == []
@@ -486,7 +469,6 @@ def test_zero_file_commit_debug_has_empty_lists():
 # == A.1: debug_detail content tests ==========================================
 
 def test_debug_detail_is_dict_with_required_keys():
-    """filter_decision() always returns a dict with the documented keys."""
     c = _commit(subject='net: fix skb', files=['net/core/sock.c'])
     _, _, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
     for key in ('sha', 'files', 'l3_commit_wl_match', 'l3_commit_bl_match',
@@ -591,7 +573,7 @@ def test_build_prefilter_debug_entry_structure():
 
 
 def test_build_prefilter_debug_entry_sha_truncated():
-    sha = 'a' * 50  # longer than 40
+    sha = 'a' * 50
     c = _commit(sha=sha)
     entry = _build_prefilter_debug_entry(c, 'keywords_blacklist', {})
     assert len(entry['sha']) == 40
@@ -602,3 +584,40 @@ def test_build_prefilter_debug_entry_sha12_truncated():
     c = _commit(sha=sha)
     entry = _build_prefilter_debug_entry(c, 'keywords_blacklist', {})
     assert len(entry['sha12']) == 12
+
+
+# == Bug-1 end-to-end: btrfs commit dropped by kconfig check ===================
+
+def test_btrfs_commit_dropped_by_kconfig_when_disabled():
+    """Bug-1 regression (v13.0.1): a commit touching only fs/btrfs/ must be
+    dropped at L2half (no_kconfig_coverage) when CONFIG_BTRFS_FS is absent from
+    config_enabled_map (i.e. disabled in .config).
+
+    Simulates the exact scenario: config_enabled_map does not contain
+    CONFIG_BTRFS_FS, so build_compiled_sets() produces compiled_sets with no
+    BTRFS files/dirs. filter_decision() then finds zero covered files and drops
+    with no_kconfig_coverage.
+    """
+    pm = {
+        # CONFIG_BTRFS_FS absent (disabled in .config); only USB enabled
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/'],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is True
+    assert not any('btrfs' in f for f in cs['compiled_files'])
+
+    c = _commit(
+        sha='btrfs001',
+        subject='btrfs: fix tree corruption on power loss',
+        files=['fs/btrfs/tree-log.c'],
+    )
+    action, reason, dbg = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'drop', 'BTRFS commit must be dropped'
+    assert reason == 'no_kconfig_coverage', (
+        'Expected no_kconfig_coverage, got: %r' % reason
+    )
+    assert 'fs/btrfs/tree-log.c' in dbg['l2half_kconfig_uncovered_files']
