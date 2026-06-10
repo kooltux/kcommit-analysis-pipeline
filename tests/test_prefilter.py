@@ -19,6 +19,15 @@ v13.0.1 (H -- Bug-1 fix):
            and config_enabled_dirs directly (pre-filtered by st03).
            Added test_build_compiled_sets_missing_enabled_map_returns_empty()
            to verify the fallback warning path.
+
+v13.0.2 (I -- Bug-2 fix):
+  I     -- build_compiled_sets(): removed `if not compiled_files: return empty`
+           short-circuit that set available=False when cem={} (no .config).
+           available is now True when ANY evidence source is non-empty.
+           Added:
+             test_build_compiled_sets_cem_empty_no_artifacts_available_false()
+             test_build_compiled_sets_cem_empty_but_artifacts_available_true()
+             test_btrfs_commit_dropped_auto_require_when_cem_has_usb_only()
 """
 import os
 import re
@@ -212,6 +221,57 @@ def test_build_compiled_sets_disabled_symbol_absent():
     assert cs['available'] is True
     assert not any('btrfs' in f for f in cs['compiled_files'])
     assert not any('btrfs' in d for d in cs['compiled_dirs'])
+
+
+# -- Bug-2 regression: cem={} + no artifacts → available=False (conservative) --
+
+def test_build_compiled_sets_cem_empty_no_artifacts_available_false():
+    """Bug-2 regression (v13.0.2): when config_enabled_map={} (no .config
+    provided) AND no build artifacts/log objects exist, available must be
+    False.  The pipeline has no coverage data; the scoring stage must handle
+    ambiguities rather than the prefilter dropping everything.
+    """
+    pm = {
+        'config_enabled_map':       {},   # cem present but empty (.config missing)
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is False, (
+        'When cem={} and no artifacts/log, available must be False '
+        '(conservative: no coverage data, keep everything for scoring)'
+    )
+
+
+def test_build_compiled_sets_cem_empty_but_artifacts_available_true():
+    """Bug-2: when cem={} but build artifacts exist, available=True.
+    Artifacts alone are enough evidence to perform coverage decisions.
+    """
+    pm = {
+        'config_enabled_map':       {},   # no .config
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': ['drivers/usb/core/hub.o'],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is True, (
+        'When artifacts are present, available must be True even if cem={}'
+    )
+    assert 'drivers/usb/core/hub' in cs['artifact_stems']
+
+
+def test_build_compiled_sets_cem_empty_but_log_basenames_available_true():
+    """Bug-2: log objects alone make available=True."""
+    pm = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   ['drivers/usb/core/hub.o'],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is True
+    assert 'hub' in cs['log_basenames']
 
 
 # -- A: built-in.o exclusion ---------------------------------------------------
@@ -621,3 +681,36 @@ def test_btrfs_commit_dropped_by_kconfig_when_disabled():
         'Expected no_kconfig_coverage, got: %r' % reason
     )
     assert 'fs/btrfs/tree-log.c' in dbg['l2half_kconfig_uncovered_files']
+
+
+def test_btrfs_commit_dropped_auto_require_when_cem_has_usb_only():
+    """Bug-2 regression (v13.0.2): with require_kconfig_coverage=None (auto),
+    compiled_sets.available=True (USB in cem) → require=True → BTRFS dropped.
+
+    This is the real-world scenario: user provides .config where CONFIG_BTRFS_FS
+    is not set but CONFIG_USB=y.  The pipeline must not keep the BTRFS commit
+    under any auto-require logic.
+    """
+    pm = {
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/'],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is True
+
+    c = _commit(
+        sha='btrfs002',
+        subject='btrfs: optimize extent allocation',
+        files=['fs/btrfs/extent-tree.c'],
+    )
+    # require_kconfig_coverage=None → auto → require = available AND kconfig_enabled
+    # kconfig_enabled = cs['available'] = True → require = True
+    action, reason, dbg = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': None}, cs['available'])
+    assert action == 'drop', (
+        'BTRFS commit must be dropped with auto require_kconfig_coverage '
+        '(available=True, BTRFS not in compiled_files)'
+    )
+    assert reason == 'no_kconfig_coverage'
