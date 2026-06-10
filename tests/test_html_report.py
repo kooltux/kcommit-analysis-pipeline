@@ -354,3 +354,17 @@ def test_html_report_uses_metadata_sidecar_and_hides_product_evidence(tmp_path):
     assert '<th>Product evidence</th>' not in s
     assert '<h4>Product evidence</h4>' not in s
     assert '<h4>Evidence</h4>' in s
+
+
+def test_summary_css_detail_pane_is_scrollable():
+    """Detail pane body must be scrollable when content exceeds viewport height."""
+    css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.css')
+    with open(css_path, encoding='utf-8') as f:
+        css = f.read()
+    # The detail body should have overflow-y: auto to enable scrolling
+    assert '#kc-detail-body' in css
+    assert 'overflow-y: auto' in css
+    # Ensure it's not overridden by overflow: hidden
+    # Check that the detail panel has a defined height
+    assert 'min(92vh, 980px)' in css

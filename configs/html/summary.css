@@ -177,7 +177,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI'
 
 
 #kc-detail-panel { width: min(1200px, 96vw); height: min(92vh, 980px); }
-#kc-detail-body { height: calc(100% - 56px); overflow: hidden; }
+#kc-detail-body { height: calc(100% - 56px); overflow-y: auto; }
 .kc-detail-split { display: grid; grid-template-rows: minmax(280px, 42%) minmax(240px, 58%); height: 100%; gap: 12px; }
 .kc-detail-top, .kc-detail-bottom { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 14px; min-height: 0; }
 .kc-detail-top { display: grid; grid-template-rows: auto auto 1fr; gap: 12px; }
