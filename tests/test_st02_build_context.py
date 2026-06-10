@@ -1,4 +1,12 @@
-"""Tests for lib.stages.st02_build_context — _read_lines, _scan_build_dir, run()."""
+"""Tests for lib.stages.st02_build_context — _read_lines, _scan_build_dir, run().
+
+v13.0.3 (J):
+  J  -- run() reads kernel.arch and kernel.srctree from config and passes
+        them to load_kernel_config_symbols().  Tests added:
+          test_run_arch_in_config_sets_env()
+          test_run_srctree_in_config_sets_env()
+          test_run_arch_printed_in_summary()
+"""
 import json, os
 import pytest
 
@@ -8,7 +16,7 @@ from lib.stages.st02_build_context import (
 from lib.manifest import CACHE_FILES
 
 
-# ── _read_lines ───────────────────────────────────────────────────────────────
+# ── _read_lines ────────────────────────────────────────────────────────────
 def test_read_lines_basic(tmp_path):
     p = tmp_path / 'build.log'
     p.write_text('line1\nline2\nline3\n')
@@ -125,9 +133,9 @@ def test_kbuild_placeholder_names_constant_contains_expected():
     assert 'built-in.a' in _KBUILD_PLACEHOLDER_NAMES
 
 
-# ── run() ─────────────────────────────────────────────────────────────────────
+# ── run() helpers ─────────────────────────────────────────────────────────────
 def _make_cfg(tmp_path, kconfig=None, source_dir=None, build_dir=None,
-              build_log=None, yocto_log=None):
+             build_log=None, yocto_log=None, arch=None, srctree=None):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache, exist_ok=True)
     return cache, {
@@ -137,10 +145,13 @@ def _make_cfg(tmp_path, kconfig=None, source_dir=None, build_dir=None,
             'build_dir':         str(build_dir) if build_dir  else None,
             'kernel_build_log':  str(build_log) if build_log  else None,
             'yocto_build_log':   str(yocto_log) if yocto_log  else None,
+            'arch':              arch,
+            'srctree':           srctree,
         }
     }
 
 
+# ── run() basic tests ──────────────────────────────────────────────────────────
 def test_run_minimal_no_paths(tmp_path):
     """run() with no kernel files produces a valid but empty build_context."""
     cache, cfg = _make_cfg(tmp_path)
@@ -234,3 +245,58 @@ def test_run_builtin_o_excluded_from_build_artifacts(tmp_path):
     data = json.load(open(os.path.join(cache, CACHE_FILES['build_context'])))
     disk_basenames = [os.path.basename(p) for p in data['build_artifacts']]
     assert 'built-in.o' not in disk_basenames
+
+
+# ── v13.0.3 (J): arch / srctree propagation from config to env ────────────────
+
+def test_run_arch_in_config_sets_env(tmp_path, monkeypatch):
+    """J: kernel.arch in config → SRCARCH/ARCH set in env before kconfiglib call."""
+    monkeypatch.delenv('SRCARCH', raising=False)
+    monkeypatch.delenv('ARCH', raising=False)
+    kc = tmp_path / '.config'
+    kc.write_text('CONFIG_ARM=y\n')
+    cache, cfg = _make_cfg(tmp_path, kconfig=kc, arch='arm')
+    run(cfg, cache)
+    assert os.environ.get('SRCARCH') == 'arm'
+    assert os.environ.get('ARCH') == 'arm'
+
+
+def test_run_srctree_in_config_sets_env(tmp_path, monkeypatch):
+    """J: kernel.srctree in config → srctree env var set."""
+    monkeypatch.delenv('srctree', raising=False)
+    kc = tmp_path / '.config'
+    kc.write_text('CONFIG_USB=y\n')
+    explicit = str(tmp_path / 'my_srctree')
+    cache, cfg = _make_cfg(tmp_path, kconfig=kc, arch='arm64', srctree=explicit)
+    run(cfg, cache)
+    assert os.environ.get('srctree') == explicit
+
+
+def test_run_arch_not_set_no_env_change(tmp_path, monkeypatch):
+    """J: When kernel.arch is absent, SRCARCH/ARCH are not injected."""
+    monkeypatch.delenv('SRCARCH', raising=False)
+    monkeypatch.delenv('ARCH', raising=False)
+    kc = tmp_path / '.config'
+    kc.write_text('CONFIG_USB=y\n')
+    cache, cfg = _make_cfg(tmp_path, kconfig=kc)  # no arch
+    run(cfg, cache)
+    assert 'SRCARCH' not in os.environ
+    assert 'ARCH' not in os.environ
+
+
+def test_run_arch_printed_in_summary(tmp_path, capsys):
+    """J: run() prints the arch value in the build context summary."""
+    kc = tmp_path / '.config'
+    kc.write_text('CONFIG_USB=y\n')
+    cache, cfg = _make_cfg(tmp_path, kconfig=kc, arch='arm')
+    run(cfg, cache)
+    captured = capsys.readouterr()
+    assert 'arm' in captured.out
+
+
+def test_run_no_arch_prints_hint(tmp_path, capsys):
+    """J: When arch is not set, summary line mentions the hint to set it."""
+    cache, cfg = _make_cfg(tmp_path)
+    run(cfg, cache)
+    captured = capsys.readouterr()
+    assert 'kernel.arch' in captured.out

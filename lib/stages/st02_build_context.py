@@ -19,6 +19,14 @@ v13.0.2 changes (Bug-2 fix):
     Makefiles, etc.) that should be visible to the user.
   - run(): prints the kconfiglib availability status and the kernel_config
     path being used so the user can confirm the correct inputs are loaded.
+
+v13.0.3 changes (J):
+  - run(): reads kernel.arch and kernel.srctree from the pipeline config and
+    passes them to load_kernel_config_symbols().  This allows kconfiglib to
+    resolve arch-specific Kconfig includes (e.g. 'arch/$SRCARCH/Kconfig')
+    that were previously causing it to fall back to the line-based parser.
+  - run(): prints arch in the build context summary line so the user can
+    confirm the correct architecture is being used.
 """
 import logging
 import os
@@ -81,9 +89,16 @@ def run(cfg, cache):
     if build_dir and not os.path.isdir(build_dir):
         build_dir = None
 
+    # v13.0.3 (J): arch and srctree from config for kconfiglib env setup.
+    # arch    → SRCARCH / ARCH env vars (resolves 'arch/$SRCARCH/Kconfig' includes)
+    # srctree → srctree  env var      (defaults to source_dir when absent)
+    arch    = kernel.get('arch') or None
+    srctree = kernel.get('srctree') or None
+
     # 1. Kernel config symbols
     update_stage_progress(2, NSTAGES, 0.10, 'loading kernel config')
-    kernel_config = load_kernel_config_symbols(kconfig_path, source_dir)
+    kernel_config = load_kernel_config_symbols(
+        kconfig_path, source_dir, arch=arch, srctree=srctree)
 
     # 2. Parse .config
     update_stage_progress(2, NSTAGES, 0.25, 'parsing .config')
@@ -137,7 +152,9 @@ def run(cfg, cache):
     finish_progress_line()
     print('  build context captured')
     print('    kconfiglib     : %s' % ('available' if _kcl_available else 'NOT available — using fallback parser'))
+    print('    arch           : %s' % (arch or 'not set (set kernel.arch to fix kconfiglib includes)'))
     print('    kernel_config  : %s' % (kconfig_path or 'not provided — kconfig filtering disabled'))
+    print('    kernel_config  : %d symbols loaded' % len(kernel_config))
     print('    kbuild_map     : %d symbols' % len(static_config_map))
     print('    build_log lines: %d kernel + %d yocto' % (len(kernel_build_log), len(yocto_build_log)))
     print('    build_artifacts: %d objects' % len(build_artifacts))
