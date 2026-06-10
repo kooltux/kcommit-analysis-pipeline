@@ -1,11 +1,14 @@
-from lib.manifest import NSTAGES
-"""Stage 01 logic: collect commits from git log."""
+"""Stage 01 logic: collect commits from git log.
+
+E.4 (v13.0.0): moved docstring to top of file (was after the first import,
+rendering it a dead string literal).
+"""
 import json
 import os
 from lib.config import save_json
 from lib.gitutils import iter_git_log_records
 from lib.pipeline_runtime import update_stage_progress, finish_progress_line
-from lib.manifest import CACHE_FILES
+from lib.manifest import CACHE_FILES, NSTAGES
 
 _PROGRESS_INTERVAL = 100
 
@@ -19,7 +22,7 @@ def run(cfg, cache):
     update_stage_progress(1, NSTAGES, 0.01, 'collecting commits', n_done=0, n_total=max_commits if max_commits else None)
     for rec in iter_git_log_records(cfg):
         if max_commits and len(commits) >= max_commits:
-            print(f'\n  WARNING: stopping at {max_commits} commits (collect.max_commits)')
+            print('\n  WARNING: stopping at %d commits (collect.max_commits)' % max_commits)
             break
         entry = {
             'commit':       rec.get('commit'),

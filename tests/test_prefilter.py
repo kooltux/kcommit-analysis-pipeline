@@ -1,8 +1,33 @@
-"""Tests for lib.stages.st04_prefilter — filter_decision and helpers.
+"""Tests for lib.stages.st04_prefilter -- filter_decision and helpers.
 
 v12.0.0 (A.1): filter_decision() now returns a 3-tuple
   (action, reason, debug_detail)
 All callers updated; new test block covers debug_detail content.
+
+v13.0.0 (E.1.x / G):
+  E.1.1 -- artifact_files computed once, reused.
+  E.1.2 -- kconfig_covered/uncovered populated in debug even for kw-whitelist-saved commits.
+  E.1.3 -- build_merged_lists() deduplication is case-insensitive on string patterns.
+  E.1.5 -- zero-file commits handled before path/kconfig layers.
+  E.1.6 -- build_compiled_sets() ignores bare CONFIG entries without '=' suffix.
+  G     -- zero-file default keep reason is 'no_files_layer'.
+
+v13.0.1 (H -- Bug-1 fix):
+  H     -- build_compiled_sets() reads config_enabled_map / config_enabled_dirs
+           from product_map instead of config_to_paths / enabled_configs.
+           All build_compiled_sets() tests updated to supply config_enabled_map
+           and config_enabled_dirs directly (pre-filtered by st03).
+           Added test_build_compiled_sets_missing_enabled_map_returns_empty()
+           to verify the fallback warning path.
+
+v13.0.2 (I -- Bug-2 fix):
+  I     -- build_compiled_sets(): removed `if not compiled_files: return empty`
+           short-circuit that set available=False when cem={} (no .config).
+           available is now True when ANY evidence source is non-empty.
+           Added:
+             test_build_compiled_sets_cem_empty_no_artifacts_available_false()
+             test_build_compiled_sets_cem_empty_but_artifacts_available_true()
+             test_btrfs_commit_dropped_auto_require_when_cem_has_usb_only()
 """
 import os
 import re
@@ -27,7 +52,7 @@ def _lists(**kw):
     return base
 
 
-# ── L3 absolute ──────────────────────────────────────────────────────────────
+# -- L3 absolute ---------------------------------------------------------------
 def test_commit_whitelist_wins():
     c = _commit(sha='deadbeef')
     action, reason, dbg = filter_decision(c, _lists(commit_wl=['deadbeef']),
@@ -50,7 +75,7 @@ def test_commit_whitelist_beats_blacklist():
     assert action == 'keep'
 
 
-# ── L2 path ──────────────────────────────────────────────────────────────────
+# -- L2 path -------------------------------------------------------------------
 def test_path_blacklist_all_drops():
     c = _commit(files=['Documentation/foo.rst', 'Documentation/bar.rst'])
     action, reason, dbg = filter_decision(c, _lists(path_bl=['Documentation/']),
@@ -59,6 +84,7 @@ def test_path_blacklist_all_drops():
 
 
 def test_path_blacklist_partial_does_not_drop():
+    """E.1.4: L2a only drops when ALL files match the blacklist."""
     c = _commit(files=['Documentation/foo.rst', 'drivers/usb/hub.c'])
     action, _, _dbg = filter_decision(c, _lists(path_bl=['Documentation/']),
                                       _EMPTY_CS, {}, False)
@@ -72,7 +98,7 @@ def test_path_whitelist_keeps():
     assert action == 'keep' and reason == 'path_whitelist'
 
 
-# ── L1 keywords ──────────────────────────────────────────────────────────────
+# -- L1 keywords ---------------------------------------------------------------
 def test_keyword_whitelist_keeps():
     c = _commit(subject='net: fix skb use-after-free')
     action, reason, dbg = filter_decision(c, _lists(kw_wl=['use-after-free']),
@@ -87,14 +113,15 @@ def test_keyword_blacklist_drops():
     assert action == 'drop' and reason == 'keywords_blacklist'
 
 
-# ── L0 default ────────────────────────────────────────────────────────────────
+# -- L0 default ----------------------------------------------------------------
 def test_default_keep():
-    c = _commit(subject='net: fix something random')
+    """Commits WITH files that reach L0 still get reason='default'."""
+    c = _commit(subject='net: fix something random', files=['net/core/sock.c'])
     action, reason, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
     assert action == 'keep' and reason == 'default'
 
 
-# ── filter_disabled ───────────────────────────────────────────────────────────
+# -- filter_disabled -----------------------------------------------------------
 def test_filter_disabled_bypasses_path_bl():
     c = _commit(files=['Documentation/foo.rst', 'Documentation/bar.rst'])
     action, reason, dbg = filter_decision(c, _lists(path_bl=['Documentation/']),
@@ -102,7 +129,7 @@ def test_filter_disabled_bypasses_path_bl():
     assert action == 'keep' and reason == 'filter_disabled'
 
 
-# ── build_merged_lists ────────────────────────────────────────────────────────
+# -- build_merged_lists --------------------------------------------------------
 def test_build_merged_lists_dedup():
     profile_rules = {
         'p1': {'merged': {'path_whitelist': ['drivers/usb/', 'drivers/usb/']}},
@@ -112,31 +139,146 @@ def test_build_merged_lists_dedup():
     assert len(lists['path_wl']) == 2  # deduped to 2
 
 
-# ── build_compiled_sets ───────────────────────────────────────────────────────
+def test_build_merged_lists_multiple_profiles():
+    profile_rules = {
+        'net':  {'merged': {'path_whitelist': ['drivers/net/'], 'path_blacklist': [],
+                            'keywords_whitelist': [], 'keywords_blacklist': [],
+                            'commit_whitelist': [], 'commit_blacklist': []}},
+        'usb':  {'merged': {'path_whitelist': ['drivers/usb/'], 'path_blacklist': [],
+                            'keywords_whitelist': [], 'keywords_blacklist': [],
+                            'commit_whitelist': [], 'commit_blacklist': []}},
+    }
+    lists = build_merged_lists(profile_rules)
+    assert 'drivers/net/' in lists['path_wl']
+    assert 'drivers/usb/' in lists['path_wl']
+
+
+# -- build_compiled_sets (v13.0.1: reads config_enabled_map/config_enabled_dirs) --
+
 def test_build_compiled_sets_empty_no_product_map():
     cs = build_compiled_sets(None)
     assert cs['available'] is False
 
 
-def test_build_compiled_sets_with_data():
+def test_build_compiled_sets_missing_enabled_map_returns_empty():
+    """H (v13.0.1): if config_enabled_map is absent, return empty and warn.
+    This guards against running st04 against a pre-v13.0.1 cache.
+    """
     pm = {
+        # Old-style cache: only config_to_paths, no config_enabled_map
         'config_to_paths': {'CONFIG_USB': ['drivers/usb/core/hub.c']},
         'enabled_configs':  ['CONFIG_USB=y'],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is False, (
+        'build_compiled_sets must return empty when config_enabled_map is absent '
+        '(pre-v13.0.1 cache); re-run st03 first'
+    )
+
+
+def test_build_compiled_sets_with_data():
+    """H (v13.0.1): product_map supplies pre-filtered config_enabled_map."""
+    pm = {
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/'],
         'built_artifacts_from_dir': ['drivers/usb/core/hub.o'],
         'built_objects_from_log':   [],
     }
     cs = build_compiled_sets(pm)
     assert cs['available'] is True
     assert 'drivers/usb/core/hub.c' in cs['compiled_files']
-    assert 'drivers/usb/core' in cs['compiled_dirs']
+    assert 'drivers/usb/core/' in cs['compiled_dirs']
     assert 'drivers/usb/core/hub' in cs['artifact_stems']
 
 
-# ── A: built-in.o ────────────────────────────────────────────────────────────
+def test_build_compiled_sets_compiled_dirs_from_enabled_dirs():
+    """H: compiled_dirs is taken directly from config_enabled_dirs."""
+    pm = {
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/', 'drivers/usb/host/'],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert 'drivers/usb/core/' in cs['compiled_dirs']
+    assert 'drivers/usb/host/' in cs['compiled_dirs']
+
+
+def test_build_compiled_sets_disabled_symbol_absent():
+    """Bug-1 regression (v13.0.1): config_enabled_map already excludes disabled
+    symbols; build_compiled_sets must not see them at all.
+    """
+    pm = {
+        # CONFIG_BTRFS_FS absent from config_enabled_map (pre-filtered by st03)
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/'],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is True
+    assert not any('btrfs' in f for f in cs['compiled_files'])
+    assert not any('btrfs' in d for d in cs['compiled_dirs'])
+
+
+# -- Bug-2 regression: cem={} + no artifacts → available=False (conservative) --
+
+def test_build_compiled_sets_cem_empty_no_artifacts_available_false():
+    """Bug-2 regression (v13.0.2): when config_enabled_map={} (no .config
+    provided) AND no build artifacts/log objects exist, available must be
+    False.  The pipeline has no coverage data; the scoring stage must handle
+    ambiguities rather than the prefilter dropping everything.
+    """
+    pm = {
+        'config_enabled_map':       {},   # cem present but empty (.config missing)
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is False, (
+        'When cem={} and no artifacts/log, available must be False '
+        '(conservative: no coverage data, keep everything for scoring)'
+    )
+
+
+def test_build_compiled_sets_cem_empty_but_artifacts_available_true():
+    """Bug-2: when cem={} but build artifacts exist, available=True.
+    Artifacts alone are enough evidence to perform coverage decisions.
+    """
+    pm = {
+        'config_enabled_map':       {},   # no .config
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': ['drivers/usb/core/hub.o'],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is True, (
+        'When artifacts are present, available must be True even if cem={}'
+    )
+    assert 'drivers/usb/core/hub' in cs['artifact_stems']
+
+
+def test_build_compiled_sets_cem_empty_but_log_basenames_available_true():
+    """Bug-2: log objects alone make available=True."""
+    pm = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   ['drivers/usb/core/hub.o'],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is True
+    assert 'hub' in cs['log_basenames']
+
+
+# -- A: built-in.o exclusion ---------------------------------------------------
 def test_build_compiled_sets_builtin_o_not_in_artifact_stems():
     pm = {
-        'config_to_paths': {'CONFIG_DRM': ['drivers/gpu/drm/drm_drv.c']},
-        'enabled_configs':  ['CONFIG_DRM=y'],
+        'config_enabled_map':  {'CONFIG_DRM': ['drivers/gpu/drm/drm_drv.c']},
+        'config_enabled_dirs': ['drivers/gpu/drm/'],
         'built_artifacts_from_dir': [
             'drivers/gpu/drm/built-in.o',
             'drivers/gpu/drm/drm_drv.o',
@@ -159,9 +301,7 @@ def test_builtin_o_only_commit_not_kept_by_artifact_evidence():
     c = _commit(files=['drivers/gpu/drm/built-in.o'])
     action, reason, dbg = filter_decision(
         c, _lists(), cs, {'require_kconfig_coverage': False}, True)
-    assert reason != 'build_artifact', (
-        'built-in.o must not trigger build_artifact keep; got reason=%r' % reason
-    )
+    assert reason != 'build_artifact'
 
 
 def test_builtin_o_only_commit_dropped_when_kconfig_required():
@@ -178,7 +318,7 @@ def test_builtin_o_only_commit_dropped_when_kconfig_required():
     assert reason != 'build_artifact'
 
 
-# ── C: log_basenames directory-scoped ────────────────────────────────────────
+# -- C: log_basenames directory-scoped -----------------------------------------
 def test_file_has_artifact_log_match_requires_compiled_dir():
     cs = dict(
         compiled_files=set(),
@@ -237,10 +377,7 @@ def test_log_basename_cross_tree_commit_not_kept():
     c = _commit(files=['sound/usb/hub.c'])
     action, reason, dbg = filter_decision(
         c, _lists(), cs, {'require_kconfig_coverage': False}, True)
-    assert reason != 'build_artifact', (
-        'sound/usb/hub.c must not be kept by artifact evidence from drivers/usb/hub.o; '
-        'got reason=%r' % reason
-    )
+    assert reason != 'build_artifact'
 
 
 def test_log_basename_same_dir_commit_kept():
@@ -256,7 +393,7 @@ def test_log_basename_same_dir_commit_kept():
     assert action == 'keep' and reason == 'build_artifact'
 
 
-# ── min_score threshold (E.1c / st06_postfilter) ─────────────────────────────
+# -- min_score threshold (st06_postfilter passthrough test) --------------------
 from lib.stages.st06_postfilter import _get_threshold
 
 
@@ -277,7 +414,7 @@ def test_get_threshold_filter_wins():
     assert _get_threshold(cfg) == 10.0
 
 
-# ── L2½: artifact / kconfig evidence ────────────────────────────────────────
+# -- L2half artifact / kconfig evidence ----------------------------------------
 def test_artifact_evidence_keeps_commit():
     c = _commit(files=['drivers/usb/core/hub.c'])
     cs = dict(
@@ -315,26 +452,84 @@ def test_kconfig_coverage_not_required_keeps():
     assert action == 'keep'
 
 
-# ── build_merged_lists: multiple profiles merged correctly ────────────────────
-def test_build_merged_lists_multiple_profiles():
-    profile_rules = {
-        'net':  {'merged': {'path_whitelist': ['drivers/net/'], 'path_blacklist': [],
-                            'keywords_whitelist': [], 'keywords_blacklist': [],
-                            'commit_whitelist': [], 'commit_blacklist': []}},
-        'usb':  {'merged': {'path_whitelist': ['drivers/usb/'], 'path_blacklist': [],
-                            'keywords_whitelist': [], 'keywords_blacklist': [],
-                            'commit_whitelist': [], 'commit_blacklist': []}},
-    }
-    lists = build_merged_lists(profile_rules)
-    assert 'drivers/net/' in lists['path_wl']
-    assert 'drivers/usb/' in lists['path_wl']
+# == E.1.2: kconfig debug populated even for kw-whitelist-saved commits ========
+
+def test_debug_kconfig_uncovered_populated_when_kw_wl_saves_commit():
+    cs = dict(
+        compiled_files={'drivers/usb/hub.c'},
+        compiled_dirs={'drivers/usb'},
+        artifact_stems=set(), log_basenames=set(), available=True,
+    )
+    c = _commit(files=['arch/arm/mm/unrelated.c'], subject='arm: fix critical bug')
+    action, reason, dbg = filter_decision(
+        c,
+        _lists(kw_wl=['critical bug']),
+        cs,
+        {'require_kconfig_coverage': True},
+        True,
+    )
+    assert action == 'keep'
+    assert reason == 'keywords_whitelist'
+    assert 'arch/arm/mm/unrelated.c' in dbg['l2half_kconfig_uncovered_files']
 
 
-# ══ A.1: debug_detail content tests ══════════════════════════════════════════════════════
+# == E.1.5 / G: zero-file commits handled explicitly ==========================
+
+def test_zero_file_commit_keeps_by_no_files_layer():
+    c = _commit(sha='merge001', subject='Merge branch x into y', files=[])
+    action, reason, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
+    assert action == 'keep'
+    assert reason == 'no_files_layer'
+
+
+def test_zero_file_commit_kept_by_kw_whitelist():
+    c = _commit(sha='zf001', subject='security: patch critical CVE', files=[])
+    action, reason, dbg = filter_decision(c, _lists(kw_wl=['CVE']), _EMPTY_CS, {}, True)
+    assert action == 'keep'
+    assert reason == 'keywords_whitelist'
+    assert len(dbg['l1a_kw_wl_matches']) >= 1
+
+
+def test_zero_file_commit_dropped_by_kw_blacklist():
+    c = _commit(sha='zf002', subject='docs: typo fix in README', files=[])
+    action, reason, dbg = filter_decision(c, _lists(kw_bl=['typo']), _EMPTY_CS, {}, True)
+    assert action == 'drop'
+    assert reason == 'keywords_blacklist'
+
+
+def test_zero_file_commit_not_dropped_by_path_blacklist():
+    c = _commit(sha='zf003', subject='Merge tag v5.15', files=[])
+    action, reason, dbg = filter_decision(
+        c, _lists(path_bl=['Documentation/']), _EMPTY_CS, {}, False)
+    assert action == 'keep'
+
+
+def test_zero_file_commit_not_dropped_by_kconfig():
+    cs = dict(
+        compiled_files={'drivers/usb/hub.c'},
+        compiled_dirs={'drivers/usb'},
+        artifact_stems=set(), log_basenames=set(), available=True,
+    )
+    c = _commit(sha='zf004', subject='random merge', files=[])
+    action, reason, dbg = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'keep'
+
+
+def test_zero_file_commit_debug_has_empty_lists():
+    c = _commit(sha='zf005', subject='Merge tag', files=[])
+    _, _, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, True)
+    assert dbg['l2a_path_bl_matches'] == []
+    assert dbg['l2b_path_wl_matches'] == []
+    assert dbg['l2half_artifact_files'] == []
+    assert dbg['l2half_kconfig_covered_files'] == []
+    assert dbg['l2half_kconfig_uncovered_files'] == []
+
+
+# == A.1: debug_detail content tests ==========================================
 
 def test_debug_detail_is_dict_with_required_keys():
-    """filter_decision() always returns a dict with the documented keys."""
-    c = _commit(subject='net: fix skb')
+    c = _commit(subject='net: fix skb', files=['net/core/sock.c'])
     _, _, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
     for key in ('sha', 'files', 'l3_commit_wl_match', 'l3_commit_bl_match',
                 'l2a_path_bl_matches', 'l2b_path_wl_matches',
@@ -342,7 +537,7 @@ def test_debug_detail_is_dict_with_required_keys():
                 'l2half_kconfig_covered_files', 'l2half_kconfig_uncovered_files',
                 'l1a_kw_wl_matches', 'l1b_kw_bl_matches',
                 'filter_enabled', 'kconfig_required'):
-        assert key in dbg, f'debug_detail missing key: {key!r}'
+        assert key in dbg, 'debug_detail missing key: %r' % (key,)
 
 
 def test_debug_detail_sha_populated():
@@ -422,7 +617,7 @@ def test_debug_detail_filter_enabled_flag():
     assert dbg['filter_enabled'] is False
 
 
-# ══ A.1: _build_prefilter_debug_entry ═════════════════════════════════════════════════════
+# == A.1: _build_prefilter_debug_entry =========================================
 
 def test_build_prefilter_debug_entry_structure():
     c = _commit(sha='abc123', subject='treewide: cleanup', files=['mm/slab.c'])
@@ -438,7 +633,7 @@ def test_build_prefilter_debug_entry_structure():
 
 
 def test_build_prefilter_debug_entry_sha_truncated():
-    sha = 'a' * 50  # longer than 40
+    sha = 'a' * 50
     c = _commit(sha=sha)
     entry = _build_prefilter_debug_entry(c, 'keywords_blacklist', {})
     assert len(entry['sha']) == 40
@@ -449,3 +644,73 @@ def test_build_prefilter_debug_entry_sha12_truncated():
     c = _commit(sha=sha)
     entry = _build_prefilter_debug_entry(c, 'keywords_blacklist', {})
     assert len(entry['sha12']) == 12
+
+
+# == Bug-1 end-to-end: btrfs commit dropped by kconfig check ===================
+
+def test_btrfs_commit_dropped_by_kconfig_when_disabled():
+    """Bug-1 regression (v13.0.1): a commit touching only fs/btrfs/ must be
+    dropped at L2half (no_kconfig_coverage) when CONFIG_BTRFS_FS is absent from
+    config_enabled_map (i.e. disabled in .config).
+
+    Simulates the exact scenario: config_enabled_map does not contain
+    CONFIG_BTRFS_FS, so build_compiled_sets() produces compiled_sets with no
+    BTRFS files/dirs. filter_decision() then finds zero covered files and drops
+    with no_kconfig_coverage.
+    """
+    pm = {
+        # CONFIG_BTRFS_FS absent (disabled in .config); only USB enabled
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/'],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is True
+    assert not any('btrfs' in f for f in cs['compiled_files'])
+
+    c = _commit(
+        sha='btrfs001',
+        subject='btrfs: fix tree corruption on power loss',
+        files=['fs/btrfs/tree-log.c'],
+    )
+    action, reason, dbg = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'drop', 'BTRFS commit must be dropped'
+    assert reason == 'no_kconfig_coverage', (
+        'Expected no_kconfig_coverage, got: %r' % reason
+    )
+    assert 'fs/btrfs/tree-log.c' in dbg['l2half_kconfig_uncovered_files']
+
+
+def test_btrfs_commit_dropped_auto_require_when_cem_has_usb_only():
+    """Bug-2 regression (v13.0.2): with require_kconfig_coverage=None (auto),
+    compiled_sets.available=True (USB in cem) → require=True → BTRFS dropped.
+
+    This is the real-world scenario: user provides .config where CONFIG_BTRFS_FS
+    is not set but CONFIG_USB=y.  The pipeline must not keep the BTRFS commit
+    under any auto-require logic.
+    """
+    pm = {
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/'],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is True
+
+    c = _commit(
+        sha='btrfs002',
+        subject='btrfs: optimize extent allocation',
+        files=['fs/btrfs/extent-tree.c'],
+    )
+    # require_kconfig_coverage=None → auto → require = available AND kconfig_enabled
+    # kconfig_enabled = cs['available'] = True → require = True
+    action, reason, dbg = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': None}, cs['available'])
+    assert action == 'drop', (
+        'BTRFS commit must be dropped with auto require_kconfig_coverage '
+        '(available=True, BTRFS not in compiled_files)'
+    )
+    assert reason == 'no_kconfig_coverage'

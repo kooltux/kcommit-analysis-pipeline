@@ -1,4 +1,9 @@
-"""Tests for lib.scoring — extract_commit_meta, score_commit."""
+"""Tests for lib.scoring — extract_commit_meta, score_commit.
+
+v13.0.1: _pm() helper now includes config_enabled_map and config_enabled_dirs
+so that _collect_product_evidence() reads from the correct field.
+test_evidence_config_map_hit / test_evidence_config_map_miss updated accordingly.
+"""
 import os
 
 from lib.scoring import extract_commit_meta, score_commit, precompile_rules
@@ -80,7 +85,7 @@ def test_score_rule_miss():
     assert 'networking' not in s['matched_profiles']
 
 
-# ── fmt helpers (E.3) ────────────────────────────────────────────────────────
+# -- fmt helpers (E.3) ---------------------------------------------------------
 from lib.scoring import fmt_profiles, fmt_evidence
 
 
@@ -106,12 +111,20 @@ def test_fmt_evidence_values():
     assert fmt_evidence(c) == 'kconfig:CONFIG_USB; path:drivers/usb'
 
 
-# ── _collect_product_evidence ─────────────────────────────────────────────────
+# -- _collect_product_evidence -------------------------------------------------
 from lib.scoring import _collect_product_evidence
 
 
 def _pm(**kw):
+    """Build a minimal product_map for evidence tests.
+
+    v13.0.1: includes config_enabled_map and config_enabled_dirs by default
+    so _collect_product_evidence() reads from the correct (enabled-only) field.
+    If a test passes config_enabled_map explicitly it overrides the default.
+    """
     base = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
         'config_to_paths':          {},
         'enabled_configs':          [],
         'config_dirs':              [],
@@ -123,42 +136,41 @@ def _pm(**kw):
 
 
 def test_evidence_config_map_hit():
+    """v13.0.1: pass config_enabled_map (enabled symbols only)."""
     c = _commit(files=['drivers/usb/core/hub.c'])
-    pm = _pm(config_to_paths={'CONFIG_USB': ['drivers/usb/core/hub.c']})
+    pm = _pm(config_enabled_map={'CONFIG_USB': ['drivers/usb/core/hub.c']})
     ev = _collect_product_evidence(c, pm)
     assert any('config_map' in e for e in ev)
 
 
 def test_evidence_config_map_miss():
+    """File not in config_enabled_map → no config_map evidence."""
     c = _commit(files=['mm/slab.c'])
-    pm = _pm(config_to_paths={'CONFIG_USB': ['drivers/usb/core/hub.c']})
+    pm = _pm(config_enabled_map={'CONFIG_USB': ['drivers/usb/core/hub.c']})
     ev = _collect_product_evidence(c, pm)
     assert not any('config_map' in e for e in ev)
 
 
 def test_evidence_artifact_hit():
-    # scoring.py: base = basename(tp) → 'hub.c'; matches if base in artifact entry
     c = _commit(files=['drivers/usb/core/hub.c'])
     c['touched_paths_guess'] = ['drivers/usb/core/hub.c']
-    pm = _pm(built_artifacts_from_dir=['drivers/usb/core/hub.c'])  # 'hub.c' in 'hub.c'
+    pm = _pm(built_artifacts_from_dir=['drivers/usb/core/hub.c'])
     ev = _collect_product_evidence(c, pm)
     assert any('artifact' in e for e in ev)
 
 
 def test_evidence_build_log_hit():
-    # scoring.py: base = basename(tp) → 'hub.c'; matches if base in log line
     c = _commit(files=['drivers/usb/core/hub.c'])
     c['touched_paths_guess'] = ['drivers/usb/core/hub.c']
-    pm = _pm(built_objects_from_log=['CC drivers/usb/core/hub.c'])  # 'hub.c' in line
+    pm = _pm(built_objects_from_log=['CC drivers/usb/core/hub.c'])
     ev = _collect_product_evidence(c, pm)
     assert any('build_log' in e for e in ev)
 
 
 def test_evidence_config_text_hit():
-    # scoring.py line 130: sym[7:].lower() in full_lower → 'usb' in subject/body
     c = _commit(subject='Fix CONFIG_USB driver crash', body='usb stack overflow')
     c['touched_paths_guess'] = []
-    pm = _pm(enabled_configs=['CONFIG_USB'])   # no =y suffix; sym[7:] = 'USB'
+    pm = _pm(enabled_configs=['CONFIG_USB'])
     ev = _collect_product_evidence(c, pm)
     assert any('config_text' in e for e in ev)
 
@@ -169,7 +181,7 @@ def test_evidence_none_product_map():
     assert ev == []
 
 
-# ── meta-multiplier bonuses (extract_commit_meta flags) ──────────────────────
+# -- meta-multiplier bonuses (extract_commit_meta flags) -----------------------
 def test_extract_meta_no_flags():
     c = _commit(subject='treewide: fix typos')
     m = extract_commit_meta(c)
@@ -191,10 +203,31 @@ def test_extract_meta_multiple_flags():
 
 
 def test_score_commit_includes_rule_trace_details():
-    commit = {'commit': 'abc123', 'subject': 'usb fix', 'body': 'CVE-2026-1234', 'files': ['drivers/usb/core.c']}
-    product_map = {'config_to_paths': {}, 'enabled_configs': [], 'config_dirs': [], 'built_objects_from_log': [], 'built_artifacts_from_dir': []}
-    profile_rules = {'sec': {'merged': {'keywords_whitelist': ['CVE-*'], 'keywords_blacklist': [], 'path_whitelist': ['drivers/usb/*'], 'path_blacklist': [], 'commit_whitelist': [], 'commit_blacklist': []}, 'rules': {'r1': {'weight': 30, 'keywords_whitelist': ['CVE-*'], 'path_whitelist': [], 'commit_whitelist': []}, 'r2': {'weight': 20, 'keywords_whitelist': [], 'path_whitelist': ['drivers/usb/*'], 'commit_whitelist': []}}}}
-    out = score_commit(commit, product_map, profile_rules, {'profiles': {'active': {'sec': 100}}})
+    commit = {'commit': 'abc123', 'subject': 'usb fix', 'body': 'CVE-2026-1234',
+              'files': ['drivers/usb/core.c']}
+    product_map = {
+        'config_enabled_map': {}, 'config_enabled_dirs': [],
+        'config_to_paths': {}, 'enabled_configs': [],
+        'config_dirs': [], 'built_objects_from_log': [],
+        'built_artifacts_from_dir': [],
+    }
+    profile_rules = {
+        'sec': {
+            'merged': {
+                'keywords_whitelist': ['CVE-*'], 'keywords_blacklist': [],
+                'path_whitelist': ['drivers/usb/*'], 'path_blacklist': [],
+                'commit_whitelist': [], 'commit_blacklist': [],
+            },
+            'rules': {
+                'r1': {'weight': 30, 'keywords_whitelist': ['CVE-*'],
+                       'path_whitelist': [], 'commit_whitelist': []},
+                'r2': {'weight': 20, 'keywords_whitelist': [],
+                       'path_whitelist': ['drivers/usb/*'], 'commit_whitelist': []},
+            },
+        }
+    }
+    out = score_commit(commit, product_map, profile_rules,
+                       {'profiles': {'active': {'sec': 100}}})
     trace = out['scoring']['trace']['profiles']['sec']
     assert trace['raw_rule_total'] == 50
     assert trace['final_score'] == 50
@@ -206,9 +239,27 @@ def test_score_commit_includes_rule_trace_details():
 
 def test_score_commit_trace_marks_blocked_profiles():
     commit = {'commit': 'deadbeef', 'subject': 'skip me', 'body': '', 'files': ['a.txt']}
-    product_map = {'config_to_paths': {}, 'enabled_configs': [], 'config_dirs': [], 'built_objects_from_log': [], 'built_artifacts_from_dir': []}
-    profile_rules = {'p': {'merged': {'keywords_whitelist': [], 'keywords_blacklist': ['skip*'], 'path_whitelist': [], 'path_blacklist': [], 'commit_whitelist': [], 'commit_blacklist': []}, 'rules': {'r': {'weight': 10, 'keywords_whitelist': ['skip*'], 'path_whitelist': [], 'commit_whitelist': []}}}}
-    out = score_commit(commit, product_map, profile_rules, {'profiles': {'active': {'p': 100}}})
+    product_map = {
+        'config_enabled_map': {}, 'config_enabled_dirs': [],
+        'config_to_paths': {}, 'enabled_configs': [],
+        'config_dirs': [], 'built_objects_from_log': [],
+        'built_artifacts_from_dir': [],
+    }
+    profile_rules = {
+        'p': {
+            'merged': {
+                'keywords_whitelist': [], 'keywords_blacklist': ['skip*'],
+                'path_whitelist': [], 'path_blacklist': [],
+                'commit_whitelist': [], 'commit_blacklist': [],
+            },
+            'rules': {
+                'r': {'weight': 10, 'keywords_whitelist': ['skip*'],
+                      'path_whitelist': [], 'commit_whitelist': []},
+            },
+        }
+    }
+    out = score_commit(commit, product_map, profile_rules,
+                       {'profiles': {'active': {'p': 100}}})
     trace = out['scoring']['trace']['profiles']['p']
     assert trace['blocked'] is True
     assert trace['final_score'] == 0

@@ -1,13 +1,20 @@
-"""Tests for lib.stages.st06_postfilter — run(), _get_threshold, rank assignment."""
-import json, os
-import pytest
+"""Tests for lib.stages.st06_postfilter -- run(), _get_threshold, _score_buckets.
 
-from lib.stages.st06_postfilter import run, _get_threshold
+v13.0.0 (E.7):
+  - Added tests for _score_buckets() helper.
+  - Added tests asserting run() writes postfilter_debug.json with the expected
+    summary structure (keys: summary, score_distribution).
+  - Added test asserting CACHE_FILES['postfilter_debug'] key exists.
+"""
+import json
+import os
+
+from lib.stages.st06_postfilter import run, _get_threshold, _score_buckets
 from lib.manifest import CACHE_FILES
 
 
 def _scored_commit(sha, score, rank=None):
-    c = {'commit': sha, 'subject': f'fix: {sha}', 'score': score,
+    c = {'commit': sha, 'subject': 'fix: %s' % sha, 'score': score,
          'author_name': 'A', 'author_time': 0,
          'matched_profiles': [], 'product_evidence': []}
     if rank is not None:
@@ -26,7 +33,7 @@ def _read_json(path):
         return json.load(f)
 
 
-# ── _get_threshold ─────────────────────────────────────────────────────────
+# -- _get_threshold ------------------------------------------------------------
 def test_get_threshold_default():
     assert _get_threshold({}) == 0.0
 
@@ -40,7 +47,66 @@ def test_get_threshold_bad_value_returns_zero():
     assert _get_threshold({'filter': {'min_score': 'high'}}) == 0.0
 
 
-# ── run(): rank assignment ─────────────────────────────────────────────────
+# -- _score_buckets ------------------------------------------------------------
+def test_score_buckets_empty():
+    b = _score_buckets([])
+    assert b['0'] == 0
+    assert b['100+'] == 0
+
+def test_score_buckets_zero_score():
+    b = _score_buckets([_scored_commit('x', 0)])
+    assert b['0'] == 1
+    assert sum(v for k, v in b.items() if k != '0') == 0
+
+def test_score_buckets_hundred_plus():
+    b = _score_buckets([_scored_commit('a', 100), _scored_commit('b', 200)])
+    assert b['100+'] == 2
+
+def test_score_buckets_various():
+    commits = [
+        _scored_commit('a', 0),
+        _scored_commit('b', 5),
+        _scored_commit('c', 15),
+        _scored_commit('d', 25),
+        _scored_commit('e', 40),
+        _scored_commit('f', 60),
+        _scored_commit('g', 80),
+        _scored_commit('h', 150),
+    ]
+    b = _score_buckets(commits)
+    assert b['0'] == 1
+    assert b['1-9'] == 1
+    assert b['10-19'] == 1
+    assert b['20-29'] == 1
+    assert b['30-49'] == 1
+    assert b['50-74'] == 1
+    assert b['75-99'] == 1
+    assert b['100+'] == 1
+
+def test_score_buckets_boundary_values():
+    """Verify bucket boundary conditions (inclusive lower, exclusive upper)."""
+    commits = [
+        _scored_commit('a', 9),    # 1-9
+        _scored_commit('b', 10),   # 10-19
+        _scored_commit('c', 19),   # 10-19
+        _scored_commit('d', 20),   # 20-29
+        _scored_commit('e', 30),   # 30-49
+        _scored_commit('f', 50),   # 50-74
+        _scored_commit('g', 75),   # 75-99
+        _scored_commit('h', 99),   # 75-99
+        _scored_commit('i', 100),  # 100+
+    ]
+    b = _score_buckets(commits)
+    assert b['1-9']   == 1
+    assert b['10-19'] == 2
+    assert b['20-29'] == 1
+    assert b['30-49'] == 1
+    assert b['50-74'] == 1
+    assert b['75-99'] == 2
+    assert b['100+']  == 1
+
+
+# -- run(): rank assignment ----------------------------------------------------
 def test_run_assigns_rank(tmp_path):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
@@ -50,14 +116,13 @@ def test_run_assigns_rank(tmp_path):
     _write_json(os.path.join(cache, CACHE_FILES['filtered']), [])
 
     relevant, low, thresh = run({}, cache)
-    # Should be sorted descending by score
     assert [c['commit'] for c in relevant] == ['bbb', 'aaa', 'ccc']
     assert [c['_rank'] for c in relevant] == [1, 2, 3]
     assert thresh == 0.0
     assert low == []
 
 
-# ── run(): threshold drops commits ────────────────────────────────────────
+# -- run(): threshold drops commits --------------------------------------------
 def test_run_threshold_drops_low_scores(tmp_path):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
@@ -75,7 +140,7 @@ def test_run_threshold_drops_low_scores(tmp_path):
     assert 'score_below_threshold' in low[0]['_filter_reason']
 
 
-# ── run(): dropped written to dedicated postfilter cache ───────────────────
+# -- run(): dropped written to postfilter cache --------------------------------
 def test_run_writes_postfilter_dropped_cache(tmp_path):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
@@ -89,7 +154,7 @@ def test_run_writes_postfilter_dropped_cache(tmp_path):
     assert shas == ['drop']
 
 
-# ── run(): relevant written to cache ──────────────────────────────────────
+# -- run(): relevant written to cache ------------------------------------------
 def test_run_writes_relevant_cache(tmp_path):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
@@ -104,7 +169,7 @@ def test_run_writes_relevant_cache(tmp_path):
     assert relevant[0]['_rank'] == 1
 
 
-# ── run(): empty scored list ───────────────────────────────────────────────
+# -- run(): empty scored list --------------------------------------------------
 def test_run_empty_scored(tmp_path):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
@@ -115,7 +180,7 @@ def test_run_empty_scored(tmp_path):
     assert low == []
 
 
-# ── run(): zero-score commits kept when no threshold ─────────────────────
+# -- run(): zero-score commits kept when no threshold --------------------------
 def test_run_zero_score_kept_without_threshold(tmp_path):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
@@ -125,3 +190,109 @@ def test_run_zero_score_kept_without_threshold(tmp_path):
     relevant, low, _ = run({}, cache)
     assert len(relevant) == 1
     assert low == []
+
+
+# == E.7: postfilter_debug.json written by run() ==============================
+
+def test_run_writes_postfilter_debug_json(tmp_path):
+    """E.7: run() must write postfilter_debug.json in the cache directory."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    _write_json(os.path.join(cache, CACHE_FILES['scored']),
+                [_scored_commit('a', 80), _scored_commit('b', 5)])
+    run({'filter': {'min_score': 10}}, cache)
+    debug_path = os.path.join(cache, CACHE_FILES['postfilter_debug'])
+    assert os.path.isfile(debug_path), 'postfilter_debug.json not written'
+
+
+def test_postfilter_debug_json_top_level_keys(tmp_path):
+    """E.7: postfilter_debug.json must have 'summary' and 'score_distribution' keys."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    _write_json(os.path.join(cache, CACHE_FILES['scored']),
+                [_scored_commit('a', 80), _scored_commit('b', 5)])
+    run({'filter': {'min_score': 10}}, cache)
+    data = _read_json(os.path.join(cache, CACHE_FILES['postfilter_debug']))
+    assert 'summary' in data
+    assert 'score_distribution' in data
+
+
+def test_postfilter_debug_json_summary_keys(tmp_path):
+    """E.7: summary block must contain the documented keys."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    _write_json(os.path.join(cache, CACHE_FILES['scored']),
+                [_scored_commit('a', 80), _scored_commit('b', 5)])
+    run({'filter': {'min_score': 10}}, cache)
+    data = _read_json(os.path.join(cache, CACHE_FILES['postfilter_debug']))
+    s = data['summary']
+    for key in ('total_scored', 'kept', 'dropped', 'threshold',
+                'top_score', 'bottom_kept_score', 'top_dropped_score'):
+        assert key in s, 'postfilter_debug summary missing key: %r' % (key,)
+
+
+def test_postfilter_debug_json_summary_values(tmp_path):
+    """E.7: summary counts must reflect the actual run."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    _write_json(os.path.join(cache, CACHE_FILES['scored']),
+                [_scored_commit('a', 80), _scored_commit('b', 5)])
+    run({'filter': {'min_score': 10}}, cache)
+    data = _read_json(os.path.join(cache, CACHE_FILES['postfilter_debug']))
+    s = data['summary']
+    assert s['total_scored'] == 2
+    assert s['kept']         == 1
+    assert s['dropped']      == 1
+    assert s['threshold']    == 10.0
+    assert s['top_score']    == 80
+    assert s['bottom_kept_score'] == 80
+    assert s['top_dropped_score'] == 5
+
+
+def test_postfilter_debug_json_score_distribution_keys(tmp_path):
+    """E.7: score_distribution must have 'all_scored', 'kept', 'dropped' sub-dicts."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    _write_json(os.path.join(cache, CACHE_FILES['scored']),
+                [_scored_commit('a', 80)])
+    run({}, cache)
+    data = _read_json(os.path.join(cache, CACHE_FILES['postfilter_debug']))
+    sd = data['score_distribution']
+    assert 'all_scored' in sd
+    assert 'kept' in sd
+    assert 'dropped' in sd
+
+
+def test_postfilter_debug_json_no_threshold_empty_dropped_buckets(tmp_path):
+    """E.7: when no threshold is set, dropped score_distribution bucket should
+    be all zeros."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    _write_json(os.path.join(cache, CACHE_FILES['scored']),
+                [_scored_commit('a', 80)])
+    run({}, cache)
+    data = _read_json(os.path.join(cache, CACHE_FILES['postfilter_debug']))
+    dropped_buckets = data['score_distribution']['dropped']
+    assert all(v == 0 for v in dropped_buckets.values())
+
+
+def test_postfilter_debug_json_empty_scored(tmp_path):
+    """E.7: run() on empty input must still write valid postfilter_debug.json."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    _write_json(os.path.join(cache, CACHE_FILES['scored']), [])
+    run({}, cache)
+    data = _read_json(os.path.join(cache, CACHE_FILES['postfilter_debug']))
+    assert data['summary']['total_scored'] == 0
+    assert data['summary']['kept']         == 0
+    assert data['summary']['dropped']      == 0
+    assert data['summary']['top_score']    == 0
+
+
+# == CACHE_FILES manifest key ==================================================
+
+def test_cache_files_has_postfilter_debug_key():
+    """E.7: CACHE_FILES must expose 'postfilter_debug' so callers have a
+    stable, named key to reference rather than a hardcoded filename."""
+    assert 'postfilter_debug' in CACHE_FILES
+    assert CACHE_FILES['postfilter_debug'].endswith('.json')

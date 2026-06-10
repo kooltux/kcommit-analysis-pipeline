@@ -1,7 +1,15 @@
-"""Tests for lib.profile_rules — active_profile_names, compile_rules_for_config,
-load_profile_rules, _merged_patterns."""
+"""Tests for lib.profile_rules -- active_profile_names, compile_rules_for_config,
+load_profile_rules, _merged_patterns.
+
+v13.0.0 (E.2, E.8):
+  E.2 -- added test: load_profile_rules() recompiles when a rule file is modified
+         (stale cache based on content hash, not timestamp).
+  E.8 -- added test: _compute_schema_hash() only hashes the loaded rule files,
+         not the entire rules directory tree.
+"""
 import json
 import os
+import time
 
 from lib.profile_rules import (
     active_profile_names,
@@ -40,7 +48,7 @@ def _cfg(tmp_path, active, profiles_dir, rules_dir):
     }
 
 
-# ── active_profile_names ──────────────────────────────────────────────────────
+# -- active_profile_names ------------------------------------------------------
 def test_active_profile_names_dict():
     cfg = {'profiles': {'active': {'security_fixes': 100, 'networking': 80}}}
     names = active_profile_names(cfg)
@@ -63,7 +71,7 @@ def test_active_profile_names_missing():
     assert active_profile_names(cfg) == []
 
 
-# ── _merged_patterns ──────────────────────────────────────────────────────────
+# -- _merged_patterns ----------------------------------------------------------
 def test_merged_patterns_empty():
     assert _merged_patterns(None) == {}
     assert _merged_patterns({}) == {}
@@ -74,7 +82,7 @@ def test_merged_patterns_returns_merged_dict():
     assert _merged_patterns(pdata) == {'keywords_whitelist': ['usb']}
 
 
-# ── compile_rules_for_config ──────────────────────────────────────────────────
+# -- compile_rules_for_config --------------------------------------------------
 def test_compile_rules_basic(tmp_path):
     pd = tmp_path / 'profiles'; pd.mkdir()
     rd = tmp_path / 'rules';    rd.mkdir()
@@ -126,7 +134,7 @@ def test_compile_rules_merged_union(tmp_path):
     assert any('bluetooth' in k for k in kw_strs)
 
 
-# ── load_profile_rules ────────────────────────────────────────────────────────
+# -- load_profile_rules --------------------------------------------------------
 def test_load_profile_rules_uses_compiled_cache(tmp_path):
     """load_profile_rules compiles and writes cache; second call reads it."""
     pd = tmp_path / 'profiles'; pd.mkdir()
@@ -143,6 +151,93 @@ def test_load_profile_rules_uses_compiled_cache(tmp_path):
     assert 'security_fixes' in result2
 
 
+# == E.2: stale cache detection via content hash ===============================
+
+def test_load_profile_rules_recompiles_when_rule_file_changes(tmp_path):
+    """E.2: load_profile_rules() must detect a stale cache when a rule file
+    body is modified, even if the file mtime has not changed.
+
+    The test writes an initial rule, calls load_profile_rules() to prime the
+    cache, then modifies the rule file content, then calls load_profile_rules()
+    again.  The second call must return the updated patterns (i.e. it
+    recompiled rather than reading the stale cache).
+    """
+    pd = tmp_path / 'profiles'; pd.mkdir()
+    rd = tmp_path / 'rules';    rd.mkdir()
+    (tmp_path / 'cache').mkdir()
+    _write_rule(rd, 'r1', ['original-keyword'])
+    _write_profile(pd, 'sec', ['r1'])
+    cfg = _cfg(tmp_path, {'sec': 100}, pd, rd)
+
+    # Prime the cache
+    result1 = load_profile_rules(cfg)
+    kw1 = result1['sec']['merged'].get('keywords_whitelist', [])
+    kw1_strs = [p if isinstance(p, str) else p.pattern for p in kw1]
+    assert any('original-keyword' in k for k in kw1_strs), \
+        'original-keyword not found in first load: %r' % kw1_strs
+
+    # Overwrite rule file with new content
+    rule_file = os.path.join(str(rd), 'r1', 'keywords_whitelist.txt')
+    with open(rule_file, 'w') as f:
+        f.write('replaced-keyword\n')
+
+    # Second load must detect the change and recompile
+    result2 = load_profile_rules(cfg)
+    kw2 = result2['sec']['merged'].get('keywords_whitelist', [])
+    kw2_strs = [p if isinstance(p, str) else p.pattern for p in kw2]
+    assert any('replaced-keyword' in k for k in kw2_strs), (
+        'E.2: load_profile_rules() did not recompile after rule file content '
+        'changed. Got: %r' % kw2_strs
+    )
+    assert not any('original-keyword' in k for k in kw2_strs), (
+        'E.2: stale original-keyword still present after rule file change. '
+        'Got: %r' % kw2_strs
+    )
+
+
+# == E.8: hash only covers loaded files =======================================
+
+def test_schema_hash_does_not_include_unloaded_files(tmp_path):
+    """E.8: adding a rule file that is NOT referenced by any active profile
+    must NOT invalidate the compiled cache.
+
+    If E.8 is correctly implemented, the hash only covers the profile JSON
+    and rule body files actually loaded for the active profiles.  An
+    irrelevant extra file should not change the hash and therefore should not
+    trigger a recompile.
+    """
+    pd = tmp_path / 'profiles'; pd.mkdir()
+    rd = tmp_path / 'rules';    rd.mkdir()
+    (tmp_path / 'cache').mkdir()
+    _write_rule(rd, 'r1', ['relevant-keyword'])
+    _write_profile(pd, 'sec', ['r1'])
+    cfg = _cfg(tmp_path, {'sec': 100}, pd, rd)
+
+    # Prime the cache
+    result1 = load_profile_rules(cfg)
+    assert 'sec' in result1
+
+    # Record the compiled_rules.json mtime to detect recompilation
+    from lib.manifest import CACHE_FILES
+    cache_file = os.path.join(str(tmp_path / 'cache'), CACHE_FILES['compiled_rules'])
+    mtime_before = os.path.getmtime(cache_file) if os.path.exists(cache_file) else None
+
+    # Add an unrelated rule file that no active profile references
+    _write_rule(rd, 'r_unused', ['irrelevant-keyword'])
+
+    # Second load: should still use cached result
+    result2 = load_profile_rules(cfg)
+    assert 'sec' in result2
+
+    if mtime_before is not None and os.path.exists(cache_file):
+        mtime_after = os.path.getmtime(cache_file)
+        assert mtime_after == mtime_before, (
+            'E.8: compiled_rules.json was rewritten after adding an unreferenced '
+            'rule file, suggesting the hash covers more files than it should.'
+        )
+
+
+# -- fallback to builtin rules dir ---------------------------------------------
 def test_compile_rules_falls_back_to_builtin_rule_dirs(tmp_path):
     """D.1: external configs may reference shipped shared rules without copying
     them into the external rules tree."""
@@ -168,7 +263,6 @@ def test_compile_rules_prefers_external_rule_dir_before_builtin(tmp_path):
     kw = result['performance']['merged'].get('keywords_whitelist', [])
     kw_strs = [p if isinstance(p, str) else p.pattern for p in kw]
     assert any('artemis-only-keyword' in k for k in kw_strs)
-
 
 
 def test_compile_rules_accepts_singular_paths_rules_dir_alias(tmp_path):
@@ -209,7 +303,6 @@ def test_compile_rules_accepts_singular_paths_profiles_dir_alias(tmp_path):
     assert 'r1' in out['myprof']['rules']
 
 
-
 def test_compile_rules_builtin_profile_uses_builtin_rule_dirs(tmp_path):
     cfg = {
         'profiles': {'active': {'performance': 100}},
@@ -243,7 +336,6 @@ def test_compile_rules_external_profile_can_use_builtin_rule_fallback(tmp_path):
     assert 'performance' in out
     assert 'generic' in out['performance']['rules']
     assert 'performance_general' in out['performance']['rules']
-
 
 
 def test_compile_rules_builtin_rule_alias_artemis_generic_falls_back_to_generic(tmp_path):

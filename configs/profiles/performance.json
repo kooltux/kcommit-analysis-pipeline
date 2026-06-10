@@ -3,9 +3,10 @@
   "name": "performance",
   "description": "Performance improvements: latency reduction, throughput gains, scalability, and scheduler/memory hotpath optimisations.",
   "rules": {
-    "generic": 20,
-    "performance_general": 70,
-    "performance_latency": 80,
+    "product_scope":          10,
+    "generic":                20,
+    "performance_general":    70,
+    "performance_latency":    80,
     "performance_throughput": 80
   }
 }
