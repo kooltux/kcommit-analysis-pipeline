@@ -368,3 +368,113 @@ def test_summary_css_detail_pane_is_scrollable():
     # Ensure it's not overridden by overflow: hidden
     # Check that the detail panel has a defined height
     assert 'min(92vh, 980px)' in css
+
+
+def test_html_detail_pane_has_tabs(tmp_path):
+    """Detail pane must have Overview, Scoring, Files, Raw tabs."""
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'abc123456789', 'subject': 'subj', 'body': 'body',
+        'author_name': 'A', 'author_time': 1700000000,
+        'score': 42, 'matched_profiles': ['security'], 'product_evidence': ['config_map:CONFIG_USB'],
+        'scoring': {'profiles': {'security': 42}, 'trace': {'profiles': {}}},
+        'files': ['drivers/usb/core.c']
+    }]
+    generate_html_report(commits, {}, {}, str(out))
+    txt = out.read_text(encoding='utf-8')
+    assert 'Overview' in txt
+    assert 'Scoring' in txt
+    assert 'Files' in txt
+    assert 'Raw' in txt
+    assert 'kc-tab' in txt
+    assert 'kc-tab-content' in txt
+
+
+def test_detail_pane_shows_decision_rationale(tmp_path):
+    """Detail pane must show why a commit was kept."""
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'abc123456789', 'subject': 'usb fix', 'body': 'Fix use-after-free',
+        'author_name': 'Dev', 'author_time': 1700000000,
+        'score': 87, 'matched_profiles': ['security_fixes'],
+        'product_evidence': ['config_map:CONFIG_USB'],
+        'scoring': {
+            'profiles': {'security_fixes': 87},
+            'trace': {
+                'profiles': {
+                    'security_fixes': {
+                        'multiplier': 1.0,
+                        'final_score': 87,
+                        'raw_rule_total': 87,
+                        'raw_rule_total_capped': 87,
+                        'blocked': False,
+                        'rules': {
+                            'security_memory': {
+                                'weight': 80, 'matched': True, 'score': 80,
+                                'matches': {'keywords_whitelist': [{'pattern': 'use-after-free', 'value': 'Fix use-after-free'}]}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        'files': ['drivers/usb/core.c']
+    }]
+    generate_html_report(commits, {}, {}, str(out))
+    txt = out.read_text(encoding='utf-8')
+    assert 'Why This Commit Was Kept' in txt
+    assert 'Kept' in txt
+    assert 'Score 87' in txt
+
+
+def test_detail_pane_shows_scoring_breakdown(tmp_path):
+    """Detail pane must show per-profile score breakdown."""
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'abc123456789', 'subject': 'security fix',
+        'author_name': 'Dev', 'author_time': 1700000000,
+        'score': 87,
+        'matched_profiles': ['security_fixes'],
+        'scoring': {
+            'profiles': {'security_fixes': 87},
+            'trace': {
+                'profiles': {
+                    'security_fixes': {
+                        'multiplier': 1.0,
+                        'final_score': 87,
+                        'raw_rule_total': 160,
+                        'raw_rule_total_capped': 100,
+                        'rules': {
+                            'security_memory': {'weight': 80, 'matched': True, 'score': 80},
+                            'security_cve_bugs': {'weight': 100, 'matched': True, 'score': 100}
+                        }
+                    }
+                }
+            }
+        }
+    }]
+    generate_html_report(commits, {}, {}, str(out))
+    txt = out.read_text(encoding='utf-8')
+    assert 'Score Breakdown' in txt
+    assert 'security_fixes' in txt
+    assert 'Final:' in txt
+    assert 'security_memory' in txt
+    assert 'security_cve_bugs' in txt
+
+
+def test_detail_pane_shows_files_tab(tmp_path):
+    """Detail pane Files tab must show changed files with coverage status."""
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'abc123456789', 'subject': 'driver fix',
+        'author_name': 'Dev', 'author_time': 1700000000,
+        'score': 50,
+        'matched_profiles': ['security'],
+        'files': ['drivers/usb/core.c', 'drivers/usb/hub.c'],
+        'scoring': {'profiles': {'security': 50}, 'trace': {'profiles': {}}}
+    }]
+    generate_html_report(commits, {}, {}, str(out))
+    txt = out.read_text(encoding='utf-8')
+    assert 'Changed Files' in txt
+    assert 'drivers/usb/core.c' in txt
+    assert 'drivers/usb/hub.c' in txt
