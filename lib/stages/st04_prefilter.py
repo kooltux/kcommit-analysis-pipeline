@@ -56,14 +56,25 @@ v13.0.0 changes (E.1.1-E.1.6, E.6):
            (was incorrectly 'default'), matching the module docstring and E.1.5
            specification above.
 
+v13.0.1 changes (Bug-1 fix):
+  H     -- build_compiled_sets(): reads product_map['config_enabled_map'] and
+           product_map['config_enabled_dirs'] instead of 'config_to_paths'.
+           The enabled-symbol join (previously performed here) is now done
+           upstream in st03 _filter_to_enabled(), so build_compiled_sets()
+           no longer needs to re-filter.  compiled_files is built directly
+           from config_enabled_map values; compiled_dirs is taken directly
+           from config_enabled_dirs.  This removes the only place where
+           disabled CONFIG symbols could still slip through (e.g. CONFIG_BTRFS_FS
+           appearing in config_to_paths despite being disabled in .config).
+
 prefilter_debug.json schema (A.1 / v13.0.0):
   {
     "summary": {
       "total_commits":   <int>,
       "kept":            <int>,
       "dropped":         <int>,
-      "drop_reasons":    { reason: count, … },   # renamed from reason_counts in v13
-      "pattern_counts":  { commit_wl: N, … },
+      "drop_reasons":    { reason: count, ... },   # renamed from reason_counts in v13
+      "pattern_counts":  { commit_wl: N, ... },
       "kconfig_active":  <bool>,
       "compiled_files":  <int>,
       "compiled_dirs":   <int>
@@ -74,11 +85,11 @@ prefilter_debug.json schema (A.1 / v13.0.0):
         "sha12":       <str>,
         "subject":     <str>,
         "author":      <str>,
-        "files":       [<str>, …],
+        "files":       [<str>, ...],
         "drop_reason": <str>,
-        "debug":       { … }
+        "debug":       { ... }
       },
-      …
+      ...
     ]
   }
 """
@@ -149,53 +160,57 @@ def build_compiled_sets(product_map):
     """Build the compiled_sets lookup structure used by _file_has_artifact() and
     _file_is_kconfig_covered().
 
-    E.1.6 (v13.0.0): removed the ambiguous else-branch in the enabled_set
-    construction loop.  Previously, entries in enabled_raw that had no '='
-    separator (e.g. a bare 'CONFIG_FOO') were added as-is.  However,
-    config_to_paths keys are always bare symbols ('CONFIG_FOO'), while
-    load_kernel_config_symbols() always returns 'CONFIG_FOO=y' strings.  The
-    else-branch could never be reached in normal operation and masked a latent
-    bug where raw 'CONFIG_FOO=m' strings (which DO contain '=') were parsed
-    by the if-branch correctly, while hypothetical bare entries without '='
-    would be silently passed through.  The correct fix is to only accept
-    entries in 'CONFIG_X=y' or 'CONFIG_X=m' form and ignore all others.
+    v13.0.1 (H): reads config_enabled_map and config_enabled_dirs from
+    product_map instead of config_to_paths.  config_enabled_map is the
+    enabled-symbol-only subset computed by st03 _filter_to_enabled(); it
+    contains only CONFIG symbols that are =y or =m in the product .config.
+    The enabled-symbol join that was previously performed here (building
+    enabled_set and filtering c2p) is no longer needed -- config_enabled_map
+    is already filtered.  compiled_dirs is taken directly from
+    config_enabled_dirs rather than being re-derived from compiled_files.
+
+    Falls back to config_to_paths when config_enabled_map is absent (e.g.
+    caches produced before v13.0.1), so that re-running st04 alone without
+    re-running st03 produces a clear empty result rather than a silent
+    misclassification.
     """
     empty = dict(compiled_files=set(), compiled_dirs=set(),
                  artifact_stems=set(), log_basenames=set(), available=False)
     if not product_map:
         return empty
-    c2p         = product_map.get('config_to_paths', {}) or {}
-    enabled_raw = product_map.get('enabled_configs',  []) or []
-    enabled_set = set()
-    for s in enabled_raw:
-        if '=' in s:
-            sym, _, val = s.partition('=')
-            if val.strip() in ('y', 'm'):
-                enabled_set.add(sym)
-        else:
-            # Bare symbols without a value suffix (no '=') are not produced by
-            # load_kernel_config_symbols() under normal operation.  Log and skip
-            # rather than silently adding them, which could cause false positives.
-            logging.debug(
-                'build_compiled_sets: ignoring bare enabled_config entry without value: %r', s)
+
+    # v13.0.1 (H): prefer config_enabled_map; warn if falling back.
+    cem = product_map.get('config_enabled_map')
+    if cem is None:
+        logging.warning(
+            'build_compiled_sets: config_enabled_map not found in product_map '
+            '(cache pre-dates v13.0.1). Re-run stage 03 to fix. '
+            'Falling back to empty compiled set to avoid false-positive keeps.')
+        return empty
 
     compiled_files = set()
-    for sym, paths in c2p.items():
-        if sym in enabled_set:
-            compiled_files.update(paths)
+    for paths in cem.values():
+        compiled_files.update(paths)
+
     if not compiled_files:
         return empty
-    compiled_dirs = {os.path.dirname(f) for f in compiled_files}
+
+    # Take config_enabled_dirs directly from product_map (pre-computed in st03).
+    ced = product_map.get('config_enabled_dirs') or []
+    compiled_dirs = set(ced)
     compiled_dirs.discard('')
+
     artifact_stems = set()
     for p in (product_map.get('built_artifacts_from_dir', []) or []):
         stem, _ = os.path.splitext(p)
         artifact_stems.add(stem)
+
     log_basenames = set()
     for p in (product_map.get('built_objects_from_log', []) or []):
         bn = os.path.basename(p)
         stem, _ = os.path.splitext(bn)
         log_basenames.add(stem)
+
     return dict(compiled_files=compiled_files, compiled_dirs=compiled_dirs,
                 artifact_stems=artifact_stems, log_basenames=log_basenames, available=True)
 
@@ -223,12 +238,10 @@ def _file_has_artifact(f, cs):
        ``compiled_files``.  This scopes the match to "same compiled directory"
        rather than "anywhere in the tree".
     """
-    # Source 1: full-path artifact stem (precise, no extra qualification needed)
     stem, _ = os.path.splitext(f)
     if stem in cs['artifact_stems']:
         return True
 
-    # Source 2: log basename stem -- only valid when directory is compiled
     bn_stem, _ = os.path.splitext(os.path.basename(f))
     if bn_stem not in cs['log_basenames']:
         return False
@@ -411,8 +424,6 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
         return 'keep', 'filter_disabled', d
 
     # E.1.5 / G: zero-file commits skip path/artifact/kconfig layers entirely.
-    # Reason is 'no_files_layer' for a plain default keep so they can be
-    # identified separately from commits with files that reach L0.
     if not files:
         d = _debug()
         kw_wl_hits = _collect_hits(kw_wl, [subj, body]) if kw_wl else []
@@ -443,10 +454,8 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
         return 'keep', 'build_artifact', d
 
     # L2half kconfig coverage miss
-    # E.1.2: kconfig_covered/uncovered already computed above
     if kconfig_enabled and require:
         if not kconfig_covered:
-            # Keyword whitelist can save a kconfig-missed commit
             kw_wl_hits = _collect_hits(kw_wl, [subj, body]) if kw_wl else []
             if kw_wl_hits:
                 d = _debug()
@@ -516,16 +525,15 @@ def run(cfg, cache):
     kept            = []
     dropped_commits = []
     reasons         = {}
-    debug_entries   = []   # A.1: per-dropped-commit debug records
+    debug_entries   = []
 
     for i, c in enumerate(commits):
         action, reason, dbg = filter_decision(c, lists, compiled_sets, filter_cfg, kconfig_active)
         if action == 'drop':
             c['_filter_reason'] = reason
-            c['_prefilter_debug'] = dbg          # A.1: attach debug to commit
+            c['_prefilter_debug'] = dbg
             reasons[reason] = reasons.get(reason, 0) + 1
             dropped_commits.append(c)
-            # A.1: collect debug record for the debug output file
             debug_entries.append(_build_prefilter_debug_entry(c, reason, dbg))
         else:
             kept.append(c)
@@ -540,9 +548,6 @@ def run(cfg, cache):
     save_json(os.path.join(cache, CACHE_FILES['prefilter_kept']), kept)
     save_json(os.path.join(cache, CACHE_FILES['filtered']), dropped_commits)
 
-    # A.1: write prefilter_debug.json
-    # Keys: 'dropped' (list of per-commit debug records) and
-    # 'summary.drop_reasons' (reason → count map).
     reason_summary = {}
     for r, cnt in sorted(reasons.items(), key=lambda kv: -kv[1]):
         reason_summary[r] = cnt
@@ -551,7 +556,7 @@ def run(cfg, cache):
             'total_commits':   total,
             'kept':            len(kept),
             'dropped':         len(dropped_commits),
-            'drop_reasons':    reason_summary,          # v13: was 'reason_counts'
+            'drop_reasons':    reason_summary,
             'pattern_counts': {
                 'commit_wl':  len(lists['commit_wl']),
                 'commit_bl':  len(lists['commit_bl']),
@@ -564,7 +569,7 @@ def run(cfg, cache):
             'compiled_files':  len(compiled_sets['compiled_files']),
             'compiled_dirs':   len(compiled_sets['compiled_dirs']),
         },
-        'dropped': debug_entries,                       # v13: was 'dropped_commits'
+        'dropped': debug_entries,
     }
     save_json(os.path.join(cache, CACHE_FILES['prefilter_debug']), debug_output)
     logging.debug('prefilter_debug.json: %d dropped commit entries written', len(debug_entries))
@@ -582,7 +587,6 @@ def write_outputs(cfg, dropped_commits, outdir):
     reports = cfg.get('reports', {}) or {}
     os.makedirs(outdir, exist_ok=True)
 
-    # Always write dropped JSON
     jp = os.path.join(outdir, 'filtered_commits.json')
     with open(jp, 'w', encoding='utf-8') as f:
         json.dump(dropped_commits, f, indent=2, default=str)

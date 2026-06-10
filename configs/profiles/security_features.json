@@ -3,9 +3,10 @@
   "name": "security_features",
   "description": "New security features, hardening changes, and capability/policy updates.",
   "rules": {
-    "security_general": 70,
-    "security_auth_caps": 80,
+    "product_scope":        10,
+    "security_general":     70,
+    "security_auth_caps":   80,
     "security_crypto_time": 80,
-    "security_syscalls": 60
+    "security_syscalls":    60
   }
 }

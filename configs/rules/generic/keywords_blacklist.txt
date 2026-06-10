@@ -1,6 +1,47 @@
+# generic/keywords_blacklist.txt
+# L1b keyword blacklist — applies across all profiles.
+# Commits whose subject/body matches any of these are dropped at L1b
+# (unless already saved by L1a whitelist or a higher layer).
+
+# --- Original entries ---
 spelling
 typo
 *documentation*
 comment only
 whitespace
 *cleanup*
+
+# --- MAINTAINERS / credits churn (never compilable content) ---
+re:(?i)^MAINTAINERS\b
+re:(?i)\bMAINTAINERS\b.*:\s*(add|remove|update|change|replace)
+re:(?i)update.*\bmaintainer\b
+re:(?i)add.*\bmaintainer\b
+re:(?i)remove.*\bmaintainer\b
+re:(?i)\bowner(ship)?\b.*transfer
+
+# --- Coding style / formatting noise ---
+re:(?i)\bcoding[\s_-]style\b
+re:(?i)\bcheckpatch\b
+re:(?i)\bformatting\b.*(fix|change|only)
+re:(?i)^(fix|clean)\s+(up\s+)?coding\s+style
+re:(?i)\bindentation\b
+re:(?i)\btrailing\s+white\s*space\b
+re:(?i)\btabs?\s+to\s+spaces\b
+
+# --- Build system / defconfig noise ---
+re:(?i)\bdefconfig\b.*(update|bump|enable|disable)
+re:(?i)update\s+\w+defconfig
+re:(?i)\bKconfig\b.*\bdefault\b
+re:(?i)^kconfig:\s+
+
+# --- Version bump / tag noise ---
+re:(?i)^Linux\s+\d+\.\d+(\.\d+)?
+re:(?i)\bbump\b.*(version|release)
+
+# --- Translation / localisation ---
+re:(?i)\btranslation\b
+re:(?i)\bl10n\b|\bi18n\b
+re:(?i)\bpo\s+file\b
+
+# --- Revert of revert (double-revert noise) ---
+re:(?i)^Revert\s+"Revert\s+

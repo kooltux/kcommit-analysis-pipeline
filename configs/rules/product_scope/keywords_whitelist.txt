@@ -1,0 +1,19 @@
+# product_scope/keywords_whitelist.txt
+# Qualcomm SDX55 / sdxprairie keyword saves.
+#
+# These patterns rescue commits whose files narrowly miss the path_whitelist
+# (e.g. a cross-subsystem fix touching only a header), or that are described
+# in the commit subject/body using SDX55-specific vocabulary.
+#
+# Qualcomm platform identifiers
+re:(?i)qualcomm|qcom
+re:(?i)sdx55|sdxprairie
+re:(?i)snapdragon
+re:(?i)msm|mdm|apq
+re:(?i)qrtr|qmi
+re:(?i)smd|glink|apr
+re:(?i)rmnet|ipa
+re:(?i)pil|modem|wcnss
+re:(?i)llcc|bwmon
+re:(?i)qpnp|spmi
+re:(?i)rpm|rpmh|cprf

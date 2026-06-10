@@ -1,4 +1,9 @@
-"""Extra tests for lib.scoring — product evidence, meta extraction, formatting."""
+"""Extra tests for lib.scoring — product evidence, meta extraction, formatting.
+
+v13.0.1: test_score_commit_product_evidence_config_map updated to supply
+config_enabled_map instead of config_to_paths, matching the new field
+read by _collect_product_evidence().
+"""
 import pytest
 
 from lib.scoring import (
@@ -46,7 +51,7 @@ def _profile_rules(kw_wl=None, kw_bl=None, path_wl=None, path_bl=None,
     }
 
 
-# ── extract_commit_meta ───────────────────────────────────────────────────────
+# -- extract_commit_meta -------------------------------------------------------
 def test_meta_fixes_tag():
     m = extract_commit_meta({'subject': 'fix: null deref', 'body': 'Fixes: abc123'})
     assert m['is_fix'] is True
@@ -58,7 +63,8 @@ def test_meta_cve():
 
 
 def test_meta_syzbot():
-    m = extract_commit_meta({'subject': 'mm: fix', 'body': 'Reported-by: syzbot+abc@google.com'})
+    m = extract_commit_meta({'subject': 'mm: fix',
+                              'body': 'Reported-by: syzbot+abc@google.com'})
     assert m['has_syzbot'] is True
 
 
@@ -78,7 +84,7 @@ def test_meta_none_fields():
     assert isinstance(m, dict)
 
 
-# ── score_commit — hit/miss/blacklist paths ───────────────────────────────────
+# -- score_commit — hit/miss/blacklist paths -----------------------------------
 def test_score_commit_keyword_hit():
     c = _commit(subject='net: fix skb leak')
     pr = _profile_rules()
@@ -142,21 +148,30 @@ def test_score_commit_capped_at_100_per_profile():
                         'path_whitelist': [], 'path_blacklist': [],
                         'commit_whitelist': [], 'commit_blacklist': [],
                         'weight': 60} for i in range(5)}
-    pr = {'networking': {'description': '', 'rules': rules,
-                  'merged': {'keywords_whitelist': ['net:'], 'keywords_blacklist': [],
-                              'path_whitelist': [], 'path_blacklist': [],
-                              'commit_whitelist': [], 'commit_blacklist': []}}}
+    pr = {'networking': {
+        'description': '', 'rules': rules,
+        'merged': {'keywords_whitelist': ['net:'], 'keywords_blacklist': [],
+                   'path_whitelist': [], 'path_blacklist': [],
+                   'commit_whitelist': [], 'commit_blacklist': []}}}
     precompile_rules(pr)
     r = score_commit(_commit(subject='net: big fix'), {}, pr)
     assert r['scoring']['profiles']['networking'] <= 100
 
 
 def test_score_commit_product_evidence_config_map():
+    """v13.0.1: product_map must supply config_enabled_map (not config_to_paths)
+    for _collect_product_evidence() to emit config_map evidence tags.
+    """
     c = _commit(files=['drivers/usb/hub.c'])
-    pm = {'config_to_paths': {'CONFIG_USB': ['drivers/usb/hub.c']},
-          'enabled_configs': ['CONFIG_USB'],
-          'config_dirs': [], 'built_objects_from_log': [],
-          'built_artifacts_from_dir': []}
+    pm = {
+        'config_enabled_map':       {'CONFIG_USB': ['drivers/usb/hub.c']},
+        'config_enabled_dirs':      ['drivers/usb/'],
+        'config_to_paths':          {'CONFIG_USB': ['drivers/usb/hub.c']},
+        'enabled_configs':          ['CONFIG_USB=y'],
+        'config_dirs':              ['drivers/usb/'],
+        'built_objects_from_log':   [],
+        'built_artifacts_from_dir': [],
+    }
     r = score_commit(c, pm, {})
     assert any('config_map:CONFIG_USB' in e for e in r['product_evidence'])
 
@@ -167,7 +182,7 @@ def test_score_commit_meta_stored():
     assert r['meta'].get('has_cve') is True
 
 
-# ── fmt_profiles / fmt_evidence ───────────────────────────────────────────────
+# -- fmt_profiles / fmt_evidence -----------------------------------------------
 def test_fmt_profiles_multiple():
     c = {'matched_profiles': ['networking', 'security_fixes']}
     assert fmt_profiles(c) == 'networking; security_fixes'
