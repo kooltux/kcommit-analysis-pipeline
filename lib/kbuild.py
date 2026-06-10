@@ -21,6 +21,17 @@ v13.0.2 changes (Bug-2 fix):
   - load_kernel_config_symbols(): emits a logging.warning when config_path
     is None or does not exist, so the caller can distinguish "no .config
     provided" from an empty but valid .config file.
+
+v13.0.3 changes (J):
+  - load_kernel_config_symbols(): accepts arch and srctree keyword arguments.
+    When arch is supplied, SRCARCH and ARCH are set in the process environment
+    (via os.environ.setdefault) before kconfiglib is invoked, so that
+    kconfiglib can resolve 'source "arch/$SRCARCH/Kconfig"' references.
+    srctree defaults to source_dir when not explicitly given.
+    Both variables are set with setdefault so that values already present in
+    the environment (e.g. from a build system) are always respected.
+    After the kconfiglib call the env vars are NOT unset; they are harmless
+    for the rest of the process and unsetting them could break sub-processes.
 """
 import functools as _functools
 import logging
@@ -53,7 +64,7 @@ KBUILD_PLACEHOLDER_NAMES = frozenset({
 })
 
 
-def load_kernel_config_symbols(config_path, source_dir=None):
+def load_kernel_config_symbols(config_path, source_dir=None, arch=None, srctree=None):
     """Parse a .config file and return enabled CONFIG_* symbols.
 
     Returns a list of 'CONFIG_X=y' / 'CONFIG_X=m' strings for every symbol
@@ -63,9 +74,26 @@ def load_kernel_config_symbols(config_path, source_dir=None):
     as it evaluates full Kconfig expressions.  Falls back to a lightweight
     line-based parser otherwise (handles simple =y / =m lines).
 
+    Parameters
+    ----------
+    config_path : str or None
+        Path to the .config file.  Returns [] when None or missing.
+    source_dir : str or None
+        Kernel source root (used as kconfiglib Kconfig entry point).
+    arch : str or None
+        Target architecture name (e.g. 'arm', 'arm64', 'x86').  When given,
+        SRCARCH and ARCH are injected into the process environment via
+        os.environ.setdefault so that kconfiglib can resolve arch-specific
+        Kconfig includes such as 'source "arch/$SRCARCH/Kconfig"'.
+        Values already in the environment are never overwritten.
+    srctree : str or None
+        Value to set for the 'srctree' env var expected by kconfiglib.
+        Defaults to source_dir when not explicitly provided.
+
     Emits logging.warning when:
       - config_path is None or does not exist (caller should know .config is absent)
       - kconfiglib is not available (fallback parser in use — see module warning)
+      - kconfiglib raises an exception (falls back to line parser)
 
     Returns [] when config_path is absent; callers must treat [] as
     "no .config provided" and keep kconfig filtering disabled.
@@ -86,6 +114,26 @@ def load_kernel_config_symbols(config_path, source_dir=None):
         return symbols
 
     if kconfiglib is not None and source_dir:
+        # v13.0.3 (J): inject arch / srctree env vars so kconfiglib can
+        # resolve 'source "arch/$SRCARCH/Kconfig"' and similar includes.
+        # setdefault is used so values already in the environment (e.g. from
+        # a CI/build system) are always respected over config-file values.
+        _srctree = srctree or source_dir
+        if _srctree:
+            prev_srctree = os.environ.get('srctree')
+            os.environ.setdefault('srctree', _srctree)
+            if prev_srctree is None:
+                logging.debug('load_kernel_config_symbols: set srctree=%s', _srctree)
+        if arch:
+            # SRCARCH is what kconfiglib substitutes for $SRCARCH in Kconfig.
+            # ARCH is the user-facing name; for most arches they are identical
+            # (arm, arm64, x86) except e.g. i386 -> SRCARCH=x86.
+            os.environ.setdefault('SRCARCH', arch)
+            os.environ.setdefault('ARCH', arch)
+            logging.debug(
+                'load_kernel_config_symbols: SRCARCH=%s ARCH=%s (setdefault)',
+                os.environ['SRCARCH'], os.environ['ARCH'])
+
         kconfig_path = os.path.join(source_dir, 'Kconfig')
         try:
             if os.path.isfile(kconfig_path):
