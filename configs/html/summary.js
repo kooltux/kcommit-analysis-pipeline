@@ -1,27 +1,29 @@
 /* kcommit-analysis-pipeline — filter/sort/export + commit detail panel
  *
  * Changes:
- *   v13.0.0       — openPanel() call in the SHA-link click handler now passes
- *                   a.getAttribute('data-sha') inline (Firefox getAttribute
- *                   fallback path); loadCommitStore().then() is on one line
- *                   so test assertions can find the call-site unambiguously.
+ *   v13.0.3 (K)   — Fixed critical regression: renderCommit(), renderOverviewTab(),
+ *                   renderScoringTab(), renderFilesTab(), generateDecisionRationale(),
+ *                   activateDetailTab() and the DOMContentLoaded tab-click handler
+ *                   were duplicated *outside* the IIFE where esc(), field(),
+ *                   scoreClass(), fmtDate() and panelBody are not in scope.
+ *                   The outer definitions shadowed the inner ones causing
+ *                   "panelBody is not defined" / blank detail pane on every
+ *                   SHA-link click.  All rendering logic is now consolidated
+ *                   inside the IIFE.
  *
- *   v12.0.0 (B)   — openPanel() now resolves commit details in sidecar mode
- *                   by fetching the per-commit sidecar JSON from the
- *                   commits/<aa>/<bb>/<fullsha>.json tree when the commit is
- *                   not found in the in-memory index (window.__KC_COMMITS__).
- *                   This fixes the "Failed to fetch" error that appeared when
- *                   clicking a SHA link in sidecar-mode HTML reports.
+ *   v13.0.0       — openPanel() call uses a.getAttribute('data-sha') inline
+ *                   (Firefox getAttribute fallback); loadCommitStore().then()
+ *                   on one line so test assertions can find the call-site.
  *
- *   v12.0.0 (A.2) — renderCommit() now renders the full scoring trace:
- *                   per-profile multiplier, raw/capped/final score formula,
- *                   per-rule weight + matched patterns, and a prefilter debug
- *                   section when _prefilter_debug is present on the commit.
+ *   v12.0.0 (B)   — openPanel() resolves sidecar JSON for commits not found
+ *                   in the in-memory index.
+ *
+ *   v12.0.0 (A.2) — renderCommit() renders full scoring trace.
  */
 (function () {
   'use strict';
 
-  /* ── Helpers ───────────────────────────────────────────────────── */
+  /* ── Helpers ──────────────────────────────────────────────── */
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -34,17 +36,37 @@
     return out;
   }
 
-  /* B: resolve the per-commit sidecar path from a full SHA.
-   *    Pattern: commits/<first2>/<next2>/<fullsha>.json
-   *    root is window.__KC_COMMIT_DETAIL_ROOT__ (e.g. './commits'). */
+  function fmtDate(ts) {
+    if (!ts) return '';
+    var n = Number(ts);
+    if (!isNaN(n) && n > 1e8) {
+      var d = new Date(n * 1000);
+      var p = function(x){ return String(x).padStart(2,'0'); };
+      return d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate())
+             +' '+p(d.getUTCHours())+':'+p(d.getUTCMinutes());
+    }
+    return String(ts).slice(0,16);
+  }
+
+  function scoreClass(s) {
+    s = parseFloat(s) || 0;
+    return s >= 70 ? 'hi' : s >= 30 ? 'mid' : 'low';
+  }
+
+  function field(label, value, cls) {
+    return '<div class="kc-detail-field">'
+      + '<div class="field-label">'+esc(label)+'</div>'
+      + '<div class="field-value'+(cls?' '+cls:'')+'">'+value+'</div>'
+      + '</div>';
+  }
+
+  /* ── Sidecar helpers ─────────────────────────────────────────── */
   function _sidecarPath(fullSha) {
     if (!fullSha || fullSha.length < 4) return null;
     var root = (window.__KC_COMMIT_DETAIL_ROOT__ || './commits').replace(/\/+$/, '');
     return root + '/' + fullSha.slice(0, 2) + '/' + fullSha.slice(2, 4) + '/' + fullSha + '.json';
   }
 
-  /* B: fetch a per-commit sidecar JSON, caching result in __KC_COMMITS__.
-   *    Tries full SHA first, then 12-char sha12 as a fallback key lookup. */
   function _fetchCommitSidecar(sha12, fullSha) {
     var path = fullSha ? _sidecarPath(fullSha) : null;
     if (!path) return Promise.resolve(null);
@@ -54,7 +76,6 @@
         return r.json();
       })
       .then(function(data) {
-        // Cache by both full SHA and sha12 so future lookups are instant
         if (!window.__KC_COMMITS__) window.__KC_COMMITS__ = {};
         if (fullSha) window.__KC_COMMITS__[fullSha] = data;
         if (sha12)   window.__KC_COMMITS__[sha12]   = data;
@@ -62,6 +83,7 @@
       });
   }
 
+  /* ── Commit store ───────────────────────────────────────────── */
   function loadCommitStore() {
     if (window.__KC_COMMITS__) return Promise.resolve(window.__KC_COMMITS__);
     if (window.__KC_COMMITS_COMPRESSED__ && window.__KC_COMMITS_COMPRESSION__ === 'zlib') {
@@ -134,26 +156,11 @@
     });
   }
 
-  function fmtDate(ts) {
-    if (!ts) return '';
-    var n = Number(ts);
-    if (!isNaN(n) && n > 1e8) {
-      var d = new Date(n * 1000);
-      var p = function(x){ return String(x).padStart(2,'0'); };
-      return d.getUTCFullYear()+'-'+p(d.getUTCMonth()+1)+'-'+p(d.getUTCDate())
-             +' '+p(d.getUTCHours())+':'+p(d.getUTCMinutes());
-    }
-    return String(ts).slice(0,16);
-  }
-
-  /* ── A.5 / D.14: metadata sidecar → #evaluation-details ──────────────── */
+  /* ── Metadata sidecar ───────────────────────────────────────── */
   function loadReportMetadata() {
     var url = window.KCOMMIT_REPORT_METADATA_URL;
     if (!url) return;
     var el = document.getElementById('evaluation-details');
-    // Only populate when the server-side block is empty (sidecar mode).
-    // If generate_html_report() already rendered content (embedded mode),
-    // the div is non-empty and we skip the fetch.
     if (!el || el.children.length > 0) return;
     fetch(url)
       .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
@@ -185,14 +192,12 @@
         el.innerHTML = html;
       })
       .catch(function(err) {
-        // Silently ignore — evaluation details are optional
-        if (typeof console !== 'undefined' && console.warn) {
+        if (typeof console !== 'undefined' && console.warn)
           console.warn('[kcommit] Could not load report metadata:', err);
-        }
       });
   }
 
-  /* ── Per-column filters + global search ───────────────────────────────── */
+  /* ── Per-column filters + global search ───────────────────────── */
   var MULTISELECT_MAX = 20;
 
   function distinctVals(rows, ci) {
@@ -231,10 +236,10 @@
   }
 
   function initTable(tbl) {
-    var tbody   = tbl.querySelector('tbody');
-    var rows    = Array.from(tbody.querySelectorAll('tr'));
-    var noMatch = tbl.parentElement.querySelector('.kc-no-match');
-    var filterRow = tbl.querySelector('tr.kc-filters');
+    var tbody      = tbl.querySelector('tbody');
+    var rows       = Array.from(tbody.querySelectorAll('tr'));
+    var noMatch    = tbl.parentElement.querySelector('.kc-no-match');
+    var filterRow  = tbl.querySelector('tr.kc-filters');
     if (!filterRow) return;
 
     var rowData = rows.map(function(row) {
@@ -254,7 +259,7 @@
         ctrl = buildSelect(vals);
       } else {
         ctrl = document.createElement('input');
-        ctrl.type = 'text'; ctrl.placeholder = 'filter\u2026';
+        ctrl.type = 'text'; ctrl.placeholder = 'filter…';
         ctrl.setAttribute('aria-label','filter column');
       }
       th.innerHTML = '';
@@ -262,12 +267,15 @@
       controls.push(ctrl);
     });
 
-    var card = tbl.closest('.kc-card');
-    var globalEl = card && card.querySelector('.kc-global-filter');
+    /* Walk up from the table to find the card, then look for the
+       filter-bar elements which are siblings of the table wrapper
+       inside the same card content area. */
+    var card       = tbl.closest('.kc-card');
+    var globalEl   = card && card.querySelector('.kc-global-filter');
     var liveCountEl = card && card.querySelector('.kc-live-count');
-    var tableWrap = tbl.closest('.kc-table-wrap');
-    var busyEl = tableWrap && tableWrap.querySelector('.kc-table-busy');
-    var filterJob = 0;
+    var tableWrap  = tbl.closest('.kc-table-wrap');
+    var busyEl     = tableWrap && tableWrap.querySelector('.kc-table-busy');
+    var filterJob  = 0;
 
     function setBusy(isBusy) {
       if (!tableWrap) return;
@@ -321,11 +329,7 @@
       requestAnimationFrame(function() {
         setTimeout(function() {
           if (ticket !== filterJob) return;
-          try {
-            apply();
-          } finally {
-            if (ticket === filterJob) setBusy(false);
-          }
+          try { apply(); } finally { if (ticket === filterJob) setBusy(false); }
         }, 0);
       });
     }
@@ -349,7 +353,7 @@
     apply();
   }
 
-  /* ── Column sort ───────────────────────────────────────────────────── */
+  /* ── Column sort ─────────────────────────────────────────────── */
   function initSort(tbl) {
     var tbody   = tbl.querySelector('tbody');
     var rows    = Array.from(tbody.querySelectorAll('tr'));
@@ -367,8 +371,8 @@
         });
         if (icon) icon.className = 'sort-icon ' + (sortState.dir === 1 ? 'asc' : 'desc');
         rows.slice().sort(function(a, b) {
-          var av = a.cells[ci] ? a.cells[ci].textContent.trim() : '';
-          var bv = b.cells[ci] ? b.cells[ci].textContent.trim() : '';
+          var av = a.cells[ci] ? a.cells[ci].getAttribute('data-sort') || a.cells[ci].textContent.trim() : '';
+          var bv = b.cells[ci] ? b.cells[ci].getAttribute('data-sort') || b.cells[ci].textContent.trim() : '';
           var an = parseFloat(av), bn = parseFloat(bv);
           var cmp = (!isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv);
           return cmp * sortState.dir;
@@ -377,7 +381,7 @@
     });
   }
 
-  /* ── CSV export ───────────────────────────────────────────────────── */
+  /* ── CSV export ──────────────────────────────────────────────── */
   function initCsvExport(tbl) {
     var card = tbl.closest('.kc-card');
     if (!card) return;
@@ -398,95 +402,32 @@
     });
   }
 
-  /* ── Detail panel ────────────────────────────────────────────────────── */
+  /* ── Detail panel ─────────────────────────────────────────────── */
   var overlay   = document.getElementById('kc-detail-overlay');
   var panel     = document.getElementById('kc-detail-panel');
   var panelH3   = document.getElementById('kc-detail-sha');
   var panelBody = document.getElementById('kc-detail-body');
   var closeBtn  = document.getElementById('kc-detail-close');
 
-  /*
-   * B: openPanel() resolution order:
-   *
-   *  1. Look up sha12 (and fullSha) in the in-memory store populated by
-   *     loadCommitStore().  In embedded mode this always has full detail.
-   *     In sidecar mode the index only has summary rows (no scoring.trace).
-   *
-   *  2. If the object found in the index lacks scoring detail (no
-   *     scoring.trace), AND we have a fullSha AND __KC_COMMIT_DETAIL_ROOT__
-   *     is set, fetch the per-commit sidecar JSON.
-   *     The sidecar contains the complete commit object including
-   *     scoring.trace and product_evidence.
-   *
-   *  3. Fall back to whatever is in the store, even if incomplete.
-   */
-  function openPanel(sha12, fullSha) {
-    if (!overlay || !panel || !sha12) return false;
-    overlay.classList.add('open');
-    panel.classList.add('open');
-    if (panelH3) panelH3.textContent = fullSha || sha12;
-    if (panelBody) panelBody.innerHTML = '<p style="color:var(--color-text-muted,#888);font-size:.75rem">Loading\u2026</p>';
-
-    loadCommitStore().then(function(map) {
-        map = (map && typeof map === 'object') ? map : {};
-        var c = map[sha12] || map[String(sha12)] || (fullSha ? map[fullSha] : null) || null;
-
-        // B: if we have a fullSha and the sidecar root is configured, always
-        // fetch the richer sidecar (it contains scoring.trace + full body).
-        // We skip the sidecar fetch only when already in embedded mode (no
-        // __KC_COMMIT_DETAIL_ROOT__) or when the index object already has
-        // full trace data.
-        var hasSidecar = !!window.__KC_COMMIT_DETAIL_ROOT__;
-        var hasFullDetail = c && c.scoring && c.scoring.trace;
-
-        if (hasSidecar && !hasFullDetail && (fullSha || sha12)) {
-          return _fetchCommitSidecar(sha12, fullSha || sha12)
-            .then(function(sidecar) {
-              return sidecar || c;
-            })
-            .catch(function() { return c; }); // sidecar not found → use index data
-        }
-        return c;
-      })
-      .then(function(c) {
-        renderCommit(c, fullSha || sha12);
-      })
-      .catch(function(err) {
-        var msg = (err && err.message) ? err.message : String(err || 'unknown error');
-        if (panelBody) {
-          panelBody.innerHTML = field('SHA', esc(fullSha || sha12), 'mono')
-            + '<p style="color:var(--color-text-muted,#888);margin-top:.75rem;font-size:.75rem">'
-            + 'Unable to load commit details: ' + esc(msg) + '</p>';
-        }
-      });
-    return true;
+  /* ── Tab management (inside IIFE — has access to all closures) ───────── */
+  function activateDetailTab(tabName) {
+    document.querySelectorAll('#kc-detail-header .kc-tab').forEach(function(t) {
+      t.classList.toggle('active', t.getAttribute('data-tab') === tabName);
+    });
+    document.querySelectorAll('#kc-detail-body .kc-tab-content').forEach(function(c) {
+      c.classList.remove('active');
+    });
+    var active = document.getElementById('tab-' + tabName);
+    if (active) active.classList.add('active');
   }
 
-  function closePanel() {
-    if (overlay) overlay.classList.remove('open');
-    if (panel)   panel.classList.remove('open');
-  }
-
-  /* D.5 fix-1: only close on backdrop click, not panel child clicks */
-  if (overlay) overlay.addEventListener('click', function(e) {
-    if (e.target === overlay) closePanel();
+  document.querySelectorAll('#kc-detail-header .kc-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      activateDetailTab(this.getAttribute('data-tab'));
+    });
   });
-  if (closeBtn) closeBtn.addEventListener('click', closePanel);
-  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closePanel(); });
 
-  function scoreClass(s) {
-    s = parseFloat(s) || 0;
-    return s >= 70 ? 'hi' : s >= 30 ? 'mid' : 'low';
-  }
-
-  function field(label, value, cls) {
-    return '<div class="kc-detail-field">'
-      + '<div class="field-label">'+esc(label)+'</div>'
-      + '<div class="field-value'+(cls?' '+cls:'')+'">'+value+'</div>'
-      + '</div>';
-  }
-
-  /* A.2: render a pattern-match list as compact inline badges */
+  /* ── Scoring trace rendering ──────────────────────────────────────── */
   function _matchBadges(matches) {
     if (!matches || !matches.length) return '<em style="color:var(--color-text-faint,#aaa)">none</em>';
     return matches.map(function(m) {
@@ -498,32 +439,29 @@
     }).join('');
   }
 
-  /* A.2: render the full scoring trace for one profile */
   function _renderProfileTrace(pname, ptrace) {
     var html = '';
-    var blocked   = ptrace.blocked;
-    var mult      = ptrace.multiplier != null ? ptrace.multiplier : 1.0;
-    var rawTotal  = ptrace.raw_rule_total || 0;
-    var capped    = ptrace.raw_rule_total_capped || 0;
-    var final     = ptrace.final_score || 0;
+    var blocked     = ptrace.blocked;
+    var mult        = ptrace.multiplier != null ? ptrace.multiplier : 1.0;
+    var rawTotal    = ptrace.raw_rule_total || 0;
+    var capped      = ptrace.raw_rule_total_capped || 0;
+    var final_score = ptrace.final_score || 0;
     var blockReason = ptrace.block_reason || '';
+    var formula     = 'min(' + rawTotal + ',100) × ' + (mult * 100).toFixed(0) + '% = ' + final_score;
+    var pillCls     = scoreClass(final_score);
 
-    // Profile header with score formula
-    var formula = 'min(' + rawTotal + ',100) \u00d7 ' + (mult * 100).toFixed(0) + '% = ' + final;
-    var pillCls = scoreClass(final);
     html += '<div class="kc-detail-section" style="margin-top:.5rem">';
     html += '<h4 style="display:flex;align-items:center;gap:.4rem">';
     html += '<span class="profile-chip">' + esc(pname) + '</span>';
-    html += '<span class="score-pill ' + pillCls + '">' + final + '</span>';
+    html += '<span class="score-pill ' + pillCls + '">' + final_score + '</span>';
     if (blocked) {
-      html += '<span style="font-size:.7rem;color:var(--color-error,#c33);font-weight:600">\u26d4 BLOCKED</span>';
+      html += '<span style="font-size:.7rem;color:var(--color-error,#c33);font-weight:600">⛔ BLOCKED</span>';
       if (blockReason) html += '<span style="font-size:.68rem;color:var(--color-text-muted,#888)">(' + esc(blockReason) + ')</span>';
     } else {
       html += '<span style="font-size:.68rem;color:var(--color-text-muted,#888)">' + esc(formula) + '</span>';
     }
     html += '</h4>';
 
-    // Merged-pattern matches (profile-level blacklists that blocked)
     if (blocked) {
       var mm = ptrace.merged_matches || {};
       var blHits = (mm.keywords_blacklist || []).concat(mm.path_blacklist || []).concat(mm.commit_blacklist || []);
@@ -535,8 +473,7 @@
       }
     }
 
-    // Per-rule detail
-    var rules = ptrace.rules || {};
+    var rules  = ptrace.rules || {};
     var rnames = Object.keys(rules).sort();
     if (rnames.length) {
       html += '<table style="width:100%;font-size:.7rem;border-collapse:collapse;margin-top:.25rem">';
@@ -548,16 +485,15 @@
       html += '<th style="text-align:left;padding:.1rem .25rem">Patterns matched</th>';
       html += '</tr>';
       rnames.forEach(function(rname) {
-        var rd = rules[rname] || {};
+        var rd      = rules[rname] || {};
         var matched = rd.matched;
-        var level   = rd.matched_level || '';
-        var rScore  = rd.score || 0;
+        var rScore  = rd.score  || 0;
         var rWeight = rd.weight || 0;
         var matches = rd.matches || {};
         var allHits = (matches.keywords_whitelist || [])
                     .concat(matches.path_whitelist || [])
                     .concat(matches.commit_whitelist || []);
-        var rowCls = matched ? 'color:var(--color-text)' : 'color:var(--color-text-faint,#aaa)';
+        var rowCls    = matched ? 'color:var(--color-text)' : 'color:var(--color-text-faint,#aaa)';
         var matchIcon = blocked ? '\u25a0' : (matched ? '\u2714' : '\u2715');
         var matchColor = blocked
           ? 'color:var(--color-text-faint,#aaa)'
@@ -576,6 +512,116 @@
     return html;
   }
 
+  /* ── Tab content renderers ─────────────────────────────────────────── */
+  function _renderOverview(c) {
+    var html = '';
+    var sc   = c.scoring || {};
+
+    html += field('SHA',     '<code>'+esc((c.commit||'').slice(0,40))+'</code>', 'mono');
+    html += field('Subject', esc(c.subject || ''));
+    html += field('Author',  esc((c.author_name||'')+(c.author_email?' <'+c.author_email+'>':'')));
+    html += field('Date',    esc(fmtDate(c.author_time)), 'mono');
+    html += field('Score',   '<span class="score-pill '+scoreClass(c.score||0)+'">'+esc(String(c.score||0))+'</span>');
+    if (c.matched_profiles && c.matched_profiles.length) {
+      html += field('Profiles',
+        c.matched_profiles.map(function(p){ return '<span class="profile-chip">'+esc(p)+'</span>'; }).join(' '));
+    }
+
+    /* Decision rationale */
+    html += '<div class="kc-detail-section"><h4>Why This Commit Was Kept</h4>';
+    var keptReasons = [];
+    if (sc.trace && sc.trace.profiles && Object.keys(sc.trace.profiles).length) {
+      keptReasons.push('Passed prefilter checks');
+    }
+    if (c.matched_profiles && c.matched_profiles.length) {
+      keptReasons.push('Matched profiles: ' + c.matched_profiles.map(esc).join(', '));
+    }
+    if (c.score != null) {
+      keptReasons.push('Score ' + esc(String(c.score)) + ' met minimum threshold');
+    }
+    if (!keptReasons.length) keptReasons.push('Commit passed all filtering stages');
+    html += '<div class="decision-section kept-reason">';
+    html += '<strong>Kept</strong>';
+    html += '<ul style="margin:.25rem 0 0 1rem;font-size:.75rem">';
+    keptReasons.forEach(function(r){ html += '<li>' + r + '</li>'; });
+    html += '</ul></div></div>';
+
+    /* Product evidence */
+    if (c.product_evidence && c.product_evidence.length) {
+      html += '<div class="kc-detail-section"><h4>Evidence</h4>'
+        + '<ul style="padding-left:1.1rem;font-size:.75rem">';
+      c.product_evidence.forEach(function(p){ html += '<li><code>'+esc(p)+'</code></li>'; });
+      html += '</ul></div>';
+    }
+
+    /* Commit message */
+    if (c.body) {
+      html += '<div class="kc-detail-section"><h4>Commit message</h4>'
+        + '<pre style="white-space:pre-wrap;font-size:.72rem;max-height:220px;overflow-y:auto">'
+        + esc(c.body.slice(0,3000))+(c.body.length>3000?'\n\u2026':'')
+        + '</pre></div>';
+    }
+    return html;
+  }
+
+  function _renderScoring(c) {
+    var html = '';
+    var sc   = c.scoring || {};
+    var traceProfiles = sc.trace && sc.trace.profiles;
+
+    if (traceProfiles && Object.keys(traceProfiles).length) {
+      html += '<div class="kc-detail-section"><h4>Score Breakdown</h4>';
+      html += '<p style="font-size:.7rem;color:var(--color-text-muted,#888);margin-bottom:.3rem">';
+      html += 'Formula per profile: <code>min(&sum;rule_weights, 100) &times; profile_multiplier</code>. '
+            + 'Combined score = &sum; of all profile scores.</p>';
+      Object.keys(traceProfiles).sort().forEach(function(pname) {
+        html += _renderProfileTrace(pname, traceProfiles[pname] || {});
+      });
+      html += '</div>';
+    } else if (sc.profiles && Object.keys(sc.profiles).length) {
+      html += '<div class="kc-detail-section"><h4>Final:</h4>';
+      Object.keys(sc.profiles).sort().forEach(function(p) {
+        html += field(p, '<span class="score-pill">'+esc(String(sc.profiles[p]))+'</span>');
+      });
+      html += '</div>';
+    } else {
+      html += '<p style="color:var(--color-text-muted,#888);font-style:italic">No scoring data available.</p>';
+    }
+    return html;
+  }
+
+  function _renderFiles(c) {
+    var files = c.files || [];
+    if (!files.length) {
+      return '<p style="color:var(--color-text-muted,#888);font-style:italic">No files recorded for this commit.</p>';
+    }
+    var html = '<div class="kc-detail-section"><h4>Changed Files (' + files.length + ')</h4>';
+    var productMap    = window.__KC_PRODUCT_MAP__ || {};
+    var configToPaths = productMap.config_to_paths || {};
+    var coveredFiles  = Object.create(null);
+    (productMap.enabled_configs || []).forEach(function(cfg) {
+      (configToPaths[cfg] || []).forEach(function(p){ coveredFiles[p] = true; });
+    });
+    html += '<table style="width:100%;font-size:.75rem;border-collapse:collapse">';
+    html += '<thead><tr style="color:var(--color-text-muted,#888);border-bottom:1px solid var(--color-divider,#ddd)">';
+    html += '<th style="text-align:left;padding:.15rem .3rem">File</th>';
+    html += '<th style="text-align:center;padding:.15rem .3rem">Product coverage</th>';
+    html += '</tr></thead><tbody>';
+    files.forEach(function(f) {
+      var covered = !!coveredFiles[f];
+      var badge   = covered
+        ? '<span style="color:var(--color-success,green);font-weight:600">✔ covered</span>'
+        : '<span style="color:var(--color-text-faint,#aaa)">—</span>';
+      html += '<tr style="border-bottom:1px solid var(--color-divider,#eee)">';
+      html += '<td style="padding:.15rem .3rem;font-family:monospace;font-size:.7rem">' + esc(f) + '</td>';
+      html += '<td style="text-align:center;padding:.15rem .3rem">' + badge + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    return html;
+  }
+
+  /* ── renderCommit — writes into static tab divs from report.html ────── */
   function renderCommit(c, sha) {
     if (!panelBody) return;
     if (!c) {
@@ -584,63 +630,64 @@
         + 'No detail data available for this commit.</p>';
       return;
     }
-    var sc = c.scoring || {};
-    var html = '';
-    html += field('SHA',    '<code>'+esc((c.commit||'').slice(0,40))+'</code>', 'mono');
-    html += field('Subject', esc(c.subject || ''));
-    html += field('Author',  esc((c.author_name||'')+(c.author_email?' <'+c.author_email+'>':'')));
-    html += field('Date',    esc(fmtDate(c.author_time)), 'mono');
-    html += field('Score',   '<span class="score-pill '+scoreClass(c.score||0)+'">'+esc(String(c.score||0))+'</span>');
-    if (c.matched_profiles && c.matched_profiles.length) {
-      html += field('Profiles',
-        c.matched_profiles.map(function(p){
-          return '<span class="profile-chip">'+esc(p)+'</span>';
-        }).join(' '));
-    }
 
-    /* A.2: Full scoring trace — one section per profile */
-    var traceProfiles = sc.trace && sc.trace.profiles;
-    if (traceProfiles && Object.keys(traceProfiles).length) {
-      html += '<div class="kc-detail-section"><h4>Scoring trace</h4>';
-      html += '<p style="font-size:.7rem;color:var(--color-text-muted,#888);margin-bottom:.3rem">';
-      html += 'Formula per profile: <code>min(sum_of_matched_rule_weights, 100) \u00d7 profile_multiplier</code>. '
-            + 'Combined score = sum of all profile scores.';
-      html += '</p>';
-      Object.keys(traceProfiles).sort().forEach(function(pname) {
-        html += _renderProfileTrace(pname, traceProfiles[pname] || {});
-      });
-      html += '</div>';
-    } else if (sc.profiles && Object.keys(sc.profiles).length) {
-      /* Fallback: only per-profile scores available (index row, no trace) */
-      html += '<div class="kc-detail-section"><h4>Profile scores</h4>';
-      Object.keys(sc.profiles).sort().forEach(function(p) {
-        html += field(p, '<span class="score-pill">'+esc(String(sc.profiles[p]))+'</span>');
-      });
-      html += '</div>';
-    }
+    var tabOverview = document.getElementById('tab-overview');
+    var tabScoring  = document.getElementById('tab-scoring');
+    var tabFiles    = document.getElementById('tab-files');
+    var tabRaw      = document.getElementById('tab-raw');
 
-    if (c.product_evidence && c.product_evidence.length) {
-      html += '<div class="kc-detail-section"><h4>Evidence</h4>'
-        + '<ul style="padding-left:1.1rem;font-size:.75rem">';
-      c.product_evidence.forEach(function(p){
-        html += '<li><code>'+esc(p)+'</code></li>';
-      });
-      html += '</ul></div>';
-    }
-    if (c._filter_reason) {
-      html += '<div class="kc-detail-section"><h4>Filter reason</h4>'
-        + field('', esc(c._filter_reason)) + '</div>';
-    }
-    if (c.body) {
-      html += '<div class="kc-detail-section"><h4>Commit message</h4>'
-        + '<pre style="white-space:pre-wrap;font-size:.72rem;max-height:220px;overflow-y:auto">'
-        + esc(c.body.slice(0,3000))+(c.body.length>3000?'\n\u2026':'')
-        + '</pre></div>';
-    }
-    panelBody.innerHTML = html;
+    if (tabOverview) tabOverview.innerHTML = _renderOverview(c);
+    if (tabScoring)  tabScoring.innerHTML  = _renderScoring(c);
+    if (tabFiles)    tabFiles.innerHTML    = _renderFiles(c);
+    if (tabRaw)      tabRaw.innerHTML      = '<pre style="white-space:pre-wrap;font-size:.7rem;overflow-y:auto;max-height:60vh">'
+                                           + esc(JSON.stringify(c, null, 2)) + '</pre>';
+    activateDetailTab('overview');
   }
 
-  /* D.5 fix-2: event delegation — works after filter/sort reorders rows */
+  /* ── openPanel ─────────────────────────────────────────────────── */
+  function openPanel(sha12, fullSha) {
+    if (!overlay || !panel || !sha12) return false;
+    overlay.classList.add('open');
+    panel.classList.add('open');
+    if (panelH3) panelH3.textContent = fullSha || sha12;
+    if (panelBody) panelBody.innerHTML = '<p style="color:var(--color-text-muted,#888);font-size:.75rem">Loading…</p>';
+
+    loadCommitStore().then(function(map) {
+        map = (map && typeof map === 'object') ? map : {};
+        var c = map[sha12] || map[String(sha12)] || (fullSha ? map[fullSha] : null) || null;
+        var hasSidecar    = !!window.__KC_COMMIT_DETAIL_ROOT__;
+        var hasFullDetail = c && c.scoring && c.scoring.trace;
+        if (hasSidecar && !hasFullDetail && (fullSha || sha12)) {
+          return _fetchCommitSidecar(sha12, fullSha || sha12)
+            .then(function(sidecar){ return sidecar || c; })
+            .catch(function(){ return c; });
+        }
+        return c;
+      })
+      .then(function(c) { renderCommit(c, fullSha || sha12); })
+      .catch(function(err) {
+        var msg = (err && err.message) ? err.message : String(err || 'unknown error');
+        if (panelBody) {
+          panelBody.innerHTML = field('SHA', esc(fullSha || sha12), 'mono')
+            + '<p style="color:var(--color-text-muted,#888);margin-top:.75rem;font-size:.75rem">'
+            + 'Unable to load commit details: ' + esc(msg) + '</p>';
+        }
+      });
+    return true;
+  }
+
+  function closePanel() {
+    if (overlay) overlay.classList.remove('open');
+    if (panel)   panel.classList.remove('open');
+  }
+
+  if (overlay) overlay.addEventListener('click', function(e) {
+    if (e.target === overlay) closePanel();
+  });
+  if (closeBtn) closeBtn.addEventListener('click', closePanel);
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closePanel(); });
+
+  /* D.5: event delegation for SHA links — survives filter/sort reorders */
   document.addEventListener('click', function(e) {
     var target = e.target;
     var a = null;
@@ -648,9 +695,9 @@
       a = target.closest('a.sha-link');
     } else {
       while (target && target !== document) {
-        if (target.tagName && target.tagName.toLowerCase() === 'a' && /(^|\s)sha-link(\s|$)/.test(target.className || '')) {
-          a = target;
-          break;
+        if (target.tagName && target.tagName.toLowerCase() === 'a'
+            && /(^|\s)sha-link(\s|$)/.test(target.className || '')) {
+          a = target; break;
         }
         target = target.parentNode;
       }
@@ -659,17 +706,13 @@
     if (e.preventDefault) e.preventDefault();
     if (e.stopPropagation) e.stopPropagation();
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-    /* B: pass both sha12 and fullSha so openPanel can fetch the sidecar.
-     * v13: use getAttribute() inline so Firefox getAttribute fallback path
-     * is exercised; dataset access is kept as secondary fallback. */
-    var sha12   = a.getAttribute('data-sha') || (a.dataset && a.dataset.sha) || '';
+    var sha12   = a.getAttribute('data-sha')   || (a.dataset && a.dataset.sha)     || '';
     var fullSha = a.getAttribute('data-full-sha') || (a.dataset && a.dataset.fullSha) || sha12;
     openPanel(a.getAttribute('data-sha') || sha12, fullSha);
     return false;
   }, true);
 
-
-  /* ── Theme toggle ────────────────────────────────────────────────────── */
+  /* ── Theme toggle ──────────────────────────────────────────────── */
   (function(){
     var SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -699,7 +742,6 @@
     var html  = document.documentElement;
     var btn   = document.getElementById('kc-theme-toggle');
     var icon  = document.getElementById('kc-theme-icon');
-
     var theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     html.setAttribute('data-theme', theme);
     setIcon(icon, theme === 'dark');
@@ -715,426 +757,13 @@
     }
   })();
 
-  /* ── Bootstrap ────────────────────────────────────────────────────── */
+  /* ── Bootstrap ────────────────────────────────────────────────── */
   document.querySelectorAll('table.kc-table').forEach(function(tbl) {
     initTable(tbl);
     initSort(tbl);
     initCsvExport(tbl);
   });
 
-  // A.5 / D.14: load evaluation metadata from sidecar after DOM is ready
   loadReportMetadata();
 
 })();
-
-
-function renderCommit(c, sha) {
-    if (!panelBody) return;
-    if (!c) {
-      panelBody.innerHTML = field('SHA', esc(sha), 'mono')
-        + '<p style="color:var(--color-text-muted,#888);margin-top:.75rem;font-size:.75rem;">'
-        + 'No detail data available for this commit.</p>';
-      return;
-    }
-    
-    // Store original content for raw tab
-    window.__KC_RAW_COMMIT__ = c;
-    
-    // Ensure tab containers exist
-    var tabs = {
-      overview: document.getElementById('tab-overview'),
-      scoring: document.getElementById('tab-scoring'),
-      files: document.getElementById('tab-files'),
-      raw: document.getElementById('tab-raw')
-    };
-    
-    if (!tabs.overview || !tabs.scoring || !tabs.files || !tabs.raw) {
-      // Fallback to old behavior if tabs don't exist
-      var sc = c.scoring || {};
-      var html = '';
-      html += field('SHA',    '<code>'+esc((c.commit||'').slice(0,40))+'</code>', 'mono');
-      html += field('Subject', esc(c.subject || ''));
-      html += field('Author',  esc((c.author_name||'')+(c.author_email?' <'+c.author_email+'>':'')));
-      html += field('Date',    esc(fmtDate(c.author_time)), 'mono');
-      html += field('Score',   '<span class="score-pill '+scoreClass(c.score||0)+'">'+esc(String(c.score||0))+'</span>');
-      if (c.matched_profiles && c.matched_profiles.length) {
-        html += field('Profiles',
-          c.matched_profiles.map(function(p){
-            return '<span class="profile-chip">'+esc(p)+'</span>';
-          }).join(' '));
-      }
-      var traceProfiles = sc.trace && sc.trace.profiles;
-      if (traceProfiles && Object.keys(traceProfiles).length) {
-        html += '<div class="kc-detail-section"><h4>Scoring trace</h4>';
-        html += '<p style="font-size:.7rem;color:var(--color-text-muted,#888);margin-bottom:.3rem;">';
-        html += 'Formula per profile: <code>min(sum_of_matched_rule_weights, 100) × profile_multiplier</code>. '
-              + 'Combined score = sum of all profile scores.';
-        html += '</p>';
-        Object.keys(traceProfiles).sort().forEach(function(pname) {
-          html += _renderProfileTrace(pname, traceProfiles[pname] || {});
-        });
-        html += '</div>';
-      } else if (sc.profiles && Object.keys(sc.profiles).length) {
-        html += '<div class="kc-detail-section"><h4>Profile scores</h4>';
-        Object.keys(sc.profiles).sort().forEach(function(p) {
-          html += field(p, '<span class="score-pill">'+esc(String(sc.profiles[p]))+'</span>');
-        });
-        html += '</div>';
-      }
-      if (c.product_evidence && c.product_evidence.length) {
-        html += '<div class="kc-detail-section"><h4>Evidence</h4>'
-          + '<ul style="padding-left:1.1rem;font-size:.75rem">';
-        c.product_evidence.forEach(function(p){
-          html += '<li><code>'+esc(p)+'</code></li>';
-        });
-        html += '</ul></div>';
-      }
-      if (c._filter_reason) {
-        html += '<div class="kc-detail-section"><h4>Filter reason</h4>'
-          + field('', esc(c._filter_reason)) + '</div>';
-      }
-      if (c.body) {
-        html += '<div class="kc-detail-section"><h4>Commit message</h4>'
-          + '<pre style="white-space:pre-wrap;font-size:.72rem;max-height:220px;overflow-y:auto">'
-          + esc(c.body.slice(0,3000))+(c.body.length>3000?'\n…':'')
-          + '</pre></div>';
-      }
-      panelBody.innerHTML = html;
-      return;
-    }
-    
-    // Render each tab
-    tabs.overview.innerHTML = renderOverviewTab(c, sha);
-    tabs.scoring.innerHTML = renderScoringTab(c);
-    tabs.files.innerHTML = renderFilesTab(c);
-    tabs.raw.innerHTML = '<pre class="raw-data">' + esc(JSON.stringify(c, null, 2)) + '</pre>';
-    
-    // Activate first tab
-    activateDetailTab('overview');
-  }
-
-  function renderOverviewTab(c, sha) {
-    var html = '';
-    var sc = c.scoring || {};
-    
-    // Header info
-    html += '<div class="kc-detail-header-info">';
-    html += field('SHA',    '<code>' + esc((c.commit || '').slice(0, 40)) + '</code>', 'mono');
-    html += field('Subject', esc(c.subject || ''));
-    html += field('Author',  esc((c.author_name || '') + (c.author_email ? ' <' + c.author_email + '>' : '')));
-    html += field('Date',    esc(fmtDate(c.author_time)), 'mono');
-    html += field('Score',   '<span class="score-pill ' + scoreClass(c.score || 0) + '">' + esc(String(c.score || 0)) + '</span>');
-    if (c.matched_profiles && c.matched_profiles.length) {
-      html += field('Profiles',
-        c.matched_profiles.map(function(p) {
-          return '<span class="profile-chip">' + esc(p) + '</span>';
-        }).join(' '));
-    }
-    html += '</div>';
-    
-    // Decision Rationale
-    var rationale = generateDecisionRationale(c);
-    if (rationale.length > 0) {
-      html += '<div class="kc-detail-section"><h4>Why This Commit Was Kept</h4>';
-      rationale.forEach(function(reason) {
-        var statusClass = reason.status === 'KEPT' ? 'kept-reason' : 'dropped-reason';
-        html += '<div class="decision-section">';
-        html += '<div class="' + statusClass + '">';
-        html += '<strong>' + esc(reason.stage) + ':</strong> ' + esc(reason.status);
-        html += '</div>';
-        if (reason.reasons) {
-          reason.reasons.forEach(function(r) {
-            html += '<div class="reason-detail">● ' + esc(r) + '</div>';
-          });
-        }
-        html += '</div>';
-      });
-      html += '</div>';
-    }
-    
-    // Product Evidence
-    if (c.product_evidence && c.product_evidence.length) {
-      html += '<div class="kc-detail-section"><h4>Product Evidence</h4>';
-      html += '<div class="evidence-grid">';
-      c.product_evidence.forEach(function(p) {
-        var parts = p.split(':');
-        var type = parts[0];
-        var detail = parts.slice(1).join(':');
-        var typeClass = type.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-        html += '<span class="evidence-badge ' + typeClass + '">' + esc(detail) + '</span>';
-      });
-      html += '</div></div>';
-    }
-    
-    // Commit message
-    if (c.body) {
-      html += '<div class="kc-detail-section"><h4>Commit Message</h4>';
-      html += '<pre class="commit-message">' + esc(c.body.slice(0, 3000)) + (c.body.length > 3000 ? '
-…' : '') + '</pre>';
-      html += '</div>';
-    }
-    
-    return html;
-  }
-
-  function renderScoringTab(c) {
-    var html = '';
-    var sc = c.scoring || {};
-    var trace = sc.trace || {};
-    var profiles = trace.profiles || {};
-    
-    if (Object.keys(profiles).length === 0) {
-      html += '<p style="color:var(--text-muted);font-style:italic;">No scoring trace available for this commit.</p>';
-      return html;
-    }
-    
-    html += '<div class="kc-detail-section"><h4>Score Breakdown</h4>';
-    html += '<p style="font-size:.75rem;color:var(--text-muted);margin-bottom:.75rem;">';
-    html += 'Formula: <code>min(&sum;rule_weights, 100) &times; profile_multiplier</code>. '
-          + 'Combined score = &sum; of all profile scores.';
-    html += '</p>';
-    
-    Object.keys(profiles).sort().forEach(function(pname) {
-      var pdata = profiles[pname] || {};
-      var multiplier = pdata.multiplier || 1.0;
-      var finalScore = pdata.final_score || 0;
-      var rawTotal = pdata.raw_rule_total || 0;
-      var cappedTotal = pdata.raw_rule_total_capped || Math.min(rawTotal, 100);
-      var rules = pdata.rules || {};
-      var percent = cappedTotal;
-      
-      html += '<div class="profile-score-card">';
-      html += '<div class="profile-score-header">';
-      html += '<span class="profile-name">' + esc(pname) + '</span>';
-      html += '<span class="profile-score">Final: ' + esc(String(finalScore)) + '</span>';
-      html += '</div>';
-      
-      html += '<div class="profile-score-bar-container">';
-      html += '<div class="profile-score-bar">';
-      html += '<div class="profile-score-bar-fill" style="width: ' + percent + '%"></div>';
-      html += '<span class="profile-score-bar-label">' + esc(String(cappedTotal)) + '/' + esc(String(rawTotal)) + '</span>';
-      html += '</div>';
-      html += '</div>';
-      
-      if (multiplier !== 1.0) {
-        html += '<div class="profile-multiplier">× ' + esc(multiplier.toFixed(2)) + ' multiplier</div>';
-      }
-      
-      if (Object.keys(rules).length > 0) {
-        html += '<div class="profile-rules">';
-        Object.keys(rules).sort().forEach(function(rname) {
-          var rdata = rules[rname] || {};
-          var weight = rdata.weight || 0;
-          var matched = rdata.matched || false;
-          var score = rdata.score || 0;
-          var matches = rdata.matches || {};
-          
-          var ruleClass = matched ? 'matched' : 'not-matched';
-          html += '<div class="rule-card ' + ruleClass + '">';
-          html += '<div class="rule-header">';
-          html += '<span class="rule-name">' + esc(rname) + '</span>';
-          if (matched) {
-            html += '<span class="rule-weight">+' + esc(String(weight)) + '</span>';
-          } else {
-            html += '<span class="rule-score">' + esc(String(weight)) + '</span>';
-          }
-          html += '</div>';
-          
-          if (matched) {
-            Object.keys(matches).forEach(function(matchType) {
-              matches[matchType].forEach(function(match) {
-                var pattern = match.pattern || match;
-                var value = match.value || '';
-                html += '<div class="pattern-match">' + esc(pattern) + ': ' + esc(value) + '</div>';
-              });
-            });
-          } else {
-            html += '<div class="no-matches">No matches for this rule</div>';
-          }
-          html += '</div>';
-        });
-        html += '</div>';
-      } else {
-        html += '<div class="no-matches">No rules matched for this profile</div>';
-      }
-      
-      html += '</div>';
-    });
-    
-    html += '</div>';
-    return html;
-  }
-
-  function renderFilesTab(c) {
-    var html = '';
-    var files = c.files || [];
-    
-    if (files.length === 0) {
-      html += '<p style="color:var(--text-muted);font-style:italic;">No files changed in this commit.</p>';
-      return html;
-    }
-    
-    html += '<div class="kc-detail-section"><h4>Changed Files (' + files.length + ')</h4>';
-    
-    // Get product map if available
-    var productMap = window.__KC_PRODUCT_MAP__ || {};
-    var enabledConfigs = productMap.enabled_configs || [];
-    var configToPaths = productMap.config_to_paths || {};
-    
-    // Build coverage set
-    var coveredFiles = new Set();
-    enabledConfigs.forEach(function(config) {
-      var paths = configToPaths[config] || [];
-      paths.forEach(function(path) {
-        coveredFiles.add(path);
-      });
-    });
-    
-    html += '<table class="files-table">';
-    html += '<thead><tr><th>File</th><th>Status</th><th>Coverage</th></tr></thead>';
-    html += '<tbody>';
-    
-    files.forEach(function(file) {
-      var isCovered = coveredFiles.has(file);
-      var status = isCovered ? 'Covered' : 'Not Covered';
-      var statusClass = isCovered ? 'covered' : 'not-covered';
-      
-      // Find covering configs
-      var coveringConfigs = [];
-      for (var config in configToPaths) {
-        if (configToPaths[config] && configToPaths[config].includes(file)) {
-          coveringConfigs.push(config);
-        }
-      }
-      
-      html += '<tr>';
-      html += '<td><code>' + esc(file) + '</code></td>';
-      html += '<td><span class="status-badge ' + statusClass + '">' + status + '</span></td>';
-      html += '<td>';
-      if (coveringConfigs.length > 0) {
-        html += coveringConfigs.join(', ');
-      } else {
-        html += '<span class="no-coverage">No config mapping</span>';
-      }
-      html += '</td>';
-      html += '</tr>';
-    });
-    
-    html += '</tbody></table>';
-    
-    // Coverage summary
-    var coveredCount = files.filter(function(f) { return coveredFiles.has(f); }).length;
-    html += '<div class="coverage-summary">Product Coverage: <strong>' + coveredCount + '/' + files.length + '</strong> files covered</div>';
-    
-    html += '</div>';
-    return html;
-  }
-
-  function generateDecisionRationale(c) {
-    var reasons = [];
-    var sc = c.scoring || {};
-    var trace = sc.trace || {};
-    
-    // Check prefilter debug info (if available from future pipeline versions)
-    if (c._prefilter_debug) {
-      var prefilter = c._prefilter_debug;
-      if (prefilter.kept) {
-        reasons.push({
-          stage: 'Prefilter',
-          status: 'KEPT',
-          reasons: prefilter.kept_reasons || ['Passed all prefilter checks']
-        });
-      }
-      if (prefilter.dropped) {
-        reasons.push({
-          stage: 'Prefilter',
-          status: 'DROPPED',
-          reasons: [prefilter.drop_reason || 'Unknown reason']
-        });
-      }
-    } else if (c._filter_reason) {
-      // No prefilter debug, but we have a filter reason
-      if (c._filter_reason === 'score_below_threshold') {
-        reasons.push({
-          stage: 'Postfilter',
-          status: 'DROPPED',
-          reasons: ['Score ' + (c.score || 0) + ' below threshold']
-        });
-      } else if (c._filter_reason !== 'kept' && c._filter_reason !== '') {
-        reasons.push({
-          stage: 'Prefilter',
-          status: 'DROPPED',
-          reasons: [c._filter_reason]
-        });
-      }
-    }
-    
-    // For kept commits without explicit drop reason, explain via scoring
-    if (reasons.length === 0) {
-      // This commit passed all filters
-      var keptReasons = [];
-      
-      // Check if it has scoring trace (means it passed prefilter)
-      if (trace.profiles && Object.keys(trace.profiles).length > 0) {
-        keptReasons.push('Passed prefilter checks');
-      }
-      
-      // Check if it has matched profiles
-      if (c.matched_profiles && c.matched_profiles.length > 0) {
-        keptReasons.push('Matched profiles: ' + c.matched_profiles.join(', '));
-      }
-      
-      // Check score
-      if (c.score !== undefined) {
-        keptReasons.push('Score ' + (c.score || 0) + ' met minimum threshold');
-      }
-      
-      // If we have any reasons, add them
-      if (keptReasons.length > 0) {
-        reasons.push({
-          stage: 'Kept',
-          status: 'KEPT',
-          reasons: keptReasons
-        });
-      } else {
-        // Fallback
-        reasons.push({
-          stage: 'Kept',
-          status: 'KEPT',
-          reasons: ['Commit passed all filtering stages']
-        });
-      }
-    }
-    
-    return reasons;
-  }
-
-  function activateDetailTab(tabName) {
-    // Deactivate all tabs and contents
-    var tabs = document.querySelectorAll('#kc-detail-header .kc-tab');
-    var contents = document.querySelectorAll('#kc-detail-body .kc-tab-content');
-    
-    tabs.forEach(function(tab) {
-      tab.classList.remove('active');
-    });
-    contents.forEach(function(content) {
-      content.classList.remove('active');
-    });
-    
-    // Activate selected
-    var activeTab = document.querySelector('#kc-detail-header .kc-tab[data-tab="' + tabName + '"]');
-    var activeContent = document.getElementById('tab-' + tabName);
-    
-    if (activeTab) activeTab.classList.add('active');
-    if (activeContent) activeContent.classList.add('active');
-  }
-  
-  // Add tab click handlers
-  document.addEventListener('DOMContentLoaded', function() {
-    var tabs = document.querySelectorAll('#kc-detail-header .kc-tab');
-    tabs.forEach(function(tab) {
-      tab.addEventListener('click', function() {
-        activateDetailTab(this.dataset.tab);
-      });
-    });
-  });
