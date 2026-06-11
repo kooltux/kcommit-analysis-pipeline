@@ -726,3 +726,415 @@
   loadReportMetadata();
 
 })();
+
+
+function renderCommit(c, sha) {
+    if (!panelBody) return;
+    if (!c) {
+      panelBody.innerHTML = field('SHA', esc(sha), 'mono')
+        + '<p style="color:var(--color-text-muted,#888);margin-top:.75rem;font-size:.75rem;">'
+        + 'No detail data available for this commit.</p>';
+      return;
+    }
+    
+    // Store original content for raw tab
+    window.__KC_RAW_COMMIT__ = c;
+    
+    // Ensure tab containers exist
+    var tabs = {
+      overview: document.getElementById('tab-overview'),
+      scoring: document.getElementById('tab-scoring'),
+      files: document.getElementById('tab-files'),
+      raw: document.getElementById('tab-raw')
+    };
+    
+    if (!tabs.overview || !tabs.scoring || !tabs.files || !tabs.raw) {
+      // Fallback to old behavior if tabs don't exist
+      var sc = c.scoring || {};
+      var html = '';
+      html += field('SHA',    '<code>'+esc((c.commit||'').slice(0,40))+'</code>', 'mono');
+      html += field('Subject', esc(c.subject || ''));
+      html += field('Author',  esc((c.author_name||'')+(c.author_email?' <'+c.author_email+'>':'')));
+      html += field('Date',    esc(fmtDate(c.author_time)), 'mono');
+      html += field('Score',   '<span class="score-pill '+scoreClass(c.score||0)+'">'+esc(String(c.score||0))+'</span>');
+      if (c.matched_profiles && c.matched_profiles.length) {
+        html += field('Profiles',
+          c.matched_profiles.map(function(p){
+            return '<span class="profile-chip">'+esc(p)+'</span>';
+          }).join(' '));
+      }
+      var traceProfiles = sc.trace && sc.trace.profiles;
+      if (traceProfiles && Object.keys(traceProfiles).length) {
+        html += '<div class="kc-detail-section"><h4>Scoring trace</h4>';
+        html += '<p style="font-size:.7rem;color:var(--color-text-muted,#888);margin-bottom:.3rem;">';
+        html += 'Formula per profile: <code>min(sum_of_matched_rule_weights, 100) × profile_multiplier</code>. '
+              + 'Combined score = sum of all profile scores.';
+        html += '</p>';
+        Object.keys(traceProfiles).sort().forEach(function(pname) {
+          html += _renderProfileTrace(pname, traceProfiles[pname] || {});
+        });
+        html += '</div>';
+      } else if (sc.profiles && Object.keys(sc.profiles).length) {
+        html += '<div class="kc-detail-section"><h4>Profile scores</h4>';
+        Object.keys(sc.profiles).sort().forEach(function(p) {
+          html += field(p, '<span class="score-pill">'+esc(String(sc.profiles[p]))+'</span>');
+        });
+        html += '</div>';
+      }
+      if (c.product_evidence && c.product_evidence.length) {
+        html += '<div class="kc-detail-section"><h4>Evidence</h4>'
+          + '<ul style="padding-left:1.1rem;font-size:.75rem">';
+        c.product_evidence.forEach(function(p){
+          html += '<li><code>'+esc(p)+'</code></li>';
+        });
+        html += '</ul></div>';
+      }
+      if (c._filter_reason) {
+        html += '<div class="kc-detail-section"><h4>Filter reason</h4>'
+          + field('', esc(c._filter_reason)) + '</div>';
+      }
+      if (c.body) {
+        html += '<div class="kc-detail-section"><h4>Commit message</h4>'
+          + '<pre style="white-space:pre-wrap;font-size:.72rem;max-height:220px;overflow-y:auto">'
+          + esc(c.body.slice(0,3000))+(c.body.length>3000?'\n…':'')
+          + '</pre></div>';
+      }
+      panelBody.innerHTML = html;
+      return;
+    }
+    
+    // Render each tab
+    tabs.overview.innerHTML = renderOverviewTab(c, sha);
+    tabs.scoring.innerHTML = renderScoringTab(c);
+    tabs.files.innerHTML = renderFilesTab(c);
+    tabs.raw.innerHTML = '<pre class="raw-data">' + esc(JSON.stringify(c, null, 2)) + '</pre>';
+    
+    // Activate first tab
+    activateDetailTab('overview');
+  }
+
+  function renderOverviewTab(c, sha) {
+    var html = '';
+    var sc = c.scoring || {};
+    
+    // Header info
+    html += '<div class="kc-detail-header-info">';
+    html += field('SHA',    '<code>' + esc((c.commit || '').slice(0, 40)) + '</code>', 'mono');
+    html += field('Subject', esc(c.subject || ''));
+    html += field('Author',  esc((c.author_name || '') + (c.author_email ? ' <' + c.author_email + '>' : '')));
+    html += field('Date',    esc(fmtDate(c.author_time)), 'mono');
+    html += field('Score',   '<span class="score-pill ' + scoreClass(c.score || 0) + '">' + esc(String(c.score || 0)) + '</span>');
+    if (c.matched_profiles && c.matched_profiles.length) {
+      html += field('Profiles',
+        c.matched_profiles.map(function(p) {
+          return '<span class="profile-chip">' + esc(p) + '</span>';
+        }).join(' '));
+    }
+    html += '</div>';
+    
+    // Decision Rationale
+    var rationale = generateDecisionRationale(c);
+    if (rationale.length > 0) {
+      html += '<div class="kc-detail-section"><h4>Why This Commit Was Kept</h4>';
+      rationale.forEach(function(reason) {
+        var statusClass = reason.status === 'KEPT' ? 'kept-reason' : 'dropped-reason';
+        html += '<div class="decision-section">';
+        html += '<div class="' + statusClass + '">';
+        html += '<strong>' + esc(reason.stage) + ':</strong> ' + esc(reason.status);
+        html += '</div>';
+        if (reason.reasons) {
+          reason.reasons.forEach(function(r) {
+            html += '<div class="reason-detail">● ' + esc(r) + '</div>';
+          });
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    
+    // Product Evidence
+    if (c.product_evidence && c.product_evidence.length) {
+      html += '<div class="kc-detail-section"><h4>Product Evidence</h4>';
+      html += '<div class="evidence-grid">';
+      c.product_evidence.forEach(function(p) {
+        var parts = p.split(':');
+        var type = parts[0];
+        var detail = parts.slice(1).join(':');
+        var typeClass = type.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+        html += '<span class="evidence-badge ' + typeClass + '">' + esc(detail) + '</span>';
+      });
+      html += '</div></div>';
+    }
+    
+    // Commit message
+    if (c.body) {
+      html += '<div class="kc-detail-section"><h4>Commit Message</h4>';
+      html += '<pre class="commit-message">' + esc(c.body.slice(0, 3000)) + (c.body.length > 3000 ? '
+…' : '') + '</pre>';
+      html += '</div>';
+    }
+    
+    return html;
+  }
+
+  function renderScoringTab(c) {
+    var html = '';
+    var sc = c.scoring || {};
+    var trace = sc.trace || {};
+    var profiles = trace.profiles || {};
+    
+    if (Object.keys(profiles).length === 0) {
+      html += '<p style="color:var(--text-muted);font-style:italic;">No scoring trace available for this commit.</p>';
+      return html;
+    }
+    
+    html += '<div class="kc-detail-section"><h4>Score Breakdown</h4>';
+    html += '<p style="font-size:.75rem;color:var(--text-muted);margin-bottom:.75rem;">';
+    html += 'Formula: <code>min(&sum;rule_weights, 100) &times; profile_multiplier</code>. '
+          + 'Combined score = &sum; of all profile scores.';
+    html += '</p>';
+    
+    Object.keys(profiles).sort().forEach(function(pname) {
+      var pdata = profiles[pname] || {};
+      var multiplier = pdata.multiplier || 1.0;
+      var finalScore = pdata.final_score || 0;
+      var rawTotal = pdata.raw_rule_total || 0;
+      var cappedTotal = pdata.raw_rule_total_capped || Math.min(rawTotal, 100);
+      var rules = pdata.rules || {};
+      var percent = cappedTotal;
+      
+      html += '<div class="profile-score-card">';
+      html += '<div class="profile-score-header">';
+      html += '<span class="profile-name">' + esc(pname) + '</span>';
+      html += '<span class="profile-score">Final: ' + esc(String(finalScore)) + '</span>';
+      html += '</div>';
+      
+      html += '<div class="profile-score-bar-container">';
+      html += '<div class="profile-score-bar">';
+      html += '<div class="profile-score-bar-fill" style="width: ' + percent + '%"></div>';
+      html += '<span class="profile-score-bar-label">' + esc(String(cappedTotal)) + '/' + esc(String(rawTotal)) + '</span>';
+      html += '</div>';
+      html += '</div>';
+      
+      if (multiplier !== 1.0) {
+        html += '<div class="profile-multiplier">× ' + esc(multiplier.toFixed(2)) + ' multiplier</div>';
+      }
+      
+      if (Object.keys(rules).length > 0) {
+        html += '<div class="profile-rules">';
+        Object.keys(rules).sort().forEach(function(rname) {
+          var rdata = rules[rname] || {};
+          var weight = rdata.weight || 0;
+          var matched = rdata.matched || false;
+          var score = rdata.score || 0;
+          var matches = rdata.matches || {};
+          
+          var ruleClass = matched ? 'matched' : 'not-matched';
+          html += '<div class="rule-card ' + ruleClass + '">';
+          html += '<div class="rule-header">';
+          html += '<span class="rule-name">' + esc(rname) + '</span>';
+          if (matched) {
+            html += '<span class="rule-weight">+' + esc(String(weight)) + '</span>';
+          } else {
+            html += '<span class="rule-score">' + esc(String(weight)) + '</span>';
+          }
+          html += '</div>';
+          
+          if (matched) {
+            Object.keys(matches).forEach(function(matchType) {
+              matches[matchType].forEach(function(match) {
+                var pattern = match.pattern || match;
+                var value = match.value || '';
+                html += '<div class="pattern-match">' + esc(pattern) + ': ' + esc(value) + '</div>';
+              });
+            });
+          } else {
+            html += '<div class="no-matches">No matches for this rule</div>';
+          }
+          html += '</div>';
+        });
+        html += '</div>';
+      } else {
+        html += '<div class="no-matches">No rules matched for this profile</div>';
+      }
+      
+      html += '</div>';
+    });
+    
+    html += '</div>';
+    return html;
+  }
+
+  function renderFilesTab(c) {
+    var html = '';
+    var files = c.files || [];
+    
+    if (files.length === 0) {
+      html += '<p style="color:var(--text-muted);font-style:italic;">No files changed in this commit.</p>';
+      return html;
+    }
+    
+    html += '<div class="kc-detail-section"><h4>Changed Files (' + files.length + ')</h4>';
+    
+    // Get product map if available
+    var productMap = window.__KC_PRODUCT_MAP__ || {};
+    var enabledConfigs = productMap.enabled_configs || [];
+    var configToPaths = productMap.config_to_paths || {};
+    
+    // Build coverage set
+    var coveredFiles = new Set();
+    enabledConfigs.forEach(function(config) {
+      var paths = configToPaths[config] || [];
+      paths.forEach(function(path) {
+        coveredFiles.add(path);
+      });
+    });
+    
+    html += '<table class="files-table">';
+    html += '<thead><tr><th>File</th><th>Status</th><th>Coverage</th></tr></thead>';
+    html += '<tbody>';
+    
+    files.forEach(function(file) {
+      var isCovered = coveredFiles.has(file);
+      var status = isCovered ? 'Covered' : 'Not Covered';
+      var statusClass = isCovered ? 'covered' : 'not-covered';
+      
+      // Find covering configs
+      var coveringConfigs = [];
+      for (var config in configToPaths) {
+        if (configToPaths[config] && configToPaths[config].includes(file)) {
+          coveringConfigs.push(config);
+        }
+      }
+      
+      html += '<tr>';
+      html += '<td><code>' + esc(file) + '</code></td>';
+      html += '<td><span class="status-badge ' + statusClass + '">' + status + '</span></td>';
+      html += '<td>';
+      if (coveringConfigs.length > 0) {
+        html += coveringConfigs.join(', ');
+      } else {
+        html += '<span class="no-coverage">No config mapping</span>';
+      }
+      html += '</td>';
+      html += '</tr>';
+    });
+    
+    html += '</tbody></table>';
+    
+    // Coverage summary
+    var coveredCount = files.filter(function(f) { return coveredFiles.has(f); }).length;
+    html += '<div class="coverage-summary">Product Coverage: <strong>' + coveredCount + '/' + files.length + '</strong> files covered</div>';
+    
+    html += '</div>';
+    return html;
+  }
+
+  function generateDecisionRationale(c) {
+    var reasons = [];
+    var sc = c.scoring || {};
+    var trace = sc.trace || {};
+    
+    // Check prefilter debug info (if available from future pipeline versions)
+    if (c._prefilter_debug) {
+      var prefilter = c._prefilter_debug;
+      if (prefilter.kept) {
+        reasons.push({
+          stage: 'Prefilter',
+          status: 'KEPT',
+          reasons: prefilter.kept_reasons || ['Passed all prefilter checks']
+        });
+      }
+      if (prefilter.dropped) {
+        reasons.push({
+          stage: 'Prefilter',
+          status: 'DROPPED',
+          reasons: [prefilter.drop_reason || 'Unknown reason']
+        });
+      }
+    } else if (c._filter_reason) {
+      // No prefilter debug, but we have a filter reason
+      if (c._filter_reason === 'score_below_threshold') {
+        reasons.push({
+          stage: 'Postfilter',
+          status: 'DROPPED',
+          reasons: ['Score ' + (c.score || 0) + ' below threshold']
+        });
+      } else if (c._filter_reason !== 'kept' && c._filter_reason !== '') {
+        reasons.push({
+          stage: 'Prefilter',
+          status: 'DROPPED',
+          reasons: [c._filter_reason]
+        });
+      }
+    }
+    
+    // For kept commits without explicit drop reason, explain via scoring
+    if (reasons.length === 0) {
+      // This commit passed all filters
+      var keptReasons = [];
+      
+      // Check if it has scoring trace (means it passed prefilter)
+      if (trace.profiles && Object.keys(trace.profiles).length > 0) {
+        keptReasons.push('Passed prefilter checks');
+      }
+      
+      // Check if it has matched profiles
+      if (c.matched_profiles && c.matched_profiles.length > 0) {
+        keptReasons.push('Matched profiles: ' + c.matched_profiles.join(', '));
+      }
+      
+      // Check score
+      if (c.score !== undefined) {
+        keptReasons.push('Score ' + (c.score || 0) + ' met minimum threshold');
+      }
+      
+      // If we have any reasons, add them
+      if (keptReasons.length > 0) {
+        reasons.push({
+          stage: 'Kept',
+          status: 'KEPT',
+          reasons: keptReasons
+        });
+      } else {
+        // Fallback
+        reasons.push({
+          stage: 'Kept',
+          status: 'KEPT',
+          reasons: ['Commit passed all filtering stages']
+        });
+      }
+    }
+    
+    return reasons;
+  }
+
+  function activateDetailTab(tabName) {
+    // Deactivate all tabs and contents
+    var tabs = document.querySelectorAll('#kc-detail-header .kc-tab');
+    var contents = document.querySelectorAll('#kc-detail-body .kc-tab-content');
+    
+    tabs.forEach(function(tab) {
+      tab.classList.remove('active');
+    });
+    contents.forEach(function(content) {
+      content.classList.remove('active');
+    });
+    
+    // Activate selected
+    var activeTab = document.querySelector('#kc-detail-header .kc-tab[data-tab="' + tabName + '"]');
+    var activeContent = document.getElementById('tab-' + tabName);
+    
+    if (activeTab) activeTab.classList.add('active');
+    if (activeContent) activeContent.classList.add('active');
+  }
+  
+  // Add tab click handlers
+  document.addEventListener('DOMContentLoaded', function() {
+    var tabs = document.querySelectorAll('#kc-detail-header .kc-tab');
+    tabs.forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        activateDetailTab(this.dataset.tab);
+      });
+    });
+  });
