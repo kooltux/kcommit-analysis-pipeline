@@ -98,6 +98,32 @@
 - Stage 07 merges prefilter and postfilter dropped commits only when
   generating filtered output reports.
 
+## diagnose subcommand
+
+The `diagnose` subcommand is a pure post-run read-only tool.  It reads cache
+files produced by a completed pipeline run and reconstructs the complete
+decision trace for one commit.  It executes **no pipeline code** whatsoever.
+
+```
+kcommit_pipeline.py diagnose --cache-dir <path> --sha <SHA_PREFIX>
+kcommit_pipeline.py diagnose --cache-dir <path> --sha <SHA_PREFIX> --out report.json
+```
+
+Output JSON top-level keys:
+
+| Key | Content |
+|---|---|
+| `meta` | Tool version, cache_dir, sha_query, generated_at (UTC), note |
+| `commit` | All raw commit fields: sha, sha12, subject, author, files, stats, body (never truncated) |
+| `kernel_annotations` | is_fix, has_cve, has_syzbot, has_stable_cc |
+| `pipeline_stages` | stage_01_collect, stage_04_prefilter, stage_05_scoring, stage_06_postfilter |
+| `final` | stage_reached, stage_label, rank, score, in_report, summary sentence |
+| `warnings` | Data quality / consistency notes (missing files, SHA ambiguity, etc.) |
+
+Missing cache files are reported in `warnings`; they do not cause a crash.
+The `stage_05_scoring` and `stage_06_postfilter` sections are `null` when the
+commit was dropped at the prefilter (never scored).
+
 ## compiled_rules.json schema
 
 ```json
@@ -147,6 +173,20 @@ stale cache files before re-running.
 | `lib/manifest.py` | Version and manifest loading |
 | `lib/logsetup.py` | Logging configuration |
 | `lib/stages/` | Stage business logic (one module per stage) |
+| `lib/commands/cmd_diagnose.py` | `diagnose` subcommand (cache-read only) |
+
+
+## v14.0.1 changes
+
+- `lib/commands/cmd_diagnose.py`: removed `cache_presence` from the JSON
+  output.  The key held a filesystem inventory of all known cache files
+  (`exists`, `size_bytes`).  It was redundant — missing files are already
+  surfaced in `warnings` — and file sizes carry no diagnostic value for
+  understanding filter/scoring decisions.  The `_presence()` helper has been
+  deleted.  Top-level output keys are now: `meta`, `commit`,
+  `kernel_annotations`, `pipeline_stages`, `final`, `warnings`.
+- `tests/test_cmd_diagnose.py`: three `cache_presence` tests replaced by a
+  single `test_no_cache_presence_in_output` assertion.
 
 
 ## v14.0.0 changes
