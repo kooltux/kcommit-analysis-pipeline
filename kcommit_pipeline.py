@@ -24,8 +24,9 @@ Usage examples
   kcommit_pipeline.py validate --config cfg.json
   kcommit_pipeline.py report   --config cfg.json [--format html] [--format xlsx]
   kcommit_pipeline.py dropped  --config cfg.json [--reason all|prefilter|low-score]
-  kcommit_pipeline.py diagnose --config cfg.json --sha <SHA_PREFIX>
-  kcommit_pipeline.py diagnose --config cfg.json --sha <SHA_PREFIX> --out report.json
+  kcommit_pipeline.py diagnose --cache-dir work/cache --sha <SHA_PREFIX>
+  kcommit_pipeline.py diagnose --cache-dir work/cache --sha <SHA_PREFIX> --out report.json
+  kcommit_pipeline.py diagnose --config cfg.json     --sha <SHA_PREFIX>   # config fallback
 """
 import argparse
 import sys
@@ -86,17 +87,26 @@ def main():
         help='Full JSON diagnosis of one commit across all pipeline stages',
         description=(
             'Trace a single commit through every pipeline stage and emit a '
-            'self-contained JSON report with: raw metadata, prefilter decision '
-            '(including full debug_detail), scoring breakdown per profile, '
-            'postfilter decision and threshold, final rank, and any '
-            'data-quality warnings.'
+            'self-contained JSON report.  Only the cache directory is required; '
+            'no config file needed.\n\n'
+            'Report sections: meta, commit, cache_presence, prefilter '
+            '(with full debug_detail), scoring (per-profile breakdown), '
+            'postfilter (threshold + outcome), final (rank + human summary), '
+            'warnings.'
         ),
     )
-    p_diag.add_argument('--config',   required=True)
-    p_diag.add_argument('--override', default=None, metavar='JSON')
-    p_diag.add_argument('--sha',      required=True,
+    # Primary: just the cache dir -- no config file needed
+    p_diag.add_argument('--cache-dir', dest='cache_dir', default=None,
+                        metavar='DIR',
+                        help='Path to the pipeline cache directory '
+                             '(e.g. work/cache).  Takes precedence over --config.')
+    # Fallback: derive cache_dir from a config file
+    p_diag.add_argument('--config', default=None,
+                        help='Config file to derive cache_dir from '
+                             '(used only when --cache-dir is not provided).')
+    p_diag.add_argument('--sha',   required=True,
                         help='SHA prefix to look up (min 7 chars)')
-    p_diag.add_argument('--out',      default=None, metavar='FILE',
+    p_diag.add_argument('--out',   default=None, metavar='FILE',
                         help='Write JSON report to FILE instead of stdout')
 
     args = ap.parse_args()
