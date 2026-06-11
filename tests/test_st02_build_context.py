@@ -5,7 +5,16 @@ v13.0.3 (J):
         them to load_kernel_config_symbols().  Tests added:
           test_run_arch_in_config_sets_env()
           test_run_srctree_in_config_sets_env()
+          test_run_arch_not_set_no_env_change()
           test_run_arch_printed_in_summary()
+          test_run_no_arch_prints_hint()
+
+        Note: the env-injection tests must supply source_dir so that
+        load_kernel_config_symbols() enters the kconfiglib code path
+        (it only calls setdefault when source_dir is truthy).  A minimal
+        source tree (just the directory itself, no Kconfig) is sufficient
+        because there is no real Kconfig to parse; the function falls back
+        to the line parser after setting the env vars.
 """
 import json, os
 import pytest
@@ -241,7 +250,6 @@ def test_run_builtin_o_excluded_from_build_artifacts(tmp_path):
     basenames = [os.path.basename(p) for p in ctx['build_artifacts']]
     assert 'built-in.o' not in basenames
     assert 'drm_drv.o' in basenames
-    # Verify the JSON on disk is also clean
     data = json.load(open(os.path.join(cache, CACHE_FILES['build_context'])))
     disk_basenames = [os.path.basename(p) for p in data['build_artifacts']]
     assert 'built-in.o' not in disk_basenames
@@ -250,24 +258,39 @@ def test_run_builtin_o_excluded_from_build_artifacts(tmp_path):
 # ── v13.0.3 (J): arch / srctree propagation from config to env ────────────────
 
 def test_run_arch_in_config_sets_env(tmp_path, monkeypatch):
-    """J: kernel.arch in config → SRCARCH/ARCH set in env before kconfiglib call."""
+    """J: kernel.arch in config → SRCARCH/ARCH set in env.
+
+    source_dir must be set (pointing to an existing dir) so that
+    load_kernel_config_symbols() enters the kconfiglib code path where
+    env vars are injected.  No real Kconfig file is needed — kconfiglib
+    fails to find Kconfig and falls back to the line parser, but the
+    setdefault calls happen before the kconfiglib call.
+    """
     monkeypatch.delenv('SRCARCH', raising=False)
     monkeypatch.delenv('ARCH', raising=False)
+    src = tmp_path / 'linux'
+    src.mkdir()
     kc = tmp_path / '.config'
     kc.write_text('CONFIG_ARM=y\n')
-    cache, cfg = _make_cfg(tmp_path, kconfig=kc, arch='arm')
+    cache, cfg = _make_cfg(tmp_path, kconfig=kc, source_dir=src, arch='arm')
     run(cfg, cache)
     assert os.environ.get('SRCARCH') == 'arm'
     assert os.environ.get('ARCH') == 'arm'
 
 
 def test_run_srctree_in_config_sets_env(tmp_path, monkeypatch):
-    """J: kernel.srctree in config → srctree env var set."""
+    """J: kernel.srctree in config → srctree env var set.
+
+    source_dir must be set so the kconfiglib branch is entered.
+    """
     monkeypatch.delenv('srctree', raising=False)
+    src = tmp_path / 'linux'
+    src.mkdir()
     kc = tmp_path / '.config'
     kc.write_text('CONFIG_USB=y\n')
     explicit = str(tmp_path / 'my_srctree')
-    cache, cfg = _make_cfg(tmp_path, kconfig=kc, arch='arm64', srctree=explicit)
+    cache, cfg = _make_cfg(
+        tmp_path, kconfig=kc, source_dir=src, arch='arm64', srctree=explicit)
     run(cfg, cache)
     assert os.environ.get('srctree') == explicit
 
@@ -276,9 +299,11 @@ def test_run_arch_not_set_no_env_change(tmp_path, monkeypatch):
     """J: When kernel.arch is absent, SRCARCH/ARCH are not injected."""
     monkeypatch.delenv('SRCARCH', raising=False)
     monkeypatch.delenv('ARCH', raising=False)
+    src = tmp_path / 'linux'
+    src.mkdir()
     kc = tmp_path / '.config'
     kc.write_text('CONFIG_USB=y\n')
-    cache, cfg = _make_cfg(tmp_path, kconfig=kc)  # no arch
+    cache, cfg = _make_cfg(tmp_path, kconfig=kc, source_dir=src)  # no arch
     run(cfg, cache)
     assert 'SRCARCH' not in os.environ
     assert 'ARCH' not in os.environ
