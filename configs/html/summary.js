@@ -1,24 +1,28 @@
 /* kcommit-analysis-pipeline — filter/sort/export + commit detail panel
  *
  * Changes:
- *   v13.0.3 (K)   — Fixed critical regression: renderCommit(), renderOverviewTab(),
- *                   renderScoringTab(), renderFilesTab(), generateDecisionRationale(),
- *                   activateDetailTab() and the DOMContentLoaded tab-click handler
- *                   were duplicated *outside* the IIFE where esc(), field(),
- *                   scoreClass(), fmtDate() and panelBody are not in scope.
- *                   The outer definitions shadowed the inner ones causing
- *                   "panelBody is not defined" / blank detail pane on every
- *                   SHA-link click.  All rendering logic is now consolidated
- *                   inside the IIFE.
+ *   v13.0.4 (L)   — Fixed "Loading…" stuck state: openPanel() was setting
+ *                   panelBody.innerHTML = 'Loading…' which destroyed the
+ *                   static #tab-overview / #tab-scoring / #tab-files /
+ *                   #tab-raw child divs.  renderCommit() then called
+ *                   getElementById('tab-overview') → null → all four
+ *                   innerHTML writes were silent no-ops → "Loading…" stayed
+ *                   forever (no console error because null-guards swallowed
+ *                   every write).
+ *                   Fix: show loading state via panel.classList ('loading')
+ *                   instead of clobbering panelBody.  The null-commit
+ *                   fallback now writes into #tab-overview instead of
+ *                   panelBody so the tab structure is always preserved.
  *
- *   v13.0.0       — openPanel() call uses a.getAttribute('data-sha') inline
- *                   (Firefox getAttribute fallback); loadCommitStore().then()
- *                   on one line so test assertions can find the call-site.
+ *   v13.0.3 (K)   — Fixed critical regression: renderCommit() and all tab
+ *                   renderers were duplicated outside the IIFE where esc(),
+ *                   field(), panelBody etc. are not in scope.
  *
- *   v12.0.0 (B)   — openPanel() resolves sidecar JSON for commits not found
- *                   in the in-memory index.
+ *   v13.0.0       — openPanel() uses a.getAttribute('data-sha') inline;
+ *                   loadCommitStore().then() on one line.
  *
- *   v12.0.0 (A.2) — renderCommit() renders full scoring trace.
+ *   v12.0.0 (B)   — Sidecar JSON fetch for commits not in index.
+ *   v12.0.0 (A.2) — Full scoring trace in renderCommit().
  */
 (function () {
   'use strict';
@@ -97,18 +101,20 @@
       });
     }
     if (window.__KC_COMMITS_INDEX__ && window.__KC_COMMITS_INDEX__.mode === 'sidecar') {
-      return fetch(window.__KC_COMMITS_INDEX__.path).then(function(r){ return r.json(); }).then(function(data){
-        var rows = Array.isArray(data) ? data : ((data && data.rows) || []);
-        var map = {};
-        rows.forEach(function(c){
-          var full = String(c.commit || '');
-          var shortSha = String(c.sha || full.slice(0, 12));
-          if (shortSha) map[shortSha] = c;
-          if (full) map[full] = c;
+      return fetch(window.__KC_COMMITS_INDEX__.path)
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          var rows = Array.isArray(data) ? data : ((data && data.rows) || []);
+          var map = {};
+          rows.forEach(function(c){
+            var full = String(c.commit || '');
+            var shortSha = String(c.sha || full.slice(0, 12));
+            if (shortSha) map[shortSha] = c;
+            if (full) map[full] = c;
+          });
+          window.__KC_COMMITS__ = map;
+          return map;
         });
-        window.__KC_COMMITS__ = map;
-        return map;
-      });
     }
     window.__KC_COMMITS__ = {};
     return Promise.resolve(window.__KC_COMMITS__);
@@ -141,9 +147,7 @@
     if (typeof DecompressionStream === 'undefined') return Promise.resolve(null);
     var ds = new DecompressionStream('deflate');
     var blob = new Blob([b64ToBytes(b64)]);
-    return new Response(blob.stream().pipeThrough(ds)).text().catch(function(){
-      return null;
-    });
+    return new Response(blob.stream().pipeThrough(ds)).text().catch(function(){ return null; });
   }
 
   function decodeEmbeddedCommitStore() {
@@ -267,15 +271,12 @@
       controls.push(ctrl);
     });
 
-    /* Walk up from the table to find the card, then look for the
-       filter-bar elements which are siblings of the table wrapper
-       inside the same card content area. */
-    var card       = tbl.closest('.kc-card');
-    var globalEl   = card && card.querySelector('.kc-global-filter');
+    var card        = tbl.closest('.kc-card');
+    var globalEl    = card && card.querySelector('.kc-global-filter');
     var liveCountEl = card && card.querySelector('.kc-live-count');
-    var tableWrap  = tbl.closest('.kc-table-wrap');
-    var busyEl     = tableWrap && tableWrap.querySelector('.kc-table-busy');
-    var filterJob  = 0;
+    var tableWrap   = tbl.closest('.kc-table-wrap');
+    var busyEl      = tableWrap && tableWrap.querySelector('.kc-table-busy');
+    var filterJob   = 0;
 
     function setBusy(isBusy) {
       if (!tableWrap) return;
@@ -409,7 +410,7 @@
   var panelBody = document.getElementById('kc-detail-body');
   var closeBtn  = document.getElementById('kc-detail-close');
 
-  /* ── Tab management (inside IIFE — has access to all closures) ───────── */
+  /* ── Tab management ───────────────────────────────────────────── */
   function activateDetailTab(tabName) {
     document.querySelectorAll('#kc-detail-header .kc-tab').forEach(function(t) {
       t.classList.toggle('active', t.getAttribute('data-tab') === tabName);
@@ -527,7 +528,6 @@
         c.matched_profiles.map(function(p){ return '<span class="profile-chip">'+esc(p)+'</span>'; }).join(' '));
     }
 
-    /* Decision rationale */
     html += '<div class="kc-detail-section"><h4>Why This Commit Was Kept</h4>';
     var keptReasons = [];
     if (sc.trace && sc.trace.profiles && Object.keys(sc.trace.profiles).length) {
@@ -540,13 +540,11 @@
       keptReasons.push('Score ' + esc(String(c.score)) + ' met minimum threshold');
     }
     if (!keptReasons.length) keptReasons.push('Commit passed all filtering stages');
-    html += '<div class="decision-section kept-reason">';
-    html += '<strong>Kept</strong>';
+    html += '<div class="decision-section kept-reason"><strong>Kept</strong>';
     html += '<ul style="margin:.25rem 0 0 1rem;font-size:.75rem">';
     keptReasons.forEach(function(r){ html += '<li>' + r + '</li>'; });
     html += '</ul></div></div>';
 
-    /* Product evidence */
     if (c.product_evidence && c.product_evidence.length) {
       html += '<div class="kc-detail-section"><h4>Evidence</h4>'
         + '<ul style="padding-left:1.1rem;font-size:.75rem">';
@@ -554,7 +552,6 @@
       html += '</ul></div>';
     }
 
-    /* Commit message */
     if (c.body) {
       html += '<div class="kc-detail-section"><h4>Commit message</h4>'
         + '<pre style="white-space:pre-wrap;font-size:.72rem;max-height:220px;overflow-y:auto">'
@@ -621,26 +618,36 @@
     return html;
   }
 
-  /* ── renderCommit — writes into static tab divs from report.html ────── */
+  /* ── renderCommit ─────────────────────────────────────────────── */
   function renderCommit(c, sha) {
-    if (!panelBody) return;
-    if (!c) {
-      panelBody.innerHTML = field('SHA', esc(sha), 'mono')
-        + '<p style="color:var(--color-text-muted,#888);margin-top:.75rem;font-size:.75rem">'
-        + 'No detail data available for this commit.</p>';
-      return;
-    }
+    /* L: never clobber panelBody — the tab divs live inside it.
+     *    Remove the loading class set by openPanel instead. */
+    if (panel) panel.classList.remove('loading');
 
     var tabOverview = document.getElementById('tab-overview');
     var tabScoring  = document.getElementById('tab-scoring');
     var tabFiles    = document.getElementById('tab-files');
     var tabRaw      = document.getElementById('tab-raw');
 
+    if (!c) {
+      /* Commit not found — write a notice into the overview tab */
+      if (tabOverview) tabOverview.innerHTML =
+        field('SHA', esc(sha), 'mono')
+        + '<p style="color:var(--color-text-muted,#888);margin-top:.75rem;font-size:.75rem">'
+        + 'No detail data available for this commit.</p>';
+      if (tabScoring) tabScoring.innerHTML = '';
+      if (tabFiles)   tabFiles.innerHTML   = '';
+      if (tabRaw)     tabRaw.innerHTML     = '';
+      activateDetailTab('overview');
+      return;
+    }
+
     if (tabOverview) tabOverview.innerHTML = _renderOverview(c);
     if (tabScoring)  tabScoring.innerHTML  = _renderScoring(c);
     if (tabFiles)    tabFiles.innerHTML    = _renderFiles(c);
-    if (tabRaw)      tabRaw.innerHTML      = '<pre style="white-space:pre-wrap;font-size:.7rem;overflow-y:auto;max-height:60vh">'
-                                           + esc(JSON.stringify(c, null, 2)) + '</pre>';
+    if (tabRaw)      tabRaw.innerHTML      =
+      '<pre style="white-space:pre-wrap;font-size:.7rem;overflow-y:auto;max-height:60vh">'
+      + esc(JSON.stringify(c, null, 2)) + '</pre>';
     activateDetailTab('overview');
   }
 
@@ -650,7 +657,10 @@
     overlay.classList.add('open');
     panel.classList.add('open');
     if (panelH3) panelH3.textContent = fullSha || sha12;
-    if (panelBody) panelBody.innerHTML = '<p style="color:var(--color-text-muted,#888);font-size:.75rem">Loading…</p>';
+
+    /* L: signal loading via CSS class — do NOT touch panelBody.innerHTML
+     *    because the static tab divs (#tab-overview etc.) live inside it. */
+    panel.classList.add('loading');
 
     loadCommitStore().then(function(map) {
         map = (map && typeof map === 'object') ? map : {};
@@ -666,19 +676,22 @@
       })
       .then(function(c) { renderCommit(c, fullSha || sha12); })
       .catch(function(err) {
+        if (panel) panel.classList.remove('loading');
         var msg = (err && err.message) ? err.message : String(err || 'unknown error');
-        if (panelBody) {
-          panelBody.innerHTML = field('SHA', esc(fullSha || sha12), 'mono')
+        var tabOverview = document.getElementById('tab-overview');
+        if (tabOverview) {
+          tabOverview.innerHTML = field('SHA', esc(fullSha || sha12), 'mono')
             + '<p style="color:var(--color-text-muted,#888);margin-top:.75rem;font-size:.75rem">'
             + 'Unable to load commit details: ' + esc(msg) + '</p>';
         }
+        activateDetailTab('overview');
       });
     return true;
   }
 
   function closePanel() {
     if (overlay) overlay.classList.remove('open');
-    if (panel)   panel.classList.remove('open');
+    if (panel)   panel.classList.remove('open', 'loading');
   }
 
   if (overlay) overlay.addEventListener('click', function(e) {
@@ -706,7 +719,7 @@
     if (e.preventDefault) e.preventDefault();
     if (e.stopPropagation) e.stopPropagation();
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-    var sha12   = a.getAttribute('data-sha')   || (a.dataset && a.dataset.sha)     || '';
+    var sha12   = a.getAttribute('data-sha')      || (a.dataset && a.dataset.sha)     || '';
     var fullSha = a.getAttribute('data-full-sha') || (a.dataset && a.dataset.fullSha) || sha12;
     openPanel(a.getAttribute('data-sha') || sha12, fullSha);
     return false;
