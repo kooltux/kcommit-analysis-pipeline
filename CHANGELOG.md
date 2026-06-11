@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## v14.0.1 — diagnose: remove cache_presence from JSON output (2026-06-11)
+
+### Changed
+
+- `lib/commands/cmd_diagnose.py` — removed `cache_presence` from the JSON
+  output of `diagnose_commit()` and the `cmd_diagnose` CLI.
+
+  `cache_presence` was an inventory of every known cache file with `exists`
+  and `size_bytes` fields.  It was redundant: missing files are already
+  reported via the `warnings` list, and file sizes carry no diagnostic value
+  for understanding why a commit was filtered or scored in a particular way.
+  Removing it keeps the output focused on commit-level decision data.
+
+  The `_presence()` helper function has been deleted along with its call-site
+  in `diagnose_commit()`.
+
+  Top-level output keys are now:
+  `meta`, `commit`, `kernel_annotations`, `pipeline_stages`, `final`, `warnings`.
+
+- `tests/test_cmd_diagnose.py` — removed the three `cache_presence` tests
+  (`test_cache_presence_all_keys`, `test_cache_presence_missing_file`,
+  `test_cache_presence_existing_file`) and replaced them with a single
+  `test_no_cache_presence_in_output` assertion that the key is absent.
+  Module docstring coverage list updated accordingly.
+
+- `docs/PIPELINE.md` — module-level output-key list updated; `v14.0.1`
+  changes section added.
+
+---
+
 ## v14.0.0 — prefilter: suppress kw_wl rescue when file evidence is authoritative (2026-06-11)
 
 ### Fixed (A — kw_wl rescue suppression)

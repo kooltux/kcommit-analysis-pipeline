@@ -26,7 +26,6 @@ Usage examples
   kcommit_pipeline.py dropped  --config cfg.json [--reason all|prefilter|low-score]
   kcommit_pipeline.py diagnose --cache-dir work/cache --sha <SHA_PREFIX>
   kcommit_pipeline.py diagnose --cache-dir work/cache --sha <SHA_PREFIX> --out report.json
-  kcommit_pipeline.py diagnose --config cfg.json     --sha <SHA_PREFIX>   # config fallback
 """
 import argparse
 import sys
@@ -86,27 +85,30 @@ def main():
         'diagnose',
         help='Full JSON diagnosis of one commit across all pipeline stages',
         description=(
-            'Trace a single commit through every pipeline stage and emit a '
-            'self-contained JSON report.  Only the cache directory is required; '
-            'no config file needed.\n\n'
-            'Report sections: meta, commit, cache_presence, prefilter '
-            '(with full debug_detail), scoring (per-profile breakdown), '
-            'postfilter (threshold + outcome), final (rank + human summary), '
-            'warnings.'
+            'Post-run diagnostic tool. Traces a single commit through every '
+            'pipeline stage and emits a self-contained JSON report.\n\n'
+            'Requires only the cache directory -- no config file needed.\n\n'
+            'Report sections:\n'
+            '  commit             -- all raw commit fields (sha, subject, author,\n'
+            '                        files, stats, body)\n'
+            '  kernel_annotations -- is_fix, has_cve, has_syzbot, has_stable_cc\n'
+            '  cache_presence     -- all cache files: exists + size_bytes\n'
+            '  pipeline_stages:\n'
+            '    stage_01_collect    -- was the commit collected?\n'
+            '    stage_04_prefilter  -- outcome, reason, full layer decision trace\n'
+            '    stage_05_scoring    -- score, per-profile full rule trace\n'
+            '    stage_06_postfilter -- outcome, threshold, rank\n'
+            '  final              -- stage_reached, rank, score, human summary\n'
+            '  warnings           -- data quality / consistency notes'
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    # Primary: just the cache dir -- no config file needed
-    p_diag.add_argument('--cache-dir', dest='cache_dir', default=None,
+    p_diag.add_argument('--cache-dir', dest='cache_dir', required=True,
                         metavar='DIR',
-                        help='Path to the pipeline cache directory '
-                             '(e.g. work/cache).  Takes precedence over --config.')
-    # Fallback: derive cache_dir from a config file
-    p_diag.add_argument('--config', default=None,
-                        help='Config file to derive cache_dir from '
-                             '(used only when --cache-dir is not provided).')
-    p_diag.add_argument('--sha',   required=True,
-                        help='SHA prefix to look up (min 7 chars)')
-    p_diag.add_argument('--out',   default=None, metavar='FILE',
+                        help='Path to the pipeline cache directory (e.g. work/cache)')
+    p_diag.add_argument('--sha',  required=True,
+                        help='Full or partial SHA to look up (min 7 chars)')
+    p_diag.add_argument('--out',  default=None, metavar='FILE',
                         help='Write JSON report to FILE instead of stdout')
 
     args = ap.parse_args()
