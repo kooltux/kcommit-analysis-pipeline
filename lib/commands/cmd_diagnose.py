@@ -39,20 +39,17 @@ Output JSON top-level keys
                         in_report, summary (one human sentence)
   warnings           -- data quality / consistency notes
 
-Stage 04 prefilter section detail
-----------------------------------
+Stage 04 prefilter section detail (v14.1.0)
+-------------------------------------------
 For DROPPED commits the section contains the full filter_decision() debug
 trace, exactly as written by st04_prefilter.py:
-  outcome, reason, filter_enabled, kconfig_required, kw_wl_rescue_suppressed
+  outcome, reason, filter_enabled, kconfig_required
   layers:
     L3_sha_whitelist / L3_sha_blacklist   -- force-keep / force-drop SHA match
     L2a_path_bl_matches                   -- all-files path-blacklist match
-    L2b_path_wl_matches                   -- any-file path-whitelist match
     L2half_artifact_files                 -- files with build-artifact evidence
     L2half_kconfig_covered_files          -- files covered by enabled kconfig symbol
     L2half_kconfig_uncovered_files        -- files NOT covered (trigger for drop)
-    L1a_kw_wl_matches                     -- keyword whitelist matches
-    L1b_kw_bl_matches                     -- keyword blacklist matches
 
 For KEPT commits: outcome='kept', layers=null (debug not stored for kept commits).
 
@@ -121,8 +118,7 @@ def _load(cache_dir, key, warnings):
 
 
 # ---------------------------------------------------------------------------
-# section builders -- each reads fields already written to cache by the
-# pipeline stages; no computation of any kind is performed here.
+# section builders
 # ---------------------------------------------------------------------------
 
 def _commit_section(c):
@@ -141,10 +137,7 @@ def _commit_section(c):
 
 
 def _kernel_annotations(c):
-    """Kernel annotation flags written to commit.meta by stage 04 enrichment.
-    Returns all four flags; defaults to False when meta is absent (e.g. commit
-    was not yet enriched, i.e. found only in raw commits.json).
-    """
+    """Kernel annotation flags written to commit.meta by stage 04 enrichment."""
     meta = c.get('meta') or {}
     return {
         'is_fix':        bool(meta.get('is_fix',        False)),
@@ -159,23 +152,15 @@ def _kernel_annotations(c):
 def _stage04(c, prefilter_debug_data):
     """Build stage_04_prefilter section.
 
-    Source for DROPPED commits:
-      Primary  -- _prefilter_debug embedded on the commit dict
-                  (filtered_commits.json).
-      Fallback -- prefilter_debug.json 'dropped' list entry for this SHA
-                  (used when the inline copy is missing or sparse).
-
-    For KEPT commits: no per-commit debug is stored by design -- stage 04
-    only persists debug detail for dropped commits.  The section reflects
-    the kept outcome and all fields that can be inferred are set.
+    v14.1.0: layers dict no longer contains kw_wl_rescue_suppressed,
+    L2b_path_wl_matches, L1a_kw_wl_matches, L1b_kw_bl_matches.
+    These were removed from filter_decision() in v14.1.0 (B).
     """
     drop_reason = c.get('_filter_reason')
 
     if drop_reason:
-        # ---- DROPPED: reconstruct full debug trace --------------------------
         dbg = dict(c.get('_prefilter_debug') or {})
 
-        # Try to enrich from prefilter_debug.json when inline copy is sparse.
         if prefilter_debug_data:
             sha_full = (c.get('commit') or '')
             for entry in (prefilter_debug_data.get('dropped') or []):
@@ -185,34 +170,28 @@ def _stage04(c, prefilter_debug_data):
                     break
 
         return {
-            'outcome':                 'dropped',
-            'reason':                  drop_reason,
-            'filter_enabled':          dbg.get('filter_enabled'),
-            'kconfig_required':        dbg.get('kconfig_required'),
-            'kw_wl_rescue_suppressed': dbg.get('kw_wl_rescue_suppressed', False),
+            'outcome':          'dropped',
+            'reason':           drop_reason,
+            'filter_enabled':   dbg.get('filter_enabled'),
+            'kconfig_required': dbg.get('kconfig_required'),
             'layers': {
-                'L3_sha_whitelist':              dbg.get('l3_commit_wl_match'),
-                'L3_sha_blacklist':              dbg.get('l3_commit_bl_match'),
-                'L2a_path_bl_matches':           dbg.get('l2a_path_bl_matches', []),
-                'L2b_path_wl_matches':           dbg.get('l2b_path_wl_matches', []),
-                'L2half_artifact_files':         dbg.get('l2half_artifact_files', []),
-                'L2half_kconfig_covered_files':  dbg.get('l2half_kconfig_covered_files', []),
-                'L2half_kconfig_uncovered_files':dbg.get('l2half_kconfig_uncovered_files', []),
-                'L1a_kw_wl_matches':             dbg.get('l1a_kw_wl_matches', []),
-                'L1b_kw_bl_matches':             dbg.get('l1b_kw_bl_matches', []),
+                'L3_sha_whitelist':               dbg.get('l3_commit_wl_match'),
+                'L3_sha_blacklist':               dbg.get('l3_commit_bl_match'),
+                'L2a_path_bl_matches':            dbg.get('l2a_path_bl_matches', []),
+                'L2half_artifact_files':          dbg.get('l2half_artifact_files', []),
+                'L2half_kconfig_covered_files':   dbg.get('l2half_kconfig_covered_files', []),
+                'L2half_kconfig_uncovered_files': dbg.get('l2half_kconfig_uncovered_files', []),
             },
             'explanation': _prefilter_explanation(drop_reason, dbg),
         }
 
-    # ---- KEPT: no per-commit debug stored -----------------------------------
     return {
-        'outcome':                 'kept',
-        'reason':                  c.get('_prefilter_reason', 'passed'),
-        'filter_enabled':          None,
-        'kconfig_required':        None,
-        'kw_wl_rescue_suppressed': False,
-        'layers':                  None,
-        'explanation':             'Commit passed the prefilter and was forwarded to scoring.',
+        'outcome':          'kept',
+        'reason':           c.get('_prefilter_reason', 'passed'),
+        'filter_enabled':   None,
+        'kconfig_required': None,
+        'layers':           None,
+        'explanation':      'Commit passed the prefilter and was forwarded to scoring.',
     }
 
 
@@ -222,10 +201,7 @@ def _prefilter_explanation(reason, dbg):
         'no_kconfig_coverage': (
             'All commit files are absent from the product build '
             '(no enabled kconfig symbol covers them and no build artifact matches). '
-            + ('The keyword whitelist would have matched but was suppressed because '
-               'compiled_files is non-empty (v14.0.0 fix). '
-               if dbg.get('kw_wl_rescue_suppressed') else '')
-            + 'Files: ' + ', '.join(dbg.get('l2half_kconfig_uncovered_files', [])) + '.'
+            'Files: ' + ', '.join(dbg.get('l2half_kconfig_uncovered_files', [])) + '.'
         ),
         'path_blacklist_all': (
             'Every file in the commit matches a path blacklist rule, '
@@ -234,14 +210,6 @@ def _prefilter_explanation(reason, dbg):
             + ', '.join(
                 '%s -> %s' % (m.get('pattern', ''), m.get('file', ''))
                 for m in dbg.get('l2a_path_bl_matches', [])
-            ) + '.'
-        ),
-        'keywords_blacklist': (
-            'The commit message matched a keyword blacklist pattern. '
-            'Matching patterns: '
-            + ', '.join(
-                '%s (in: %s)' % (m.get('pattern', ''), m.get('value', '')[:60])
-                for m in dbg.get('l1b_kw_bl_matches', [])
             ) + '.'
         ),
         'commit_blacklist': (
@@ -256,19 +224,7 @@ def _prefilter_explanation(reason, dbg):
 # -- Stage 05 ----------------------------------------------------------------
 
 def _stage05(c):
-    """Build stage_05_scoring section.
-
-    Source: commit dict from scored_commits.json / relevant_commits.json /
-    postfilter_dropped_commits.json.  All three carry the full scoring trace
-    written by scoring.py score_commit().
-
-    scoring.trace.profiles is the authoritative source.  It contains one
-    entry per active profile with the complete per-rule breakdown.  We
-    surface it verbatim so every match detail is visible.
-
-    Compact fallback: when trace is absent (older cache format) the compact
-    scoring.profiles dict {profile: score} is used instead.
-    """
+    """Build stage_05_scoring section."""
     scoring = c.get('scoring') or {}
     trace   = (scoring.get('trace') or {}).get('profiles') or {}
 
@@ -290,7 +246,6 @@ def _stage05(c):
                 'explanation':           _profile_explanation(pname, pt),
             }
     else:
-        # Compact fallback: older cache -- only per-profile scores available
         compact = scoring.get('profiles') or {}
         for pname, val in compact.items():
             if isinstance(val, int):
@@ -347,14 +302,7 @@ def _profile_explanation(pname, pt):
 # -- Stage 06 ----------------------------------------------------------------
 
 def _stage06(c, postfilter_debug, threshold):
-    """Build stage_06_postfilter section.
-
-    Source:
-      relevant_commits.json           -> _rank is set; outcome=kept
-      postfilter_dropped_commits.json -> _filter_reason contains
-                                         'score_below_threshold(N)'; outcome=dropped
-      scored_commits.json only        -> postfilter has not run; outcome=not_run
-    """
+    """Build stage_06_postfilter section."""
     rank      = c.get('_rank')
     pf_reason = (c.get('_postfilter_reason') or c.get('_filter_reason') or '')
     score     = c.get('score')
@@ -457,26 +405,9 @@ def _final(stage, c):
 # ---------------------------------------------------------------------------
 
 def diagnose_commit(cache_dir, sha_query):
-    """Read pipeline cache files and return a complete diagnosis dict.
-
-    Parameters
-    ----------
-    cache_dir : str
-        Path to the pipeline cache directory (e.g. work/cache).
-    sha_query : str
-        SHA prefix to look up (7+ characters recommended).
-
-    Returns
-    -------
-    dict  -- JSON-serialisable diagnosis report.  See module docstring for
-             the full output schema.
-
-    This function executes NO pipeline code.  It only reads JSON files
-    from cache_dir via load_json().
-    """
+    """Read pipeline cache files and return a complete diagnosis dict."""
     warnings = []
 
-    # ---- 1. load all relevant cache files ----------------------------------
     relevant           = _load(cache_dir, 'relevant',           warnings) or []
     postfilter_dropped = _load(cache_dir, 'postfilter_dropped', warnings) or []
     scored             = _load(cache_dir, 'scored',             warnings) or []
@@ -486,7 +417,6 @@ def diagnose_commit(cache_dir, sha_query):
     prefilter_debug    = _load(cache_dir, 'prefilter_debug',    warnings)
     postfilter_debug   = _load(cache_dir, 'postfilter_debug',   warnings)
 
-    # ---- 2. SHA ambiguity check across all pools ---------------------------
     all_pools = (relevant + postfilter_dropped + scored
                  + prefilter_kept + filtered + all_commits)
     matching_shas = {
@@ -501,7 +431,6 @@ def diagnose_commit(cache_dir, sha_query):
             'Provide more characters.' % (sha_query, len(matching_shas), sample)
         )
 
-    # ---- 3. find commit -- most-advanced stage first -----------------------
     commit = None
     stage  = 'not_found'
 
@@ -529,12 +458,10 @@ def diagnose_commit(cache_dir, sha_query):
             'Commit with SHA prefix %r not found in any cache file.' % sha_query)
         commit = {'commit': sha_query}
 
-    # ---- 4. extract threshold from postfilter_debug.json -------------------
     threshold = None
     if isinstance(postfilter_debug, dict):
         threshold = (postfilter_debug.get('summary') or {}).get('threshold')
 
-    # ---- 5. build each section from the cached data -----------------------
     s01 = {
         'found': bool(_find(all_commits, sha_query)),
         'sha':   commit.get('commit') or None,
@@ -548,7 +475,6 @@ def diagnose_commit(cache_dir, sha_query):
         s05 = _stage05(commit)
         s06 = _stage06(commit, postfilter_debug, threshold)
 
-    # ---- 6. assemble report -----------------------------------------------
     return {
         'meta': {
             'pipeline_version': VERSION,
