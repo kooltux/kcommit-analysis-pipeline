@@ -11,10 +11,24 @@ Filter hierarchy (higher level wins):
         Only commits where every file lives under a blacklisted prefix are dropped.
   L2b path_whitelist ANY file  -> KEEP
   L2half build artifact evidence -> KEEP
-  L2half kconfig coverage miss   -> DROP  (unless kw_whitelist saves)
+  L2half kconfig coverage miss   -> DROP  (unless kw_whitelist saves — see note)
         kconfig/path coverage is computed unconditionally before the drop
         decision so that the debug output is accurate even for commits saved
         by the keyword whitelist.
+
+        kw_wl rescue at L2half:
+          The keyword whitelist may rescue a commit from a kconfig-coverage miss
+          ONLY when compiled_files is empty (i.e. no file-level coverage data
+          exists at all).  When compiled_files is non-empty and a commit's files
+          are conclusively uncovered, the keyword whitelist must NOT override the
+          kconfig miss — the file evidence is authoritative.  This prevents
+          generic security keywords in a commit message (e.g. "lockup", "BUG")
+          from keeping commits that touch subsystems not built in the product.
+
+          When the rescue is suppressed, the debug field
+          'kw_wl_rescue_suppressed' is set to True and 'l1a_kw_wl_matches'
+          is populated so the operator can see what would have matched.
+
   L1a keywords_whitelist         -> KEEP
   L1b keywords_blacklist         -> DROP
   L0  default                    -> KEEP
@@ -32,7 +46,8 @@ v12.0.0 (A.1) -- filter_decision() now returns a 3-tuple
     l2a_path_bl_matches, l2b_path_wl_matches,
     l2half_artifact_files,
     l2half_kconfig_covered_files, l2half_kconfig_uncovered_files,
-    l1a_kw_wl_matches, l1b_kw_bl_matches
+    l1a_kw_wl_matches, l1b_kw_bl_matches,
+    kw_wl_rescue_suppressed
   All dropped commits carry this field in the cache and in the
   prefilter_debug.json output file.
 
@@ -93,7 +108,29 @@ v13.0.2 changes (Bug-2 fix):
                                resolves ambiguities (correct behaviour when the user
                                provides kernel sources only, with no .config/logs/dir).
 
-prefilter_debug.json schema (A.1 / v13.0.0):
+v14.0.0 changes (A — kw_wl rescue suppression):
+  A     -- filter_decision(): the keyword whitelist rescue inside the L2half
+           kconfig-coverage miss path is now suppressed when compiled_files is
+           non-empty.  When file-level coverage data exists and a commit's files
+           are conclusively uncovered, the kw_wl must not override the kconfig
+           miss — the file evidence is authoritative.
+
+           Previously, a commit touching e.g. fs/btrfs/ioctl.c (CONFIG_BTRFS_FS
+           disabled in .config) could be rescued by a keyword like 'lockup' or
+           'BUG' in the commit body, keeping it in the output despite being
+           demonstrably not built in the product.
+
+           New behaviour:
+             - compiled_files non-empty + files uncovered → DROP (no_kconfig_coverage)
+               even if kw_wl would have matched.
+             - compiled_files empty (no .config, no kconfig evidence) → kw_wl rescue
+               still applies, unchanged.
+
+           Debug field 'kw_wl_rescue_suppressed' (bool) added to debug_detail:
+             True  → rescue was suppressed; l1a_kw_wl_matches shows what matched.
+             False → rescue was not applicable or not triggered.
+
+prefilter_debug.json schema (A.1 / v13.0.0 / v14.0.0):
   {
     "summary": {
       "total_commits":   <int>,
@@ -113,7 +150,10 @@ prefilter_debug.json schema (A.1 / v13.0.0):
         "author":      <str>,
         "files":       [<str>, ...],
         "drop_reason": <str>,
-        "debug":       { ... }
+        "debug":       {
+          ...,
+          "kw_wl_rescue_suppressed": <bool>   # new in v14.0.0
+        }
       },
       ...
     ]
@@ -363,7 +403,7 @@ def _build_prefilter_debug_entry(commit, reason, debug_detail):
 def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
     """Return (action, reason, debug_detail): action='keep'|'drop'.
 
-    debug_detail keys (v12.0.0 A.1):
+    debug_detail keys (v12.0.0 A.1 / v14.0.0 A):
       sha                           -- commit SHA
       files                         -- list of commit files evaluated
       filter_enabled                -- bool, False when filter is globally disabled
@@ -377,6 +417,11 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
       l2half_kconfig_uncovered_files-- [file, ...] without kconfig coverage
       l1a_kw_wl_matches             -- [{pattern, value}, ...]
       l1b_kw_bl_matches             -- [{pattern, value}, ...]
+      kw_wl_rescue_suppressed       -- bool (v14.0.0 A): True when kw_wl rescue
+                                       was suppressed because compiled_files is
+                                       non-empty (file evidence is authoritative).
+                                       l1a_kw_wl_matches is populated to show
+                                       what would have matched.
 
     v13.0.0 (E.1.1): artifact_files computed once and reused.
     v13.0.0 (E.1.2): kconfig_covered/uncovered always computed before drop/save
@@ -385,6 +430,9 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
                      layers.  Reason is 'no_files_layer' for plain default keep
                      (G: was incorrectly 'default' before this fix), or the
                      matching keyword reason when L1a/L1b fires.
+    v14.0.0 (A):     kw_wl rescue at L2half suppressed when compiled_files
+                     is non-empty — file evidence is authoritative over keyword
+                     matches when coverage data exists.
     """
     sha   = commit.get('commit', '') or ''
     files = list(commit.get('files', []) or [])
@@ -433,7 +481,7 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
         artifact_files = [f for f in files if _file_has_artifact(f, compiled_sets)]
 
     # -- Build debug_detail dict -----------------------------------------------
-    def _debug():
+    def _debug(kw_wl_rescue_suppressed=False):
         return {
             'sha':                           sha,
             'files':                         files,
@@ -448,6 +496,7 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
             'l2half_kconfig_uncovered_files': kconfig_uncovered,
             'l1a_kw_wl_matches':             [],
             'l1b_kw_bl_matches':             [],
+            'kw_wl_rescue_suppressed':       kw_wl_rescue_suppressed,
         }
 
     # ========== Filter hierarchy ==============================================
@@ -500,11 +549,27 @@ def filter_decision(commit, lists, compiled_sets, filter_cfg, kconfig_enabled):
     # L2half kconfig coverage miss
     if kconfig_enabled and require:
         if not kconfig_covered:
-            kw_wl_hits = _collect_hits(kw_wl, [subj, body]) if kw_wl else []
-            if kw_wl_hits:
-                d = _debug()
-                d['l1a_kw_wl_matches'] = kw_wl_hits
-                return 'keep', 'keywords_whitelist', d
+            # v14.0.0 (A): kw_wl rescue is suppressed when compiled_files is
+            # non-empty.  File-level coverage data is authoritative: if the
+            # pipeline knows which files are built and a commit's files are
+            # conclusively absent, no keyword match should override that.
+            # When compiled_files is empty (no .config, no kconfig evidence)
+            # the rescue still applies — keyword matching is the best available
+            # heuristic in that situation.
+            if kw_wl and not compiled_sets.get('compiled_files'):
+                kw_wl_hits = _collect_hits(kw_wl, [subj, body])
+                if kw_wl_hits:
+                    d = _debug()
+                    d['l1a_kw_wl_matches'] = kw_wl_hits
+                    return 'keep', 'keywords_whitelist', d
+            elif kw_wl:
+                # compiled_files non-empty: check if kw_wl would have matched
+                # and record it in debug for traceability, but do NOT rescue.
+                kw_wl_hits = _collect_hits(kw_wl, [subj, body])
+                if kw_wl_hits:
+                    d = _debug(kw_wl_rescue_suppressed=True)
+                    d['l1a_kw_wl_matches'] = kw_wl_hits
+                    return 'drop', 'no_kconfig_coverage', d
             d = _debug()
             return 'drop', 'no_kconfig_coverage', d
 
