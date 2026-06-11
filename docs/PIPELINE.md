@@ -48,6 +48,19 @@
      the file itself is in `compiled_files`.  This prevents a build-log entry
      for `drivers/usb/hub.o` from spuriously matching `sound/usb/hub.c`,
      `net/hub.c`, etc. anywhere else in the tree.
+- **L2½ kconfig coverage miss — keyword whitelist rescue rule (v14.0.0)**:
+  When a commit's files are conclusively uncovered (not in `compiled_files`,
+  not in `compiled_dirs`), the keyword whitelist (`kw_wl`) rescue is
+  **suppressed** if `compiled_files` is non-empty.  The rationale is that
+  file-level coverage data is authoritative: if the pipeline knows which files
+  are built and the commit's files are definitively absent, no keyword match
+  should override that decision.  The rescue still applies when
+  `compiled_files` is empty (no `.config` / no kconfig evidence), where
+  keyword matching is the best available heuristic.
+
+  When the rescue is suppressed the debug field `kw_wl_rescue_suppressed` is
+  set to `true` and `l1a_kw_wl_matches` is populated so the operator can see
+  which keyword patterns would have matched.
 - Zero-file commits (merge commits, tag objects) bypass path/artifact/kconfig
   layers and use the distinct keep reason `no_files_layer` when they reach
   the default path without keyword matches.
@@ -134,6 +147,34 @@ stale cache files before re-running.
 | `lib/manifest.py` | Version and manifest loading |
 | `lib/logsetup.py` | Logging configuration |
 | `lib/stages/` | Stage business logic (one module per stage) |
+
+
+## v14.0.0 changes
+
+- Stage 04 (`filter_decision`): keyword whitelist rescue at the L2½
+  kconfig-coverage miss path is now **suppressed when `compiled_files` is
+  non-empty** (A).  When file-level coverage data exists and a commit's files
+  are conclusively absent from that set, the kw_wl must not override the drop
+  decision — file evidence is authoritative.  The rescue continues to apply
+  when `compiled_files` is empty (no `.config` provided, no kconfig evidence),
+  where keyword matching remains the best available heuristic.
+- New debug field `kw_wl_rescue_suppressed` (bool) added to `debug_detail`
+  for all code paths.  `true` when suppression occurred; `l1a_kw_wl_matches`
+  is also populated in the suppressed case for operator traceability (A).
+- **Root cause / motivating example**: commit `b238eaa1` (`btrfs: reschedule
+  when cloning lots of extents`) touched only `fs/btrfs/ioctl.c`;
+  `CONFIG_BTRFS_FS` was absent from `config_enabled_map` (product uses
+  CONFIG_USB only).  The commit body contained `BUG`/`soft lockup` which
+  matched the security keyword whitelist, incorrectly keeping it in the output
+  despite the subsystem not being built for the product.  After this fix the
+  commit is dropped with reason `no_kconfig_coverage`.
+- Tests (6 new tests in `tests/test_prefilter.py`):
+  - `test_kw_wl_rescue_suppressed_when_compiled_files_nonempty`
+  - `test_kw_wl_rescue_suppressed_debug_shows_matching_patterns`
+  - `test_kw_wl_rescue_allowed_when_compiled_files_empty`
+  - `test_kw_wl_rescue_suppressed_btrfs_real_world_scenario`
+  - `test_debug_detail_has_kw_wl_rescue_suppressed_key`
+  - `test_kw_wl_rescue_suppressed_false_by_default`
 
 
 ## v13.0.0 changes

@@ -2,6 +2,98 @@
 
 All notable changes to this project will be documented in this file.
 
+## v14.0.0 — prefilter: suppress kw_wl rescue when file evidence is authoritative (2026-06-11)
+
+### Fixed (A — kw_wl rescue suppression)
+
+- `lib/stages/st04_prefilter.py` — the keyword whitelist rescue inside the
+  L2½ kconfig-coverage miss path is now **suppressed when `compiled_files` is
+  non-empty**.
+
+  **Root cause.** When a commit's files had no kconfig coverage, `filter_decision()`
+  checked for keyword whitelist matches and, if found, returned
+  `keep, 'keywords_whitelist'` — even when `compiled_files` was fully populated
+  and the commit's files were conclusively absent from the product build.  This
+  meant that a commit like `b238eaa1` (`btrfs: reschedule when cloning lots of
+  extents`) touching only `fs/btrfs/ioctl.c` — with `CONFIG_BTRFS_FS` absent
+  from `config_enabled_map` — could be rescued by generic security terms
+  (`BUG`, `soft lockup`) in the commit body, keeping it in the final report
+  despite the subsystem not being built in the product.
+
+  **Fix.** The kw_wl rescue at L2½ is gated on `compiled_files` being empty:
+
+  ```python
+  # BEFORE — rescue always tried when kconfig miss detected
+  if kw_wl:
+      kw_wl_hits = _collect_hits(kw_wl, [subj, body])
+      if kw_wl_hits:
+          return 'keep', 'keywords_whitelist', d
+  return 'drop', 'no_kconfig_coverage', d
+
+  # AFTER — rescue only when no file-coverage data exists
+  if kw_wl and not compiled_sets.get('compiled_files'):
+      kw_wl_hits = _collect_hits(kw_wl, [subj, body])
+      if kw_wl_hits:
+          return 'keep', 'keywords_whitelist', d
+  elif kw_wl:
+      # compiled_files non-empty: record what would have matched, but suppress
+      kw_wl_hits = _collect_hits(kw_wl, [subj, body])
+      if kw_wl_hits:
+          d = _debug(kw_wl_rescue_suppressed=True)
+          d['l1a_kw_wl_matches'] = kw_wl_hits
+          return 'drop', 'no_kconfig_coverage', d
+  return 'drop', 'no_kconfig_coverage', d
+  ```
+
+  **Design contract:**
+  - `compiled_files` non-empty → file evidence is authoritative; kw_wl rescue
+    suppressed; commit dropped with `no_kconfig_coverage`.
+  - `compiled_files` empty (no `.config`, no kconfig evidence) → kw_wl rescue
+    still applies; keyword matching is the best available heuristic in that
+    situation.
+
+- New debug field `kw_wl_rescue_suppressed` (bool) added to `debug_detail`
+  for **all** code paths (default `False`).  Set to `True` only when the
+  suppression branch is taken.  `l1a_kw_wl_matches` is also populated in the
+  suppressed case, showing which patterns would have matched, for operator
+  traceability in `prefilter_debug.json`.
+
+- Module docstring and `filter_decision()` docstring updated to document the
+  kw_wl rescue rule and the `kw_wl_rescue_suppressed` debug field.
+
+### Tests (A)
+
+- `tests/test_prefilter.py` — added 6 new regression tests:
+
+  | Test | Assertion |
+  |---|---|
+  | `test_kw_wl_rescue_suppressed_when_compiled_files_nonempty` | Commit touching uncovered files dropped even when kw_wl matches (compiled_files non-empty) |
+  | `test_kw_wl_rescue_suppressed_debug_shows_matching_patterns` | `kw_wl_rescue_suppressed=True` and `l1a_kw_wl_matches` populated when suppressed |
+  | `test_kw_wl_rescue_allowed_when_compiled_files_empty` | Rescue still keeps commit when `compiled_files` is empty |
+  | `test_kw_wl_rescue_suppressed_btrfs_real_world_scenario` | End-to-end: `b238eaa1` btrfs commit dropped after fix |
+  | `test_debug_detail_has_kw_wl_rescue_suppressed_key` | `kw_wl_rescue_suppressed` present in debug_detail for all paths |
+  | `test_kw_wl_rescue_suppressed_false_by_default` | Field is `False` on normal keep/drop paths |
+
+- `test_debug_detail_is_dict_with_required_keys` updated to assert
+  `kw_wl_rescue_suppressed` is present in the required keys set.
+
+- `test_debug_kconfig_uncovered_populated_when_kw_wl_saves_commit` updated
+  to use `compiled_files=set()` (empty) to reflect that the rescue is only
+  exercised when no file-coverage data exists, and to assert
+  `kw_wl_rescue_suppressed=False` on the kept path.
+
+### Documentation (A)
+
+- `docs/PIPELINE.md` — Stage 04 description updated with the kw_wl rescue
+  suppression rule and the `kw_wl_rescue_suppressed` debug field; `## v14.0.0
+  changes` section added.
+
+### Version
+
+- `MANIFEST.json` version bumped from `v13.0.3` → `v14.0.0`.
+
+---
+
 ## v13.0.1 — prefilter: Bug-1 disabled-symbol false-keep fix (2026-06-10)
 
 ### Fixed (Bug-1 / H)

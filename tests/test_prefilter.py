@@ -28,6 +28,20 @@ v13.0.2 (I -- Bug-2 fix):
              test_build_compiled_sets_cem_empty_no_artifacts_available_false()
              test_build_compiled_sets_cem_empty_but_artifacts_available_true()
              test_btrfs_commit_dropped_auto_require_when_cem_has_usb_only()
+
+v14.0.0 (A -- kw_wl rescue suppression):
+  A     -- filter_decision(): kw_wl rescue inside L2half kconfig-miss path is
+           suppressed when compiled_files is non-empty.  When file-level
+           coverage data is available and a commit's files are conclusively
+           uncovered, keyword matching must not override the drop decision.
+           New debug field 'kw_wl_rescue_suppressed' (bool) added.
+           Added tests:
+             test_kw_wl_rescue_suppressed_when_compiled_files_nonempty()
+             test_kw_wl_rescue_suppressed_debug_shows_matching_patterns()
+             test_kw_wl_rescue_allowed_when_compiled_files_empty()
+             test_kw_wl_rescue_suppressed_btrfs_real_world_scenario()
+             test_debug_detail_has_kw_wl_rescue_suppressed_key()
+             test_kw_wl_rescue_suppressed_false_by_default()
 """
 import os
 import re
@@ -455,9 +469,12 @@ def test_kconfig_coverage_not_required_keeps():
 # == E.1.2: kconfig debug populated even for kw-whitelist-saved commits ========
 
 def test_debug_kconfig_uncovered_populated_when_kw_wl_saves_commit():
+    """E.1.2: When compiled_files is empty (no coverage data), kw_wl may still
+    rescue.  Verify kconfig_uncovered is populated in debug even in that case.
+    """
     cs = dict(
-        compiled_files={'drivers/usb/hub.c'},
-        compiled_dirs={'drivers/usb'},
+        compiled_files=set(),          # empty: rescue is allowed
+        compiled_dirs=set(),
         artifact_stems=set(), log_basenames=set(), available=True,
     )
     c = _commit(files=['arch/arm/mm/unrelated.c'], subject='arm: fix critical bug')
@@ -471,6 +488,7 @@ def test_debug_kconfig_uncovered_populated_when_kw_wl_saves_commit():
     assert action == 'keep'
     assert reason == 'keywords_whitelist'
     assert 'arch/arm/mm/unrelated.c' in dbg['l2half_kconfig_uncovered_files']
+    assert dbg['kw_wl_rescue_suppressed'] is False
 
 
 # == E.1.5 / G: zero-file commits handled explicitly ==========================
@@ -529,6 +547,7 @@ def test_zero_file_commit_debug_has_empty_lists():
 # == A.1: debug_detail content tests ==========================================
 
 def test_debug_detail_is_dict_with_required_keys():
+    """v14.0.0 (A): debug_detail must include the new kw_wl_rescue_suppressed key."""
     c = _commit(subject='net: fix skb', files=['net/core/sock.c'])
     _, _, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
     for key in ('sha', 'files', 'l3_commit_wl_match', 'l3_commit_bl_match',
@@ -536,7 +555,8 @@ def test_debug_detail_is_dict_with_required_keys():
                 'l2half_artifact_files',
                 'l2half_kconfig_covered_files', 'l2half_kconfig_uncovered_files',
                 'l1a_kw_wl_matches', 'l1b_kw_bl_matches',
-                'filter_enabled', 'kconfig_required'):
+                'filter_enabled', 'kconfig_required',
+                'kw_wl_rescue_suppressed'):
         assert key in dbg, 'debug_detail missing key: %r' % (key,)
 
 
@@ -714,3 +734,172 @@ def test_btrfs_commit_dropped_auto_require_when_cem_has_usb_only():
         '(available=True, BTRFS not in compiled_files)'
     )
     assert reason == 'no_kconfig_coverage'
+
+
+# == v14.0.0 (A): kw_wl rescue suppression ====================================
+
+def test_kw_wl_rescue_suppressed_when_compiled_files_nonempty():
+    """A (v14.0.0): when compiled_files is non-empty and a commit's files are
+    conclusively uncovered, kw_wl must NOT rescue the commit from the kconfig
+    miss.  The commit must be dropped with reason='no_kconfig_coverage'.
+    """
+    cs = dict(
+        compiled_files={'drivers/usb/core/hub.c'},  # non-empty: rescue suppressed
+        compiled_dirs={'drivers/usb/core'},
+        artifact_stems=set(), log_basenames=set(), available=True,
+    )
+    c = _commit(
+        sha='btrfs_kw',
+        subject='btrfs: reschedule when cloning lots of extents',
+        body='watchdog: BUG: soft lockup - CPU#0 stuck for 22s!',
+        files=['fs/btrfs/ioctl.c'],
+    )
+    action, reason, dbg = filter_decision(
+        c,
+        _lists(kw_wl=['BUG', 'lockup', 'soft lockup']),
+        cs,
+        {'require_kconfig_coverage': True},
+        True,
+    )
+    assert action == 'drop', (
+        'Commit touching uncovered files must be dropped even when kw_wl matches, '
+        'because compiled_files is non-empty (file evidence is authoritative)'
+    )
+    assert reason == 'no_kconfig_coverage'
+
+
+def test_kw_wl_rescue_suppressed_debug_shows_matching_patterns():
+    """A (v14.0.0): when rescue is suppressed, debug must show:
+    - kw_wl_rescue_suppressed=True
+    - l1a_kw_wl_matches populated with the patterns that would have matched
+    """
+    cs = dict(
+        compiled_files={'drivers/usb/core/hub.c'},
+        compiled_dirs={'drivers/usb/core'},
+        artifact_stems=set(), log_basenames=set(), available=True,
+    )
+    c = _commit(
+        subject='btrfs: reschedule when cloning extents',
+        body='BUG: soft lockup detected',
+        files=['fs/btrfs/ioctl.c'],
+    )
+    action, reason, dbg = filter_decision(
+        c,
+        _lists(kw_wl=['BUG', 'lockup']),
+        cs,
+        {'require_kconfig_coverage': True},
+        True,
+    )
+    assert action == 'drop'
+    assert dbg['kw_wl_rescue_suppressed'] is True
+    assert len(dbg['l1a_kw_wl_matches']) >= 1, (
+        'l1a_kw_wl_matches must be populated even when rescue is suppressed'
+    )
+
+
+def test_kw_wl_rescue_allowed_when_compiled_files_empty():
+    """A (v14.0.0): when compiled_files is empty (no .config, no kconfig
+    evidence), kw_wl rescue at L2half is still allowed.  Keyword matching is
+    the best available heuristic when no file coverage data exists.
+    """
+    cs = dict(
+        compiled_files=set(),           # empty: rescue is allowed
+        compiled_dirs=set(),
+        artifact_stems=set(), log_basenames=set(), available=True,
+    )
+    c = _commit(
+        subject='btrfs: reschedule when cloning extents',
+        body='BUG: soft lockup detected',
+        files=['fs/btrfs/ioctl.c'],
+    )
+    action, reason, dbg = filter_decision(
+        c,
+        _lists(kw_wl=['BUG', 'lockup']),
+        cs,
+        {'require_kconfig_coverage': True},
+        True,
+    )
+    assert action == 'keep', (
+        'When compiled_files is empty, kw_wl rescue must still apply '
+        '(no authoritative file evidence available)'
+    )
+    assert reason == 'keywords_whitelist'
+    assert dbg['kw_wl_rescue_suppressed'] is False
+
+
+def test_kw_wl_rescue_suppressed_btrfs_real_world_scenario():
+    """A (v14.0.0): end-to-end regression for the real-world case that triggered
+    the fix.  Commit b238eaa1 (btrfs: reschedule when cloning lots of extents)
+    touched fs/btrfs/ioctl.c.  CONFIG_BTRFS_FS was not in config_enabled_map
+    (product uses CONFIG_USB only).  The commit body contains 'soft lockup' /
+    'BUG' which matched the kw_wl, incorrectly keeping the commit.
+
+    After the fix the commit must be dropped.
+    """
+    pm = {
+        'config_enabled_map':  {'CONFIG_USB': ['drivers/usb/core/hub.c']},
+        'config_enabled_dirs': ['drivers/usb/core/'],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is True
+    assert len(cs['compiled_files']) > 0  # non-empty: rescue will be suppressed
+
+    c = _commit(
+        sha='b238eaa1536c9fa9',
+        subject='btrfs: reschedule when cloning lots of extents',
+        body=(
+            'btrfs: reschedule when cloning lots of extents\n'
+            '[ Upstream commit 6b613cc97f0ace77f92f7bc112b8f6ad3f52baf8 ]\n'
+            'watchdog: BUG: soft lockup - CPU#0 stuck for 22s! [xfs_io:10030]'
+        ),
+        files=['fs/btrfs/ioctl.c'],
+    )
+    # Use a realistic kw_wl that would have matched before the fix
+    action, reason, dbg = filter_decision(
+        c,
+        _lists(kw_wl=['BUG', 'lockup', 'soft lockup', 'use-after-free', 'CVE']),
+        cs,
+        {'require_kconfig_coverage': None},
+        cs['available'],
+    )
+    assert action == 'drop', (
+        'b238eaa1 (btrfs ioctl.c, CONFIG_BTRFS_FS disabled) must be dropped '
+        'after kw_wl rescue suppression fix'
+    )
+    assert reason == 'no_kconfig_coverage'
+    assert dbg['kw_wl_rescue_suppressed'] is True
+    assert 'fs/btrfs/ioctl.c' in dbg['l2half_kconfig_uncovered_files']
+
+
+def test_debug_detail_has_kw_wl_rescue_suppressed_key():
+    """A (v14.0.0): kw_wl_rescue_suppressed must be present in debug_detail
+    for ALL code paths, not just the suppression path.
+    """
+    c = _commit(subject='net: fix skb', files=['net/core/sock.c'])
+    _, _, dbg = filter_decision(c, _lists(), _EMPTY_CS, {}, False)
+    assert 'kw_wl_rescue_suppressed' in dbg
+
+
+def test_kw_wl_rescue_suppressed_false_by_default():
+    """A (v14.0.0): kw_wl_rescue_suppressed must be False when the suppress
+    path was not taken (normal keep/drop outcomes).
+    """
+    # Normal drop via no_kconfig_coverage, no kw_wl configured
+    cs = dict(
+        compiled_files={'drivers/usb/core/hub.c'},
+        compiled_dirs={'drivers/usb/core'},
+        artifact_stems=set(), log_basenames=set(), available=True,
+    )
+    c = _commit(files=['fs/btrfs/ioctl.c'])
+    action, reason, dbg = filter_decision(
+        c, _lists(), cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'drop'
+    assert dbg['kw_wl_rescue_suppressed'] is False
+
+    # Normal keep via default (kconfig inactive)
+    action2, _, dbg2 = filter_decision(
+        _commit(files=['net/core/sock.c']), _lists(), _EMPTY_CS, {}, False)
+    assert action2 == 'keep'
+    assert dbg2['kw_wl_rescue_suppressed'] is False
