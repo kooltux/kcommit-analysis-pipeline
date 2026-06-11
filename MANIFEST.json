@@ -1,71 +1,19 @@
 {
-  "version": "v14.0.1",
+  "version": "v14.1.0",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
   "library_dir": "lib",
   "example_configs": [
     "configs/example-arm-embedded-full.json"
   ],
   "pipeline_stages": [
-    {
-      "index": 0,
-      "key": "prepare_pipeline",
-      "outputs": [
-        "cache/compiled_rules.json",
-        "cache/prepare_summary.json"
-      ]
-    },
-    {
-      "index": 1,
-      "key": "collect_commits",
-      "outputs": [
-        "cache/commits.json"
-      ]
-    },
-    {
-      "index": 2,
-      "key": "collect_build_context",
-      "outputs": [
-        "cache/build_context.json",
-        "cache/kbuild_map.json"
-      ]
-    },
-    {
-      "index": 3,
-      "key": "build_product_map",
-      "outputs": [
-        "cache/product_map.json"
-      ]
-    },
-    {
-      "index": 4,
-      "key": "prefilter_commits",
-      "outputs": [
-        "cache/filtered_commits.json",
-        "cache/prefilter_kept_commits.json",
-        "cache/prefilter_debug.json"
-      ]
-    },
-    {
-      "index": 5,
-      "key": "score_commits",
-      "outputs": [
-        "cache/scored_commits.json"
-      ]
-    },
-    {
-      "index": 6,
-      "key": "postfilter_commits",
-      "outputs": [
-        "cache/relevant_commits.json",
-        "cache/postfilter_dropped_commits.json",
-        "cache/postfilter_debug.json"
-      ]
-    },
-    {
-      "index": 7,
-      "key": "report_commits",
-      "outputs": []
-    }
+    {"index": 0, "key": "prepare_pipeline",      "outputs": ["cache/compiled_rules.json", "cache/prepare_summary.json"]},
+    {"index": 1, "key": "collect_commits",        "outputs": ["cache/commits.json"]},
+    {"index": 2, "key": "collect_build_context",  "outputs": ["cache/build_context.json", "cache/kbuild_map.json"]},
+    {"index": 3, "key": "build_product_map",      "outputs": ["cache/product_map.json"]},
+    {"index": 4, "key": "prefilter_commits",      "outputs": ["cache/filtered_commits.json", "cache/prefilter_kept_commits.json", "cache/prefilter_debug.json"]},
+    {"index": 5, "key": "score_commits",          "outputs": ["cache/scored_commits.json"]},
+    {"index": 6, "key": "postfilter_commits",     "outputs": ["cache/relevant_commits.json", "cache/postfilter_dropped_commits.json", "cache/postfilter_debug.json"]},
+    {"index": 7, "key": "report_commits",         "outputs": []}
   ],
   "tools": [
     "tools/generate_message_whitelist.py"
