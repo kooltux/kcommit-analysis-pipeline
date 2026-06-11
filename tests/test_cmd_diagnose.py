@@ -18,6 +18,7 @@ Coverage:
   - body NOT truncated
   - internal fields absent from commit section
   - search priority (relevant wins over filtered)
+  - no cache_presence key in output (removed v14.0.1)
 """
 import json
 import os
@@ -78,20 +79,17 @@ def _make_commit(sha='aabbccdd1122', subject='net: fix skb', files=None,
 
 
 def _full_prefilter_debug():
+    """Minimal prefilter debug dict matching the v14.1.0 schema."""
     return {
-        'filter_enabled':     True,
-        'kconfig_required':   True,
-        'files':              ['fs/btrfs/ioctl.c'],
-        'l3_commit_wl_match': None,
-        'l3_commit_bl_match': None,
-        'l2a_path_bl_matches': [],
-        'l2b_path_wl_matches': [],
-        'l2half_artifact_files': [],
-        'l2half_kconfig_covered_files': [],
+        'filter_enabled':                True,
+        'kconfig_required':              True,
+        'files':                         ['fs/btrfs/ioctl.c'],
+        'l3_commit_wl_match':            None,
+        'l3_commit_bl_match':            None,
+        'l2a_path_bl_matches':           [],
+        'l2half_artifact_files':         [],
+        'l2half_kconfig_covered_files':  [],
         'l2half_kconfig_uncovered_files': ['fs/btrfs/ioctl.c'],
-        'l1a_kw_wl_matches': [{'pattern': 'BUG', 'value': 'BUG: soft lockup'}],
-        'l1b_kw_bl_matches': [],
-        'kw_wl_rescue_suppressed': True,
     }
 
 
@@ -211,22 +209,18 @@ def test_found_in_relevant(tmp_path):
     assert r['final']['score'] == 85
     assert 'rank 3' in r['final']['summary']
 
-    # commit section
     assert r['commit']['sha'] == 'aabbccdd1122'
     assert r['commit']['sha12'] == 'aabbccdd1122'
     assert r['commit']['subject'] == 'usb: fix hub crash'
     assert r['commit']['author_name'] == 'Alice'
 
-    # kernel annotations
     assert r['kernel_annotations']['is_fix'] is True
     assert r['kernel_annotations']['has_stable_cc'] is True
     assert r['kernel_annotations']['has_cve'] is False
 
-    # prefilter: kept
     assert r['pipeline_stages']['stage_04_prefilter']['outcome'] == 'kept'
     assert r['pipeline_stages']['stage_04_prefilter']['layers'] is None
 
-    # scoring: full trace
     s05 = r['pipeline_stages']['stage_05_scoring']
     assert s05 is not None
     assert s05['total_score'] == 85
@@ -239,7 +233,6 @@ def test_found_in_relevant(tmp_path):
     assert usb['rules']['rule_usb_fix']['matched'] is True
     assert usb['rules']['rule_usb_fix']['score'] == 70
 
-    # postfilter: kept
     s06 = r['pipeline_stages']['stage_06_postfilter']
     assert s06['outcome'] == 'kept'
     assert s06['threshold'] == 20.0
@@ -299,18 +292,20 @@ def test_found_in_filtered_full_layer_detail(tmp_path):
     assert s04['reason'] == 'no_kconfig_coverage'
     assert s04['filter_enabled'] is True
     assert s04['kconfig_required'] is True
-    assert s04['kw_wl_rescue_suppressed'] is True
 
     layers = s04['layers']
     assert layers['L3_sha_whitelist'] is None
     assert layers['L3_sha_blacklist'] is None
     assert layers['L2a_path_bl_matches'] == []
-    assert layers['L2b_path_wl_matches'] == []
     assert layers['L2half_artifact_files'] == []
     assert 'fs/btrfs/ioctl.c' in layers['L2half_kconfig_uncovered_files']
     assert layers['L2half_kconfig_covered_files'] == []
-    assert layers['L1a_kw_wl_matches'][0]['pattern'] == 'BUG'
-    assert layers['L1b_kw_bl_matches'] == []
+
+    # v14.1.0: these stale fields must not appear in layers
+    assert 'L2b_path_wl_matches' not in layers
+    assert 'L1a_kw_wl_matches' not in layers
+    assert 'L1b_kw_bl_matches' not in layers
+    assert 'kw_wl_rescue_suppressed' not in layers
 
     # no scoring or postfilter for dropped commit
     assert r['pipeline_stages']['stage_05_scoring'] is None
@@ -450,7 +445,7 @@ def test_commit_section_required_fields(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# no cache_presence key in output
+# no cache_presence key in output (removed v14.0.1)
 # ---------------------------------------------------------------------------
 
 def test_no_cache_presence_in_output(tmp_path):
