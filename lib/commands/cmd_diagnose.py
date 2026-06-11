@@ -4,14 +4,28 @@ Produces a self-contained JSON report summarising every aspect of one commit's
 journey through the pipeline: raw metadata, prefilter decision, scoring detail,
 postfilter decision, and final rank (if kept).
 
+Design note
+-----------
+This command does NOT require --config.  It reads only cache files and needs
+only the path to the cache directory.  --config is intentionally absent to
+keep the command runnable without a config file (e.g. after the pipeline was
+run by another user or on another machine and only the cache is available).
+
 Usage
 -----
+  kcommit_pipeline.py diagnose --cache-dir <path> --sha <SHA_PREFIX>
+  kcommit_pipeline.py diagnose --cache-dir <path> --sha <SHA_PREFIX> --out report.json
+
+  # Convenience: derive cache_dir from config when available
   kcommit_pipeline.py diagnose --config cfg.json --sha <SHA_PREFIX>
   kcommit_pipeline.py diagnose --config cfg.json --sha <SHA_PREFIX> --out report.json
 
+  When both --config and --cache-dir are provided, --cache-dir wins.
+  At least one of --config or --cache-dir is required.
+
 Output schema (top-level keys)
 -------------------------------
-  meta            -- pipeline version, work_dir, cache_dir, sha queried
+  meta            -- pipeline version, cache_dir, sha queried
   commit          -- raw commit fields from commits.json (or whichever cache
                      the commit was found in)
   cache_presence  -- which cache files exist and their sizes
@@ -26,21 +40,19 @@ Output schema (top-level keys)
 
 Search order
 ------------
-  1. relevant_commits.json       (kept through full pipeline)
-  2. postfilter_dropped_commits.json  (scored but below min_score)
-  3. scored_commits.json         (scored; postfilter cache missing or not run)
-  4. prefilter_kept_commits.json (passed prefilter; scoring not yet done)
-  5. filtered_commits.json       (dropped at prefilter)
+  1. relevant_commits.json              (kept through full pipeline)
+  2. postfilter_dropped_commits.json    (scored but below min_score)
+  3. scored_commits.json                (scored; postfilter cache missing or not run)
+  4. prefilter_kept_commits.json        (passed prefilter; scoring not yet done)
+  5. filtered_commits.json              (dropped at prefilter)
+  6. commits.json                       (raw collected commits, no stage processed yet)
 
-  The first file that contains a commit matching the SHA prefix is used.  If
-  the commit is not found in any cache a warning is emitted and the raw entry
-  from commits.json (stage 01 output) is used when available.
+  The first file that contains a commit matching the SHA prefix is used.
 """
 import json
 import os
 import sys
 
-from lib.commands.base import load_cfg
 from lib.config import load_json
 from lib.manifest import CACHE_FILES, VERSION
 
@@ -76,28 +88,26 @@ def _safe_load(cache_dir, key, warnings):
 
 
 def _cache_presence(cache_dir):
-    """Return a dict of {logical_key: {path, exists, size_bytes}} for all
+    """Return a dict of {logical_key: {filename, exists, size_bytes}} for all
     known cache files."""
     result = {}
     for key, fname in CACHE_FILES.items():
         path = os.path.join(cache_dir, fname)
         exists = os.path.exists(path)
         result[key] = {
-            'filename': fname,
-            'exists':   exists,
+            'filename':   fname,
+            'exists':     exists,
             'size_bytes': os.path.getsize(path) if exists else None,
         }
     return result
 
 
 def _strip_internals(commit):
-    """Return a copy of the commit dict without heavy internal fields
-    (body truncated, meta stripped) for the 'commit' section of the output."""
+    """Return a copy of the commit dict without heavy internal fields.
+    Body is truncated to 500 chars; pipeline-internal keys are removed."""
     c = dict(commit)
-    # Truncate body to 500 chars to keep output readable
     if c.get('body'):
         c['body'] = c['body'][:500] + ('...' if len(c['body']) > 500 else '')
-    # Remove prefilter internals -- they are reported separately
     for k in ('_filter_reason', '_prefilter_debug', '_postfilter_reason',
               'meta', 'touched_paths_guess'):
         c.pop(k, None)
@@ -107,18 +117,16 @@ def _strip_internals(commit):
 def _prefilter_section(commit, prefilter_debug_data, warnings):
     """Build the 'prefilter' section of the diagnosis.
 
-    Sources:
-    - For dropped commits: _filter_reason and _prefilter_debug are stored
-      directly on the commit object (from filtered_commits.json).
-    - For kept commits: prefilter_debug.json only contains dropped entries,
-      so we reconstruct what we can from the commit fields and note that the
-      commit passed the prefilter.
+    For dropped commits: _filter_reason and _prefilter_debug are stored
+    directly on the commit object (filtered_commits.json).
+    For kept commits: prefilter_debug.json only contains dropped entries;
+    the section reflects that the commit passed.
     """
     reason = commit.get('_filter_reason')
 
     if reason:  # commit was dropped at prefilter
         debug = commit.get('_prefilter_debug') or {}
-        # Also try to enrich from prefilter_debug.json if available
+        # Enrich from prefilter_debug.json if available
         if prefilter_debug_data:
             sha = (commit.get('commit') or '')[:40]
             for entry in (prefilter_debug_data.get('dropped') or []):
@@ -145,12 +153,11 @@ def _prefilter_section(commit, prefilter_debug_data, warnings):
             },
         }
 
-    # Commit passed prefilter
     return {
         'outcome': 'kept',
-        'reason':  commit.get('_prefilter_reason', 'passed'),  # field not always set
+        'reason':  commit.get('_prefilter_reason', 'passed'),
         'kw_wl_rescue_suppressed': False,
-        'debug': None,  # debug detail only stored for dropped commits
+        'debug': None,
     }
 
 
@@ -164,11 +171,11 @@ def _scoring_section(commit):
         if not isinstance(pdata, dict):
             continue
         profile_breakdown[pname] = {
-            'score':           pdata.get('score', 0),
-            'weight':          pdata.get('weight'),
-            'matched_rules':   pdata.get('matched_rules', []),
-            'keyword_hits':    pdata.get('keyword_hits', []),
-            'path_hits':       pdata.get('path_hits', []),
+            'score':         pdata.get('score', 0),
+            'weight':        pdata.get('weight'),
+            'matched_rules': pdata.get('matched_rules', []),
+            'keyword_hits':  pdata.get('keyword_hits', []),
+            'path_hits':     pdata.get('path_hits', []),
         }
 
     return {
@@ -238,11 +245,11 @@ def _final_section(stage_found, commit):
     }
 
     return {
-        'stage_found':   stage_found,
-        'stage_label':   stage_labels.get(stage_found, stage_found),
-        'rank':          rank,
-        'score':         score,
-        'summary':       sentences.get(stage_found, f'Commit {sha12} found at stage: {stage_found}.'),
+        'stage_found': stage_found,
+        'stage_label': stage_labels.get(stage_found, stage_found),
+        'rank':        rank,
+        'score':       score,
+        'summary':     sentences.get(stage_found, f'Commit {sha12} found at stage: {stage_found}.'),
     }
 
 
@@ -250,27 +257,32 @@ def _final_section(stage_found, commit):
 # main diagnosis logic
 # ---------------------------------------------------------------------------
 
-def diagnose_commit(cfg, sha_query):
-    """Build and return the full diagnosis dict for the given SHA prefix."""
-    cache    = cfg['paths']['cache_dir']
-    work     = cfg['paths']['work_dir']
+def diagnose_commit(cache_dir, sha_query):
+    """Build and return the full diagnosis dict for the given SHA prefix.
+
+    Args:
+        cache_dir:  path to the pipeline cache directory.
+        sha_query:  SHA prefix to search for (min 7 chars recommended).
+
+    Returns a dict with keys: meta, commit, cache_presence, prefilter,
+    scoring, postfilter, final, warnings.
+    """
     warnings = []
 
     # -- Cache presence map --------------------------------------------------
-    presence = _cache_presence(cache)
+    presence = _cache_presence(cache_dir)
 
     # -- Load cache files ----------------------------------------------------
-    relevant           = _safe_load(cache, 'relevant',           warnings) or []
-    postfilter_dropped = _safe_load(cache, 'postfilter_dropped', warnings) or []
-    scored             = _safe_load(cache, 'scored',             warnings) or []
-    prefilter_kept     = _safe_load(cache, 'prefilter_kept',     warnings) or []
-    filtered           = _safe_load(cache, 'filtered',           warnings) or []
-    all_commits        = _safe_load(cache, 'commits',            warnings) or []
-    prefilter_debug_data = _safe_load(cache, 'prefilter_debug',  warnings)
-    postfilter_debug_data = _safe_load(cache, 'postfilter_debug', warnings)
+    relevant           = _safe_load(cache_dir, 'relevant',           warnings) or []
+    postfilter_dropped = _safe_load(cache_dir, 'postfilter_dropped', warnings) or []
+    scored             = _safe_load(cache_dir, 'scored',             warnings) or []
+    prefilter_kept     = _safe_load(cache_dir, 'prefilter_kept',     warnings) or []
+    filtered           = _safe_load(cache_dir, 'filtered',           warnings) or []
+    all_commits        = _safe_load(cache_dir, 'commits',            warnings) or []
+    prefilter_debug_data  = _safe_load(cache_dir, 'prefilter_debug',  warnings)
+    postfilter_debug_data = _safe_load(cache_dir, 'postfilter_debug', warnings)
 
     # -- SHA uniqueness check ------------------------------------------------
-    # Gather all commits that match the prefix across all lists to detect ambiguity
     all_pools = relevant + postfilter_dropped + scored + prefilter_kept + filtered + all_commits
     seen_shas = set()
     for c in all_pools:
@@ -283,41 +295,26 @@ def diagnose_commit(cfg, sha_query):
             f'({", ".join(sorted(seen_shas)[:5])}).  Provide more characters.')
 
     # -- Find commit and determine stage -------------------------------------
-    commit       = None
-    stage_found  = 'not_found'
+    commit      = None
+    stage_found = 'not_found'
 
-    if not commit:
-        commit = _find_in_list(relevant, sha_query)
+    for pool, label in [
+        (relevant,           'relevant'),
+        (postfilter_dropped, 'postfilter_dropped'),
+        (scored,             'scored'),
+        (prefilter_kept,     'prefilter_kept'),
+        (filtered,           'filtered'),
+        (all_commits,        'commits_only'),
+    ]:
+        commit = _find_in_list(pool, sha_query)
         if commit:
-            stage_found = 'relevant'
+            stage_found = label
+            break
 
-    if not commit:
-        commit = _find_in_list(postfilter_dropped, sha_query)
-        if commit:
-            stage_found = 'postfilter_dropped'
-
-    if not commit:
-        commit = _find_in_list(scored, sha_query)
-        if commit:
-            stage_found = 'scored'
-
-    if not commit:
-        commit = _find_in_list(prefilter_kept, sha_query)
-        if commit:
-            stage_found = 'prefilter_kept'
-
-    if not commit:
-        commit = _find_in_list(filtered, sha_query)
-        if commit:
-            stage_found = 'filtered'
-
-    if not commit:
-        commit = _find_in_list(all_commits, sha_query)
-        if commit:
-            stage_found = 'commits_only'
-            warnings.append(
-                'Commit found only in raw commits.json.  '
-                'Stages 04+ have not processed it yet, or the pipeline has not been run.')
+    if stage_found == 'commits_only':
+        warnings.append(
+            'Commit found only in raw commits.json.  '
+            'Stages 04+ have not processed it yet, or the pipeline has not been run.')
 
     if not commit:
         warnings.append(
@@ -337,19 +334,13 @@ def diagnose_commit(cfg, sha_query):
     if stage_found in ('relevant', 'postfilter_dropped', 'scored'):
         scoring_sec    = _scoring_section(commit)
         postfilter_sec = _postfilter_section(commit, postfilter_debug_data, threshold)
-    elif stage_found == 'prefilter_kept':
-        # Passed prefilter, not yet scored
-        scoring_sec    = None
-        postfilter_sec = None
-    # For 'filtered' or earlier: prefilter section already covers everything
 
     final_sec = _final_section(stage_found, commit)
 
     return {
         'meta': {
             'pipeline_version': VERSION,
-            'work_dir':         work,
-            'cache_dir':        cache,
+            'cache_dir':        cache_dir,
             'sha_query':        sha_query,
         },
         'commit':         _strip_internals(commit),
@@ -367,8 +358,11 @@ def diagnose_commit(cfg, sha_query):
 # ---------------------------------------------------------------------------
 
 def cmd_diagnose(args):
-    cfg = load_cfg(args)
+    """Entry point called from kcommit_pipeline.py main().
 
+    Resolves cache_dir from --cache-dir (preferred) or --config (fallback),
+    then delegates to diagnose_commit().
+    """
     sha_query = (args.sha or '').strip()
     if not sha_query:
         print('ERROR: --sha is required', file=sys.stderr)
@@ -377,18 +371,35 @@ def cmd_diagnose(args):
         print('ERROR: --sha must be at least 7 characters', file=sys.stderr)
         raise SystemExit(1)
 
-    report = diagnose_commit(cfg, sha_query)
+    # Resolve cache_dir: --cache-dir wins over --config
+    cache_dir = getattr(args, 'cache_dir', None)
+    if not cache_dir:
+        config_path = getattr(args, 'config', None)
+        if not config_path:
+            print('ERROR: one of --cache-dir or --config is required', file=sys.stderr)
+            raise SystemExit(1)
+        # Minimal config load: only extract cache_dir, no rule/profile loading
+        from lib.commands.base import load_cfg
+        cfg = load_cfg(args)
+        cache_dir = cfg['paths']['cache_dir']
+
+    cache_dir = os.path.abspath(cache_dir)
+    if not os.path.isdir(cache_dir):
+        print(f'ERROR: cache directory does not exist: {cache_dir}', file=sys.stderr)
+        raise SystemExit(1)
+
+    report = diagnose_commit(cache_dir, sha_query)
 
     output = json.dumps(report, indent=2, default=str)
 
-    if args.out:
+    if getattr(args, 'out', None):
         with open(args.out, 'w', encoding='utf-8') as fh:
             fh.write(output)
         print(f'diagnose: report written to {args.out}', file=sys.stderr)
     else:
         print(output)
 
-    # Exit with non-zero if warnings present (useful in CI / scripts)
+    # Non-zero exit when warnings present (useful in CI / scripts)
     if report['warnings']:
         print(f'diagnose: {len(report["warnings"])} warning(s) -- see "warnings" key in output',
               file=sys.stderr)
