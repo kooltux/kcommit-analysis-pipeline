@@ -10,6 +10,7 @@ Subcommands
   validate  Validate config without running anything
   report    Re-generate output reports from cached scored data
   dropped   Inspect commits dropped by pre/post filter
+  diagnose  Full JSON diagnosis of one commit across all pipeline stages
 
 Usage examples
 ──────────────
@@ -23,6 +24,8 @@ Usage examples
   kcommit_pipeline.py validate --config cfg.json
   kcommit_pipeline.py report   --config cfg.json [--format html] [--format xlsx]
   kcommit_pipeline.py dropped  --config cfg.json [--reason all|prefilter|low-score]
+  kcommit_pipeline.py diagnose --config cfg.json --sha <SHA_PREFIX>
+  kcommit_pipeline.py diagnose --config cfg.json --sha <SHA_PREFIX> --out report.json
 """
 import argparse
 import sys
@@ -34,6 +37,7 @@ from lib.commands.cmd_status   import cmd_status
 from lib.commands.cmd_validate import cmd_validate
 from lib.commands.cmd_report   import cmd_report
 from lib.commands.cmd_dropped  import cmd_dropped
+from lib.commands.cmd_diagnose import cmd_diagnose
 
 def main():
     ap = argparse.ArgumentParser(
@@ -77,13 +81,36 @@ def main():
                       choices=['all', 'prefilter', 'low-score'])
     p_dr.add_argument('--json',     action='store_true')
 
+    p_diag = sub.add_parser(
+        'diagnose',
+        help='Full JSON diagnosis of one commit across all pipeline stages',
+        description=(
+            'Trace a single commit through every pipeline stage and emit a '
+            'self-contained JSON report with: raw metadata, prefilter decision '
+            '(including full debug_detail), scoring breakdown per profile, '
+            'postfilter decision and threshold, final rank, and any '
+            'data-quality warnings.'
+        ),
+    )
+    p_diag.add_argument('--config',   required=True)
+    p_diag.add_argument('--override', default=None, metavar='JSON')
+    p_diag.add_argument('--sha',      required=True,
+                        help='SHA prefix to look up (min 7 chars)')
+    p_diag.add_argument('--out',      default=None, metavar='FILE',
+                        help='Write JSON report to FILE instead of stdout')
+
     args = ap.parse_args()
     setup_logging(args.verbose)
-    dispatch = {'run': cmd_run, 'status': cmd_status, 'validate': cmd_validate,
-                'report': cmd_report, 'dropped': cmd_dropped}
+    dispatch = {
+        'run':      cmd_run,
+        'status':   cmd_status,
+        'validate': cmd_validate,
+        'report':   cmd_report,
+        'dropped':  cmd_dropped,
+        'diagnose': cmd_diagnose,
+    }
     dispatch[args.cmd](args)
 
 
 if __name__ == '__main__':
     main()
-
