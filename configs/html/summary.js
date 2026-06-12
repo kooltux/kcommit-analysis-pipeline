@@ -248,11 +248,29 @@
     if (!bar) return;
     const pills = [];
 
+	function localTzLabel() {
+      try {
+        const parts = new Intl.DateTimeFormat(undefined, {
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZoneName: 'short',
+        }).formatToParts(new Date());
+        const tz = parts.find(p => p.type === 'timeZoneName');
+        return tz ? tz.value : '';
+      } catch (_) {
+        return '';
+      }
+	}
+
     /* FIX 1: VERSION already includes the leading 'v' — do not add another */
     if (META.version) pills.push(esc(META.version));
 
-    /* FIX 2: Show full datetime HH:MM, not just the date */
-    if (META.generated_at) pills.push(`Run: ${esc(String(META.generated_at).slice(0, 16))}`);
+	/* FIX 2: Show full datetime HH:MM + local timezone */
+    if (META.generated_at) {
+      const ts = String(META.generated_at).slice(0, 16);
+      const tz = localTzLabel();
+      pills.push(`Run: ${esc(ts)}${tz ? ` ${esc(tz)}` : ''}`);
+    }
 
     /* FIX 3: Git range as "from <sha> to <sha>" */
     if (META.git_range) {
