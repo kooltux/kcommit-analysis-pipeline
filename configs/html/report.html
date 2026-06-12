@@ -1,1 +1,116 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>__TITLE__</title><style>__CSS__</style>__COMMITS_DATA__</head><body><div id="kc-detail-overlay"><div id="kc-detail-panel"><div id="kc-detail-header"><h3 id="kc-detail-sha"></h3><button id="kc-detail-close" title="Close (Esc)">&times; Close</button><div class="kc-detail-tabs"><button class="kc-tab active" data-tab="overview">Overview</button><button class="kc-tab" data-tab="scoring">Scoring</button><button class="kc-tab" data-tab="files">Files</button><button class="kc-tab" data-tab="raw">Raw</button></div></div><div id="kc-detail-body"><div class="kc-tab-content active" id="tab-overview"></div><div class="kc-tab-content" id="tab-scoring"></div><div class="kc-tab-content" id="tab-files"></div><div class="kc-tab-content" id="tab-raw"></div></div></div></div>__BODY__<script>__JS__</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>__CSS__</style>
+__COMMITS_DATA__
+</head>
+<body>
+
+<div class="kc-app">
+
+  <!-- ===== TOP BAR ===================================================== -->
+  <header class="kc-topbar">
+    <svg class="kc-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3"/>
+      <circle cx="6"  cy="6"  r="2"/>
+      <circle cx="18" cy="6"  r="2"/>
+      <circle cx="18" cy="18" r="2"/>
+      <circle cx="6"  cy="18" r="2"/>
+      <line x1="12" y1="9"  x2="8"  y2="7"/>
+      <line x1="12" y1="9"  x2="16" y2="7"/>
+      <line x1="12" y1="15" x2="8"  y2="17"/>
+      <line x1="12" y1="15" x2="16" y2="17"/>
+    </svg>
+
+    <div class="kc-brand">
+      <h1 id="kc-title">__TITLE__</h1>
+      <span class="kc-sub" id="kc-subtitle">__SUBTITLE__</span>
+    </div>
+
+    <div class="kc-topbar-meta">
+      <span id="kc-topbar-pills"></span>
+      <button id="kc-theme-btn" class="kc-theme-btn" title="Toggle theme">
+        <span id="kc-theme-icon">&#127769;</span> Theme
+      </button>
+    </div>
+  </header>
+
+  <!-- ===== THREE-PANE LAYOUT =========================================== -->
+  <div class="kc-layout">
+
+    <!-- LEFT PANE: Analysis context & pipeline stats -->
+    <aside id="kc-pane-left" class="kc-pane kc-pane-left" aria-label="Analysis context">
+      <div class="kc-pane-head">
+        Analysis Context
+      </div>
+      <div id="kc-left-body" class="kc-pane-body"></div>
+      <button id="kc-left-toggle" class="kc-collapse-btn" title="Collapse/expand context pane"
+              aria-label="Collapse context pane">&lsaquo;</button>
+    </aside>
+
+    <!-- Handle between left and mid -->
+    <div class="kc-handle" data-resize="left" title="Drag to resize"></div>
+
+    <!-- CENTRE PANE: Commit table -->
+    <main id="kc-pane-mid" class="kc-pane kc-pane-mid" aria-label="Commit table">
+      <div class="kc-toolbar">
+        <input id="kc-global-search" class="kc-global-search"
+               type="search" placeholder="&#128269;  Search all columns&hellip;" aria-label="Global search">
+        <button id="kc-clear-filters" class="kc-toolbar-btn" title="Clear all filters">&#10005; Clear filters</button>
+        <button id="kc-export-csv"    class="kc-toolbar-btn" title="Export visible rows as CSV">&#8615; Export CSV</button>
+        <span   id="kc-live-count"    class="kc-live-count"></span>
+      </div>
+
+      <div class="kc-table-wrap">
+        <table id="kc-table" class="kc-table" aria-label="Commit results">
+          <thead id="kc-thead"></thead>
+          <tbody id="kc-tbody"></tbody>
+        </table>
+        <p id="kc-no-match" class="kc-no-match">No commits match the current filters.</p>
+      </div>
+    </main>
+
+    <!-- Handle between mid and right -->
+    <div id="kc-right-handle" class="kc-handle" data-resize="right" title="Drag to resize"></div>
+
+    <!-- RIGHT PANE: Commit detail -->
+    <aside id="kc-pane-right" class="kc-pane kc-pane-right" aria-label="Commit detail">
+
+      <button id="kc-right-toggle" class="kc-collapse-btn" title="Collapse/expand detail pane"
+              aria-label="Collapse detail pane">&rsaquo;</button>
+
+      <!-- Thin header: label only, no SHA / subject (shown in Overview tab) -->
+      <div class="kc-detail-header kc-pane-head">
+        <span>Commit detail</span>
+      </div>
+
+      <!-- Tab bar: its own strip between header and body -->
+      <div class="kc-detail-tabs" role="tablist" aria-label="Commit detail tabs">
+        <button class="kc-tab kc-active" data-tab="overview" role="tab" aria-selected="true" >Overview</button>
+        <button class="kc-tab"           data-tab="scoring"  role="tab" aria-selected="false">Scoring</button>
+        <button class="kc-tab"           data-tab="files"    role="tab" aria-selected="false">Files</button>
+        <button class="kc-tab"           data-tab="raw"      role="tab" aria-selected="false">Raw JSON</button>
+      </div>
+
+      <!-- Scrollable tab body -->
+      <div id="kc-detail-body" class="kc-detail-body">
+        <div id="kc-tab-overview" class="kc-tab-panel kc-active">
+          <p class="kc-detail-placeholder">Click a commit SHA in the table to inspect it.</p>
+        </div>
+        <div id="kc-tab-scoring" class="kc-tab-panel"></div>
+        <div id="kc-tab-files"   class="kc-tab-panel"></div>
+        <div id="kc-tab-raw"     class="kc-tab-panel"></div>
+      </div>
+
+    </aside>
+
+  </div><!-- /.kc-layout -->
+</div><!-- /.kc-app -->
+
+<script>__JS__</script>
+</body>
+</html>

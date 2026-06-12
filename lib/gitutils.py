@@ -41,8 +41,6 @@ def iter_git_log_records(cfg):
                '%nauthor_name=%an%nauthor_email=%ae%nsubject=%s%nbody=%B' + FS)
     args = ['log', rev_range, '--reverse', '--topo-order', '--format=' + fmt]
 
-    # Config key is 'no_merges' (canonical). Support 'use_no_merges' as a
-    # transparent fallback so configs written before the rename still work.
     no_merges = collect.get('no_merges', True)
     if no_merges:
         args.append('--no-merges')
@@ -71,15 +69,41 @@ def iter_git_log_records(cfg):
 
 
 def parse_pretty_block(text):
-    """Parse the key=value header block produced by iter_git_log_records."""
-    record = {'body': '', 'files': [], 'numstat': []}
-    body_lines = []
-    in_body = False
+    """Parse the key=value header block produced by iter_git_log_records.
 
-    for line in text.splitlines():
-        if in_body:
-            body_lines.append(line)
-            continue
+    The header fields (commit, parents, author_time, commit_time, author_name,
+    author_email, subject) are single-line and parsed with splitlines().
+
+    The body field is the last field and may contain arbitrary newlines (blank
+    lines between paragraphs, indented continuation lines, Signed-off-by
+    trailers, etc.).  To preserve every newline character exactly as git
+    emitted it, we locate the 'body=' marker using str.find() and take
+    everything after it as a raw slice — never splitting it into lines.
+    """
+    record = {'body': '', 'files': [], 'numstat': []}
+
+    # Locate the body= marker.  It always follows a newline in the header
+    # block because it is the last field emitted by the --format string.
+    # Search for \nbody= first; fall back to body= at position 0 (edge case
+    # where the entire text starts with body=).
+    body_marker = '\nbody='
+    body_pos    = text.find(body_marker)
+    if body_pos != -1:
+        header_text = text[:body_pos]
+        body_text   = text[body_pos + len(body_marker):]
+    else:
+        # Fallback: body= at the very start (no preceding newline)
+        fallback = 'body='
+        fb_pos   = text.find(fallback)
+        if fb_pos != -1:
+            header_text = text[:fb_pos]
+            body_text   = text[fb_pos + len(fallback):]
+        else:
+            header_text = text
+            body_text   = ''
+
+    # Parse the single-line header fields.
+    for line in header_text.splitlines():
         key, sep, val = line.partition('=')
         if not sep:
             continue
@@ -97,11 +121,10 @@ def parse_pretty_block(text):
             record['author_email'] = val
         elif key == 'subject':
             record['subject'] = val
-        elif key == 'body':
-            in_body = True
-            body_lines.append(val)
 
-    record['body'] = ' '.join(body_lines).strip()
+    # Strip only the trailing newline(s) that git always appends after %B;
+    # internal newlines (blank lines, paragraph breaks, trailers) are kept.
+    record['body'] = body_text.rstrip('\n')
     return record
 
 

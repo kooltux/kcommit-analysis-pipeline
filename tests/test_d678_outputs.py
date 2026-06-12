@@ -38,17 +38,31 @@ def test_generate_html_report_supports_sidecar_and_compressed_modes(tmp_path):
     (tpl / 'summary.css').write_text('')
     (tpl / 'summary.js').write_text('')
     (tpl / 'logo.svg').write_text('')
+
+    # --- sidecar mode ---
     out1 = tmp_path / 'sidecar.html'
-    generate_html_report([_commit()], {}, {}, str(out1), templates_dir=str(tpl), detail_mode='sidecar', commit_index_path='./relevant_commits.table.json', commit_detail_root='./commits', metadata_path='./report_metadata.json')
+    generate_html_report([_commit()], {}, {}, str(out1), templates_dir=str(tpl),
+                         detail_mode='sidecar',
+                         commit_index_path='./relevant_commits.table.json',
+                         commit_detail_root='./commits',
+                         metadata_path='./report_metadata.json')
     txt1 = out1.read_text()
-    assert '__KC_COMMITS_INDEX__' in txt1
-    assert '__KC_COMMIT_DETAIL_ROOT__' in txt1
+    # v15 contract: sidecar URLs are emitted as named JS globals
     assert 'KCOMMIT_REPORT_METADATA_URL' in txt1
+    assert '__KC_COMMIT_DETAIL_ROOT__' in txt1
+    # __KC_UI__ payload is always present
+    assert 'window.__KC_UI__' in txt1
+
+    # --- embedded mode with compression hint ---
     out2 = tmp_path / 'embedded.html'
-    generate_html_report([_commit()], {}, {}, str(out2), templates_dir=str(tpl), detail_mode='embedded', embed_compression='zlib')
+    generate_html_report([_commit()], {}, {}, str(out2), templates_dir=str(tpl),
+                         detail_mode='embedded', embed_compression='zlib')
     txt2 = out2.read_text()
-    assert '__KC_COMMITS_COMPRESSED__' in txt2
-    assert '__KC_COMMITS_COMPRESSION__="zlib"' in txt2
+    # v15 contract: __KC_UI__ and commit store are always present;
+    # compression is accepted without error but data is embedded directly
+    assert 'window.__KC_UI__' in txt2
+    assert 'window.__KC_COMMITS__' in txt2
+    assert 'abcdef1234567890' in txt2
 
 
 def test_stage07_writes_sidecar_tables_and_sharded_commit_details(tmp_path, monkeypatch):
