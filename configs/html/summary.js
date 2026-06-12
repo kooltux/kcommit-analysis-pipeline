@@ -16,34 +16,82 @@
 
   /* ========= Globals ========= */
   const UI    = window.__KC_UI__      || {};
-  const STORE = window.__KC_COMMITS__ || {};  // pre-loaded by generator (embed mode)
-  const ROWS  = (UI.rows   || []).slice();
+  const STORE = window.__KC_COMMITS__ || {};
   const META  = UI.meta    || {};
   const SB    = UI.sidebar || {};
-  const COLS  = UI.columns || [];
   const DROOT = (UI.detail_root || './commits').replace(/\/+$/, '');
+
+  /* ---- Build effective column list -----------------------------------
+   * The generator emits a base set of columns.  We expand it here by
+   * injecting one numeric column per profile  (key = "score_<profile>")
+   * immediately after the combined "score" column.  This is done on the
+   * client so the generator does not need to enumerate profiles twice.
+   * -------------------------------------------------------------------*/
+  const BASE_COLS   = UI.columns || [];
+  const PROFILE_NAMES = (() => {
+    const names = new Set();
+    (UI.rows || []).forEach(r => (r.profiles || []).forEach(p => names.add(p)));
+    return [...names].sort();
+  })();
+
+  // Insert per-profile score columns after the "score" column
+  const COLS = (() => {
+    const out = [];
+    for (const col of BASE_COLS) {
+      out.push(col);
+      if (col.key === 'score' && PROFILE_NAMES.length) {
+        for (const p of PROFILE_NAMES) {
+          out.push({ key: `score_${p}`, label: p, type: 'number', _profile: p });
+        }
+      }
+    }
+    // Remove the old combined profile_scores column (replaced by per-profile)
+    return out.filter(c => c.key !== 'profile_scores');
+  })();
+
+  // Enrich rows with per-profile score keys
+  const ROWS = (UI.rows || []).map(r => {
+    const scoring = (r._scoring_profiles) || {};
+    // Per-profile scores are stored by html_report.py on each row as
+    // score_<profile>.  Fall back to 0 if absent.
+    const out = Object.assign({}, r);
+    for (const p of PROFILE_NAMES) {
+      const k = `score_${p}`;
+      if (out[k] == null) out[k] = 0;
+    }
+    return out;
+  });
 
   /* Row lookup by sha12 or full sha */
   const rowBySha = Object.create(null);
   ROWS.forEach(r => { rowBySha[r.sha12] = r; if (r.sha) rowBySha[r.sha] = r; });
 
+  /* ---- Distinct-value index for autofilter selects ------------------*/
+  const COL_DISTINCT = Object.create(null);
+  COLS.forEach(col => {
+    const vals = new Set();
+    ROWS.forEach(r => {
+      const v = r[col.key];
+      if (Array.isArray(v)) v.forEach(x => vals.add(String(x)));
+      else if (v != null && v !== '') vals.add(String(v));
+    });
+    COL_DISTINCT[col.key] = [...vals].sort((a, b) => {
+      const na = parseFloat(a), nb = parseFloat(b);
+      return (!isNaN(na) && !isNaN(nb)) ? na - nb : a.localeCompare(b);
+    });
+  });
+
   /* ========= Helpers ========= */
 
-  /** HTML-escape a plain string. */
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
   }
 
-  /**
-   * Escape for HTML then convert \n (real newline or literal \n two-char
-   * sequence) to <br> so the text renders correctly in block/inline contexts
-   * that do NOT use white-space:pre.  Used for commit message bodies.
-   */
   function escNl(s) {
     return esc(s)
-      .replace(/\\n/g, '<br>')   // literal backslash-n (double-serialised)
-      .replace(/\n/g,  '<br>');  // real newline character
+      .replace(/\\n/g, '<br>')
+      .replace(/\n/g,  '<br>');
   }
 
   function fmtDate(ts) {
@@ -54,6 +102,7 @@
       const p = x => String(x).padStart(2, '0');
       return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
     }
+    // Already a string — ensure HH:MM is preserved (up to 16 chars = "YYYY-MM-DD HH:MM")
     return String(ts).slice(0, 16);
   }
 
@@ -126,7 +175,6 @@
     if (!pane) return;
     const stored = localStorage.getItem(storageKey);
     if (stored === '1') pane.classList.add('kc-collapsed');
-
     const btn = document.getElementById(btnId);
     if (btn) {
       btn.addEventListener('click', () => {
@@ -150,24 +198,20 @@
   initPane(document.getElementById('kc-pane-right'), 'kc-right-collapsed', 'kc-right-toggle');
   updateCollapseIcons();
 
-  /* Drag-resize handles (left handle only — right handle has its own block below) */
   document.querySelectorAll('.kc-handle').forEach(handle => {
-    if (handle.id === 'kc-right-handle') return;  // handled separately
+    if (handle.id === 'kc-right-handle') return;
     const target = handle.previousElementSibling;
     if (!target) return;
     let startX, startW;
     handle.addEventListener('mousedown', e => {
-      startX = e.clientX;
-      startW = target.getBoundingClientRect().width;
+      startX = e.clientX; startW = target.getBoundingClientRect().width;
       handle.classList.add('dragging');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
     });
     window.addEventListener('mousemove', e => {
       if (!handle.classList.contains('dragging')) return;
-      const delta = e.clientX - startX;
-      const newW  = Math.max(180, Math.min(700, startW + delta));
-      target.style.width = newW + 'px';
+      target.style.width = Math.max(180, Math.min(700, startW + e.clientX - startX)) + 'px';
     });
     window.addEventListener('mouseup', () => {
       handle.classList.remove('dragging');
@@ -176,24 +220,20 @@
     });
   });
 
-  /* Right-pane handle: delta is inverted because the pane is on the right */
   (function () {
     const rHandle = document.getElementById('kc-right-handle');
     const rPane   = document.getElementById('kc-pane-right');
     if (!rHandle || !rPane) return;
     let startX, startW;
     rHandle.addEventListener('mousedown', e => {
-      startX = e.clientX;
-      startW = rPane.getBoundingClientRect().width;
+      startX = e.clientX; startW = rPane.getBoundingClientRect().width;
       rHandle.classList.add('dragging');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
     });
     window.addEventListener('mousemove', e => {
       if (!rHandle.classList.contains('dragging')) return;
-      const delta = startX - e.clientX;
-      const newW  = Math.max(220, Math.min(700, startW + delta));
-      rPane.style.width = newW + 'px';
+      rPane.style.width = Math.max(220, Math.min(700, startW + startX - e.clientX)) + 'px';
     });
     window.addEventListener('mouseup', () => {
       rHandle.classList.remove('dragging');
@@ -207,10 +247,24 @@
     const bar = document.getElementById('kc-topbar-pills');
     if (!bar) return;
     const pills = [];
-    if (META.version)      pills.push(`v${esc(META.version)}`);
-    if (META.generated_at) pills.push(`Run: ${esc(META.generated_at.slice(0,10))}`);
-    if (META.git_range)    pills.push(`Range: ${esc(META.git_range)}`);
-    if (META.kernel_ver)   pills.push(`Kernel: ${esc(META.kernel_ver)}`);
+
+    /* FIX 1: VERSION already includes the leading 'v' — do not add another */
+    if (META.version) pills.push(esc(META.version));
+
+    /* FIX 2: Show full datetime HH:MM, not just the date */
+    if (META.generated_at) pills.push(`Run: ${esc(String(META.generated_at).slice(0, 16))}`);
+
+    /* FIX 3: Git range as "from <sha> to <sha>" */
+    if (META.git_range) {
+      const parts = String(META.git_range).split('..');
+      if (parts.length === 2) {
+        pills.push(`From ${esc(parts[0].trim())} to ${esc(parts[1].trim())}`);
+      } else {
+        pills.push(`Range: ${esc(META.git_range)}`);
+      }
+    }
+
+    if (META.kernel_ver) pills.push(`Kernel: ${esc(META.kernel_ver)}`);
     bar.innerHTML = pills.map(p => `<span class="kc-meta-pill">${p}</span>`).join('');
   })();
 
@@ -225,6 +279,8 @@
     const f = SB.funnel || {};
     if (f.collected != null) {
       const total = f.collected || 1;
+
+      /* FIX 4: simplified funnel — drop "kept" rows, keep logical flow */
       function fRow(label, val, cls) {
         const pct = Math.round((val / total) * 100);
         return `<div class="kc-funnel-row ${cls}">
@@ -233,18 +289,17 @@
           <span class="kc-fn-val">${val}</span>
         </div>`;
       }
+
       html += `<div class="kc-section-head">Pipeline Funnel</div>`;
       html += `<div class="kc-stat-block">
         <div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udd0d</span>Commit flow</div>
         <div class="kc-stat-block-body">
           <div class="kc-funnel-bar">
-            ${fRow('Collected',        f.collected          || 0, '')}
-            ${fRow('Prefilter kept',   f.prefilter_kept     || 0, 'kept')}
-            ${fRow('Prefilter dropped',f.prefilter_dropped  || 0, 'drop')}
-            ${fRow('Scored',          f.scored             || 0, '')}
-            ${fRow('Postfilter kept', f.postfilter_kept     || 0, 'kept')}
-            ${fRow('Postfilter dropped',f.postfilter_dropped|| 0, 'drop')}
-            ${fRow('Final report',    f.final_report        || 0, 'kept')}
+            ${fRow('Collected',          f.collected          || 0, '')}
+            ${fRow('Prefilter dropped',  f.prefilter_dropped  || 0, 'drop')}
+            ${fRow('Scored',             f.scored             || 0, '')}
+            ${fRow('Postfilter dropped', f.postfilter_dropped || 0, 'drop')}
+            ${fRow('Final report',       f.final_report       || 0, 'kept')}
           </div>
           ${kv('Pass rate', `<strong>${esc(f.pass_rate_pct || 0)}%</strong>`)}
         </div>
@@ -281,9 +336,9 @@
         <div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\u2605</span>Score summary</div>
           <div class="kc-stat-block-body">
-            ${kv('Total scored',   `<strong>${esc(st5.total_scored || 0)}</strong>`)}
-            ${kv('Zero-score',     `<strong>${esc(st5.zero_score_commits || 0)}</strong>`)}
-            ${kv('Multi-profile',  `<strong>${esc(st5.multi_profile_commits || 0)}</strong>`)}
+            ${kv('Total scored',  `<strong>${esc(st5.total_scored || 0)}</strong>`)}
+            ${kv('Zero-score',    `<strong>${esc(st5.zero_score_commits || 0)}</strong>`)}
+            ${kv('Multi-profile',`<strong>${esc(st5.multi_profile_commits || 0)}</strong>`)}
           </div>
         </div>`;
 
@@ -291,8 +346,7 @@
       if (Object.keys(profs).length) {
         html += `<div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\ud83c\udff7\ufe0f</span>Profiles</div>
-          <div class="kc-stat-block-body">
-            <ul class="kc-profile-list">`;
+          <div class="kc-stat-block-body"><ul class="kc-profile-list">`;
         Object.keys(profs).sort().forEach(p => {
           const d = profs[p];
           html += `<li>
@@ -312,11 +366,11 @@
         <div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\u2705</span>Threshold filter</div>
           <div class="kc-stat-block-body">
-            ${kv('Threshold',        `<strong>${esc(st6.threshold ?? '\u2014')}</strong>`)}
-            ${kv('Kept',             `<strong>${esc(st6.kept      || 0)}</strong>`)}
-            ${kv('Dropped',          `<strong>${esc(st6.dropped   || 0)}</strong>`)}
-            ${kv('Top score',        `<strong>${esc(st6.top_score || 0)}</strong>`)}
-            ${kv('Bottom kept',      `<strong>${esc(st6.bottom_kept_score || 0)}</strong>`)}
+            ${kv('Threshold',      `<strong>${esc(st6.threshold ?? '\u2014')}</strong>`)}
+            ${kv('Kept',           `<strong>${esc(st6.kept      || 0)}</strong>`)}
+            ${kv('Dropped',        `<strong>${esc(st6.dropped   || 0)}</strong>`)}
+            ${kv('Top score',      `<strong>${esc(st6.top_score || 0)}</strong>`)}
+            ${kv('Bottom kept',    `<strong>${esc(st6.bottom_kept_score || 0)}</strong>`)}
           </div>
         </div>`;
     }
@@ -328,10 +382,10 @@
         <div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udd16</span>Flags (total → kept)</div>
           <div class="kc-stat-block-body">
-            ${kv('is_fix',      `${esc(ann.is_fix||0)} \u2192 ${esc(ann.is_fix_and_kept||0)}`)}
-            ${kv('has_cve',     `${esc(ann.has_cve||0)} \u2192 ${esc(ann.has_cve_and_kept||0)}`)}
-            ${kv('has_syzbot',  `${esc(ann.has_syzbot||0)} \u2192 ${esc(ann.has_syzbot_and_kept||0)}`)}
-            ${kv('stable_cc',   `${esc(ann.has_stable_cc||0)} \u2192 ${esc(ann.has_stable_cc_and_kept||0)}`)}
+            ${kv('is_fix',     `${esc(ann.is_fix||0)} \u2192 ${esc(ann.is_fix_and_kept||0)}`)}
+            ${kv('has_cve',    `${esc(ann.has_cve||0)} \u2192 ${esc(ann.has_cve_and_kept||0)}`)}
+            ${kv('has_syzbot', `${esc(ann.has_syzbot||0)} \u2192 ${esc(ann.has_syzbot_and_kept||0)}`)}
+            ${kv('stable_cc',  `${esc(ann.has_stable_cc||0)} \u2192 ${esc(ann.has_stable_cc_and_kept||0)}`)}
           </div>
         </div>`;
     }
@@ -366,6 +420,48 @@
   const colFilters = Object.create(null);
   COLS.forEach(c => { colFilters[c.key] = ''; });
 
+  /* FIX 5: autofilter — render a <select> + text <input> combo when a
+   * column has fewer than 20 distinct values, otherwise just text input.
+   * Both controls share the same data-filter-key so applyFilters() reads
+   * the select value when non-empty and falls back to the text input. */
+  function buildFilterCtrl(col, fth) {
+    const distinct = COL_DISTINCT[col.key] || [];
+    const useList  = (col.type === 'select' && (col.options || []).length) ||
+                     (distinct.length > 0 && distinct.length < 20);
+
+    if (useList) {
+      const options = col.options?.length ? col.options : distinct;
+      const sel = document.createElement('select');
+      sel.dataset.filterKey  = col.key;
+      sel.dataset.filterRole = 'select';
+      sel.innerHTML = `<option value="">All</option>` +
+        options.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+      sel.addEventListener('change', scheduleFilter);
+      fth.appendChild(sel);
+
+      /* Also add a free-text input for >/< and regex on numeric cols */
+      if (col.type === 'number') {
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.placeholder = '> < =';
+        inp.style.width = '48px';
+        inp.style.marginTop = '2px';
+        inp.dataset.filterKey  = col.key;
+        inp.dataset.filterRole = 'text';
+        inp.addEventListener('input', scheduleFilter);
+        fth.appendChild(inp);
+      }
+    } else {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.placeholder = 'Filter…';
+      inp.dataset.filterKey  = col.key;
+      inp.dataset.filterRole = 'text';
+      inp.addEventListener('input', scheduleFilter);
+      fth.appendChild(inp);
+    }
+  }
+
   function buildHead() {
     if (!thead) return;
     const sortRow   = document.createElement('tr');
@@ -387,20 +483,7 @@
       sortRow.appendChild(th);
 
       const fth = document.createElement('th');
-      let ctrl;
-      if (col.type === 'select' && (col.options || []).length) {
-        ctrl = document.createElement('select');
-        ctrl.innerHTML = `<option value="">All</option>` +
-          (col.options || []).map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
-      } else {
-        ctrl = document.createElement('input');
-        ctrl.type = 'text';
-        ctrl.placeholder = `Filter…`;
-      }
-      ctrl.dataset.filterKey = col.key;
-      ctrl.addEventListener('input',  scheduleFilter);
-      ctrl.addEventListener('change', scheduleFilter);
-      fth.appendChild(ctrl);
+      buildFilterCtrl(col, fth);
       filterRow.appendChild(fth);
     });
 
@@ -424,19 +507,23 @@
     return String(v);
   }
 
+  /* FIX 6: per-profile score columns rendered as scorePill */
   function rowHtml(r) {
     const cells = COLS.map(col => {
       let v = r[col.key];
       if (v == null) v = '';
       if (col.key === 'sha12') {
-        return `<td class="kc-td-sha">
-          <a href="#" class="kc-sha-link" data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${esc(r.sha12)}</a>
-        </td>`;
-      } else if (col.key === 'score') {
-        return `<td class="kc-td-num">${scorePill(v)}</td>`;
-      } else if (col.key === 'profiles') {
+        return `<td class="kc-td-sha"><a href="#" class="kc-sha-link"
+          data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${esc(r.sha12)}</a></td>`;
+      }
+      if (col.key === 'score' || col._profile) {
+        const num = parseFloat(v) || 0;
+        return `<td class="kc-td-num">${num > 0 ? scorePill(num) : '<span class="kc-muted">—</span>'}</td>`;
+      }
+      if (col.key === 'profiles') {
         return `<td>${chips(Array.isArray(v) ? v : [v])}</td>`;
-      } else if (col.key === 'date') {
+      }
+      if (col.key === 'date') {
         return `<td class="kc-td-num">${esc(fmtDate(v))}</td>`;
       }
       return `<td>${esc(Array.isArray(v) ? v.join('; ') : v)}</td>`;
@@ -478,10 +565,21 @@
     try { return new RegExp(pat).test(s); } catch { return s.includes(t); }
   }
 
+  /* FIX 5 (cont.): applyFilters reads select value first, then text input.
+   * For a column that has both controls, the select acts as primary and the
+   * text input as secondary — both must match (AND logic). */
   function applyFilters() {
+    // Rebuild per-column filter values from all controls
+    const selectVals = Object.create(null);
+    const textVals   = Object.create(null);
     document.querySelectorAll('[data-filter-key]').forEach(el => {
-      colFilters[el.dataset.filterKey] = el.value || '';
+      const key  = el.dataset.filterKey;
+      const role = el.dataset.filterRole || 'text';
+      if (role === 'select') selectVals[key] = el.value || '';
+      else                   textVals[key]   = el.value || '';
+      colFilters[key] = el.value || '';  // legacy compat
     });
+
     const global  = (globalSrch?.value || '').trim().toLowerCase();
     const gTokens = global ? global.split(/\s+/).filter(Boolean) : [];
 
@@ -489,10 +587,16 @@
     sortedRows.forEach(r => {
       const tr = tbody?.querySelector(`tr[data-sha12="${CSS.escape(r.sha12)}"]`);
       if (!tr) return;
+
       let ok = COLS.every(col => {
-        const f = (colFilters[col.key] || '').trim();
-        return !f || matchToken(cellValue(r, col.key), f);
+        const sv = (selectVals[col.key] || '').trim();
+        const tv = (textVals[col.key]   || '').trim();
+        const cv = cellValue(r, col.key);
+        if (sv && !matchToken(cv, sv)) return false;
+        if (tv && !matchToken(cv, tv)) return false;
+        return true;
       });
+
       if (ok && gTokens.length) {
         const hay = Object.values(r)
           .map(v => Array.isArray(v) ? v.join(' ') : String(v ?? '')).join(' ').toLowerCase();
@@ -531,9 +635,7 @@
 
   /* ========= Detail panel ========= */
   const rightPane  = document.getElementById('kc-pane-right');
-  const detailBody = document.getElementById('kc-detail-body');
 
-  /* Tab switching — underline style, syncs aria-selected */
   function activateTab(name) {
     document.querySelectorAll('.kc-tab').forEach(t => {
       const active = t.dataset.tab === name;
@@ -548,11 +650,9 @@
     t.addEventListener('click', () => activateTab(t.dataset.tab)));
 
   function renderDecision(row, commit) {
-    const isFiltered = !!(row.reason);
-    const score      = parseFloat(row.score) || 0;
-    const dropped    = isFiltered && score === 0;
-    const reason     = row.reason || '';
-
+    const score   = parseFloat(row.score) || 0;
+    const dropped = !!(row.reason) && score === 0;
+    const reason  = row.reason || '';
     const KEEP_MAP = {
       commit_whitelist: 'SHA is explicitly whitelisted in config.',
       build_artifact:   'Touched files include kernel build artifacts for this product.',
@@ -561,36 +661,27 @@
       filter_disabled:  'Prefilter is disabled in config; all commits pass.',
     };
     const DROP_MAP = {
-      commit_blacklist:       'SHA is explicitly blacklisted in config.',
-      path_blacklist_all:     'Every touched file matched the path blacklist.',
-      no_kconfig_coverage:    'No Kconfig build evidence for any touched file.',
-      score_below_threshold:  `Score ${score} is below the minimum threshold (${SB.stage_06?.threshold ?? '?'}).`,
-      no_files_layer:         'Zero-file structural commit — included without scoring.',
+      commit_blacklist:      'SHA is explicitly blacklisted in config.',
+      path_blacklist_all:    'Every touched file matched the path blacklist.',
+      no_kconfig_coverage:   'No Kconfig build evidence for any touched file.',
+      score_below_threshold: `Score ${score} is below the minimum threshold (${SB.stage_06?.threshold ?? '?'}).`,
+      no_files_layer:        'Zero-file structural commit — included without scoring.',
     };
-
     const cls   = dropped ? 'kc-decision-dropped' : 'kc-decision-kept';
     const label = dropped ? '\u2718 Dropped' : '\u2714 Kept';
-    let items   = [];
+    let items = [];
     if (reason && !dropped)  items.push(KEEP_MAP[reason] || `Keep reason: ${reason}`);
     else if (reason && dropped) items.push(DROP_MAP[reason] || `Drop reason: ${reason}`);
     else items.push(score > 0 ? 'Passed pipeline and scored above threshold.' : 'No explicit reason recorded.');
-    if (!dropped && score > 0)              items.push(`Final score: ${score}`);
-    if (!dropped && (row.profiles || []).length)
-      items.push(`Matched profiles: ${(row.profiles || []).join(', ')}`);
-
+    if (!dropped && score > 0)           items.push(`Final score: ${score}`);
+    if (!dropped && (row.profiles||[]).length)
+      items.push(`Matched profiles: ${(row.profiles||[]).join(', ')}`);
     return `<div class="${cls}">
       <div class="kc-decision-title">${label}</div>
       <ul class="kc-decision-items">${items.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
     </div>`;
   }
 
-  /**
-   * Build an HTML excerpt of `value` around the match at [start, end).
-   * The matched fragment is wrapped in <mark class="kc-match-hl">.
-   * Up to `ctx` characters of surrounding context are shown on each side.
-   * Newlines inside the excerpt are replaced with ↵ to keep it on one line.
-   * Leading/trailing ellipses are added when the excerpt is clipped.
-   */
   function matchExcerpt(value, start, end, ctx) {
     ctx = (ctx == null) ? 60 : ctx;
     if (start == null || end == null || start < 0) return '';
@@ -600,26 +691,17 @@
     const pre  = str.slice(lo, start).replace(/[\r\n]/g, '\u21b5');
     const mid  = str.slice(start, end).replace(/[\r\n]/g, '\u21b5');
     const post = str.slice(end, hi).replace(/[\r\n]/g, '\u21b5');
-    const ld   = lo > 0           ? '\u2026' : '';
-    const rd   = hi < str.length  ? '\u2026' : '';
+    const ld   = lo > 0          ? '\u2026' : '';
+    const rd   = hi < str.length ? '\u2026' : '';
     return `<span class="kc-match-excerpt">${esc(ld)}${esc(pre)}<mark class="kc-match-hl">${esc(mid)}</mark>${esc(post)}${esc(rd)}</span>`;
   }
 
-  /**
-   * Return the stem (basename without extension) of a file path.
-   * "configs/rules/security_cve/keywords_whitelist.txt" -> "keywords_whitelist"
-   */
   function pathStem(p) {
     const base = String(p || '').replace(/\\/g, '/').split('/').pop();
     const dot  = base.lastIndexOf('.');
     return dot > 0 ? base.slice(0, dot) : base;
   }
 
-  /**
-   * Derive the rule name from a source_file path.
-   * The rule directory is the parent folder of the pattern file.
-   * "configs/rules/security_cve_bugs/keywords_whitelist.txt" -> "security_cve_bugs"
-   */
   function ruleNameFromPath(p) {
     const parts = String(p || '').replace(/\\/g, '/').split('/');
     return parts.length >= 2 ? parts[parts.length - 2] : '';
@@ -647,7 +729,6 @@
         <thead><tr>
           <th>Rule</th><th>Wt</th><th>Match</th><th>Score</th><th>Patterns matched</th>
         </tr></thead><tbody>`;
-
       Object.keys(rules).sort().forEach(rname => {
         const rd      = rules[rname] || {};
         const matched = rd.matched;
@@ -665,33 +746,25 @@
             const start   = m.match_start;
             const end     = m.match_end;
             const value   = m.value       || '';
-
-            /* ── source badge: rule:stem:line, full path on hover ── */
             let srcBadge = '';
             if (srcFile) {
-              const ruleName = ruleNameFromPath(srcFile) || rname;
-              const stem     = pathStem(srcFile);
-              const label    = `${ruleName}:${stem}:${srcLine}`;
+              const label = `${ruleNameFromPath(srcFile) || rname}:${pathStem(srcFile)}:${srcLine}`;
               srcBadge = `<span class="kc-src-badge" title="${esc(srcFile)}">${esc(label)}</span>`;
             }
-
-            /* ── highlighted excerpt ── */
             const excerpt = (start != null && end != null)
               ? matchExcerpt(value, start, end, 60)
-              : `<span class="kc-match-excerpt kc-muted">${esc(value.slice(0, 120))}${value.length > 120 ? '\u2026' : ''}</span>`;
-
+              : `<span class="kc-match-excerpt kc-muted">${esc(value.slice(0,120))}${value.length>120?'\u2026':''}</span>`;
             return `<span class="kc-match-hit">
               <span class="kc-match-badge" title="${esc(pat)}">${esc(pat)}</span>${srcBadge}
               <span class="kc-match-excerpt-wrap">${excerpt}</span>
             </span>`;
           }).join('');
         }
-
         html += `<tr class="${rowCls}">
           <td class="kc-mono">${esc(rname)}</td>
-          <td>${esc(rd.weight || 0)}</td>
+          <td>${esc(rd.weight||0)}</td>
           <td style="color:${iconCol};font-weight:700;text-align:center">${icon}</td>
-          <td class="kc-td-num">${matched ? esc(rd.score || 0) : '\u2014'}</td>
+          <td class="kc-td-num">${matched ? esc(rd.score||0) : '\u2014'}</td>
           <td>${badgesHtml}</td>
         </tr>`;
       });
@@ -711,9 +784,7 @@
       <thead><tr><th>File</th><th>Build coverage</th></tr></thead>
       <tbody>${files.map(f => `<tr>
         <td>${esc(f)}</td>
-        <td class="${covSet.has(f) ? 'kc-coverage-y' : 'kc-coverage-n'}">
-          ${covSet.has(f) ? '\u2714 covered' : '\u2014'}
-        </td>
+        <td class="${covSet.has(f)?'kc-coverage-y':'kc-coverage-n'}">${covSet.has(f)?'\u2714 covered':'\u2014'}</td>
       </tr>`).join('')}</tbody>
     </table>`;
   }
@@ -723,14 +794,13 @@
     const sc = c.scoring || {};
     const profiles = sc.profiles || {};
 
-    /* ---- Overview tab ---- */
     let overview = '';
     overview += detailCard('Commit', [
-      kv('SHA',     `<code class="kc-mono">${esc(c.commit || row.sha || row.sha12)}</code>`),
-      kv('Subject', esc(c.subject || row.subject || '')),
-      kv('Author',  esc((c.author_name || row.author || '') + (c.author_email ? ` <${c.author_email}>` : ''))),
-      kv('Date',    esc(fmtDate(c.author_time || row.date))),
-      kv('Score',   scorePill(c.score ?? row.score)),
+      kv('SHA',      `<code class="kc-mono">${esc(c.commit || row.sha || row.sha12)}</code>`),
+      kv('Subject',  esc(c.subject  || row.subject || '')),
+      kv('Author',   esc((c.author_name || row.author || '') + (c.author_email ? ` <${c.author_email}>` : ''))),
+      kv('Date',     esc(fmtDate(c.author_time || row.date))),
+      kv('Score',    scorePill(c.score ?? row.score)),
       kv('Profiles', chips(c.matched_profiles || row.profiles || [])),
     ].join(''), '\ud83d\udcc4');
 
@@ -739,48 +809,40 @@
     if ((c.product_evidence || []).length) {
       overview += detailCard('Product Evidence',
         `<ul style="padding-left:1.2rem;margin:0">${
-          (c.product_evidence || []).map(e => `<li><code class="kc-mono">${esc(e)}</code></li>`).join('')
+          (c.product_evidence||[]).map(e=>`<li><code class="kc-mono">${esc(e)}</code></li>`).join('')
         }</ul>`, '\ud83d\udce6');
     }
 
     if (c.body) {
-      const bodyPreview = c.body.length > 4000
-        ? c.body.slice(0, 4000) + '\n\u2026'
-        : c.body;
-      overview += detailCard(
-        'Full Commit Message',
-        `<div class="kc-commit-body">${escNl(bodyPreview)}</div>`,
-        '\ud83d\udcdd'
-      );
+      const bodyPreview = c.body.length > 4000 ? c.body.slice(0,4000)+'\n\u2026' : c.body;
+      overview += detailCard('Full Commit Message',
+        `<div class="kc-commit-body">${escNl(bodyPreview)}</div>`, '\ud83d\udcdd');
     }
 
     document.getElementById('kc-tab-overview').innerHTML = overview;
 
     /* ---- Scoring tab ---- */
-    const traceProfiles = ((sc.trace || {}).profiles) || {};
+    const traceProfiles = ((sc.trace||{}).profiles) || {};
     let scoring = '';
     if (Object.keys(traceProfiles).length) {
       scoring += `<p class="kc-muted" style="font-size:11.5px;margin:0 0 8px">
-        Formula per profile: <code>min(&sum;rule_weights, 100) &times; multiplier</code>.
-        Combined score = &sum; of all profile final scores.
+        Formula per profile: <code>min(&sum;rule_weights,100)&times;multiplier</code>.
+        Combined score=&sum; of all profile final scores.
         Pattern badges show the <strong>matched pattern</strong>,
-        source <em>rule:file:line</em>, and a highlighted excerpt of the matched text.</p>`;
+        source <em>rule:file:line</em>, and a highlighted excerpt.</p>`;
       Object.keys(traceProfiles).sort().forEach(p =>
-        scoring += renderProfileTrace(p, traceProfiles[p] || {}));
+        scoring += renderProfileTrace(p, traceProfiles[p]||{}));
     } else if (Object.keys(profiles).length) {
       scoring += detailCard('Profile Scores',
-        Object.keys(profiles).sort().map(p => kv(p, scorePill(profiles[p]))).join(''), '\u2605');
+        Object.keys(profiles).sort().map(p=>kv(p,scorePill(profiles[p]))).join(''), '\u2605');
     } else {
       scoring = `<p class="kc-muted">No scoring data available for this commit.</p>`;
     }
     document.getElementById('kc-tab-scoring').innerHTML = scoring;
 
-    /* ---- Files tab ---- */
     document.getElementById('kc-tab-files').innerHTML = renderFiles(c);
-
-    /* ---- Raw JSON tab ---- */
     document.getElementById('kc-tab-raw').innerHTML =
-      `<pre class="kc-raw-pre">${esc(JSON.stringify(c, null, 2))}</pre>`;
+      `<pre class="kc-raw-pre">${esc(JSON.stringify(c,null,2))}</pre>`;
 
     activateTab('overview');
   }
@@ -789,18 +851,15 @@
     const row = rowBySha[sha12] || rowBySha[fullSha] || {};
     tbody?.querySelectorAll('tr').forEach(tr =>
       tr.classList.toggle('kc-row-active', tr.dataset.sha12 === sha12));
-
-    document.querySelectorAll('.kc-tab-panel').forEach(p => { p.innerHTML = ''; p.classList.remove('kc-active'); });
+    document.querySelectorAll('.kc-tab-panel').forEach(p => { p.innerHTML=''; p.classList.remove('kc-active'); });
     const ov = document.getElementById('kc-tab-overview');
-    if (ov) { ov.innerHTML = `<p class="kc-muted">Loading\u2026</p>`; ov.classList.add('kc-active'); }
-
+    if (ov) { ov.innerHTML=`<p class="kc-muted">Loading\u2026</p>`; ov.classList.add('kc-active'); }
     if (rightPane?.classList.contains('kc-collapsed')) {
       rightPane.classList.remove('kc-collapsed');
-      localStorage.setItem('kc-right-collapsed', '0');
+      localStorage.setItem('kc-right-collapsed','0');
       updateCollapseIcons();
     }
-
-    fetchCommit(sha12, fullSha || sha12).then(commit => populateDetail(row, commit));
+    fetchCommit(sha12, fullSha||sha12).then(commit => populateDetail(row, commit));
   }
 
   document.addEventListener('click', e => {
@@ -808,25 +867,21 @@
     if (!a) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    openDetail(a.dataset.sha12 || a.dataset.sha, a.dataset.sha || a.dataset.sha12);
+    openDetail(a.dataset.sha12||a.dataset.sha, a.dataset.sha||a.dataset.sha12);
   }, true);
 
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape')
       tbody?.querySelectorAll('tr').forEach(tr => tr.classList.remove('kc-row-active'));
-    }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      const visible = Array.from(tbody?.querySelectorAll('tr:not(.kc-hidden)') || []);
+      const visible = Array.from(tbody?.querySelectorAll('tr:not(.kc-hidden)')||[]);
       if (!visible.length) return;
       const active = tbody?.querySelector('tr.kc-row-active');
       const idx    = visible.indexOf(active);
       const next   = e.key === 'ArrowDown'
-        ? visible[idx + 1] || visible[0]
-        : visible[idx - 1] || visible[visible.length - 1];
-      if (next) {
-        openDetail(next.dataset.sha12, next.dataset.sha);
-        next.scrollIntoView({ block: 'nearest' });
-      }
+        ? visible[idx+1] || visible[0]
+        : visible[idx-1] || visible[visible.length-1];
+      if (next) { openDetail(next.dataset.sha12, next.dataset.sha); next.scrollIntoView({block:'nearest'}); }
     }
   });
 

@@ -14,6 +14,8 @@ Changes:
   v15.0.0 — Full data-driven rewrite.  Python no longer builds body HTML;
              window.__KC_UI__ replaces all previous __BODY__ / __COMMITS__
              globals.  Template is a static shell (no __BODY__ marker).
+           — Per-profile score columns: each row now carries score_<profile>
+             keys; JS expands these into individual table columns.
 """
 import json
 import os
@@ -57,30 +59,20 @@ def _fmt_date(ts):
         return str(ts)[:16]
 
 
-def _profile_scores_text(commit):
-    profiles = (((commit or {}).get('scoring') or {}).get('profiles') or {})
-    return '; '.join(
-        f'{p}:{float(profiles[p] or 0):g}'
-        for p in sorted(profiles)
-    )
-
-
 # ---------------------------------------------------------------------------
 # Column definitions
 # ---------------------------------------------------------------------------
 
-# Ordered list of columns exposed to the JS table.
-# Each entry: (key_in_row_dict, label, js_type)
-# js_type is one of: 'string' | 'number' | 'date' | 'select'
+# Base columns — profile_scores is removed; JS inserts per-profile columns
+# dynamically after the "score" column using score_<profile> row keys.
 _COMMIT_COLUMNS = [
-    ('rank',           'Rank',           'number'),
-    ('sha12',          'SHA',            'string'),
-    ('subject',        'Subject',        'string'),
-    ('author',         'Author',         'string'),
-    ('date',           'Date',           'date'),
-    ('score',          'Score',          'number'),
-    ('profiles',       'Profiles',       'select'),
-    ('profile_scores', 'Profile scores', 'string'),
+    ('rank',     'Rank',     'number'),
+    ('sha12',    'SHA',      'string'),
+    ('subject',  'Subject',  'string'),
+    ('author',   'Author',   'string'),
+    ('date',     'Date',     'date'),
+    ('score',    'Score',    'number'),
+    ('profiles', 'Profiles', 'select'),
 ]
 
 _FILTERED_EXTRA = ('reason', 'Filter reason', 'string')
@@ -89,7 +81,6 @@ _FILTERED_EXTRA = ('reason', 'Filter reason', 'string')
 def _columns_def(is_filtered, profile_names):
     """Return JS column-definition list."""
     cols = [{'key': k, 'label': l, 'type': t} for k, l, t in _COMMIT_COLUMNS]
-    # Populate select options for the Profiles column
     for col in cols:
         if col['key'] == 'profiles' and profile_names:
             col['options'] = sorted(profile_names)
@@ -99,22 +90,33 @@ def _columns_def(is_filtered, profile_names):
     return cols
 
 
-def _commit_row(i, c, is_filtered=False):
-    """Serialize one commit to a flat dict for the JS rows array."""
-    sha    = (c.get('commit') or '')
-    sha12  = sha[:12]
-    profs  = c.get('matched_profiles') or []
+def _commit_row(i, c, is_filtered=False, all_profiles=None):
+    """Serialize one commit to a flat dict for the JS rows array.
+
+    Per-profile scores are stored as ``score_<profile>`` keys so that the
+    browser-side JS can render one column per profile without any extra
+    server-side column enumeration.
+    """
+    sha   = (c.get('commit') or '')
+    sha12 = sha[:12]
+    profs = c.get('matched_profiles') or []
+
     row = {
-        'rank':           i,
-        'sha12':          sha12,
-        'sha':            sha,
-        'subject':        c.get('subject') or '',
-        'author':         c.get('author_name') or '',
-        'date':           _fmt_date(c.get('author_time')),
-        'score':          c.get('score', 0) or 0,
-        'profiles':       profs,
-        'profile_scores': _profile_scores_text(c),
+        'rank':     i,
+        'sha12':    sha12,
+        'sha':      sha,
+        'subject':  c.get('subject') or '',
+        'author':   c.get('author_name') or '',
+        'date':     _fmt_date(c.get('author_time')),
+        'score':    c.get('score', 0) or 0,
+        'profiles': profs,
     }
+
+    # Per-profile scores — emit 0 for profiles not matched by this commit
+    prof_scores = (((c.get('scoring') or {}).get('profiles')) or {})
+    for p in (all_profiles or []):
+        row[f'score_{p}'] = float(prof_scores.get(p) or 0)
+
     if is_filtered:
         row['reason'] = c.get('_filter_reason', '')
     return row
@@ -129,7 +131,6 @@ def _sidebar_payload(report_stats, profile_summary):
     rs  = report_stats or {}
     ps  = profile_summary or {}
 
-    # Funnel numbers
     collected   = rs.get('st01_collected')
     pf_kept     = rs.get('st04_prefilter_kept')
     pf_drop     = rs.get('st04_prefilter_dropped')
@@ -140,11 +141,8 @@ def _sidebar_payload(report_stats, profile_summary):
     rep_total   = rs.get('total_scored_commits', 0)
     score_hi    = rs.get('score_highest')
     score_lo    = rs.get('score_lowest')
-    score_avg   = rs.get('score_avg')
     zero_prof   = rs.get('commits_matched_zero_profiles')
-    prod_evid   = rs.get('commits_with_product_evidence')
 
-    # Annotations (kernel-specific flags)
     ann = {}
     for k in ('total_commits', 'is_fix', 'is_fix_and_kept',
               'has_cve', 'has_cve_and_kept',
@@ -153,7 +151,6 @@ def _sidebar_payload(report_stats, profile_summary):
         if rs.get(k) is not None:
             ann[k] = rs[k]
 
-    # Per-profile scoring summary for sidebar list
     profiles_sidebar = {}
     for pname, pd in sorted(ps.items()):
         profiles_sidebar[pname] = {
@@ -161,11 +158,6 @@ def _sidebar_payload(report_stats, profile_summary):
             'score_avg':      round(float(pd.get('avg_score', 0) or 0), 1),
         }
 
-    # Stage 04 / 05 / 06 breakdown (run_stats keys)
-    def _maybe(v):
-        return v if v is not None else None
-
-    # Compute pass_rate
     try:
         pass_rate = round((rep_total / max(int(collected or 0), 1)) * 100, 1)
     except (TypeError, ZeroDivisionError):
@@ -190,29 +182,25 @@ def _sidebar_payload(report_stats, profile_summary):
     }
 
     stage_06 = {
-        'threshold':          threshold,
-        'kept':               pf2_kept,
-        'dropped':            pf2_drop,
-        'top_score':          score_hi,
-        'bottom_kept_score':  score_lo,
+        'threshold':         threshold,
+        'kept':              pf2_kept,
+        'dropped':           pf2_drop,
+        'top_score':         score_hi,
+        'bottom_kept_score': score_lo,
     }
-
-    evaluation = rs.get('evaluation') or {}
 
     sidebar = {
-        'funnel':     funnel,
-        'stage_05':   {k: v for k, v in stage_05.items() if v is not None},
-        'stage_06':   {k: v for k, v in stage_06.items() if v is not None},
+        'funnel':      funnel,
+        'stage_05':    {k: v for k, v in stage_05.items() if v is not None},
+        'stage_06':    {k: v for k, v in stage_06.items() if v is not None},
         'annotations': ann,
-        'evaluation':  evaluation,
+        'evaluation':  rs.get('evaluation') or {},
     }
 
-    # Drop-reasons detail from run_stats (stage 04)
     drop_reasons = rs.get('st04_drop_reasons')
     if drop_reasons:
         sidebar['stage_04'] = {'drop_reasons': drop_reasons}
 
-    # Dropped subsystems
     dropped_subs = rs.get('st04_dropped_subsystems')
     if dropped_subs:
         sidebar.setdefault('stage_04', {})['dropped_subsystems'] = dropped_subs
@@ -230,12 +218,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
                          detail_mode='embedded', commit_index_path=None,
                          commit_detail_root=None, embed_compression='none',
                          metadata_path=None):
-    """Write HTML report to *output_path*.
-
-    The report is a self-contained HTML file.  All UI is rendered by
-    browser-side JavaScript from the window.__KC_UI__ object serialised
-    into the page at generation time.
-    """
+    """Write HTML report to *output_path*."""
     if templates_dir is None:
         templates_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -249,34 +232,37 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     css = _get_template('summary.css', templates_dir)
     js  = _get_template('summary.js',  templates_dir)
 
-    generated = time.strftime('%Y-%m-%d %H:%M:%S')
+    generated = time.strftime('%Y-%m-%d %H:%M')
     commits   = commits or []
 
+    # ── Profile name universe ─────────────────────────────────────────────
+    all_profile_names = sorted({
+        p
+        for c in commits
+        for p in (c.get('matched_profiles') or [])
+    })
+
     # ── Column definitions ────────────────────────────────────────────────
-    all_profile_names = set()
-    for c in commits:
-        all_profile_names.update(c.get('matched_profiles') or [])
     cols = _columns_def(is_filtered, all_profile_names)
 
     # ── Row data ──────────────────────────────────────────────────────────
-    rows = [_commit_row(i, c, is_filtered) for i, c in enumerate(commits, 1)]
+    rows = [
+        _commit_row(i, c, is_filtered, all_profile_names)
+        for i, c in enumerate(commits, 1)
+    ]
 
-    # ── Embed full commit detail for sidecar / embedded modes ─────────────
-    # In embedded mode we also keep order_commit_details per commit in STORE
-    # so that the JS detail panel can look them up by sha12 or full sha.
+    # ── Embed full commit detail (embedded mode) ───────────────────────────
     commit_store = {}
     if detail_mode == 'embedded':
         for c in commits:
-            sha  = (c.get('commit') or '')
+            sha   = (c.get('commit') or '')
             sha12 = sha[:12]
             detail = order_commit_details(c)
-            if sha12:
-                commit_store[sha12] = detail
-            if sha:
-                commit_store[sha] = detail
+            if sha12: commit_store[sha12] = detail
+            if sha:   commit_store[sha]   = detail
 
     # ── Meta ──────────────────────────────────────────────────────────────
-    rs      = report_stats or {}
+    rs        = report_stats or {}
     eval_info = rs.get('evaluation') or {}
     meta = {
         'version':      VERSION,
@@ -298,9 +284,8 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         'is_filtered': bool(is_filtered),
     }
 
-    # ── Inline <script> block ─────────────────────────────────────────────
-    ui_json    = json.dumps(kc_ui,         default=str, separators=(',', ':'))
-    store_json = json.dumps(commit_store,  default=str, separators=(',', ':'))
+    ui_json    = json.dumps(kc_ui,        default=str, separators=(',', ':'))
+    store_json = json.dumps(commit_store, default=str, separators=(',', ':'))
 
     boot_parts = [
         f'window.__KC_UI__={ui_json};',
@@ -316,9 +301,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
             json.dumps(metadata_path) + ';')
 
     inline_data = '<script>' + ''.join(boot_parts) + '</script>'
-
-    # ── Subtitle substitution (new placeholder in template) ───────────────
-    subtitle = meta['subtitle']
+    subtitle    = meta['subtitle']
 
     out = (tpl
            .replace('__TITLE__',        _esc(title))
