@@ -29,6 +29,12 @@ Changes:
                   handled gracefully: when compiled_rules.json is already
                   present in cache the inflated in-memory form is derived
                   from it directly, so the stage does not abort.
+  v14.1.0       — build_run_stats() from lib.run_stats is called at the end
+                  of run(); it writes pipeline_run_stats.json in outdir.
+                  This file contains exhaustive, pre-aggregated pipeline-run
+                  statistics for the HTML report right-pane "Global Stats"
+                  panel.  'pipeline_run_stats.json' is added to
+                  report_stats['generated_files'].
 """
 import csv
 import json
@@ -38,6 +44,7 @@ import shutil
 from lib.config import load_json, save_json
 from lib.html_report import generate_html_report
 from lib.manifest import CACHE_FILES
+from lib.run_stats import build_run_stats
 
 
 # Column definitions imported from manifest (single source of truth)
@@ -659,7 +666,7 @@ def run(cfg, cache, outdir):
                 _emit(_ftp)
                 generate_html_report(
                     filtered, {}, {'total_scored_commits': len(filtered)},
-                    _fhp, title=title + ' — Filtered Commits',
+                    _fhp, title=title + ' \u2014 Filtered Commits',
                     is_filtered=True,
                     templates_dir=cfg['paths'].get('templates_dir'),
                     detail_mode=html_detail_mode,
@@ -679,6 +686,14 @@ def run(cfg, cache, outdir):
             _rt_finish_line()
         except Exception as _e:
             logging.debug('finish_progress_line (st07) failed: %s', _e)
+
+    # v14.1.0: write exhaustive pipeline_run_stats.json for HTML right-pane
+    try:
+        _prs_path = os.path.join(outdir, CACHE_FILES['run_stats'])
+        build_run_stats(cfg, cache, outdir)
+        _emit(_prs_path)
+    except Exception as _e:
+        logging.warning('pipeline_run_stats.json write failed: %s', _e)
 
     # Embed generated_files list, then write report_stats.json last
     report_stats['generated_files'] = sorted(set(

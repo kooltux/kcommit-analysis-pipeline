@@ -1,21 +1,18 @@
 """HTML report generator for kcommit-analysis-pipeline.
 
-Generates self-contained HTML reports with embedded or sidecar-backed
-commit detail panes. Commit details include rule-match/score analysis
-from scoring.trace when present.
-
-Column definitions (COMMIT_COLS, SUMMARY_COLS, MATRIX_COLS) are the
-canonical source in lib.manifest and imported here via lib.spreadsheet.
+Generates self-contained HTML reports with a 3-pane horizontally-resizable
+layout:
+  Left pane  — pipeline run stats + profiles (collapsible)
+  Middle pane — commit table with typed per-column filters
+  Right pane  — commit detail (starts collapsed; opens on SHA click)
 
 Changes:
-  v12.0.0 (A.1) — _commit_row_html() no longer emits a Product Evidence
-                  <td> cell; the column is filtered from headers at report
-                  time, so rows and headers must match in width.
-  v12.0.0 (A.2) — Dead `cfg` local variable reference removed from
-                  generate_html_report(); collect_cfg was always {} due to
-                  the `'cfg' in dir()` guard masking the NameError.
-  v12.0.0 (A.4) — Sidebar now renders an Evaluation section when
-                  report_stats['evaluation'] is present.
+  v14.2.0 — Three-pane layout with drag-resize handles.  Right pane
+             replaces the old overlay/fixed-panel approach.  Left and
+             right panes can each be collapsed to a narrow button rail.
+             Column filter widgets are typed: date columns get a date
+             range picker, integer/float columns get > / < / = inputs,
+             and categorical columns get a multi-select.
 """
 import base64
 import json
@@ -34,7 +31,6 @@ def _esc(text):
             .replace('<', '&lt;')
             .replace('>', '&gt;')
             .replace('\"', '&quot;'))
-
 
 
 def _get_template(name, templates_dir, default=''):
@@ -76,22 +72,39 @@ def _profile_scores_text(commit):
     return '; '.join(parts)
 
 
-def _th(label):
-    return (f'<th><span class="col-label">{label}</span>'
+def _th(label, col_type='string'):
+    """Header cell with sort icon; data-col-type drives JS widget selection."""
+    return (f'<th data-col-type="{col_type}">'
+            f'<span class="col-label">{label}</span>'
             f'<i class="sort-icon">⇅</i></th>')
 
 
+# Column type hints for filter widget selection
+_COL_TYPES = {
+    'Rank':          'integer',
+    'SHA':           'string',
+    'Subject':       'string',
+    'Author':        'string',
+    'Date':          'date',
+    'Score':         'float',
+    'Profiles':      'multiselect',
+    'Profile Scores':'string',
+    'Filter reason': 'string',
+}
+
+
 def _table(headers, rows_html, table_id=''):
-    """Table with sticky header row + per-column filter row."""
+    """Table with sticky header + per-column filter row.
+    Each header cell carries data-col-type so JS can build the right widget.
+    """
     id_attr = f' id="{table_id}"' if table_id else ''
+    th_cells = ''.join(_th(h, _COL_TYPES.get(str(h), 'string')) for h in headers)
+    # Filter row: empty cells — JS replaces content with typed widgets
+    filt_cells = ''.join('<th class="kc-filter-cell"></th>' for _ in headers)
     thead = (
         '<thead>'
-        '<tr class="kc-col-headers">'
-        + ''.join(_th(h) for h in headers)
-        + '</tr>'
-        '<tr class="kc-filters">'
-        + ''.join('<th><input type="text" placeholder="filter…  >N <N foo*" aria-label="filter column"></th>' for _ in headers)
-        + '</tr>'
+        f'<tr class="kc-col-headers">{th_cells}</tr>'
+        f'<tr class="kc-filters">{filt_cells}</tr>'
         '</thead>'
     )
     return (
@@ -103,17 +116,7 @@ def _table(headers, rows_html, table_id=''):
     )
 
 
-
 def _commit_row_html(i, c, with_reason=False):
-    """Build a <tr> for a commit.
-
-    Matches the visible columns of the HTML report table:
-      Rank | SHA | Subject | Author | Date | Score | Profiles | Profile Scores
-
-    The 'Product Evidence' column is intentionally excluded from the HTML
-    table (A.1 / D.16) — the data remains available in sidecar JSON files
-    and in the commit detail panel.
-    """
     sha    = (c.get('commit') or '')
     sha12  = sha[:12]
     subj   = c.get('subject') or ''
@@ -133,14 +136,12 @@ def _commit_row_html(i, c, with_reason=False):
         f' title="Show commit details">{sha12}</a>'
     )
 
-    # A.1 / D.16: Product Evidence column removed from HTML table rows.
-    # Evidence remains in sidecar JSON and the commit detail panel.
     cells = [
         f'<td class="rank">{i}</td>',
         f'<td class="sha">{sha_link}</td>',
         f'<td>{subj}</td>',
         f'<td>{author}</td>',
-        f'<td class="num">{date}</td>',
+        f'<td class="num" data-sort="{date}">{date}</td>',
         f'<td class="num" data-sort="{float(score or 0):.6f}">{_score_pill(score)}</td>',
         f'<td>{_profile_chips(profs)}</td>',
         f'<td><small>{prof_scores}</small></td>',
@@ -152,10 +153,9 @@ def _commit_row_html(i, c, with_reason=False):
 
 
 def _section(title, badge, content, anchor):
-    assert anchor, "_section() requires a non-empty anchor"
-    id_attr = f' id="{anchor}"' if anchor else ''
+    assert anchor
     return (
-        f'<section class="kc-card"{id_attr}>'
+        f'<section class="kc-card" id="{anchor}">'
         f'<div class="kc-card-header"><h2>{title}</h2>'
         f'<span class="kc-badge">{badge}</span></div>'
         + content
@@ -164,11 +164,6 @@ def _section(title, badge, content, anchor):
 
 
 def _kv_rows(items):
-    """Build sidebar key-value rows from (label, value) pairs.
-
-    Skips items whose value is None, empty string, empty list, or empty
-    dict so the section only shows meaningful data.
-    """
     rows = []
     for label, value in items:
         if value in (None, '', [], {}):
@@ -192,10 +187,10 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
                          metadata_path=None):
     """Write HTML report to *output_path*.
 
-    Section order: Run Stats → Profile Summary → Commits table.
-    Commit table columns match the visible subset of COMMIT_COLS:
-      Rank | SHA | Subject | Author | Date | Score | Profiles | Profile Scores
-    (Product Evidence is excluded from the HTML table; see A.1 / D.16.)
+    Layout: 3 horizontally-resizable panes separated by drag handles.
+      Left  — pipeline stats + profiles  (collapsible)
+      Mid   — commit table with typed per-column filters
+      Right — commit detail (collapsed until a SHA is clicked)
     """
     if templates_dir is None:
         templates_dir = os.path.join(
@@ -216,8 +211,6 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     rs      = report_stats or {}
     total   = rs.get('total_scored_commits', len(commits))
     n_profs = len(profile_summary or {})
-    cov     = rs.get('profile_coverage', {})
-    cov_pct = f'{cov.get("pct", 0):.0f}%' if isinstance(cov, dict) else str(cov)
 
     header = (
         '<header class="kc-header">'
@@ -227,12 +220,17 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         f'<p>{VERSION} &nbsp;·&nbsp; generated {generated}</p>'
         '</div>'
         '<div class="kc-header-spacer"></div>'
-        '<nav class="kc-nav"><a href="#commits">Commits</a></nav>'
-        + '<button class="kc-theme-btn" id="kc-theme-toggle" aria-label="Toggle light/dark theme" title="Toggle theme"><svg viewBox="0 0 24 24" aria-hidden="true" id="kc-theme-icon"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>Theme</button>'
+        '<button class="kc-theme-btn" id="kc-theme-toggle" '
+        'aria-label="Toggle light/dark theme" title="Toggle theme">'
+        '<svg viewBox="0 0 24 24" aria-hidden="true" id="kc-theme-icon">'
+        '<circle cx="12" cy="12" r="5"/>'
+        '<path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42'
+        'M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>'
+        '</svg>Theme</button>'
         '</header>'
     )
 
-    # ── Sidebar ───────────────────────────────────────────────────────────
+    # ── Left pane: pipeline stats ─────────────────────────────────────────
     def _srow(label, value, cls=''):
         cls_attr = f' class="{cls}"' if cls else ''
         return (
@@ -246,7 +244,8 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         id_attr = f' id="sidebar-{stage_id}"' if stage_id else ''
         return (
             f'<div class="kc-stage-block"{id_attr}>'
-            f'<div class="kc-stage-header"><span class="kc-stage-icon">{icon}</span>'
+            f'<div class="kc-stage-header">'
+            f'<span class="kc-stage-icon">{icon}</span>'
             f'<span class="kc-stage-title">{title}</span></div>'
             + rows_html
             + '</div>'
@@ -254,8 +253,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
 
     def _fmt_n(v, fallback='—'):
         try:
-            n = int(v)
-            return f'{n:,}'
+            return f'{int(v):,}'
         except (TypeError, ValueError):
             return fallback if v is None else str(v)
 
@@ -265,7 +263,6 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         except (TypeError, ValueError):
             return fallback if v is None else str(v)
 
-    # Stage 01 – Collection
     collected   = rs.get('st01_collected')
     pf_kept     = rs.get('st04_prefilter_kept')
     pf_drop     = rs.get('st04_prefilter_dropped')
@@ -279,40 +276,42 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     score_avg   = rs.get('score_avg')
     zero_prof   = rs.get('commits_matched_zero_profiles')
     prod_evid   = rs.get('commits_with_product_evidence')
+    cov         = rs.get('profile_coverage', {})
+    cov_pct     = f'{cov.get("pct", 0):.0f}%' if isinstance(cov, dict) else str(cov)
 
     stage_collection = _stage_block('①', 'Collection',
-        _srow('Total commits',    _fmt_n(collected) if collected is not None else _fmt_n(rep_total)),
+        _srow('Total commits', _fmt_n(collected) if collected is not None else _fmt_n(rep_total)),
         stage_id='collect')
 
     stage_prefilter = _stage_block('②', 'Pre-filter',
-        (_srow('Kept',    _fmt_n(pf_kept))    if pf_kept    is not None else '')
-      + (_srow('Dropped', _fmt_n(pf_drop), 'dim') if pf_drop   is not None else ''),
+        (_srow('Kept',    _fmt_n(pf_kept))           if pf_kept  is not None else '')
+      + (_srow('Dropped', _fmt_n(pf_drop), 'dim')    if pf_drop  is not None else ''),
         stage_id='prefilter')
 
     stage_scoring = _stage_block('③', 'Scoring',
-        (_srow('Scored',    _fmt_n(sc_total))  if sc_total is not None else _srow('Scored', _fmt_n(rep_total)))
-      + (_srow('Profiles',  str(n_profs)))
-      + (_srow('Coverage',  cov_pct)),
+        (_srow('Scored',   _fmt_n(sc_total))          if sc_total is not None else _srow('Scored', _fmt_n(rep_total)))
+      + _srow('Profiles',  str(n_profs))
+      + _srow('Coverage',  cov_pct),
         stage_id='scoring')
 
     thr_label = f'Threshold ({_fmt_score(threshold)})' if threshold else 'Threshold'
     stage_postfilter = _stage_block('④', 'Post-filter',
-        _srow(thr_label,   _fmt_score(threshold) if threshold else 'none')
-      + (_srow('Dropped',  _fmt_n(pf2_drop), 'dim') if pf2_drop is not None else ''),
+        _srow(thr_label, _fmt_score(threshold) if threshold else 'none')
+      + (_srow('Dropped', _fmt_n(pf2_drop), 'dim')   if pf2_drop is not None else ''),
         stage_id='postfilter')
 
     top_n_note = f' (top {top_n_val:,})' if top_n_val else ''
     stage_report = _stage_block('⑤', f'Report{top_n_note}',
-        _srow('Commits',       _fmt_n(rep_total))
-      + (_srow('Score highest', _fmt_score(score_hi))   if score_hi  is not None else '')
-      + (_srow('Score lowest',  _fmt_score(score_lo))   if score_lo  is not None else '')
-      + (_srow('Score avg',     _fmt_score(score_avg))  if score_avg is not None else '')
-      + (_srow('No-profile',   _fmt_n(zero_prof), 'dim')  if zero_prof is not None else '')
+        _srow('Commits',        _fmt_n(rep_total))
+      + (_srow('Score highest', _fmt_score(score_hi))  if score_hi  is not None else '')
+      + (_srow('Score lowest',  _fmt_score(score_lo))  if score_lo  is not None else '')
+      + (_srow('Score avg',     _fmt_score(score_avg)) if score_avg is not None else '')
+      + (_srow('No-profile',    _fmt_n(zero_prof), 'dim') if zero_prof is not None else '')
       + (_srow('With evidence', _fmt_n(prod_evid))        if prod_evid is not None else ''),
         stage_id='report')
 
-    sidebar_stats = (
-        '<div class="kc-sidebar-section kc-pipeline-stats"><h3>Pipeline Run</h3>'
+    pipeline_stats_html = (
+        '<div class="kc-left-section"><h3>Pipeline Run</h3>'
         + stage_collection
         + stage_prefilter
         + stage_scoring
@@ -321,11 +320,10 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         + '</div>'
     )
 
-    # A.4 / D.14: Evaluation section from report_stats['evaluation']
     eval_info = rs.get('evaluation') or {}
     if eval_info:
-        sidebar_evaluation = (
-            '<div class="kc-sidebar-section" id="evaluation-details"><h3>Evaluation</h3>'
+        eval_html = (
+            '<div class="kc-left-section" id="evaluation-details"><h3>Evaluation</h3>'
             + _kv_rows([
                 ('Git source',       eval_info.get('git_source')),
                 ('Git baseline',     eval_info.get('git_baseline')),
@@ -340,73 +338,123 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
             + '</div>'
         )
     else:
-        # Empty placeholder preserved for JS async population via metadata sidecar
-        sidebar_evaluation = '<div id="evaluation-details"></div>'
+        eval_html = '<div id="evaluation-details"></div>'
 
     prof_items = []
     for pname, pd in sorted((profile_summary or {}).items(),
                              key=lambda x: -x[1].get('total_score', 0)):
-        cnt     = pd.get('commit_count', pd.get('count', 0))
-        avg_sc  = pd.get('avg_score', 0)
+        cnt    = pd.get('commit_count', pd.get('count', 0))
+        avg_sc = pd.get('avg_score', 0)
         prof_items.append(
             f'<li><span class="pname">{pname}</span>'
             f'<span class="pbadge">{cnt}</span>'
             f'<span class="pavg" title="avg score">⌀{avg_sc:.0f}</span></li>'
         )
-    sidebar_profiles = (
-        '<div class="kc-sidebar-section"><h3>Profiles</h3>'
+    profiles_html = (
+        '<div class="kc-left-section"><h3>Profiles</h3>'
         f'<ul class="kc-profile-list">{"".join(prof_items)}</ul>'
         '</div>'
     ) if prof_items else ''
 
-    sidebar = (
-        '<aside class="kc-sidebar">'
-        + sidebar_evaluation
-        + sidebar_stats
-        + sidebar_profiles
-        + '</aside>'
+    # Left pane: collapse button + scrollable content
+    left_pane = (
+        '<div class="kc-pane kc-pane-left" id="kc-pane-left">'
+        '<button class="kc-pane-collapse-btn" id="kc-left-collapse-btn" '
+        'aria-label="Collapse stats pane" title="Collapse">&#8249;</button>'
+        '<div class="kc-pane-content">'
+        + eval_html
+        + pipeline_stats_html
+        + profiles_html
+        + '</div>'
+        '</div>'
     )
 
-    # ── Commits table ─────────────────────────────────────────────────────
-    # A.1 / D.16: 'Product Evidence' excluded from HTML table headers
-    # (and from <td> cells in _commit_row_html above).
+    # ── Middle pane: commit table ──────────────────────────────────────────
     commit_headers = [h for h in list(COMMIT_COLS) if str(h).lower() != 'product evidence']
     if is_filtered:
         commit_headers = commit_headers + ['Filter reason']
 
     c_rows = [_commit_row_html(i, c, with_reason=is_filtered)
               for i, c in enumerate(commits, 1)]
-    commits_content = (
+
+    filter_bar = (
         '<div class="kc-filter-bar">'
         '<label>Search:</label>'
         '<input class="kc-global-filter" type="text"'
         ' placeholder="search all columns…" aria-label="global search">'
-        + '<span class="kc-live-count" aria-live="polite">'
-        + 'Showing ' + str(len(commits)) + ' of ' + str(len(commits)) + ' commits'
-        + '</span>'
+        '<span class="kc-live-count" aria-live="polite">'
+        f'Showing {len(commits)} of {len(commits)} commits'
+        '</span>'
         '<button type="button" class="kc-clear-filters">Clear all</button>'
-        '<button type="button" class="kc-export-filtered-csv">↓ Export filtered CSV</button>'
+        '<button type="button" class="kc-export-filtered-csv">Export filtered CSV</button>'
         '</div>'
+    )
+
+    table_html = (
         '<div class="kc-table-wrap" aria-busy="false">'
-        + '<div class="kc-table-busy" aria-hidden="true"><div class="spinner"></div><div class="label">Filtering commits…</div></div>'
+        '<div class="kc-table-busy" aria-hidden="true">'
+        '<div class="spinner"></div>'
+        '<div class="label">Filtering commits…</div>'
+        '</div>'
         + _table(commit_headers, c_rows, table_id='tbl-commits')
         + '</div>'
     )
-    commits_section = _section(
+
+    commits_card = _section(
         'Filtered commits' if is_filtered else 'Relevant commits',
         str(len(commits)) + ' rows',
-        commits_content, anchor='commits')
+        filter_bar + table_html,
+        anchor='commits')
 
-    body = (
-        header
-        + '<div class="kc-layout">'
-        + sidebar
-        + '<main class="kc-main">'
-        + commits_section
-        + '</main>'
+    mid_pane = (
+        '<div class="kc-pane kc-pane-mid" id="kc-pane-mid">'
+        + commits_card
         + '</div>'
     )
 
+    # ── Right pane: commit detail (starts collapsed) ───────────────────────
+    right_pane = (
+        '<div class="kc-pane kc-pane-right kc-pane-collapsed" id="kc-pane-right">'
+        '<button class="kc-pane-collapse-btn kc-right-collapse-btn" '
+        'id="kc-right-collapse-btn" aria-label="Expand detail pane" title="Expand">'
+        '&#8250;</button>'
+        '<div class="kc-detail-header" id="kc-detail-header">'
+        '<h3 id="kc-detail-sha" class="kc-detail-sha">—</h3>'
+        '<div class="kc-detail-tabs">'
+        '<button class="kc-tab active" data-tab="overview">Overview</button>'
+        '<button class="kc-tab" data-tab="scoring">Scoring</button>'
+        '<button class="kc-tab" data-tab="files">Files</button>'
+        '<button class="kc-tab" data-tab="raw">Raw</button>'
+        '</div>'
+        '</div>'
+        '<div class="kc-detail-body" id="kc-detail-body">'
+        '<div class="kc-tab-content active" id="tab-overview">'
+        '<p class="kc-detail-placeholder">Click a SHA in the table to inspect a commit.</p>'
+        '</div>'
+        '<div class="kc-tab-content" id="tab-scoring"></div>'
+        '<div class="kc-tab-content" id="tab-files"></div>'
+        '<div class="kc-tab-content" id="tab-raw"></div>'
+        '</div>'
+        '</div>'
+    )
+
+    # ── Assemble body ──────────────────────────────────────────────────────
+    body = (
+        header
+        + '<div class="kc-layout" id="kc-layout">'
+        + left_pane
+        + '<div class="kc-resize-handle" id="kc-resize-left" data-resize="left" '
+        'role="separator" aria-orientation="vertical" tabindex="0" '
+        'aria-label="Resize stats pane"></div>'
+        + mid_pane
+        + '<div class="kc-resize-handle" id="kc-resize-right" data-resize="right" '
+        'role="separator" aria-orientation="vertical" tabindex="0" '
+        'aria-label="Resize detail pane"></div>'
+        + right_pane
+        + '</div>'
+    )
+
+    # ── Inline commit data ─────────────────────────────────────────────────
     commit_map = {(c.get('commit') or '')[:12]: order_commit_details(c) for c in commits}
     boot = []
     if commit_detail_root:
