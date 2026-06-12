@@ -127,6 +127,12 @@ def test_html_filtered_table_includes_reason_column(tmp_path):
 
 
 def test_html_report_includes_profile_scores_column(tmp_path):
+    """Per-profile scores are emitted as score_<profile> row keys.
+
+    The old combined 'profile_scores' string column was replaced by
+    individual score_<profile> numeric keys on each row (one per profile
+    in the report universe).  The JS expands these into separate columns.
+    """
     out = tmp_path / 'report.html'
     commits = [{
         'commit': 'a' * 40, 'subject': 'usb fix', 'author_name': 'Alice',
@@ -135,12 +141,21 @@ def test_html_report_includes_profile_scores_column(tmp_path):
         'scoring': {'profiles': {'security_fixes': 42, 'performance': 5}}
     }]
     generate_html_report(commits, {}, {}, str(out))
-    ui = _kc_ui(out.read_text())
+    ui      = _kc_ui(out.read_text())
     col_keys = [c['key'] for c in ui['columns']]
-    assert 'profile_scores' in col_keys
-    row = ui['rows'][0]
-    assert 'performance:5' in row['profile_scores']
-    assert 'security_fixes:42' in row['profile_scores']
+    row      = ui['rows'][0]
+
+    # Old combined column must no longer exist
+    assert 'profile_scores' not in col_keys
+
+    # Per-profile score keys are present on the row
+    # (only profiles that appear in matched_profiles are in the universe)
+    assert 'score_security_fixes' in row
+    assert row['score_security_fixes'] == 42.0
+
+    # 'performance' is present in scoring.profiles but NOT in matched_profiles
+    # for any commit, so it is NOT in the profile universe and must be absent.
+    assert 'score_performance' not in row
 
 
 def test_html_report_rows_contain_expected_fields(tmp_path):
@@ -525,7 +540,6 @@ def test_summary_js_sidebar_renderer_present():
                            'configs', 'html', 'summary.js')
     with open(js_path, encoding='utf-8') as f:
         js = f.read()
-    # Left sidebar is built from SB (sidebar) object
     assert 'kc-left-body'   in js
     assert 'kc-funnel-bar'  in js or 'funnel' in js
 
@@ -537,3 +551,14 @@ def test_summary_js_has_scoring_trace_renderer():
         js = f.read()
     assert 'renderProfileTrace' in js
     assert 'kc-trace-table'     in js
+
+
+def test_summary_js_has_per_profile_score_columns():
+    """JS must expand per-profile score_<profile> keys into table columns."""
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    assert 'score_' in js          # key prefix used for per-profile columns
+    assert 'PROFILE_NAMES' in js   # profile name universe computed at startup
+    assert '_profile' in js        # column marker used in rowHtml()
