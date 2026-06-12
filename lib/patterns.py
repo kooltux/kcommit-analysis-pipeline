@@ -53,10 +53,6 @@ def compilepat(p):
         except re.error:
             return p
     # Keywords (no unescaped glob chars): compile to a regex.
-    # If the unescaped literal is bounded by word-chars on both sides, use \b
-    # for whole-word matching.  If the literal itself starts/ends with a
-    # non-word character (e.g. escaped "CVE-*" -> literal "CVE-*"), fall back
-    # to a plain case-insensitive search (no boundary anchors needed).
     if not _is_glob(p):
         literal = _unescape_glob(p)
         try:
@@ -91,8 +87,6 @@ def match(pattern, text):  # type: (object, str) -> bool
             return False
     if _is_glob(pattern):
         return fnmatch.fnmatch(text.lower(), pattern.lower())
-    # keyword: case-insensitive.
-    # Whole-word (\b) when literal is word-bounded; plain substring otherwise.
     literal = _unescape_glob(pattern)
     try:
         if re.match(r'^\w', literal) and re.search(r'\w$', literal):
@@ -101,6 +95,39 @@ def match(pattern, text):  # type: (object, str) -> bool
             return bool(re.search(r'(?i)' + re.escape(literal), text))
     except re.error:
         return pattern.lower() in text.lower()
+
+
+def match_span(pattern, text):  # type: (object, str) -> tuple | None
+    """Return (start, end) char offsets of the first match in *text*, or None.
+
+    Dispatch logic mirrors match() exactly so the two are always consistent.
+    For glob patterns (which test the whole string via fnmatch) the span is
+    (0, len(text)) when the pattern matches, or None otherwise.
+    """
+    text = text or ''
+    if isinstance(pattern, re.Pattern):
+        m = pattern.search(text)
+        return (m.start(), m.end()) if m else None
+    if not isinstance(pattern, str):
+        return None
+    if pattern.startswith('re:'):
+        try:
+            m = re.search(pattern[3:], text)
+            return (m.start(), m.end()) if m else None
+        except re.error:
+            return None
+    if _is_glob(pattern):
+        return (0, len(text)) if fnmatch.fnmatch(text.lower(), pattern.lower()) else None
+    literal = _unescape_glob(pattern)
+    try:
+        rx = (r'(?i)\b' + re.escape(literal) + r'\b'
+              if re.match(r'^\w', literal) and re.search(r'\w$', literal)
+              else r'(?i)' + re.escape(literal))
+        m = re.search(rx, text)
+        return (m.start(), m.end()) if m else None
+    except re.error:
+        idx = text.lower().find(pattern.lower())
+        return (idx, idx + len(pattern)) if idx != -1 else None
 
 
 def anymatches(patterns, text):  # type: (list, str) -> bool
@@ -125,9 +152,6 @@ def precompile_rules(profile_rules):
 
     Idempotent: repeated calls on the same dict object are no-ops (id check).
     """
-    # Sentinel key avoids re-compiling the same dict.
-    # Using a sentinel avoids the id()-reuse hazard of a
-    # module-level set (Python may reuse addresses of dead objects).
     if profile_rules.get(_COMPILED_SENTINEL):
         return profile_rules
     profile_rules[_COMPILED_SENTINEL] = True
@@ -137,7 +161,6 @@ def precompile_rules(profile_rules):
     for pdata in (profile_rules or {}).values():
         if not isinstance(pdata, dict):
             continue
-        # _merged_patterns imported locally to avoid circular import at module level
         from lib.profile_rules import _merged_patterns
         merged = _merged_patterns(pdata)
         for key in keys:

@@ -6,7 +6,7 @@ v9.12 changes:
     Rule pattern data is stored once even when shared across profiles.
   - compile_rules_for_config() writes the new schema.
   - load_profile_rules() inflates it back to the in-memory form expected by
-    scoring.py / prefilter.py: { profile_name: { "merged": {…}, "rules": { rule_name: {patterns+weight} } } }
+    scoring.py / prefilter.py: { profile_name: { "merged": {…}, "rules": { rule_name: {weight+patterns} } } }
 
 v9.8 changes (historical):
   - compile_rules_for_config() now reads cfg['paths']['profiles_dirs'] and
@@ -24,6 +24,12 @@ v13.0.0 changes:
   - compile_rules_for_config() only validates existence of explicitly-configured
     external profiles_dirs / rules_dirs entries, not the CWD-default fallback
     path (which is irrelevant when the built-in configs/ tree covers the profiles).
+
+Pattern source tracking:
+  _read_patterns() now returns (patterns, sources) where sources is a list of
+  (filepath, lineno) tuples parallel to patterns.  Rule bodies store
+  _sources_<key> alongside each pattern list so that scoring._all_matches()
+  can include the origin file and line number in each match hit.
 """
 import hashlib
 import json
@@ -35,19 +41,25 @@ from lib.config import _load_json as _load_json_config, INLINE_COMMENT_RE as _PA
 
 
 def _read_patterns(path):
-    """Read a pattern file, stripping blank lines and bash-style comments."""
+    """Read a pattern file, stripping blank lines and bash-style comments.
+
+    Returns (patterns, sources) where patterns is a list of pattern strings
+    and sources is a parallel list of (filepath, lineno) tuples.
+    """
     if not path:
-        return []
+        return [], []
     if not os.path.exists(path):
         logging.debug('kcommit: rule pattern file not found (optional): %s', path)
-        return []
+        return [], []
     patterns = []
+    sources  = []
     with open(path, encoding='utf-8', errors='replace') as f:
-        for line in f:
+        for lineno, line in enumerate(f, 1):
             stripped = _PATTERN_COMMENT_RE.sub('', line).strip()
             if stripped:
                 patterns.append(stripped)
-    return patterns
+                sources.append((path, lineno))
+    return patterns, sources
 
 
 def active_profile_names(cfg):
@@ -69,13 +81,6 @@ RULE_SCHEMA = {
 
 
 def _resolve_dirs(cfg, key_plural, default_subdir):
-    """Return the directory list for *key_plural* from cfg['paths'].
-
-    Also accepts the singular compatibility aliases ``profiles_dir`` and
-    ``rules_dir`` in the derived ``paths`` mapping, normalizing them to the
-    same list form used internally.
-    Falls back to <config_dir>/<default_subdir> when not set.
-    """
     paths = cfg.get('paths', {}) or {}
     if paths.get(key_plural):
         return list(paths[key_plural])
@@ -89,12 +94,6 @@ def _resolve_dirs(cfg, key_plural, default_subdir):
 
 
 def _dirs_explicitly_configured(cfg, key_plural):
-    """Return True when profiles_dirs / rules_dirs was explicitly set in cfg.
-
-    Returns False when the value was derived from the CWD default fallback,
-    meaning the caller should not enforce existence of that path (the
-    built-in configs/ tree will cover it).
-    """
     paths = cfg.get('paths', {}) or {}
     if paths.get(key_plural):
         return True
@@ -106,11 +105,6 @@ def _dirs_explicitly_configured(cfg, key_plural):
 
 
 def _find_unique(name, dirs, suffix=''):
-    """Find *name* (with optional *suffix*) across *dirs*, enforcing uniqueness.
-
-    Returns the full path of the unique match, or None if not found.
-    Raises RuntimeError if the name is found in more than one directory.
-    """
     found = []
     for d in dirs:
         candidate = os.path.join(d, name + suffix) if suffix else os.path.join(d, name)
@@ -125,11 +119,6 @@ def _find_unique(name, dirs, suffix=''):
 
 
 def _find_preferred(name, primary_dirs, fallback_dirs, suffix=''):
-    """Find *name* with preference order: primary dirs first, fallback dirs second.
-
-    Uniqueness is enforced within each tier; primary cleanly overrides a same-name
-    fallback. Used for D.1 fallback so external configs can override built-in rules.
-    """
     primary = _find_unique(name, primary_dirs, suffix=suffix) if primary_dirs else None
     if primary is not None:
         return primary
@@ -137,7 +126,6 @@ def _find_preferred(name, primary_dirs, fallback_dirs, suffix=''):
 
 
 def _rule_name_candidates(name):
-    """Return preferred fallback candidate names for legacy external rule names."""
     candidates = [name]
     if name.startswith('artemis_'):
         stripped = name[len('artemis_'):]
@@ -147,7 +135,6 @@ def _rule_name_candidates(name):
 
 
 def _merged_patterns(pdata):
-    """Return the merged pattern dict from a profile data entry (safe, never None)."""
     if not isinstance(pdata, dict):
         logging.warning('_merged_patterns: expected dict, got %s %r — skipping',
                         type(pdata).__name__, pdata)
@@ -157,13 +144,6 @@ def _merged_patterns(pdata):
 
 def _compute_schema_hash(active_profile_names_list, profiles_dirs, rule_bodies_by_name,
                          rules_dirs, builtin_rules_dirs):
-    """Compute a hash over the actually-loaded profile and rule files.
-
-    E.8 (v13.0.0): hashes only the files that were actually loaded (profile
-    JSON + the pattern files inside each loaded rule directory), not every
-    file in rules_dirs. This avoids both false positives (unused rule files
-    triggering needless recompilation) and reads all content once.
-    """
     hash_parts = []
     builtin_profiles_dirs = [os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -201,26 +181,10 @@ def _compute_schema_hash(active_profile_names_list, profiles_dirs, rule_bodies_b
 def compile_rules_for_config(cfg, cache_dir=None):
     """Compile rules for all active profiles and cache to compiled_rules.json.
 
-    v9.12: writes a deduplicated on-disk schema:
-        {
-          "rules":    { rule_name: { patterns… } },          # each rule body once
-          "profiles": { profile_name: {                       # per-profile metadata
-              "rules":  { rule_name: { "weight": N } },       # weight only — body in rules{}
-              "merged": { keyword/path lists … }              # union of all rule patterns
-          }},
-          "schema_hash": "<sha1[:16]>"                        # content fingerprint
-        }
-
-    The in-memory return value remains the inflated form expected by scoring.py
-    and prefilter.py:
-        { profile_name: { "merged": {…}, "rules": { rule_name: {weight+patterns} } } }
-    so no other module needs changing.
-
-    v9.8: searches multiple profiles_dirs and rules_dirs; raises on name collision.
-
-    v13.0.0: existence check is only enforced for explicitly-configured external
-    dirs.  The CWD-default fallback path is skipped when absent because the
-    built-in configs/ tree will satisfy the lookup.
+    Pattern source tracking: each rule body stores _sources_<key> alongside
+    the pattern list for each RULE_SCHEMA key.  _sources_<key> is a list of
+    [filepath, lineno] pairs parallel to the patterns list, enabling
+    scoring._all_matches() to report the origin of every match.
     """
     if cache_dir is None:
         paths     = cfg.get('paths', {}) or {}
@@ -234,15 +198,10 @@ def compile_rules_for_config(cfg, cache_dir=None):
     profiles_dirs = _resolve_dirs(cfg, 'profiles_dirs', 'profiles')
     rules_dirs    = _resolve_dirs(cfg, 'rules_dirs',    'rules')
 
-    # D.1: tool's built-in shipped configs act as fallback roots after
-    # any external config directories.
     _tool_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     builtin_profiles_dirs = [os.path.join(_tool_root, 'configs', 'profiles')]
     builtin_rules_dirs    = [os.path.join(_tool_root, 'configs', 'rules')]
 
-    # Only validate existence of directories that were explicitly configured by
-    # the caller.  The CWD-default fallback paths are skipped when absent:
-    # the built-in configs/ tree covers those cases (D.1).
     profiles_explicitly_set = _dirs_explicitly_configured(cfg, 'profiles_dirs')
     rules_explicitly_set    = _dirs_explicitly_configured(cfg, 'rules_dirs')
 
@@ -262,9 +221,7 @@ def compile_rules_for_config(cfg, cache_dir=None):
         if not os.path.isdir(d):
             raise RuntimeError('rules directory not found: %s' % d)
 
-    # rule_bodies: rule_name -> full pattern dict (shared across profiles)
     rule_bodies   = {}
-    # in-memory result (inflated): profile_name -> {merged, rules{name:{weight+patterns}}}
     profiles_mem  = {}
 
     for name in active:
@@ -290,10 +247,9 @@ def compile_rules_for_config(cfg, cache_dir=None):
             raise RuntimeError('profile %r must define a non-empty rules mapping' % name)
 
         merged_accum = {key: set() for key in RULE_SCHEMA}
-        per_rule_mem = {}   # {rule_name: {weight + patterns}}
+        per_rule_mem = {}
 
         for rname, rule_spec in rules_cfg.items():
-            # ── resolve weight & extras from profile rule spec ──────────────────
             if isinstance(rule_spec, dict):
                 try:
                     w = int(rule_spec.get('weight', 50))
@@ -310,7 +266,6 @@ def compile_rules_for_config(cfg, cache_dir=None):
                             rname, name, rule_spec))
                 extras = {}
 
-            # ── load pattern files only once per rule name ──────────────────
             if rname not in rule_bodies:
                 rdir = None
                 for candidate_name in _rule_name_candidates(rname):
@@ -328,13 +283,17 @@ def compile_rules_for_config(cfg, cache_dir=None):
                             rdir, rname, name))
                 body = {}
                 for key, fname in RULE_SCHEMA.items():
-                    pats = list(_read_patterns(os.path.join(rdir, fname)))
-                    extra_key = key + '_extra'
+                    pats, srcs = _read_patterns(os.path.join(rdir, fname))
+                    extra_key  = key + '_extra'
                     if extra_key in extras:
                         extra_pats = extras[extra_key]
                         if isinstance(extra_pats, list):
+                            # Extra patterns injected from profile have no file source
+                            extra_srcs = [('(profile:%s)' % name, 0)] * len(extra_pats)
                             pats = pats + [str(p) for p in extra_pats]
-                    body[key] = pats
+                            srcs = srcs + extra_srcs
+                    body[key]                    = pats
+                    body['_sources_' + key]      = srcs
                 if not any(body[k] for k in RULE_SCHEMA):
                     raise RuntimeError(
                         'rule %r in profile %r has no pattern files under %r — '
@@ -343,7 +302,6 @@ def compile_rules_for_config(cfg, cache_dir=None):
             else:
                 body = rule_bodies[rname]
 
-            # accumulate merged patterns for this profile
             for key in RULE_SCHEMA:
                 merged_accum[key].update(body[key])
 
@@ -356,13 +314,17 @@ def compile_rules_for_config(cfg, cache_dir=None):
             'description': pdata.get('description', ''),
         }
 
-    # ── Compute hash over only the files that were actually loaded (E.8) ─────
     schema_hash = _compute_schema_hash(
         active, profiles_dirs, rule_bodies, rules_dirs, builtin_rules_dirs)
 
-    # ── Write deduplicated schema ───────────────────────────────────────────────
+    # _sources_* keys are runtime-only; strip them from the on-disk JSON to
+    # keep the cache human-readable and avoid bloat. They are rebuilt from
+    # the source .txt files on every load via load_profile_rules().
+    def _strip_sources(d):
+        return {k: v for k, v in d.items() if not k.startswith('_sources_')}
+
     disk_doc = {
-        'rules': rule_bodies,
+        'rules': {rn: _strip_sources(rb) for rn, rb in rule_bodies.items()},
         'profiles': {
             pname: {
                 'rules':  {rn: {'weight': rv['weight']} for rn, rv in pdata['rules'].items()},
@@ -382,15 +344,6 @@ def compile_rules_for_config(cfg, cache_dir=None):
 
 
 def _current_schema_hash(cfg):
-    """Compute the expected hash for the current config, without compiling rules.
-
-    Used by _needs_recompile() to compare against the cached hash.
-    Returns None on any error.
-
-    E.2 (v13.0.0): this enables _needs_recompile() to detect stale caches by
-    comparing the live hash against the stored hash, not just checking that
-    a hash field is present.
-    """
     try:
         active        = active_profile_names(cfg)
         profiles_dirs = _resolve_dirs(cfg, 'profiles_dirs', 'profiles')
@@ -398,10 +351,8 @@ def _current_schema_hash(cfg):
         _tool_root    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         builtin_rules_dirs = [os.path.join(_tool_root, 'configs', 'rules')]
 
-        # We need the list of rule names that would be loaded. We do this by
-        # scanning profile JSONs without a full compile.
         builtin_profiles_dirs = [os.path.join(_tool_root, 'configs', 'profiles')]
-        rule_names_seen = []  # ordered, de-duplicated
+        rule_names_seen = []
         _seen = set()
         for name in active:
             prof_path = _find_preferred(name, profiles_dirs, builtin_profiles_dirs, suffix='.json')
@@ -417,7 +368,6 @@ def _current_schema_hash(cfg):
                     _seen.add(rname)
                     rule_names_seen.append(rname)
 
-        # Build a minimal rule_bodies_by_name with just the names
         rule_bodies_by_name = {rn: {} for rn in rule_names_seen}
         return _compute_schema_hash(
             active, profiles_dirs, rule_bodies_by_name, rules_dirs, builtin_rules_dirs)
@@ -429,16 +379,9 @@ def load_profile_rules(cfg):
     """Load and inflate compiled_rules.json into the in-memory form:
         { profile_name: { "merged": {…}, "rules": { rule_name: {weight+patterns} } } }
 
-    Recompiles if the cache is missing, unreadable, hash-free, or stale.
-
-    E.2 (v13.0.0): the cached schema_hash is now compared against a freshly
-    computed hash of the source files. A mismatch triggers recompilation
-    instead of silently using a stale cache.
-
-    When _current_schema_hash() returns None (profile files unreachable —
-    e.g. a unit-test cfg that provides a pre-built compiled_rules.json but
-    no external profiles directory), the cached hash is trusted as-is so
-    that compile_rules_for_config() is not invoked unnecessarily.
+    After inflating from the on-disk cache, _sources_<key> entries are
+    re-attached by re-reading the source .txt files so that scoring has
+    file+line provenance for every pattern.
     """
     paths      = cfg.get('paths', {}) or {}
     work_dir   = paths.get('work_dir') or cfg.get('project', {}).get('work_dir', './work')
@@ -456,13 +399,8 @@ def load_profile_rules(cfg):
         cached_hash = d.get('schema_hash')
         if not cached_hash:
             return True, 'no schema_hash (pre-v9.12 cache)'
-        # E.2: compute the expected hash and compare it against the cached one.
         current_hash = _current_schema_hash(cfg)
         if current_hash is None:
-            # Could not compute the live hash (e.g. profile files are not
-            # reachable from this cfg — common in unit tests that supply a
-            # pre-built compiled_rules.json).  Trust the cached hash rather
-            # than forcing a recompile that would fail with a confusing error.
             logging.debug(
                 'profile_rules: could not compute live schema_hash — '
                 'trusting cached hash %r.', cached_hash)
@@ -486,11 +424,42 @@ def load_profile_rules(cfg):
         doc = json.load(f)
 
     rule_bodies = doc['rules']
-    inflated    = {}
+
+    # Re-attach _sources_<key> by re-reading the source .txt files.
+    # This is cheap (the files are small) and keeps the on-disk cache clean.
+    rules_dirs    = _resolve_dirs(cfg, 'rules_dirs', 'rules')
+    _tool_root    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    builtin_rules_dirs = [os.path.join(_tool_root, 'configs', 'rules')]
+
+    for rname, rbody in rule_bodies.items():
+        rdir = None
+        for candidate_name in _rule_name_candidates(rname):
+            rdir = _find_preferred(candidate_name, rules_dirs, builtin_rules_dirs)
+            if rdir is not None:
+                break
+        for key, fname in RULE_SCHEMA.items():
+            src_key = '_sources_' + key
+            if rdir:
+                _, srcs = _read_patterns(os.path.join(rdir, fname))
+            else:
+                srcs = []
+            # Align sources list length to pattern list length (safety)
+            pats = rbody.get(key, [])
+            if len(srcs) != len(pats):
+                srcs = srcs[:len(pats)] + [('(unknown)', 0)] * max(0, len(pats) - len(srcs))
+            rbody[src_key] = srcs
+
+    inflated = {}
     for pname, pdata in doc['profiles'].items():
-        per_rule = {
-            rname: {'weight': rmeta.get('weight', 50), **rule_bodies[rname]}
-            for rname, rmeta in (pdata.get('rules') or {}).items()
-        }
+        per_rule = {}
+        for rname, rmeta in (pdata.get('rules') or {}).items():
+            if rname not in rule_bodies:
+                continue
+            rb = rule_bodies[rname]
+            entry = {'weight': rmeta.get('weight', 50)}
+            for key in RULE_SCHEMA:
+                entry[key]                 = rb.get(key, [])
+                entry['_sources_' + key]  = rb.get('_sources_' + key, [])
+            per_rule[rname] = entry
         inflated[pname] = {'merged': pdata.get('merged') or {}, 'rules': per_rule}
     return inflated

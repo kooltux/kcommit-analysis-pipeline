@@ -10,12 +10,18 @@ v13.0.1 changes:
   from product_map instead of config_to_paths and config_dirs.  This ensures
   that product_evidence tags reference only symbols that are actually enabled
   in the product .config, not the full Kbuild universe.
+
+Pattern match provenance:
+  _all_matches() now accepts an optional *sources* argument — a list of
+  (filepath, lineno) tuples parallel to *patterns* — and includes
+  source_file, source_line, match_start, match_end in every hit dict.
+  score_commit() passes the _sources_<key> lists from each rule body.
 """
 import os
 import re
 
 from lib.profile_rules import _merged_patterns
-from lib.patterns import match as _pat_match, precompile_rules
+from lib.patterns import match as _pat_match, match_span as _pat_span, precompile_rules
 
 
 def order_commit_details(commit):
@@ -79,34 +85,47 @@ def _first_match(patterns, values):
     return None
 
 
-def _all_matches(patterns, values):
-    """Return all unique {pattern, value} matches across patterns x values."""
+def _all_matches(patterns, values, sources=None):
+    """Return all unique match hit dicts across patterns x values.
+
+    Each hit dict contains:
+      pattern     -- string representation of the compiled pattern
+      value       -- the full string that was matched (subject, body, or file path)
+      source_file -- path to the .txt rule file that defined this pattern
+      source_line -- 1-based line number within that file
+      match_start -- start char offset of the match within *value*
+      match_end   -- end char offset of the match within *value*
+
+    *sources* is an optional list of (filepath, lineno) tuples parallel to
+    *patterns*.  When absent (e.g. for merged-pattern calls that have no
+    per-index source map), source_file and source_line are omitted.
+    """
     out, seen = [], set()
-    for pat in (patterns or []):
+    for idx, pat in enumerate(patterns or []):
+        src = sources[idx] if (sources and idx < len(sources)) else None
         for val in (values or []):
             if _pat_match(pat, val):
-                key = (pat, val)
+                key = (_pattern_repr(pat), val)
                 if key not in seen:
                     seen.add(key)
-                    out.append({'pattern': _pattern_repr(pat), 'value': val})
+                    span = _pat_span(pat, val)
+                    hit = {
+                        'pattern':     _pattern_repr(pat),
+                        'value':       val,
+                        'match_start': span[0] if span else 0,
+                        'match_end':   span[1] if span else len(val),
+                    }
+                    if src:
+                        hit['source_file'] = src[0]
+                        hit['source_line'] = src[1]
+                    out.append(hit)
     return out
 
 
 # -- Public API ----------------------------------------------------------------
 
 def extract_commit_meta(commit):
-    """Linux kernel commit annotation flags (informational metadata only).
-
-    These are structural properties defined by Linux kernel commit conventions.
-    They do NOT contribute to the score -- profiles and rules are the sole
-    source of score points.
-
-    Returned keys (all boolean):
-      is_fix        -- commit has a Fixes: tag pointing at a prior commit
-      has_cve       -- commit references a CVE identifier
-      has_syzbot    -- commit references a syzbot bug report
-      has_stable_cc -- commit has a Cc: stable trailer (backport candidate)
-    """
+    """Linux kernel commit annotation flags (informational metadata only)."""
     subject = commit.get('subject', '') or ''
     body    = commit.get('body',    '') or ''
     full    = subject + '\n' + body
@@ -119,33 +138,12 @@ def extract_commit_meta(commit):
 
 
 def _collect_product_evidence(commit, product_map):
-    """Collect informational product-coverage evidence tags for *commit*.
-
-    Purely informational -- evidence tags appear in the report but do NOT
-    contribute to the score. Scoring is entirely the responsibility of
-    profile rules.
-
-    prefilter's build_compiled_sets() serves filtering decisions only.
-    This function produces the 'product_evidence' field in scored commit dicts
-    for display in reports. Both use product_map but for different purposes.
-
-    Returns a sorted, deduplicated list of 'type:detail' tag strings.
-
-    v13.0.1: reads config_enabled_map and config_enabled_dirs instead of
-    config_to_paths and config_dirs.  config_enabled_map contains only
-    symbols enabled (=y or =m) in the product .config, so evidence tags
-    such as 'config_map:CONFIG_BTRFS_FS' are no longer emitted for disabled
-    symbols.
-
-    E.5 (v13.0.0): removed duplicate docstring that was immediately overwriting
-    the first one (Python only sees the last consecutive docstring).
-    """
+    """Collect informational product-coverage evidence tags for *commit*."""
     commit_files  = set(commit.get('files', []) or [])
     touched       = set(commit.get('touched_paths_guess') or [])
     full_lower    = ((commit.get('subject', '') or '') + '\n' +
                      (commit.get('body', '') or '')).lower()
 
-    # v13.0.1: use config_enabled_map / config_enabled_dirs (enabled symbols only)
     cem           = (product_map or {}).get('config_enabled_map', {}) or {}
     ced           = list((product_map or {}).get('config_enabled_dirs', []) or [])
     enabled_cfgs  = set((product_map or {}).get('enabled_configs', []) or [])
@@ -192,26 +190,7 @@ def _collect_product_evidence(commit, product_map):
 
 
 def score_commit(commit, product_map, profile_rules, cfg=None):
-    """Score a single commit against all active profiles.
-
-    score = sum of per-profile rule scores ONLY.
-
-    Kernel annotation metadata (CVE, Fixes:, stable cc, syzbot) is extracted
-    via extract_commit_meta() and stored in the result for display; it does
-    NOT affect the score.
-
-    Product-evidence tags are collected via _collect_product_evidence() and
-    stored in the result for display; they do NOT affect the score.
-
-    Path-based filtering is handled upstream by stage 04 (prefilter_commits).
-
-    Returns a shallow copy of *commit* augmented with:
-        score            -- combined integer score (profile rules only)
-        scoring          -- {'profiles': {name: int}}
-        matched_profiles -- profile names that contributed score > 0
-        product_evidence -- evidence tags (informational)
-        meta             -- kernel annotation flags that are True
-    """
+    """Score a single commit against all active profiles."""
     if profile_rules:
         precompile_rules(profile_rules)
 
@@ -238,6 +217,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         rules  = (pdata or {}).get('rules', {}) or {}
         pmult  = prof_mults.get(pname, 1.0)
 
+        # Merged-level matches have no per-pattern source index, so sources=None
         kw_black   = _all_matches(merged.get('keywords_blacklist', []), message_values)
         sha_black  = _all_matches(merged.get('commit_blacklist',   []), [commit_sha])
         path_black = _all_matches(merged.get('path_blacklist',     []), file_values)
@@ -264,11 +244,18 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
         per_rule_total = 0
         if not blocked:
             for rname, rdata in rules.items():
-                rw       = int(rdata.get('weight', 50) or 0)
-                kw_hits  = _all_matches(rdata.get('keywords_whitelist', []), message_values)
-                path_hits = _all_matches(rdata.get('path_whitelist',    []), file_values)
-                sha_hits  = _all_matches(rdata.get('commit_whitelist',  []), [commit_sha])
-                r_hit     = bool(kw_hits or path_hits or sha_hits)
+                rw = int(rdata.get('weight', 50) or 0)
+                # Pass _sources_<key> so each hit carries file+line provenance
+                kw_hits   = _all_matches(
+                    rdata.get('keywords_whitelist', []), message_values,
+                    sources=rdata.get('_sources_keywords_whitelist'))
+                path_hits = _all_matches(
+                    rdata.get('path_whitelist', []), file_values,
+                    sources=rdata.get('_sources_path_whitelist'))
+                sha_hits  = _all_matches(
+                    rdata.get('commit_whitelist', []), [commit_sha],
+                    sources=rdata.get('_sources_commit_whitelist'))
+                r_hit      = bool(kw_hits or path_hits or sha_hits)
                 rule_score = rw if r_hit else 0
                 if r_hit:
                     per_rule_total += rw
@@ -326,10 +313,8 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
 # -- Commit display helpers ----------------------------------------------------
 
 def fmt_profiles(commit):
-    """Return matched_profiles as a semicolon-separated string."""
     return '; '.join(commit.get('matched_profiles') or [])
 
 
 def fmt_evidence(commit):
-    """Return product_evidence as a semicolon-separated string."""
     return '; '.join(commit.get('product_evidence') or [])

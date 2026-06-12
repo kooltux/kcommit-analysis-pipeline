@@ -584,6 +584,47 @@
     </div>`;
   }
 
+  /**
+   * Build an HTML excerpt of `value` around the match at [start, end).
+   * The matched fragment is wrapped in <mark class="kc-match-hl">.
+   * Up to `ctx` characters of surrounding context are shown on each side.
+   * Newlines inside the excerpt are replaced with ↵ to keep it on one line.
+   * Leading/trailing ellipses are added when the excerpt is clipped.
+   */
+  function matchExcerpt(value, start, end, ctx) {
+    ctx = (ctx == null) ? 60 : ctx;
+    if (start == null || end == null || start < 0) return '';
+    const str  = String(value || '');
+    const lo   = Math.max(0, start - ctx);
+    const hi   = Math.min(str.length, end + ctx);
+    const pre  = str.slice(lo, start).replace(/[\r\n]/g, '\u21b5');
+    const mid  = str.slice(start, end).replace(/[\r\n]/g, '\u21b5');
+    const post = str.slice(end, hi).replace(/[\r\n]/g, '\u21b5');
+    const ld   = lo > 0           ? '\u2026' : '';
+    const rd   = hi < str.length  ? '\u2026' : '';
+    return `<span class="kc-match-excerpt">${esc(ld)}${esc(pre)}<mark class="kc-match-hl">${esc(mid)}</mark>${esc(post)}${esc(rd)}</span>`;
+  }
+
+  /**
+   * Return the stem (basename without extension) of a file path.
+   * "configs/rules/security_cve/keywords_whitelist.txt" -> "keywords_whitelist"
+   */
+  function pathStem(p) {
+    const base = String(p || '').replace(/\\/g, '/').split('/').pop();
+    const dot  = base.lastIndexOf('.');
+    return dot > 0 ? base.slice(0, dot) : base;
+  }
+
+  /**
+   * Derive the rule name from a source_file path.
+   * The rule directory is the parent folder of the pattern file.
+   * "configs/rules/security_cve_bugs/keywords_whitelist.txt" -> "security_cve_bugs"
+   */
+  function ruleNameFromPath(p) {
+    const parts = String(p || '').replace(/\\/g, '/').split('/');
+    return parts.length >= 2 ? parts[parts.length - 2] : '';
+  }
+
   function renderProfileTrace(pname, pt) {
     const score   = pt.final_score || 0;
     const mult    = pt.multiplier  != null ? pt.multiplier : 1;
@@ -606,6 +647,7 @@
         <thead><tr>
           <th>Rule</th><th>Wt</th><th>Match</th><th>Score</th><th>Patterns matched</th>
         </tr></thead><tbody>`;
+
       Object.keys(rules).sort().forEach(rname => {
         const rd      = rules[rname] || {};
         const matched = rd.matched;
@@ -613,15 +655,44 @@
         const rowCls  = blocked ? 'kc-rule-blocked' : (matched ? 'kc-rule-matched' : '');
         const icon    = blocked ? '\u25a0' : (matched ? '\u2714' : '\u2715');
         const iconCol = blocked ? 'var(--muted)' : (matched ? 'var(--success)' : 'var(--muted)');
-        const badges  = allHits.length
-          ? allHits.map(m => `<span class="kc-match-badge" title="value: ${esc(m.value || '')}">${esc(m.pattern || '')}</span>`).join(' ')
-          : '<span class="kc-muted">\u2014</span>';
+
+        let badgesHtml = '<span class="kc-muted">\u2014</span>';
+        if (allHits.length) {
+          badgesHtml = allHits.map(m => {
+            const pat     = m.pattern     || '';
+            const srcFile = m.source_file || null;
+            const srcLine = m.source_line || null;
+            const start   = m.match_start;
+            const end     = m.match_end;
+            const value   = m.value       || '';
+
+            /* ── source badge: rule:stem:line, full path on hover ── */
+            let srcBadge = '';
+            if (srcFile) {
+              const ruleName = ruleNameFromPath(srcFile) || rname;
+              const stem     = pathStem(srcFile);
+              const label    = `${ruleName}:${stem}:${srcLine}`;
+              srcBadge = `<span class="kc-src-badge" title="${esc(srcFile)}">${esc(label)}</span>`;
+            }
+
+            /* ── highlighted excerpt ── */
+            const excerpt = (start != null && end != null)
+              ? matchExcerpt(value, start, end, 60)
+              : `<span class="kc-match-excerpt kc-muted">${esc(value.slice(0, 120))}${value.length > 120 ? '\u2026' : ''}</span>`;
+
+            return `<span class="kc-match-hit">
+              <span class="kc-match-badge" title="${esc(pat)}">${esc(pat)}</span>${srcBadge}
+              <span class="kc-match-excerpt-wrap">${excerpt}</span>
+            </span>`;
+          }).join('');
+        }
+
         html += `<tr class="${rowCls}">
           <td class="kc-mono">${esc(rname)}</td>
           <td>${esc(rd.weight || 0)}</td>
           <td style="color:${iconCol};font-weight:700;text-align:center">${icon}</td>
           <td class="kc-td-num">${matched ? esc(rd.score || 0) : '\u2014'}</td>
-          <td>${badges}</td>
+          <td>${badgesHtml}</td>
         </tr>`;
       });
       html += `</tbody></table>`;
@@ -673,15 +744,8 @@
     }
 
     if (c.body) {
-      /*
-       * Commit message body: use escNl() so that \n (real or double-encoded)
-       * becomes <br>, rendered inside a styled div with word-wrap and
-       * font-family:monospace.  This preserves paragraph breaks, blank lines
-       * between paragraphs, indented continuation lines, and Signed-off-by
-       * trailers — exactly as git-log would show them.
-       */
       const bodyPreview = c.body.length > 4000
-        ? c.body.slice(0, 4000) + '\n…'
+        ? c.body.slice(0, 4000) + '\n\u2026'
         : c.body;
       overview += detailCard(
         'Full Commit Message',
@@ -698,7 +762,9 @@
     if (Object.keys(traceProfiles).length) {
       scoring += `<p class="kc-muted" style="font-size:11.5px;margin:0 0 8px">
         Formula per profile: <code>min(&sum;rule_weights, 100) &times; multiplier</code>.
-        Combined score = &sum; of all profile final scores.</p>`;
+        Combined score = &sum; of all profile final scores.
+        Pattern badges show the <strong>matched pattern</strong>,
+        source <em>rule:file:line</em>, and a highlighted excerpt of the matched text.</p>`;
       Object.keys(traceProfiles).sort().forEach(p =>
         scoring += renderProfileTrace(p, traceProfiles[p] || {}));
     } else if (Object.keys(profiles).length) {
