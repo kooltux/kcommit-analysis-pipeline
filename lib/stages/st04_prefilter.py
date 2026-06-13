@@ -108,6 +108,24 @@ v16.0.0 changes (C -- Kconfig/Makefile directory-scoped coverage):
            returns '') are always considered covered -- the top-level Kconfig
            and Makefile are unconditionally product-relevant.
 
+v16.0.1 changes (D -- artifact trailing-slash normalisation):
+  D     -- _file_has_artifact(): applied the same trailing-slash normalisation
+           to the compiled_dirs membership check that was applied to
+           _file_is_kconfig_covered() in v16.0.0.  Prior to this fix,
+           os.path.dirname() returns paths without a trailing slash (e.g.
+           "drivers/usb/core") while compiled_dirs stores entries with one
+           (e.g. "drivers/usb/core/"), causing the directory-scope guard for
+           log_basenames to always fail silently.  Log-basename artifact hits
+           were therefore only accepted via the exact compiled_files match,
+           making the directory-scope guard effectively dead code since
+           v13.0.1 (v12.0.2) when _derive_config_dirs() began storing
+           trailing-slash paths.
+
+           Effect: commits whose files are identified via build-log basenames
+           AND whose directory is in compiled_dirs are now correctly kept via
+           the build_artifact layer, as originally intended by the
+           directory-scope guard design (v12.0.2).
+
 prefilter_debug.json schema (v14.1.0):
   {
     "summary": {
@@ -252,6 +270,13 @@ def _file_has_artifact(f, cs):
        (e.g. ``'hub'`` from ``hub.o``).  Directory-scoped: a log-basename hit is
        only accepted when the file's parent directory is in ``compiled_dirs`` or
        the file itself is in ``compiled_files``.
+
+    Trailing-slash normalisation (v16.0.1):
+       ``compiled_dirs`` stores entries with a trailing slash (as produced by st03
+       ``_derive_config_dirs()``), while ``os.path.dirname()`` returns paths without
+       one.  The directory lookup is normalised here so that the membership test
+       is reliable.  This is the same normalisation applied in
+       ``_file_is_kconfig_covered()`` since v16.0.0.
     """
     stem, _ = os.path.splitext(f)
     if stem in cs['artifact_stems']:
@@ -260,8 +285,10 @@ def _file_has_artifact(f, cs):
     bn_stem, _ = os.path.splitext(os.path.basename(f))
     if bn_stem not in cs['log_basenames']:
         return False
+    fdir = os.path.dirname(f)
+    fdir_norm = (fdir.rstrip('/') + '/') if fdir else ''
     return (
-        os.path.dirname(f) in cs['compiled_dirs']
+        (fdir and fdir_norm in cs['compiled_dirs'])
         or f in cs['compiled_files']
     )
 

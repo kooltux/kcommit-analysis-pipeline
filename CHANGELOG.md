@@ -2,6 +2,72 @@
 
 All notable changes to this project will be documented in this file.
 
+## v16.0.1 — prefilter: _file_has_artifact trailing-slash normalisation (2026-06-13)
+
+### Fixed (D — artifact directory-scope normalisation)
+
+- `lib/stages/st04_prefilter.py` — `_file_has_artifact()`: applied the same
+  `compiled_dirs` trailing-slash normalisation that was applied to
+  `_file_is_kconfig_covered()` in v16.0.0.
+
+  **Root cause.**  `_file_has_artifact()` used `os.path.dirname(f)` directly
+  in the `compiled_dirs` membership test.  `os.path.dirname()` returns paths
+  without a trailing slash (e.g. `"drivers/usb/core"`), while `compiled_dirs`
+  stores entries with one (e.g. `"drivers/usb/core/"`) as produced by
+  `st03._derive_config_dirs()`.  The lookup never matched, making the
+  directory-scope guard for `log_basenames` dead code since v13.0.1.
+  Log-basename artifact hits were therefore only accepted via the exact
+  `f in compiled_files` check — more restrictive than documented.
+
+  **Fix.**  `fdir = os.path.dirname(f)` is normalised to `fdir + "/"` before
+  the `compiled_dirs` membership test, consistent with `_file_is_kconfig_covered()`.
+  A root-file guard (`fdir and ...`) prevents an empty-string lookup when the
+  file is at the kernel root.
+
+  **Also fixed:** six existing tests in `tests/test_prefilter.py` used
+  `compiled_dirs` sets without trailing slashes (e.g. `{'drivers/usb'}`).
+  These fixtures did not reflect the real st03 output and were masking the bug
+  rather than catching it.  All six have been updated to the trailing-slash
+  form (`{'drivers/usb/'}`).
+
+  **Impact:**  Log-basename artifact rescues that require a directory match
+  now work correctly.  Previously, a file like `drivers/usb/core/hub.c`
+  could only be rescued by `log_basenames` if it also appeared in
+  `compiled_files` exactly; now it is also rescued when `drivers/usb/core/`
+  is in `compiled_dirs`, as intended by the directory-scope guard design
+  introduced in v12.0.2.
+
+### Tests (D)
+
+- `tests/test_prefilter.py`:
+  - **Fixed 6 existing fixture bugs** — `compiled_dirs` sets updated to use
+    trailing-slash form matching real st03 output:
+    `test_file_has_artifact_log_match_requires_compiled_dir`,
+    `test_file_has_artifact_log_match_requires_compiled_dir_deep`,
+    `test_log_basename_cross_tree_commit_not_kept`,
+    `test_log_basename_same_dir_commit_kept`,
+    `test_builtin_o_only_commit_not_kept_by_artifact_evidence`,
+    `test_builtin_o_only_commit_dropped_when_kconfig_required`.
+
+  - **3 new tests** in the `v16.0.1 (D)` section:
+
+    | Test | Assertion |
+    |---|---|
+    | `test_file_has_artifact_log_trailing_slash_normalisation` | trailing-slash normalisation makes `compiled_dirs` lookup reliable for log-basename hits |
+    | `test_file_has_artifact_log_root_file_not_rescued_by_dir` | root file (`fdir == ''`) is not rescued via `compiled_dirs` — only via `compiled_files` exact match |
+    | `test_file_has_artifact_log_sibling_dir_not_rescued` | file in a sibling directory is not rescued by a log-basename hit from a different compiled directory |
+
+### Documentation (D)
+
+- `docs/PIPELINE.md` — Stage 04 `_file_has_artifact` description updated:
+  trailing-slash normalisation note added.  `v16.0.1 changes` section added.
+
+### Version
+
+- `MANIFEST.json` version was already bumped to `v16.0.1` in the prior commit.
+
+---
+
 ## v16.0.0 — prefilter: Kconfig/Makefile directory-scoped coverage (2026-06-13)
 
 ### Fixed (C — build-system file coverage scoping)

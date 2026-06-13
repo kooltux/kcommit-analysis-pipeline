@@ -39,15 +39,17 @@
 
 ### Stage 04 — prefilter_commits
 - Loads compiled rules and applies the multi-level filter hierarchy.
-- **L2½ artifact evidence** uses two sources:
+- **L2½ artifact evidence** (`_file_has_artifact()`) uses two sources:
   1. `artifact_stems` — full-path stems from `built_artifacts_from_dir`
      (e.g. `drivers/usb/core/hub`).  Precise; no extra qualification needed.
   2. `log_basenames` — bare filename stems from build-log tokens
      (e.g. `hub` from `hub.o`).  **Directory-scoped**: a log-basename hit is
      only accepted when the file's parent directory is in `compiled_dirs` or
-     the file itself is in `compiled_files`.  This prevents a build-log entry
-     for `drivers/usb/hub.o` from spuriously matching `sound/usb/hub.c`,
-     `net/hub.c`, etc. anywhere else in the tree.
+     the file itself is in `compiled_files`.  The directory lookup uses the
+     same trailing-slash normalisation as `_file_is_kconfig_covered()`: the
+     path returned by `os.path.dirname()` is normalised to `fdir + "/"` before
+     the `compiled_dirs` membership test, matching the form stored by
+     `st03._derive_config_dirs()` (v16.0.1).
 - **L2½ kconfig coverage** — `_file_is_kconfig_covered()` determines whether
   a file belongs to the product build.  Coverage is established by (in order):
   1. **Exact path** — the file appears in `compiled_files` (derived from
@@ -188,6 +190,44 @@ stale cache files before re-running.
 | `lib/logsetup.py` | Logging configuration |
 | `lib/stages/` | Stage business logic (one module per stage) |
 | `lib/commands/cmd_diagnose.py` | `diagnose` subcommand (cache-read only) |
+
+
+## v16.0.1 changes
+
+- Stage 04 (`_file_has_artifact`): applied the same `compiled_dirs`
+  trailing-slash normalisation that was applied to `_file_is_kconfig_covered()`
+  in v16.0.0 (D).
+
+  **Root cause.**  `_file_has_artifact()` used `os.path.dirname(f)` directly
+  in the `compiled_dirs` membership test.  `os.path.dirname()` returns paths
+  without a trailing slash (e.g. `"drivers/usb/core"`), while `compiled_dirs`
+  stores entries with one (e.g. `"drivers/usb/core/"`) as produced by
+  `st03._derive_config_dirs()`.  The lookup always failed silently, making the
+  directory-scope guard for `log_basenames` effectively dead code since
+  v13.0.1.  Log-basename artifact hits were therefore only accepted via the
+  exact `f in compiled_files` check.
+
+  **Fix.**  `os.path.dirname(f)` is normalised to `fdir + "/"` before the
+  `compiled_dirs` membership test, consistent with `_file_is_kconfig_covered()`.
+  A root-file guard (`fdir and …`) prevents an empty-string lookup when the
+  file is at the kernel root.
+
+  **Impact:**  Commits whose files are identified via build-log basenames
+  AND whose parent directory is in `compiled_dirs` are now correctly kept via
+  `build_artifact`, as originally intended by the directory-scope guard design
+  introduced in v12.0.2.
+
+  **Also fixed:** six existing tests in `tests/test_prefilter.py` used
+  `compiled_dirs` fixtures without trailing slashes, masking the bug.  All
+  six have been corrected to the trailing-slash form.
+
+- New tests (3 in `tests/test_prefilter.py`, D):
+
+  | Test | Assertion |
+  |---|---|
+  | `test_file_has_artifact_log_trailing_slash_normalisation` | trailing-slash normalisation makes `compiled_dirs` lookup reliable |
+  | `test_file_has_artifact_log_root_file_not_rescued_by_dir` | root file not rescued via `compiled_dirs` |
+  | `test_file_has_artifact_log_sibling_dir_not_rescued` | sibling-dir file not rescued by log-basename hit |
 
 
 ## v16.0.0 changes

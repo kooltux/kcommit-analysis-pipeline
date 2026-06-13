@@ -45,6 +45,25 @@ v16.0.0 (C -- Kconfig/Makefile directory-scoped coverage):
              test_kconfig_uncovered_plus_artifact_keeps_via_artifact()
              test_kconfig_covered_dir_trailing_slash_normalisation()
              test_kconfig_file_uncovered_appears_in_debug_uncovered_list()
+
+v16.0.1 (D -- artifact trailing-slash normalisation):
+  D     -- _file_has_artifact(): trailing-slash normalisation applied to
+           compiled_dirs lookup (same fix as C applied to _file_is_kconfig_covered).
+           Existing compiled_dirs test fixtures corrected from no-slash form
+           (e.g. {'drivers/usb'}) to the real st03 trailing-slash form
+           (e.g. {'drivers/usb/'}) so they exercise the actual normalisation
+           path rather than masking the bug.
+           Fixed fixtures:
+             test_file_has_artifact_log_match_requires_compiled_dir
+             test_file_has_artifact_log_match_requires_compiled_dir_deep
+             test_log_basename_cross_tree_commit_not_kept
+             test_log_basename_same_dir_commit_kept
+             test_builtin_o_only_commit_not_kept_by_artifact_evidence
+             test_builtin_o_only_commit_dropped_when_kconfig_required
+           Added:
+             test_file_has_artifact_log_trailing_slash_normalisation()
+             test_file_has_artifact_log_root_file_not_rescued_by_dir()
+             test_file_has_artifact_log_sibling_dir_not_rescued()
 """
 import os
 import re
@@ -255,9 +274,10 @@ def test_build_compiled_sets_builtin_o_not_in_artifact_stems():
 
 
 def test_builtin_o_only_commit_not_kept_by_artifact_evidence():
+    """D (v16.0.1): fixture corrected to use trailing-slash compiled_dirs."""
     cs = dict(
         compiled_files=set(),
-        compiled_dirs={'drivers/gpu/drm'},
+        compiled_dirs={'drivers/gpu/drm/'},   # trailing slash — real st03 form
         artifact_stems={'drivers/gpu/drm/drm_drv'},
         log_basenames=set(),
         available=True,
@@ -269,9 +289,10 @@ def test_builtin_o_only_commit_not_kept_by_artifact_evidence():
 
 
 def test_builtin_o_only_commit_dropped_when_kconfig_required():
+    """D (v16.0.1): fixture corrected to use trailing-slash compiled_dirs."""
     cs = dict(
         compiled_files={'drivers/gpu/drm/drm_drv.c'},
-        compiled_dirs={'drivers/gpu/drm'},
+        compiled_dirs={'drivers/gpu/drm/'},   # trailing slash — real st03 form
         artifact_stems={'drivers/gpu/drm/drm_drv'},
         log_basenames=set(),
         available=True,
@@ -285,9 +306,10 @@ def test_builtin_o_only_commit_dropped_when_kconfig_required():
 # -- log_basenames directory-scoped --------------------------------------------
 
 def test_file_has_artifact_log_match_requires_compiled_dir():
+    """D (v16.0.1): compiled_dirs uses trailing-slash form (real st03 output)."""
     cs = dict(
         compiled_files=set(),
-        compiled_dirs={'drivers/usb'},
+        compiled_dirs={'drivers/usb/'},   # trailing slash
         artifact_stems=set(),
         log_basenames={'hub'},
         available=True,
@@ -298,9 +320,10 @@ def test_file_has_artifact_log_match_requires_compiled_dir():
 
 
 def test_file_has_artifact_log_match_requires_compiled_dir_deep():
+    """D (v16.0.1): compiled_dirs uses trailing-slash form (real st03 output)."""
     cs = dict(
         compiled_files=set(),
-        compiled_dirs={'drivers/net/ethernet/intel'},
+        compiled_dirs={'drivers/net/ethernet/intel/'},   # trailing slash
         artifact_stems=set(),
         log_basenames={'e1000e'},
         available=True,
@@ -321,9 +344,10 @@ def test_file_has_artifact_log_match_via_compiled_files():
 
 
 def test_file_has_artifact_no_log_no_stem_returns_false():
+    """D (v16.0.1): compiled_dirs uses trailing-slash form."""
     cs = dict(
         compiled_files=set(),
-        compiled_dirs={'drivers/usb'},
+        compiled_dirs={'drivers/usb/'},   # trailing slash
         artifact_stems=set(),
         log_basenames={'hub'},
         available=True,
@@ -332,9 +356,10 @@ def test_file_has_artifact_no_log_no_stem_returns_false():
 
 
 def test_log_basename_cross_tree_commit_not_kept():
+    """D (v16.0.1): compiled_dirs uses trailing-slash form."""
     cs = dict(
         compiled_files=set(),
-        compiled_dirs={'drivers/usb'},
+        compiled_dirs={'drivers/usb/'},   # trailing slash
         artifact_stems=set(),
         log_basenames={'hub'},
         available=True,
@@ -346,9 +371,10 @@ def test_log_basename_cross_tree_commit_not_kept():
 
 
 def test_log_basename_same_dir_commit_kept():
+    """D (v16.0.1): compiled_dirs uses trailing-slash form."""
     cs = dict(
         compiled_files=set(),
-        compiled_dirs={'drivers/usb'},
+        compiled_dirs={'drivers/usb/'},   # trailing slash
         artifact_stems=set(),
         log_basenames={'hub'},
         available=True,
@@ -436,7 +462,7 @@ def test_zero_file_commit_not_dropped_by_path_blacklist():
 def test_zero_file_commit_not_dropped_by_kconfig():
     cs = dict(
         compiled_files={'drivers/usb/hub.c'},
-        compiled_dirs={'drivers/usb'},
+        compiled_dirs={'drivers/usb/'},
         artifact_stems=set(), log_basenames=set(), available=True,
     )
     c = _commit(sha='zf004', subject='random merge', files=[])
@@ -791,3 +817,62 @@ def test_kconfig_file_uncovered_appears_in_debug_uncovered_list():
     assert action == 'drop'
     assert 'fs/btrfs/Kconfig' in dbg['l2half_kconfig_uncovered_files']
     assert 'fs/btrfs/Kconfig' not in dbg['l2half_kconfig_covered_files']
+
+
+# ==============================================================================
+# v16.0.1 (D) -- artifact trailing-slash normalisation
+# ==============================================================================
+
+def test_file_has_artifact_log_trailing_slash_normalisation():
+    """D (v16.0.1): verify that the trailing-slash normalisation in
+    _file_has_artifact() makes compiled_dirs lookup reliable.
+
+    compiled_dirs stores 'drivers/usb/core/' (with trailing slash, real st03
+    form); os.path.dirname('drivers/usb/core/hub.c') returns 'drivers/usb/core'
+    (no slash).  Without normalisation the membership test always fails silently
+    and the log-basename rescue never fires."""
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/usb/core/'},   # trailing slash — real st03 form
+        artifact_stems=set(),
+        log_basenames={'hub'},
+        available=True,
+    )
+    # File in compiled dir: log-basename rescue must fire
+    assert _file_has_artifact('drivers/usb/core/hub.c', cs) is True
+    # File in different dir: must not be rescued
+    assert _file_has_artifact('sound/usb/hub.c', cs) is False
+    assert _file_has_artifact('drivers/usb/hub.c', cs) is False
+
+
+def test_file_has_artifact_log_root_file_not_rescued_by_dir():
+    """D (v16.0.1): a file at the kernel root (fdir == '') must NOT be rescued
+    by the compiled_dirs check -- the root exception in _file_is_kconfig_covered
+    does not apply to artifact evidence.  A root-level file with a matching
+    log basename is only rescued via exact compiled_files match."""
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/usb/core/'},
+        artifact_stems=set(),
+        log_basenames={'Makefile'},   # hypothetical log entry
+        available=True,
+    )
+    # Root-level Makefile: fdir == '' so the dir check guard (fdir and ...) is False
+    # and compiled_files is empty -> _file_has_artifact returns False
+    assert _file_has_artifact('Makefile', cs) is False
+
+
+def test_file_has_artifact_log_sibling_dir_not_rescued():
+    """D (v16.0.1): a file in a sibling directory is not rescued by a
+    log-basename hit from a different directory, even if the basename matches.
+    drivers/usb/host/xhci.c must not be rescued because only
+    drivers/usb/core/ is in compiled_dirs."""
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/usb/core/'},   # core/ only, not host/
+        artifact_stems=set(),
+        log_basenames={'xhci'},
+        available=True,
+    )
+    assert _file_has_artifact('drivers/usb/host/xhci.c', cs) is False
+    assert _file_has_artifact('drivers/usb/core/xhci.c', cs) is True
