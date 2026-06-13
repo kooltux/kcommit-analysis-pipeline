@@ -39,13 +39,45 @@ storage (e.g. a RAM disk for the cache). Only `work_dir`, `cache_dir`, and
   "source_dir":       "${kernel_src}",              // required
   "rev_old":          "v6.1.1",                     // required
   "rev_new":          "HEAD",                        // required
-  "kernel_config":    "${build_dir}/.config",        // optional
+  "kernel_config":    "${build_dir}/.config",        // optional but recommended
   "build_dir":        "${build_dir}",                // optional
   "kernel_build_log": "${build_dir}/kernel.log",     // optional
   "yocto_build_log":  "${build_dir}/yocto.log",      // optional
-  "dts_roots":        ["${kernel_src}/arch/arm/boot/dts"]
+  "dts_roots":        ["${kernel_src}/arch/arm/boot/dts"],  // optional
+  "arch":             "arm64",                       // optional — see note below
+  "srctree":          "${kernel_src}"                // optional — see note below
 }
 ```
+
+#### `arch` — target architecture
+
+When `kernel_config` is provided, stage 02 automatically detects the target
+architecture from the `.config` file by scanning for `CONFIG_<ARCH>=y` markers
+(e.g. `CONFIG_ARM64=y`).  Setting `arch` explicitly is therefore **not required
+in most cases**.
+
+Set `arch` explicitly only when:
+- Auto-detection fails (the `.config` contains no recognised arch symbol).
+- You want to override the detected value (e.g. cross-compiling with a
+  non-standard config).
+- You are running without a `kernel_config` but still want kconfiglib to work.
+
+When set, the value must be the kernel `ARCH` make variable
+(e.g. `"arm"`, `"arm64"`, `"x86_64"`, `"riscv"`, `"mips"`, `"powerpc"`).
+
+The `SRCARCH` env var (the directory name under `arch/` used by the kernel
+Makefile) is derived automatically from `arch`.  For the x86 family both
+`x86` and `x86_64` map to `SRCARCH=x86`; for all other architectures
+`SRCARCH` equals `arch`.
+
+Explicit `kernel.arch` always takes precedence over auto-detection.
+
+#### `srctree` — kernel source tree path for kconfiglib
+
+kconfiglib expects a `srctree` environment variable pointing to the kernel
+source root.  The pipeline sets it automatically to `source_dir` when not
+provided here.  Override only when `source_dir` and the kconfiglib entry
+point diverge (unusual).
 
 ### `profiles`
 ```json
@@ -164,6 +196,9 @@ Nested keys are merged recursively; scalar values and lists are replaced.
 
 # Change active profile weights
 --override '{"profiles":{"active":{"my_profile_a":100,"my_profile_b":50}}}'
+
+# Force a specific architecture (overrides auto-detection)
+--override '{"kernel":{"arch":"arm"}}'
 ```
 
 ## Variable expansion

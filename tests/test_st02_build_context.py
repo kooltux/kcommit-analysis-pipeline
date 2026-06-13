@@ -15,6 +15,13 @@ v13.0.3 (J):
         source tree (just the directory itself, no Kconfig) is sufficient
         because there is no real Kconfig to parse; the function falls back
         to the line parser after setting the env vars.
+
+v16.0.2 (E.1):
+  E.1 -- test_run_no_arch_prints_hint() updated: the summary line no longer
+         prints 'kernel.arch' literally; it now prints
+         'arch / srcarch : not set / not set  (not set)'.  The assertion
+         was updated from 'kernel.arch' to 'not set' to match the new
+         output format introduced by the arch auto-detection feature.
 """
 import json, os
 import pytest
@@ -25,7 +32,7 @@ from lib.stages.st02_build_context import (
 from lib.manifest import CACHE_FILES
 
 
-# ── _read_lines ────────────────────────────────────────────────────────────
+# ── _read_lines ──────────────────────────────────────────────────
 def test_read_lines_basic(tmp_path):
     p = tmp_path / 'build.log'
     p.write_text('line1\nline2\nline3\n')
@@ -52,7 +59,7 @@ def test_read_lines_empty_file(tmp_path):
     assert _read_lines(str(p)) == []
 
 
-# ── _scan_build_dir ───────────────────────────────────────────────────────────
+# ── _scan_build_dir ───────────────────────────────────────────────────
 def test_scan_build_dir_finds_objects(tmp_path):
     d = tmp_path / 'build' / 'drivers' / 'usb'
     d.mkdir(parents=True)
@@ -142,7 +149,7 @@ def test_kbuild_placeholder_names_constant_contains_expected():
     assert 'built-in.a' in _KBUILD_PLACEHOLDER_NAMES
 
 
-# ── run() helpers ─────────────────────────────────────────────────────────────
+# ── run() helpers ─────────────────────────────────────────────────────
 def _make_cfg(tmp_path, kconfig=None, source_dir=None, build_dir=None,
              build_log=None, yocto_log=None, arch=None, srctree=None):
     cache = str(tmp_path / 'cache')
@@ -160,7 +167,7 @@ def _make_cfg(tmp_path, kconfig=None, source_dir=None, build_dir=None,
     }
 
 
-# ── run() basic tests ──────────────────────────────────────────────────────────
+# ── run() basic tests ─────────────────────────────────────────────────────
 def test_run_minimal_no_paths(tmp_path):
     """run() with no kernel files produces a valid but empty build_context."""
     cache, cfg = _make_cfg(tmp_path)
@@ -320,8 +327,16 @@ def test_run_arch_printed_in_summary(tmp_path, capsys):
 
 
 def test_run_no_arch_prints_hint(tmp_path, capsys):
-    """J: When arch is not set, summary line mentions the hint to set it."""
+    """J/E.1: When arch is not set and no .config is provided, the summary
+    line shows 'not set' for arch/srcarch.
+
+    In v13.0.3 the output printed 'kernel.arch' as a literal hint string.
+    In v16.0.2 (E.1) the summary line changed to:
+        arch / srcarch : not set / not set  (not set)
+    The assertion is updated to check for 'not set' which is the canonical
+    signal that the arch could not be determined.
+    """
     cache, cfg = _make_cfg(tmp_path)
     run(cfg, cache)
     captured = capsys.readouterr()
-    assert 'kernel.arch' in captured.out
+    assert 'not set' in captured.out

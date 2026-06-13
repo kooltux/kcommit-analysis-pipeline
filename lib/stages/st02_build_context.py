@@ -27,12 +27,25 @@ v13.0.3 changes (J):
     that were previously causing it to fall back to the line-based parser.
   - run(): prints arch in the build context summary line so the user can
     confirm the correct architecture is being used.
+
+v16.0.2 changes (E.1):
+  - run(): when kernel.arch is not set in the pipeline config, automatically
+    detects the target architecture from the .config file using
+    detect_arch_from_dotconfig().  The detected (arch, srcarch) pair is passed
+    to load_kernel_config_symbols() so that kconfiglib can resolve
+    'arch/$SRCARCH/Kconfig' includes without requiring the user to set
+    kernel.arch explicitly.
+  - Explicit kernel.arch in the config always takes precedence (setdefault
+    semantics are preserved in load_kernel_config_symbols).
+  - The summary print line now shows both arch and srcarch with the detection
+    source ('from config', 'auto-detected from .config', or 'not set').
 """
 import logging
 import os
 
 from lib.config import save_json
-from lib.kbuild import load_kernel_config_symbols, KBUILD_PLACEHOLDER_NAMES
+from lib.kbuild import (load_kernel_config_symbols, KBUILD_PLACEHOLDER_NAMES,
+                         detect_arch_from_dotconfig)
 from lib.parse_kconfig import parse_kernel_config, scan_kbuild_tree
 from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.manifest import CACHE_FILES, NSTAGES
@@ -90,15 +103,44 @@ def run(cfg, cache):
         build_dir = None
 
     # v13.0.3 (J): arch and srctree from config for kconfiglib env setup.
-    # arch    → SRCARCH / ARCH env vars (resolves 'arch/$SRCARCH/Kconfig' includes)
-    # srctree → srctree  env var      (defaults to source_dir when absent)
+    # arch    → ARCH env var    (user-facing architecture name)
+    # srctree → srctree env var (defaults to source_dir when absent)
+    #
+    # v16.0.2 (E.1): when arch is not set in the pipeline config, attempt to
+    # auto-detect it from the .config file.  Explicit config always wins.
     arch    = kernel.get('arch') or None
     srctree = kernel.get('srctree') or None
+    srcarch = None          # SRCARCH may differ from ARCH for the x86 family
+    _arch_source = 'not set'
+
+    if arch:
+        # Explicit kernel.arch in the pipeline config: derive srcarch from the
+        # arch table so the x86 case is handled correctly even when set manually.
+        # Import the table locally to avoid a circular reference at module level.
+        from lib.kbuild import _ARCH_CONFIG_MAP
+        _tbl = {a: sa for _, a, sa in _ARCH_CONFIG_MAP}
+        srcarch = _tbl.get(arch, arch)   # fallback: srcarch == arch
+        _arch_source = 'from config'
+    elif kconfig_path:
+        # Auto-detect from .config when kernel.arch is absent.
+        _detected_arch, _detected_srcarch = detect_arch_from_dotconfig(kconfig_path)
+        if _detected_arch:
+            arch         = _detected_arch
+            srcarch      = _detected_srcarch
+            _arch_source = 'auto-detected from .config'
+            logging.info(
+                'st02: auto-detected arch=%s srcarch=%s from %s',
+                arch, srcarch, kconfig_path)
+        else:
+            logging.warning(
+                'st02: could not auto-detect arch from .config — '
+                'kconfiglib may fail on arch/$SRCARCH/Kconfig includes. '
+                'Set kernel.arch in your pipeline config to fix this.')
 
     # 1. Kernel config symbols
     update_stage_progress(2, NSTAGES, 0.10, 'loading kernel config')
     kernel_config = load_kernel_config_symbols(
-        kconfig_path, source_dir, arch=arch, srctree=srctree)
+        kconfig_path, source_dir, arch=arch, srcarch=srcarch, srctree=srctree)
 
     # 2. Parse .config
     update_stage_progress(2, NSTAGES, 0.25, 'parsing .config')
@@ -152,7 +194,8 @@ def run(cfg, cache):
     finish_progress_line()
     print('  build context captured')
     print('    kconfiglib     : %s' % ('available' if _kcl_available else 'NOT available — using fallback parser'))
-    print('    arch           : %s' % (arch or 'not set (set kernel.arch to fix kconfiglib includes)'))
+    print('    arch / srcarch : %s / %s  (%s)' % (
+        arch or 'not set', srcarch or arch or 'not set', _arch_source))
     print('    kernel_config  : %s' % (kconfig_path or 'not provided — kconfig filtering disabled'))
     print('    kernel_config  : %d symbols loaded' % len(kernel_config))
     print('    kbuild_map     : %d symbols' % len(static_config_map))
