@@ -48,19 +48,33 @@
      the file itself is in `compiled_files`.  This prevents a build-log entry
      for `drivers/usb/hub.o` from spuriously matching `sound/usb/hub.c`,
      `net/hub.c`, etc. anywhere else in the tree.
-- **L2½ kconfig coverage miss — keyword whitelist rescue rule (v14.0.0)**:
-  When a commit's files are conclusively uncovered (not in `compiled_files`,
-  not in `compiled_dirs`), the keyword whitelist (`kw_wl`) rescue is
-  **suppressed** if `compiled_files` is non-empty.  The rationale is that
-  file-level coverage data is authoritative: if the pipeline knows which files
-  are built and the commit's files are definitively absent, no keyword match
-  should override that decision.  The rescue still applies when
-  `compiled_files` is empty (no `.config` / no kconfig evidence), where
-  keyword matching is the best available heuristic.
+- **L2½ kconfig coverage** — `_file_is_kconfig_covered()` determines whether
+  a file belongs to the product build.  Coverage is established by (in order):
+  1. **Exact path** — the file appears in `compiled_files` (derived from
+     `config_enabled_map` in `product_map.json`).
+  2. **Directory** — the file's parent directory, normalised to the
+     trailing-slash form stored by st03 (e.g. `drivers/usb/core/`), is present
+     in `compiled_dirs`.  This covers files in compiled subsystem directories
+     even when they are not listed individually in `compiled_files`.
+  3. **Build-system root exception** — the top-level `Kconfig`, `Makefile`,
+     and `Kbuild` (files whose `os.path.dirname` is `''`) are always considered
+     covered.  They are unconditionally product-relevant.
+- **Build-system files outside compiled directories are dropped** (v16.0.0).
+  Prior to v16.0.0, any file named `Kconfig`, `Makefile`, `Kbuild`, or `*.mk`
+  was unconditionally considered covered regardless of its location.  This
+  caused false-keeps for commits like:
+  ```
+  btrfs: add Kconfig option for free-space tree
+  files: fs/btrfs/Kconfig
+  ```
+  when `CONFIG_BTRFS_FS` was absent from the product `.config`.  The file
+  matched the build-system check and bypassed kconfig coverage entirely.
 
-  When the rescue is suppressed the debug field `kw_wl_rescue_suppressed` is
-  set to `true` and `l1a_kw_wl_matches` is populated so the operator can see
-  which keyword patterns would have matched.
+  After v16.0.0, `fs/btrfs/Kconfig` is treated like any other file in
+  `fs/btrfs/`: it is covered only when `fs/btrfs/` appears in `compiled_dirs`.
+  The root exception (`Kconfig`, `Makefile`, `Kbuild` at the tree root) is
+  preserved because those files are structurally product-relevant for any
+  kernel build.
 - Zero-file commits (merge commits, tag objects) bypass path/artifact/kconfig
   layers and use the distinct keep reason `no_files_layer` when they reach
   the default path without keyword matches.
@@ -174,6 +188,96 @@ stale cache files before re-running.
 | `lib/logsetup.py` | Logging configuration |
 | `lib/stages/` | Stage business logic (one module per stage) |
 | `lib/commands/cmd_diagnose.py` | `diagnose` subcommand (cache-read only) |
+
+
+## v16.0.0 changes
+
+- Stage 04 (`_file_is_kconfig_covered`): build-system files (`Kconfig`,
+  `Makefile`, `Kbuild`, `*.mk`) are no longer unconditionally considered
+  covered (C).
+
+  **Root cause / motivating example.**  A commit touching only
+  `fs/btrfs/Kconfig` was kept by the prefilter even when `CONFIG_BTRFS_FS`
+  was absent from `config_enabled_map`.  The function `_is_build_system_file()`
+  returned `True` for the file, which short-circuited the kconfig coverage
+  check entirely, placing the file in `kconfig_covered` and keeping the commit
+  as though it were product-relevant.  The same false-keep applied to
+  `fs/btrfs/Makefile`, `fs/btrfs/build.mk`, and any other build-system
+  filename in an uncovered subsystem directory.
+
+  **Fix.**  `_file_is_kconfig_covered()` now applies the build-system check
+  only as a **root-level exception**: a build-system file whose
+  `os.path.dirname` is `''` (i.e. the top-level `Kconfig`, `Makefile`,
+  `Kbuild` at the kernel root) is always covered.  All other build-system
+  files are subject to the same directory coverage check as any source file:
+  their parent directory (trailing-slash normalised) must be present in
+  `compiled_dirs`.
+
+  **Trailing-slash normalisation fix.**  The `compiled_dirs` membership test
+  now normalises `os.path.dirname(f)` to the trailing-slash form stored by
+  `st03 _derive_config_dirs()` (e.g. `"drivers/usb/core/"`) before the
+  lookup.  Previously the check was silently unreliable because `dirname`
+  returns paths without a trailing slash while `compiled_dirs` always stores
+  them with one.  This normalisation is applied for all file types, not only
+  build-system files.
+
+  **Impact summary:**
+
+  | Commit files | Before v16.0.0 | After v16.0.0 |
+  |---|---|---|
+  | `fs/btrfs/Kconfig` only, btrfs not built | KEPT (false keep) | DROPPED |
+  | `fs/btrfs/Makefile` only, btrfs not built | KEPT (false keep) | DROPPED |
+  | `drivers/usb/Kconfig`, usb compiled | KEPT | KEPT |
+  | `Kconfig` at root | KEPT | KEPT |
+  | `Makefile` at root | KEPT | KEPT |
+  | `fs/btrfs/Kconfig` + `drivers/usb/hub.c`, usb compiled | KEPT (artifact) | KEPT (artifact) |
+
+- Tests (9 new tests in `tests/test_prefilter.py`, C):
+
+  | Test | Assertion |
+  |---|---|
+  | `test_kconfig_file_in_uncovered_dir_drops` | `fs/btrfs/Kconfig` dropped when btrfs not built |
+  | `test_kconfig_file_in_compiled_dir_keeps` | `drivers/usb/Kconfig` kept when usb dir compiled |
+  | `test_root_kconfig_always_keeps` | root `Kconfig` always kept |
+  | `test_root_makefile_always_keeps` | root `Makefile` always kept |
+  | `test_makefile_in_uncovered_dir_drops` | `fs/btrfs/Makefile` dropped when btrfs not built |
+  | `test_mk_file_in_uncovered_dir_drops` | `fs/btrfs/build.mk` dropped when btrfs not built |
+  | `test_kconfig_uncovered_plus_artifact_keeps_via_artifact` | mixed commit: uncovered Kconfig + compiled source → kept via artifact |
+  | `test_kconfig_covered_dir_trailing_slash_normalisation` | trailing-slash normalisation makes `compiled_dirs` lookup reliable |
+  | `test_kconfig_file_uncovered_appears_in_debug_uncovered_list` | dropped Kconfig file appears in `l2half_kconfig_uncovered_files` |
+
+### Version
+
+- `MANIFEST.json` version bumped `v14.1.0` → `v16.0.0`.
+
+---
+
+## v14.1.0 changes
+
+- Stage 04 (`filter_decision`): keyword whitelist rescue at the L2½
+  kconfig-coverage miss path is now **suppressed when `compiled_files` is
+  non-empty** (A).  When file-level coverage data exists and a commit's files
+  are conclusively absent from that set, the kw_wl must not override the drop
+  decision — file evidence is authoritative.  The rescue continues to apply
+  when `compiled_files` is empty (no `.config` provided, no kconfig evidence),
+  where keyword matching remains the best available heuristic.
+- New debug field `kw_wl_rescue_suppressed` (bool) added to `debug_detail`
+  for all code paths.  `true` when suppression occurred; `l1a_kw_wl_matches`
+  is also populated in the suppressed case for operator traceability (A).
+- **Root cause / motivating example**: commit `b238eaa1` (`btrfs: reschedule
+  when cloning lots of extents`) touched only `fs/btrfs/ioctl.c`;
+  `CONFIG_BTRFS_FS` was absent from `config_enabled_map` (product uses
+  CONFIG_USB only).  The commit body contained `BUG`/`soft lockup` which
+  matched the security keyword whitelist, incorrectly keeping it in the output
+  despite the subsystem not being built for the product.  After this fix the
+  commit is dropped with reason `no_kconfig_coverage`.
+- Tests (6 new tests in `tests/test_prefilter.py`):
+  - `test_kw_wl_rescue_suppressed_when_compiled_files_nonempty`
+  - `test_kw_wl_rescue_suppressed_debug_shows_matching_patterns`
+  - `test_kw_wl_rescue_allowed_when_compiled_files_empty`
+  - `test_kw_wl_rescue_suppressed_btrfs_real_world_scenario`
+  - `test_debug_detail_has_kw_wl_rescue_suppressed_key`
+  - `test_kw_wl_rescue_suppressed_false_by_default`
 
 
 ## v14.0.1 changes

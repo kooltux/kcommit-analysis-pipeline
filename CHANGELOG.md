@@ -2,6 +2,100 @@
 
 All notable changes to this project will be documented in this file.
 
+## v16.0.0 — prefilter: Kconfig/Makefile directory-scoped coverage (2026-06-13)
+
+### Fixed (C — build-system file coverage scoping)
+
+- `lib/stages/st04_prefilter.py` — `_file_is_kconfig_covered()`: build-system
+  files (`Kconfig`, `Makefile`, `Kbuild`, `*.mk`) no longer receive an
+  unconditional coverage pass.
+
+  **Root cause.**  `_file_is_kconfig_covered()` called `_is_build_system_file(f)`
+  as its final fallback, which returned `True` for any file named `Kconfig`,
+  `Makefile`, `Kbuild`, or matching `Kconfig.*` / `Makefile.*` / `*.mk` —
+  regardless of its location in the kernel tree.  This caused a false-keep for
+  commits that touched only build-system files in subsystems that were not
+  compiled into the product.  Example: a commit modifying `fs/btrfs/Kconfig`
+  was kept even when `CONFIG_BTRFS_FS` was absent from `config_enabled_map`,
+  because the file name alone triggered the build-system pass.
+
+  **Fix.**  A build-system file is now considered covered only when:
+
+  1. The file itself appears in `compiled_files` (exact match), OR
+  2. The file's parent directory — normalised to the trailing-slash form stored
+     by `st03 _derive_config_dirs()` — is present in `compiled_dirs`, OR
+  3. The file is at the kernel root (`os.path.dirname(f) == ''`).  Top-level
+     `Kconfig`, `Makefile`, and `Kbuild` are unconditionally product-relevant.
+
+  The root exception preserves correct behaviour for the kernel's entry-point
+  build files while correctly scoping all subsystem-level build files to their
+  compiled directories.
+
+  **Trailing-slash normalisation.**  `compiled_dirs` stores entries in the
+  trailing-slash form produced by `st03._derive_config_dirs()` (e.g.
+  `"drivers/usb/core/"`), while `os.path.dirname()` returns paths without a
+  trailing slash.  The lookup now normalises `fdir` to `fdir + "/"` before
+  testing membership, making the directory check reliable for all file types
+  (previously the check could silently fail for any file when the entry in
+  `compiled_dirs` had a trailing slash).
+
+  **Impact summary:**
+
+  | Commit touches | Before | After |
+  |---|---|---|
+  | `fs/btrfs/Kconfig` only, btrfs not built | **KEPT** (false-keep) | **DROPPED** (`no_kconfig_coverage`) |
+  | `fs/btrfs/Makefile` only, btrfs not built | **KEPT** (false-keep) | **DROPPED** (`no_kconfig_coverage`) |
+  | `drivers/usb/Kconfig`, USB compiled | KEPT | KEPT (dir in compiled_dirs) |
+  | `Kconfig` at kernel root | KEPT | KEPT (root exception) |
+  | `Makefile` at kernel root | KEPT | KEPT (root exception) |
+  | `fs/btrfs/Kconfig` + `drivers/usb/hub.c` (USB built) | KEPT | KEPT (artifact evidence) |
+
+### Tests (C)
+
+- `tests/test_prefilter.py` — 13 new tests in the `v16.0.0 (C)` section:
+
+  | Test | Assertion |
+  |---|---|
+  | `test_is_build_system_file_kconfig` | Kconfig variants recognised |
+  | `test_is_build_system_file_makefile` | Makefile variants recognised |
+  | `test_is_build_system_file_kbuild` | Kbuild recognised |
+  | `test_is_build_system_file_mk_extension` | *.mk recognised |
+  | `test_is_build_system_file_regular_c_file` | .c files not recognised |
+  | `test_file_is_kconfig_covered_kconfig_in_compiled_dir` | Kconfig in compiled dir → covered |
+  | `test_file_is_kconfig_covered_kconfig_not_in_compiled_dir` | Kconfig in uncovered dir → not covered |
+  | `test_file_is_kconfig_covered_root_kconfig_always_covered` | Root Kconfig → always covered |
+  | `test_file_is_kconfig_covered_root_makefile_always_covered` | Root Makefile → always covered |
+  | `test_file_is_kconfig_covered_makefile_in_uncovered_dir` | Makefile in uncovered dir → not covered |
+  | `test_kconfig_file_in_uncovered_dir_drops` | filter_decision drops btrfs/Kconfig |
+  | `test_kconfig_file_in_compiled_dir_keeps` | filter_decision keeps usb/Kconfig |
+  | `test_makefile_in_uncovered_dir_drops` | filter_decision drops btrfs/Makefile |
+  | `test_root_kconfig_always_keeps` | filter_decision keeps root Kconfig |
+  | `test_root_makefile_always_keeps` | filter_decision keeps root Makefile |
+  | `test_kconfig_uncovered_plus_covered_source_keeps_via_artifact` | mixed commit kept via artifact |
+  | `test_compiled_dirs_trailing_slash_normalisation` | trailing-slash dir lookup works |
+  | `test_kconfig_dot_suffix_in_uncovered_dir_drops` | Kconfig.nfs drops |
+  | `test_mk_file_in_uncovered_dir_drops` | build.mk drops |
+  | `test_auto_require_drops_kconfig_in_uncovered_dir` | auto-require path also drops |
+
+  `_file_is_kconfig_covered` and `_is_build_system_file` added to the import
+  list in the test module.
+
+  `_usb_cs()` helper added to reduce compiled_sets fixture boilerplate.
+
+### Documentation (C)
+
+- `docs/PIPELINE.md` — Stage 04 section updated:
+  - `_file_is_kconfig_covered()` behaviour documented with the three coverage
+    rules and the root exception.
+  - Trailing-slash normalisation note added.
+  - `v16.0.0 changes` section added.
+
+### Version
+
+- `MANIFEST.json` version bumped `v14.1.0` → `v16.0.0`.
+
+---
+
 ## v14.1.0 — prefilter: remove keyword and path-whitelist coupling (2026-06-11)
 
 ### Changed (B — keyword/path-wl decoupling)

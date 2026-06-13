@@ -29,13 +29,30 @@ v14.1.0 (B -- keyword/path-wl decoupling):
            read from filter_cfg directly, not from profile_rules.
            All keyword and path-whitelist tests removed; debug_detail key
            assertions updated to remove kw/path-wl fields.
+
+v16.0.0 (C -- Kconfig/Makefile directory-scoped coverage):
+  C     -- _file_is_kconfig_covered(): build-system files (Kconfig, Makefile,
+           Kbuild, *.mk) are no longer unconditionally covered.
+           They are covered only when their directory is in compiled_dirs
+           (trailing-slash normalised) or when they are at the kernel root.
+           Added:
+             test_kconfig_file_in_uncovered_dir_drops()
+             test_kconfig_file_in_compiled_dir_keeps()
+             test_root_kconfig_always_keeps()
+             test_root_makefile_always_keeps()
+             test_makefile_in_uncovered_dir_drops()
+             test_mk_file_in_uncovered_dir_drops()
+             test_kconfig_uncovered_plus_artifact_keeps_via_artifact()
+             test_kconfig_covered_dir_trailing_slash_normalisation()
+             test_kconfig_file_uncovered_appears_in_debug_uncovered_list()
 """
 import os
 import re
 
 from lib.stages.st04_prefilter import (
     filter_decision, build_compiled_sets,
-    _file_has_artifact, _build_prefilter_debug_entry,
+    _file_has_artifact, _file_is_kconfig_covered,
+    _build_prefilter_debug_entry,
 )
 
 _EMPTY_CS = dict(compiled_files=set(), compiled_dirs=set(),
@@ -45,6 +62,21 @@ _EMPTY_CS = dict(compiled_files=set(), compiled_dirs=set(),
 def _commit(sha='aaa', subject='', body='', files=None):
     return {'commit': sha, 'subject': subject, 'body': body or '',
             'files': files or []}
+
+
+def _usb_cs():
+    """compiled_sets for a product that compiles drivers/usb/core/ only.
+
+    compiled_dirs uses the trailing-slash form produced by st03
+    _derive_config_dirs(), so these tests exercise the normalisation path.
+    """
+    return dict(
+        compiled_files={'drivers/usb/core/hub.c'},
+        compiled_dirs={'drivers/usb/core/'},
+        artifact_stems=set(),
+        log_basenames=set(),
+        available=True,
+    )
 
 
 # -- L3 absolute ---------------------------------------------------------------
@@ -598,3 +630,164 @@ def test_btrfs_with_security_keywords_dropped():
     assert action == 'drop'
     assert reason == 'no_kconfig_coverage'
     assert 'fs/btrfs/ioctl.c' in dbg['l2half_kconfig_uncovered_files']
+
+
+# ==============================================================================
+# v16.0.0 (C) -- Kconfig/Makefile directory-scoped coverage
+# ==============================================================================
+
+def test_kconfig_file_in_uncovered_dir_drops():
+    """C (v16.0.0): fs/btrfs/Kconfig must be dropped when CONFIG_BTRFS_FS is
+    absent from config_enabled_map.  Previously the unconditional
+    _is_build_system_file() passthrough rescued it."""
+    cs = _usb_cs()
+    c = _commit(
+        sha='btrfs_kconfig_01',
+        subject='btrfs: add Kconfig option for free-space tree',
+        files=['fs/btrfs/Kconfig'],
+    )
+    action, reason, dbg = filter_decision(
+        c, cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'drop'
+    assert reason == 'no_kconfig_coverage'
+    assert 'fs/btrfs/Kconfig' in dbg['l2half_kconfig_uncovered_files']
+
+
+def test_kconfig_file_in_compiled_dir_keeps():
+    """C (v16.0.0): drivers/usb/Kconfig must be kept when drivers/usb/ (or a
+    sub-directory) is in compiled_dirs.  Trailing-slash normalisation is
+    exercised: compiled_dirs stores 'drivers/usb/core/' while dirname of
+    'drivers/usb/Kconfig' is 'drivers/usb' -- we need the parent-dir check."""
+    # Use a compiled_dirs entry whose directory IS the parent of the Kconfig.
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/usb/'},
+        artifact_stems=set(),
+        log_basenames=set(),
+        available=True,
+    )
+    c = _commit(
+        sha='usb_kconfig_01',
+        subject='usb: add Kconfig option for USB4',
+        files=['drivers/usb/Kconfig'],
+    )
+    action, reason, dbg = filter_decision(
+        c, cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'keep'
+    assert 'drivers/usb/Kconfig' in dbg['l2half_kconfig_covered_files']
+
+
+def test_root_kconfig_always_keeps():
+    """C (v16.0.0): top-level Kconfig (fdir == '') is always covered regardless
+    of compiled_dirs.  It is unconditionally product-relevant."""
+    cs = _usb_cs()
+    c = _commit(
+        sha='root_kconfig_01',
+        subject='kconfig: add EXPERT dependency to DEBUG_FS',
+        files=['Kconfig'],
+    )
+    action, reason, dbg = filter_decision(
+        c, cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'keep'
+    assert 'Kconfig' in dbg['l2half_kconfig_covered_files']
+
+
+def test_root_makefile_always_keeps():
+    """C (v16.0.0): top-level Makefile (fdir == '') is always covered."""
+    cs = _usb_cs()
+    c = _commit(
+        sha='root_makefile_01',
+        subject='Makefile: bump SUBLEVEL to 4',
+        files=['Makefile'],
+    )
+    action, reason, dbg = filter_decision(
+        c, cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'keep'
+    assert 'Makefile' in dbg['l2half_kconfig_covered_files']
+
+
+def test_makefile_in_uncovered_dir_drops():
+    """C (v16.0.0): fs/btrfs/Makefile must be dropped when fs/btrfs/ is not
+    compiled.  Same rule as Kconfig; the unconditional passthrough is gone."""
+    cs = _usb_cs()
+    c = _commit(
+        sha='btrfs_makefile_01',
+        subject='btrfs: add new object to Makefile',
+        files=['fs/btrfs/Makefile'],
+    )
+    action, reason, dbg = filter_decision(
+        c, cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'drop'
+    assert reason == 'no_kconfig_coverage'
+    assert 'fs/btrfs/Makefile' in dbg['l2half_kconfig_uncovered_files']
+
+
+def test_mk_file_in_uncovered_dir_drops():
+    """C (v16.0.0): *.mk files in uncovered directories are dropped."""
+    cs = _usb_cs()
+    c = _commit(
+        sha='btrfs_mk_01',
+        subject='btrfs: update build helpers',
+        files=['fs/btrfs/build.mk'],
+    )
+    action, reason, dbg = filter_decision(
+        c, cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'drop'
+    assert reason == 'no_kconfig_coverage'
+
+
+def test_kconfig_uncovered_plus_artifact_keeps_via_artifact():
+    """C (v16.0.0): a commit touching both an uncovered Kconfig and a compiled
+    source file must be kept via build_artifact evidence.  The Kconfig drop
+    path must not fire when artifact evidence is present for other files."""
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'drivers/usb/core/'},
+        artifact_stems={'drivers/usb/core/hub'},
+        log_basenames=set(),
+        available=True,
+    )
+    c = _commit(
+        sha='mixed_commit_01',
+        subject='usb/btrfs: cross-subsystem change',
+        files=['fs/btrfs/Kconfig', 'drivers/usb/core/hub.c'],
+    )
+    action, reason, dbg = filter_decision(
+        c, cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'keep'
+    assert reason == 'build_artifact'
+
+
+def test_kconfig_covered_dir_trailing_slash_normalisation():
+    """C (v16.0.0): verify that the trailing-slash normalisation makes
+    compiled_dirs lookup work correctly.
+
+    compiled_dirs stores 'net/core/' (with slash); dirname of
+    'net/core/Kconfig' is 'net/core' (without slash).  Without normalisation
+    the lookup would silently fail and the file would be uncovered."""
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'net/core/'},   # trailing slash, as stored by st03
+        artifact_stems=set(),
+        log_basenames=set(),
+        available=True,
+    )
+    assert _file_is_kconfig_covered('net/core/Kconfig', cs) is True
+    assert _file_is_kconfig_covered('net/core/filter.c', cs) is True
+    assert _file_is_kconfig_covered('net/sched/Kconfig', cs) is False
+
+
+def test_kconfig_file_uncovered_appears_in_debug_uncovered_list():
+    """C (v16.0.0): when a Kconfig file in an uncovered dir causes a drop,
+    it must appear in l2half_kconfig_uncovered_files in debug_detail."""
+    cs = _usb_cs()
+    c = _commit(
+        sha='btrfs_kconfig_debug',
+        subject='btrfs: Kconfig: add BTRFS_FS_POSIX_ACL option',
+        files=['fs/btrfs/Kconfig'],
+    )
+    action, reason, dbg = filter_decision(
+        c, cs, {'require_kconfig_coverage': True}, True)
+    assert action == 'drop'
+    assert 'fs/btrfs/Kconfig' in dbg['l2half_kconfig_uncovered_files']
+    assert 'fs/btrfs/Kconfig' not in dbg['l2half_kconfig_covered_files']

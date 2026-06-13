@@ -79,6 +79,35 @@ v14.1.0 changes (B -- keyword/path-wl decoupling):
            The filter now answers only: "is this commit built in the product?"
            Scoring resolves importance/severity via profile rules.
 
+v16.0.0 changes (C -- Kconfig/Makefile directory-scoped coverage):
+  C     -- _file_is_kconfig_covered(): build-system files (Kconfig, Makefile,
+           Kbuild, *.mk) no longer receive an unconditional coverage pass.
+           A build-system file is now considered covered only when its own
+           directory is present in compiled_dirs (i.e. the subsystem it
+           configures is built into the product), or when the file lives at
+           the kernel root (fdir == '', e.g. the top-level Makefile/Kconfig).
+
+           Previously, _is_build_system_file() returned True for any such file
+           regardless of location, causing false-keeps for commits touching
+           e.g. fs/btrfs/Kconfig when CONFIG_BTRFS_FS was absent from the
+           product .config.  The file matched _is_build_system_file() -> True,
+           which short-circuited the coverage check and kept the commit as if
+           it were product-relevant.
+
+           The fix is consistent with the design contract: the prefilter
+           answers "is this commit built in the product?"  A Kconfig or
+           Makefile in an uncovered subsystem directory is not built.
+
+           Additionally, the compiled_dirs membership check is now performed
+           with a trailing-slash normalisation (fdir + '/') to match the form
+           stored in compiled_dirs by st03 _derive_config_dirs().  This makes
+           the directory lookup reliable for all file types, not just
+           build-system files.
+
+           Root-level exception: files at the kernel root (os.path.dirname
+           returns '') are always considered covered -- the top-level Kconfig
+           and Makefile are unconditionally product-relevant.
+
 prefilter_debug.json schema (v14.1.0):
   {
     "summary": {
@@ -238,12 +267,63 @@ def _file_has_artifact(f, cs):
 
 
 def _file_is_kconfig_covered(f, cs):
+    """Return True if *f* is considered covered by the product build.
+
+    Coverage is established by three evidence sources, checked in order:
+
+    1. ``compiled_files`` -- exact path match against the set of source files
+       associated with enabled CONFIG symbols (config_enabled_map).  This is
+       the most precise evidence.
+
+    2. ``compiled_dirs`` -- the file's parent directory (normalised to the
+       trailing-slash form stored by st03 _derive_config_dirs, e.g.
+       ``"drivers/usb/core/"``) is present in the set of directories derived
+       from enabled CONFIG symbols.  A file in a compiled directory is
+       considered product-relevant even when it does not appear directly in
+       compiled_files (e.g. inline headers, generated stubs).
+
+    3. Build-system files (Kconfig, Makefile, Kbuild, *.mk) -- covered *only*
+       when their own directory satisfies rule 2 above, OR when they live at
+       the kernel root (os.path.dirname returns '').
+
+       v16.0.0 (C): prior to this version, _is_build_system_file() returned an
+       unconditional True for any such file regardless of its location.  This
+       caused false-keeps for commits like "btrfs: add Kconfig option for ..."
+       that touch fs/btrfs/Kconfig when CONFIG_BTRFS_FS is absent from the
+       product .config -- the file matched the build-system check and bypassed
+       kconfig coverage entirely.
+
+       The root exception (fdir == '') preserves correct behaviour for the
+       kernel's top-level Kconfig and Makefile, which are unconditionally
+       product-relevant regardless of which CONFIG symbols are enabled.
+
+    Trailing-slash normalisation (v16.0.0):
+       st03 _derive_config_dirs() stores directory paths with a trailing slash
+       (e.g. ``"drivers/usb/core/"``), while os.path.dirname() returns paths
+       without one (e.g. ``"drivers/usb/core"``).  The lookup is normalised
+       here so that the membership test is reliable for all file types.
+    """
     if f in cs['compiled_files']:
         return True
+
     fdir = os.path.dirname(f)
-    if fdir and fdir in cs['compiled_dirs']:
+    # compiled_dirs stores trailing-slash normalised paths (e.g. "drivers/usb/core/").
+    # os.path.dirname returns paths without a trailing slash.  Normalise before
+    # lookup so the membership test is reliable for all file types.
+    fdir_norm = (fdir.rstrip('/') + '/') if fdir else ''
+
+    if fdir and fdir_norm in cs['compiled_dirs']:
         return True
-    return _is_build_system_file(f)
+
+    # Build-system files (Kconfig, Makefile, Kbuild, *.mk): product-relevant
+    # only when their directory is compiled into the product, or when they live
+    # at the kernel root (fdir == '').  The compiled_dirs check above already
+    # handles the "directory is compiled" case; we reach here only when it did
+    # not match, so we apply the root exception only.
+    if _is_build_system_file(f):
+        return not fdir   # True only at root level (fdir == '')
+
+    return False
 
 
 # -- Pattern repr helper -------------------------------------------------------
