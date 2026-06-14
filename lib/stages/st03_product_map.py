@@ -29,7 +29,13 @@ built_objects_from_log  -- .o/.ko path stems extracted from kernel/yocto build l
                            stems to eliminate cross-architecture false positives
                            (e.g. arch/s390/kernel/setup.c matching a log entry
                            for arch/arm/kernel/setup.o).
+built_dtb_stems_from_log  -- Full-path DTB stems extracted from build log lines.
+                             e.g. 'arch/arm/boot/dts/exynos5410-odroidxu' from
+                             '  DTC     arch/arm/boot/dts/exynos5410-odroidxu.dtb'.
+                             v16.4.0 (J): new field.
 built_artifacts_from_dir -- .o/.ko relative paths found by scanning build_dir.
+built_dtb_artifacts_from_dir -- .dtb/.dtbo full-path stems found in build_dir.
+                                v16.4.0 (J): new field.
 kbuild_files          -- absolute paths of every Makefile/Kbuild in source_dir.
 dts_roots             -- DTS root directories from config.
 
@@ -49,6 +55,20 @@ v16.3.0 (H.2):
      This eliminates cross-architecture false positives where two files share a
      common basename (e.g. arch/arm/kernel/setup.c and arch/s390/kernel/setup.c
      both matching stem 'setup' under the old scheme).
+
+v16.4.0 (J -- DTB artifact coverage for DTS files):
+  -- _extract_log_objects(): now also captures .dtb/.dtbo tokens and stores
+     their full-path stems in a separate returned set (dtb_stems_from_log).
+     The function signature is unchanged (returns the same sorted list for
+     .o/.ko); the new DTB stems are returned via the product_map field
+     'built_dtb_stems_from_log'.
+  -- _extract_dtb_stems_from_log(): new helper that extracts DTB/DTBO path
+     stems from build log lines (e.g. DTC lines).
+  -- _extract_dtb_stems_from_dir(): new helper that collects .dtb/.dtbo files
+     from build_artifacts list and returns their path stems.
+  -- product_map gains two new fields:
+       built_dtb_stems_from_log   -- sorted list of full-path DTB stems from log
+       built_dtb_artifacts_from_dir -- sorted list of full-path DTB stems from dir
 """
 import logging
 import os
@@ -128,6 +148,8 @@ def _extract_log_objects(lines):
 
     v16.3.0 (H.2): changed from bare-basename storage to full-path-stem storage
     for tokens that include a directory component.
+
+    Note: DTB/DTBO tokens are handled separately by _extract_dtb_stems_from_log().
     """
     objs = set()
     for line in (lines or []):
@@ -142,6 +164,62 @@ def _extract_log_objects(lines):
                     stem = stem[2:]
                 objs.add(stem)
     return sorted(objs)
+
+
+def _extract_dtb_stems_from_log(lines):
+    """Extract DTB/DTBO path stems from build log lines.
+
+    v16.4.0 (J): DTS files produce .dtb (or .dtbo) outputs, not .o files, so
+    _extract_log_objects() never captures them.  This function fills that gap
+    by scanning for tokens ending in ``.dtb`` or ``.dtbo``.
+
+    Typical build log lines produced by kbuild's DTC rule look like::
+
+        DTC     arch/arm/boot/dts/exynos5410-odroidxu.dtb
+        DTC     arch/arm64/boot/dts/rockchip/rk3399-rock-pi-4.dtb
+        DTCO    arch/arm/boot/dts/overlay/foo.dtbo
+
+    The full relative path stem is always stored (e.g.
+    ``arch/arm/boot/dts/exynos5410-odroidxu``).  DTS files do not produce
+    bare-basename tokens in any known build system, so the bare-basename
+    fallback path used for .o tokens is not needed here.
+
+    Returns a sorted list of full-path stems.
+    """
+    stems = set()
+    for line in (lines or []):
+        for tok in line.split():
+            if tok.endswith('.dtb') or tok.endswith('.dtbo'):
+                stem, _ = os.path.splitext(tok)
+                if stem.startswith('./'):
+                    stem = stem[2:]
+                if os.path.dirname(stem):   # must have a directory component
+                    stems.add(stem)
+    return sorted(stems)
+
+
+def _extract_dtb_stems_from_dir(artifact_paths):
+    """Extract DTB/DTBO path stems from a list of build artifact paths.
+
+    v16.4.0 (J): ``built_artifacts_from_dir`` contains paths discovered by
+    scanning the build output directory.  This function filters for ``.dtb``
+    and ``.dtbo`` files and strips the extension to produce full-path stems
+    suitable for matching against DTS source paths.
+
+    Example: ``arch/arm/boot/dts/exynos5410-odroidxu.dtb``
+             -> ``arch/arm/boot/dts/exynos5410-odroidxu``
+
+    Returns a sorted list of full-path stems.
+    """
+    stems = set()
+    for p in (artifact_paths or []):
+        if p.endswith('.dtb') or p.endswith('.dtbo'):
+            stem, _ = os.path.splitext(p)
+            if stem.startswith('./'):
+                stem = stem[2:]
+            if os.path.dirname(stem):   # must have a directory component
+                stems.add(stem)
+    return sorted(stems)
 
 
 def run(cfg, cache):
@@ -191,22 +269,31 @@ def run(cfg, cache):
 
     finish_progress_line()
 
-    # 4. Assemble product map
+    # 4. Build log and artifact evidence
+    build_log_lines = (ctx.get('kernel_build_log', []) or []) + \
+                      (ctx.get('yocto_build_log', []) or [])
+    artifact_paths  = ctx.get('build_artifacts', []) or []
+
+    # v16.4.0 (J): extract DTB stems separately from .o/.ko stems
+    dtb_stems_from_log = _extract_dtb_stems_from_log(build_log_lines)
+    dtb_stems_from_dir = _extract_dtb_stems_from_dir(artifact_paths)
+
+    # 5. Assemble product map
     product_map = {
         # --- Diagnostic / full-universe fields (all Kbuild symbols) ----------
-        'config_to_paths':          config_to_paths,
-        'config_dirs':              _derive_config_dirs(config_to_paths),
+        'config_to_paths':               config_to_paths,
+        'config_dirs':                   _derive_config_dirs(config_to_paths),
         # --- Product-scope fields (enabled symbols only) ---------------------
-        'config_enabled_map':       config_enabled_map,
-        'config_enabled_dirs':      config_enabled_dirs,
+        'config_enabled_map':            config_enabled_map,
+        'config_enabled_dirs':           config_enabled_dirs,
         # --- Other build evidence --------------------------------------------
-        'enabled_configs':          enabled_configs_raw,
-        'built_objects_from_log':   _extract_log_objects(
-                                        ctx.get('kernel_build_log', []) +
-                                        ctx.get('yocto_build_log', [])),
-        'built_artifacts_from_dir': ctx.get('build_artifacts', []),
-        'kbuild_files':             ctx.get('kbuild_files', []),
-        'dts_roots':                ctx.get('dts_roots', []),
+        'enabled_configs':               enabled_configs_raw,
+        'built_objects_from_log':        _extract_log_objects(build_log_lines),
+        'built_dtb_stems_from_log':      dtb_stems_from_log,
+        'built_artifacts_from_dir':      artifact_paths,
+        'built_dtb_artifacts_from_dir':  dtb_stems_from_dir,
+        'kbuild_files':                  ctx.get('kbuild_files', []),
+        'dts_roots':                     ctx.get('dts_roots', []),
     }
     if history_info:
         product_map['history_info'] = {
@@ -219,4 +306,6 @@ def run(cfg, cache):
     print('    config_to_paths    : %d symbols (full Kbuild universe)' % len(config_to_paths))
     print('    config_enabled_map : %d symbols (enabled in .config)' % len(config_enabled_map))
     print('    config_enabled_dirs: %d directories' % len(config_enabled_dirs))
+    print('    dtb_stems (log)    : %d' % len(dtb_stems_from_log))
+    print('    dtb_stems (dir)    : %d' % len(dtb_stems_from_dir))
     return product_map

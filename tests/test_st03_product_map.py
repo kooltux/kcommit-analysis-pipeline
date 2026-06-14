@@ -30,6 +30,17 @@ v16.3.0 (H.2 -- full-path stems for build-log objects):
        test_run_extracts_log_objects
        test_run_builtin_o_excluded_from_log_objects
        test_run_builtin_a_excluded_from_log_objects
+
+v16.4.0 (J -- DTB artifact coverage for DTS files):
+  -- Added tests for new helpers:
+       _extract_dtb_stems_from_log()
+       _extract_dtb_stems_from_dir()
+  -- Added run() integration tests:
+       test_run_extracts_dtb_stems_from_log()
+       test_run_extracts_dtb_stems_from_dir()
+       test_run_dtb_stems_both_sources_merged()
+       test_run_dtb_stems_absent_when_no_dtb_artifacts()
+       test_run_product_map_has_dtb_fields()
 """
 import json, os
 from unittest.mock import patch
@@ -37,6 +48,7 @@ import pytest
 
 from lib.stages.st03_product_map import (
     _derive_config_dirs, _extract_log_objects, _filter_to_enabled, run,
+    _extract_dtb_stems_from_log, _extract_dtb_stems_from_dir,
 )
 from lib.manifest import CACHE_FILES
 
@@ -162,6 +174,144 @@ def test_extract_log_objects_builtin_mixed_with_real():
     assert not any('built-in' in o for o in objs)
     assert 'drivers/gpu/drm/drm_mode' in objs
     assert 'drivers/net/core/skbuff' in objs
+
+
+# ==============================================================================
+# v16.4.0 (J) -- _extract_dtb_stems_from_log
+# ==============================================================================
+
+def test_extract_dtb_stems_from_log_basic():
+    """J (v16.4.0): a DTC log line produces the correct full-path stem."""
+    lines = ['  DTC     arch/arm/boot/dts/exynos5410-odroidxu.dtb']
+    stems = _extract_dtb_stems_from_log(lines)
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in stems
+
+
+def test_extract_dtb_stems_from_log_dtbo():
+    """J (v16.4.0): .dtbo tokens are also captured."""
+    lines = ['  DTCO    arch/arm/boot/dts/overlay/foo.dtbo']
+    stems = _extract_dtb_stems_from_log(lines)
+    assert 'arch/arm/boot/dts/overlay/foo' in stems
+
+
+def test_extract_dtb_stems_from_log_arm64():
+    """J (v16.4.0): arm64 DTB full-path stems are captured."""
+    lines = [
+        '  DTC     arch/arm64/boot/dts/rockchip/rk3399-rock-pi-4.dtb',
+    ]
+    stems = _extract_dtb_stems_from_log(lines)
+    assert 'arch/arm64/boot/dts/rockchip/rk3399-rock-pi-4' in stems
+
+
+def test_extract_dtb_stems_from_log_bare_dtb_ignored():
+    """J (v16.4.0): a bare .dtb token with no directory component is ignored
+    (must have a directory component to be stored)."""
+    lines = ['  DTC     foo.dtb']
+    stems = _extract_dtb_stems_from_log(lines)
+    assert stems == []
+
+
+def test_extract_dtb_stems_from_log_non_dtb_ignored():
+    """J (v16.4.0): .o and .ko tokens in the same log are not captured."""
+    lines = [
+        '  CC      arch/arm/kernel/setup.o',
+        '  DTC     arch/arm/boot/dts/exynos5410-odroidxu.dtb',
+    ]
+    stems = _extract_dtb_stems_from_log(lines)
+    assert all('.o' not in s for s in stems)
+    assert len(stems) == 1
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in stems
+
+
+def test_extract_dtb_stems_from_log_leading_dot_slash_stripped():
+    """J (v16.4.0): leading ./ is stripped from DTB stems."""
+    lines = ['  DTC     ./arch/arm/boot/dts/exynos5410-odroidxu.dtb']
+    stems = _extract_dtb_stems_from_log(lines)
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in stems
+    assert not any(s.startswith('./') for s in stems)
+
+
+def test_extract_dtb_stems_from_log_multiple_boards():
+    """J (v16.4.0): multiple DTB lines all produce stems; output is sorted."""
+    lines = [
+        '  DTC     arch/arm/boot/dts/exynos5420-arndale-octa.dtb',
+        '  DTC     arch/arm/boot/dts/exynos5410-odroidxu.dtb',
+        '  DTC     arch/arm/boot/dts/exynos5800-peach-pi.dtb',
+    ]
+    stems = _extract_dtb_stems_from_log(lines)
+    assert stems == sorted(stems)
+    assert len(stems) == 3
+
+
+def test_extract_dtb_stems_from_log_none():
+    assert _extract_dtb_stems_from_log(None) == []
+
+
+def test_extract_dtb_stems_from_log_empty():
+    assert _extract_dtb_stems_from_log([]) == []
+
+
+# ==============================================================================
+# v16.4.0 (J) -- _extract_dtb_stems_from_dir
+# ==============================================================================
+
+def test_extract_dtb_stems_from_dir_basic():
+    """J (v16.4.0): .dtb artifact path produces the correct full-path stem."""
+    artifacts = ['arch/arm/boot/dts/exynos5410-odroidxu.dtb']
+    stems = _extract_dtb_stems_from_dir(artifacts)
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in stems
+
+
+def test_extract_dtb_stems_from_dir_dtbo():
+    """J (v16.4.0): .dtbo artifact path produces the correct stem."""
+    artifacts = ['arch/arm/boot/dts/overlay/foo.dtbo']
+    stems = _extract_dtb_stems_from_dir(artifacts)
+    assert 'arch/arm/boot/dts/overlay/foo' in stems
+
+
+def test_extract_dtb_stems_from_dir_ignores_non_dtb():
+    """J (v16.4.0): .o and .ko artifacts in the list are ignored."""
+    artifacts = [
+        'drivers/usb/core/hub.o',
+        'arch/arm/boot/dts/exynos5410-odroidxu.dtb',
+    ]
+    stems = _extract_dtb_stems_from_dir(artifacts)
+    assert all('.o' not in s for s in stems)
+    assert len(stems) == 1
+
+
+def test_extract_dtb_stems_from_dir_bare_dtb_ignored():
+    """J (v16.4.0): a .dtb with no directory component is ignored."""
+    artifacts = ['foo.dtb']
+    stems = _extract_dtb_stems_from_dir(artifacts)
+    assert stems == []
+
+
+def test_extract_dtb_stems_from_dir_leading_dot_slash_stripped():
+    """J (v16.4.0): leading ./ is stripped."""
+    artifacts = ['./arch/arm/boot/dts/exynos5410-odroidxu.dtb']
+    stems = _extract_dtb_stems_from_dir(artifacts)
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in stems
+    assert not any(s.startswith('./') for s in stems)
+
+
+def test_extract_dtb_stems_from_dir_multiple():
+    """J (v16.4.0): multiple .dtb artifacts produce sorted stems."""
+    artifacts = [
+        'arch/arm/boot/dts/exynos5800-peach-pi.dtb',
+        'arch/arm/boot/dts/exynos5410-odroidxu.dtb',
+    ]
+    stems = _extract_dtb_stems_from_dir(artifacts)
+    assert stems == sorted(stems)
+    assert len(stems) == 2
+
+
+def test_extract_dtb_stems_from_dir_empty():
+    assert _extract_dtb_stems_from_dir([]) == []
+
+
+def test_extract_dtb_stems_from_dir_none():
+    assert _extract_dtb_stems_from_dir(None) == []
 
 
 # -- _filter_to_enabled (v13.0.1 Bug-1) ----------------------------------------
@@ -388,6 +538,88 @@ def test_run_builtin_a_excluded_from_log_objects(tmp_path):
     pm = run(cfg, cache)
     assert not any('built-in' in o for o in pm['built_objects_from_log'])
     assert 'net/core/skbuff' in pm['built_objects_from_log']
+
+
+# ==============================================================================
+# v16.4.0 (J) -- DTB artifact coverage: run() integration tests
+# ==============================================================================
+
+def test_run_product_map_has_dtb_fields(tmp_path):
+    """J (v16.4.0): product_map must always contain the two new DTB fields,
+    even when no DTB artifacts are present (fields default to empty lists)."""
+    cache, cfg = _setup(tmp_path)
+    pm = run(cfg, cache)
+    assert 'built_dtb_stems_from_log' in pm, (
+        'built_dtb_stems_from_log must always be present in product_map')
+    assert 'built_dtb_artifacts_from_dir' in pm, (
+        'built_dtb_artifacts_from_dir must always be present in product_map')
+
+
+def test_run_extracts_dtb_stems_from_log(tmp_path):
+    """J (v16.4.0): a DTC log line produces a DTB stem in built_dtb_stems_from_log."""
+    ctx = _build_context(
+        build_log=[
+            '  DTC     arch/arm/boot/dts/exynos5410-odroidxu.dtb',
+            '  CC      drivers/usb/core/hub.o',
+        ],
+    )
+    cache, cfg = _setup(tmp_path, ctx=ctx)
+    pm = run(cfg, cache)
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in pm['built_dtb_stems_from_log'], (
+        'DTC log line must produce a DTB stem in built_dtb_stems_from_log')
+    # .o artifact must NOT appear in the DTB stems list
+    assert not any('.o' in s for s in pm['built_dtb_stems_from_log'])
+
+
+def test_run_extracts_dtb_stems_from_dir(tmp_path):
+    """J (v16.4.0): .dtb artifact path in build_artifacts produces a stem
+    in built_dtb_artifacts_from_dir."""
+    ctx = _build_context(
+        artifacts=[
+            'drivers/usb/core/hub.o',
+            'arch/arm/boot/dts/exynos5410-odroidxu.dtb',
+        ],
+    )
+    cache, cfg = _setup(tmp_path, ctx=ctx)
+    pm = run(cfg, cache)
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in pm['built_dtb_artifacts_from_dir'], (
+        '.dtb artifact must produce a stem in built_dtb_artifacts_from_dir')
+    # .o artifacts must NOT appear in the DTB stems list
+    assert not any('.o' in s for s in pm['built_dtb_artifacts_from_dir'])
+
+
+def test_run_dtb_stems_both_sources_merged(tmp_path):
+    """J (v16.4.0): DTB stems from log and from dir are stored in separate fields
+    (both are consumed by st04 build_compiled_sets() and merged into dtb_stems)."""
+    ctx = _build_context(
+        build_log=[
+            '  DTC     arch/arm/boot/dts/exynos5410-odroidxu.dtb',
+            '  DTC     arch/arm64/boot/dts/rockchip/rk3399-rock-pi-4.dtb',
+        ],
+        artifacts=[
+            'arch/arm/boot/dts/exynos5800-peach-pi.dtb',
+        ],
+    )
+    cache, cfg = _setup(tmp_path, ctx=ctx)
+    pm = run(cfg, cache)
+    # Log stems
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in pm['built_dtb_stems_from_log']
+    assert 'arch/arm64/boot/dts/rockchip/rk3399-rock-pi-4' in pm['built_dtb_stems_from_log']
+    # Dir stems
+    assert 'arch/arm/boot/dts/exynos5800-peach-pi' in pm['built_dtb_artifacts_from_dir']
+
+
+def test_run_dtb_stems_absent_when_no_dtb_artifacts(tmp_path):
+    """J (v16.4.0): when neither log nor dir produce DTB artifacts, both fields
+    are present in product_map but contain empty lists."""
+    ctx = _build_context(
+        build_log=['  CC      drivers/usb/core/hub.o'],
+        artifacts=['drivers/usb/core/hub.o'],
+    )
+    cache, cfg = _setup(tmp_path, ctx=ctx)
+    pm = run(cfg, cache)
+    assert pm['built_dtb_stems_from_log'] == []
+    assert pm['built_dtb_artifacts_from_dir'] == []
 
 
 # -- Bug-1 regression: disabled symbol excluded from config_enabled_map --------

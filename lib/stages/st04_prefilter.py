@@ -36,7 +36,12 @@ Filter hierarchy (higher level wins):
           dir not covd, |
            require active|   -> DROP vote
           root-level    |   -> always KEEP (kconfig_coverage)
-        other           | docs, dts, txt, MAINTAINERS, …
+        dts/dtsi        | .dts .dtsi
+          dtb hit       |   -> KEEP (build_artifact)
+          no hit,       |
+           dtb evidence |   -> DROP vote (DTS file for a board not built)
+          no dtb evid.  |   -> neutral (falls to L0 default keep)
+        other           | docs, txt, MAINTAINERS, …
           (any context) |   neutral — never vote DROP; falls to L0 keep
 
         Decision after per-file voting:
@@ -66,7 +71,7 @@ Design contract (v14.1.0 / v16.1.0):
   Documentation/, tools/testing/).  SHA overrides are kept for explicit
   per-commit operator decisions.
 
-  File-type classification (v16.1.0):
+  File-type classification (v16.1.0 / v16.4.0):
     The prefilter uses file type to determine WHICH evidence source is
     authoritative for each file in a commit:
     - source files: build artifacts are authoritative; kconfig coverage is
@@ -75,6 +80,10 @@ Design contract (v14.1.0 / v16.1.0):
       produce build artifacts directly).
     - build-meta files: kconfig coverage first; path-prefix artifact coverage
       as fallback when real artifacts are present.
+    - dts/dtsi files: DTB artifact stems are authoritative (v16.4.0 J).
+      When DTB evidence is present, only a direct DTB stem hit keeps the file;
+      a DTS file whose board DTB was not built votes DROP.  When no DTB
+      evidence exists at all, DTS files are neutral (fall to L0 default keep).
     - other files: always neutral; never cause a DROP.
 
 v12.0.0 (A.1) -- filter_decision() returns a 3-tuple
@@ -200,6 +209,43 @@ v16.3.0 changes (H.2 -- full-path stems for build-log objects):
            unchanged; they continue to check artifact_stems and log_basenames
            respectively, and both benefit automatically from the rerouting above.
 
+v16.4.0 changes (J -- DTB artifact coverage for DTS/DTSI files):
+  J     -- build_compiled_sets(): collects DTB path stems from the two new
+           product_map fields produced by st03 v16.4.0:
+             built_dtb_stems_from_log      -> full-path stems from DTC log lines
+             built_dtb_artifacts_from_dir  -> full-path stems from .dtb/.dtbo
+                                              files found in build_dir
+           Both sets are merged into a new compiled_sets field 'dtb_stems'.
+
+           _file_is_dts(): new helper -- returns True for .dts and .dtsi files.
+
+           _file_has_dtb(): new helper -- returns True when a .dts/.dtsi file's
+           path stem is present in dtb_stems.  The stem is computed by stripping
+           the source extension from the file path; no directory normalisation is
+           needed because DTB stems always carry the full path.
+
+           _has_dtb_evidence(): new helper -- returns True when dtb_stems is
+           non-empty, i.e. the product map contains at least one DTB artifact.
+
+           filter_decision() L2half: DTS/DTSI files now participate in the
+           voting loop:
+             - DTB hit  -> keep_via_artifact (reason 'build_artifact')
+             - No hit but DTB evidence present -> vote_drop
+             - No DTB evidence at all -> neutral (falls to L0)
+
+           This closes the false-keep gap for DTS-only commits touching
+           boards not in the product build.  A commit like
+           "ARM: dts: exynos: fix roles of USB 3.0 ports on Odroid XU"
+           that touches only arch/arm/boot/dts/exynos5410-odroidxu.dts
+           is now correctly dropped when the product's build artifacts
+           contain DTB files for a different board.
+
+           available flag: dtb_stems alone do NOT set available=True
+           (they are a supplemental evidence type, not a substitute for
+           compiled_files/artifact_stems).  DTS files are only evaluated
+           when dtb_stems is non-empty -- ensuring that products without any
+           DTB evidence at all fall through to the L0 neutral path.
+
 prefilter_debug.json schema (v16.1.0):
   {
     "summary": {
@@ -257,6 +303,7 @@ from lib.schema import validate_commit_list, validate_filtered_commit_list
 _BUILD_SYS_NAMES = frozenset({'Makefile', 'Kbuild', 'Kconfig'})
 _HEADER_EXTENSIONS = frozenset({'.h', '.hpp', '.hxx', '.h++'})
 _SOURCE_EXTENSIONS = frozenset({'.c', '.S', '.cc', '.cpp', '.cxx', '.c++'})
+_DTS_EXTENSIONS    = frozenset({'.dts', '.dtsi'})
 
 
 def _is_build_system_file(path):
@@ -292,6 +339,20 @@ def _file_is_source(path):
     return ext in _SOURCE_EXTENSIONS
 
 
+def _file_is_dts(path):
+    """Return True if *path* is a DTS or DTSI file.
+
+    v16.4.0 (J): DTS/DTSI files are evaluated against DTB artifact stems
+    rather than Kconfig coverage.  A DTS file produces exactly one DTB output
+    whose path stem matches the source file's path stem (with extension swapped
+    from .dts/.dtsi to .dtb/.dtbo).  When the product's build produced DTB
+    artifacts, a DTS file that has no matching DTB is for a board not built
+    by the product.
+    """
+    _, ext = os.path.splitext(path)
+    return ext in _DTS_EXTENSIONS
+
+
 def _has_real_artifact_evidence(cs):
     """Return True when the product_map contains real build-tree artifacts.
 
@@ -303,6 +364,37 @@ def _has_real_artifact_evidence(cs):
     as a proxy.
     """
     return bool(cs.get('artifact_stems') or cs.get('log_basenames'))
+
+
+def _has_dtb_evidence(cs):
+    """Return True when the product_map contains DTB artifact stems.
+
+    v16.4.0 (J): when True, DTS/DTSI files can be evaluated against dtb_stems.
+    When False (no DTB artifacts at all), DTS files are neutral and fall
+    through to the L0 default keep, preserving the pre-J behaviour for
+    products that do not provide DTB build output.
+    """
+    return bool(cs.get('dtb_stems'))
+
+
+def _file_has_dtb(path, cs):
+    """Return True if *path* (a .dts/.dtsi file) has a matching DTB artifact.
+
+    v16.4.0 (J): the stem of a DTS source file matches the DTB output stem
+    exactly -- only the extension differs (.dts/.dtsi vs .dtb/.dtbo).  Strip
+    the source extension and check for membership in dtb_stems.
+
+    Example:
+      path = 'arch/arm/boot/dts/exynos5410-odroidxu.dts'
+      stem = 'arch/arm/boot/dts/exynos5410-odroidxu'
+      dtb_stems contains 'arch/arm/boot/dts/exynos5410-odroidxu'  -> True
+
+    No trailing-slash normalisation is needed here because DTB stems always
+    carry the full relative path (guaranteed by st03 _extract_dtb_stems_from_log
+    and _extract_dtb_stems_from_dir, which both require a directory component).
+    """
+    stem, _ = os.path.splitext(path)
+    return stem in cs.get('dtb_stems', set())
 
 
 def _dir_has_artifact_coverage(path, cs):
@@ -354,6 +446,12 @@ def build_compiled_sets(product_map):
       that had no path) continue to go into log_basenames so the existing
       directory-scoped fallback in _file_has_artifact() is preserved.
 
+    v16.4.0 (J): collects DTB stems from two new product_map fields:
+      built_dtb_stems_from_log      -> stems extracted from DTC log lines
+      built_dtb_artifacts_from_dir  -> stems from .dtb/.dtbo files in build_dir
+    Both are merged into the new 'dtb_stems' set.  dtb_stems do NOT affect
+    the available flag (DTB evidence alone does not activate the kconfig filter).
+
     Design contract:
       available=True  -> at least one evidence source is non-empty; commits with
                          zero coverage across all sources are confidently dropped.
@@ -362,7 +460,8 @@ def build_compiled_sets(product_map):
                          provides kernel sources only, with no .config/logs/dir).
     """
     empty = dict(compiled_files=set(), compiled_dirs=set(),
-                 artifact_stems=set(), log_basenames=set(), available=False)
+                 artifact_stems=set(), log_basenames=set(),
+                 dtb_stems=set(), available=False)
     if not product_map:
         return empty
 
@@ -399,6 +498,13 @@ def build_compiled_sets(product_map):
         else:
             log_basenames.add(stem)
 
+    # v16.4.0 (J): collect DTB stems from both log and dir sources
+    dtb_stems = set()
+    for stem in (product_map.get('built_dtb_stems_from_log', []) or []):
+        dtb_stems.add(stem)
+    for stem in (product_map.get('built_dtb_artifacts_from_dir', []) or []):
+        dtb_stems.add(stem)
+
     has_evidence = bool(compiled_files or artifact_stems or log_basenames)
     if not has_evidence:
         logging.info(
@@ -408,7 +514,7 @@ def build_compiled_sets(product_map):
 
     return dict(compiled_files=compiled_files, compiled_dirs=compiled_dirs,
                 artifact_stems=artifact_stems, log_basenames=log_basenames,
-                available=has_evidence)
+                dtb_stems=dtb_stems, available=has_evidence)
 
 
 def _file_has_artifact(f, cs):
@@ -432,6 +538,8 @@ def _file_has_artifact(f, cs):
        one.  The directory lookup is normalised here so that the membership test
        is reliable.  This is the same normalisation applied in
        ``_file_is_kconfig_covered()`` since v16.0.0.
+
+    Note: DTS/DTSI files should be checked via _file_has_dtb() instead.
     """
     stem, _ = os.path.splitext(f)
     if stem in cs['artifact_stems']:
@@ -568,6 +676,9 @@ def filter_decision(commit, compiled_sets, filter_cfg, kconfig_enabled):
     v16.1.0 (F): L2half replaced with a per-file type-aware voting loop.
     See module docstring for the full decision table.
 
+    v16.4.0 (J): DTS/DTSI files added to the voting loop.
+    See module docstring for the DTS/DTSI evaluation rule.
+
     Only the following signals are evaluated:
       L3  SHA whitelist / blacklist  -- explicit operator per-commit overrides
       L2a path_blacklist ALL files   -- structural path exclusions
@@ -670,50 +781,63 @@ def filter_decision(commit, compiled_sets, filter_cfg, kconfig_enabled):
         d['l2a_path_bl_matches'] = _collect_file_hits(path_bl, files)
         return 'drop', 'path_blacklist_all', d
 
-    # L2half -- file-type-aware voting (v16.1.0 / F)
-    if compiled_sets.get('available'):
+    # L2half -- file-type-aware voting (v16.1.0 / F, v16.4.0 / J)
+    if compiled_sets.get('available') or _has_dtb_evidence(compiled_sets):
         keep_via_artifact = []   # direct artifact hit
         keep_via_kconfig  = []   # kconfig/dir coverage hit
         vote_drop         = []   # file actively votes DROP
         # 'other' files are neutral and do not appear in any list
 
+        dtb_evidence = _has_dtb_evidence(compiled_sets)
+
         for f in files:
-            if _file_is_source(f):
-                # Source files: artifact is the authoritative evidence.
-                # Fall back to kconfig only when no real artifacts exist.
-                if f in artifact_files:
-                    keep_via_artifact.append(f)
-                elif real_artifacts:
-                    # Real artifacts available but this file has none -> not built
-                    vote_drop.append(f)
-                elif kconfig_enabled and require:
-                    if _file_is_kconfig_covered(f, compiled_sets):
-                        keep_via_kconfig.append(f)
+            if _file_is_dts(f):
+                # v16.4.0 (J): DTS/DTSI files evaluated against DTB stems.
+                # Neutral when no DTB evidence exists (pre-J products).
+                if dtb_evidence:
+                    if _file_has_dtb(f, compiled_sets):
+                        keep_via_artifact.append(f)
                     else:
                         vote_drop.append(f)
-                # else: no real artifacts, require inactive -> neutral
+                # else: no DTB evidence -> neutral
 
-            elif _file_is_header(f):
-                # Header files: never produce artifacts; always use kconfig.
-                if kconfig_enabled and require:
+            elif compiled_sets.get('available'):
+                if _file_is_source(f):
+                    # Source files: artifact is the authoritative evidence.
+                    # Fall back to kconfig only when no real artifacts exist.
+                    if f in artifact_files:
+                        keep_via_artifact.append(f)
+                    elif real_artifacts:
+                        # Real artifacts available but this file has none -> not built
+                        vote_drop.append(f)
+                    elif kconfig_enabled and require:
+                        if _file_is_kconfig_covered(f, compiled_sets):
+                            keep_via_kconfig.append(f)
+                        else:
+                            vote_drop.append(f)
+                    # else: no real artifacts, require inactive -> neutral
+
+                elif _file_is_header(f):
+                    # Header files: never produce artifacts; always use kconfig.
+                    if kconfig_enabled and require:
+                        if _file_is_kconfig_covered(f, compiled_sets):
+                            keep_via_kconfig.append(f)
+                        else:
+                            vote_drop.append(f)
+                    # else: require inactive -> neutral
+
+                elif _is_build_system_file(f):
+                    # Build-meta files: kconfig dir coverage first;
+                    # path-prefix artifact fallback when real artifacts present.
                     if _file_is_kconfig_covered(f, compiled_sets):
                         keep_via_kconfig.append(f)
-                    else:
+                    elif real_artifacts and _dir_has_artifact_coverage(f, compiled_sets):
+                        keep_via_artifact.append(f)
+                    elif kconfig_enabled and require:
                         vote_drop.append(f)
-                # else: require inactive -> neutral
+                    # else: neutral
 
-            elif _is_build_system_file(f):
-                # Build-meta files: kconfig dir coverage first;
-                # path-prefix artifact fallback when real artifacts present.
-                if _file_is_kconfig_covered(f, compiled_sets):
-                    keep_via_kconfig.append(f)
-                elif real_artifacts and _dir_has_artifact_coverage(f, compiled_sets):
-                    keep_via_artifact.append(f)
-                elif kconfig_enabled and require:
-                    vote_drop.append(f)
-                # else: neutral
-
-            # other files (docs, dts, txt, MAINTAINERS, …): neutral, skip
+                # other files (docs, txt, MAINTAINERS, …): neutral, skip
 
         if keep_via_artifact:
             return 'keep', 'build_artifact', _debug()
@@ -758,6 +882,7 @@ def run(cfg, cache):
     print('  compiled_dirs   : %d' % len(compiled_sets['compiled_dirs']))
     print('  artifact_stems  : %d' % len(compiled_sets['artifact_stems']))
     print('  log_basenames   : %d' % len(compiled_sets['log_basenames']))
+    print('  dtb_stems       : %d' % len(compiled_sets['dtb_stems']))
     print('  commit_wl       : %d patterns' % len(commit_wl))
     print('  commit_bl       : %d patterns' % len(commit_bl))
     print('  path_bl         : %d patterns' % len(path_bl))

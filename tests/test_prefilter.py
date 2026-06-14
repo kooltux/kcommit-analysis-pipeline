@@ -123,6 +123,35 @@ v16.3.0 (H.2 -- full-path stems for build-log objects):
              test_build_compiled_sets_log_full_path_prevents_cross_arch_false_positive()
              test_file_has_artifact_full_path_log_stem_exact_match()
              test_file_has_artifact_full_path_log_stem_no_cross_arch_match()
+
+v16.4.0 (J -- DTB artifact coverage for DTS/DTSI files):
+  J     -- New helpers _file_is_dts(), _file_has_dtb(), _has_dtb_evidence().
+           build_compiled_sets() gains new 'dtb_stems' field.
+           _EMPTY_CS and all fixture compiled_sets updated to include dtb_stems.
+           filter_decision() L2half: DTS/DTSI files now vote keep/drop/neutral.
+           Added:
+             test_file_is_dts_dot_dts()
+             test_file_is_dts_dot_dtsi()
+             test_file_is_dts_dot_c_is_not_dts()
+             test_file_is_dts_dot_h_is_not_dts()
+             test_has_dtb_evidence_true_when_dtb_stems_present()
+             test_has_dtb_evidence_false_when_empty()
+             test_file_has_dtb_matching_stem()
+             test_file_has_dtb_dtsi_matching_stem()
+             test_file_has_dtb_no_match()
+             test_build_compiled_sets_dtb_stems_from_both_sources()
+             test_build_compiled_sets_dtb_stems_log_only()
+             test_build_compiled_sets_dtb_stems_dir_only()
+             test_build_compiled_sets_dtb_stems_empty_when_no_dtb_artifacts()
+             test_build_compiled_sets_dtb_stems_do_not_set_available()
+             test_dts_commit_keeps_when_dtb_stem_matches()
+             test_dts_commit_drops_when_dtb_evidence_present_no_match()
+             test_dts_commit_neutral_when_no_dtb_evidence()
+             test_dtsi_commit_keeps_when_dtb_stem_matches()
+             test_dts_commit_drops_correct_reason()
+             test_dts_commit_kept_reason_is_build_artifact()
+             test_dts_mixed_commit_keeps_when_dtb_stem_matches()
+             test_dts_only_dtb_evidence_activates_l2half()
 """
 import os
 import re
@@ -133,10 +162,12 @@ from lib.stages.st04_prefilter import (
     _file_is_header, _file_is_source,
     _has_real_artifact_evidence, _dir_has_artifact_coverage,
     _build_prefilter_debug_entry,
+    _file_is_dts, _file_has_dtb, _has_dtb_evidence,
 )
 
 _EMPTY_CS = dict(compiled_files=set(), compiled_dirs=set(),
-                 artifact_stems=set(), log_basenames=set(), available=False)
+                 artifact_stems=set(), log_basenames=set(),
+                 dtb_stems=set(), available=False)
 
 
 def _commit(sha='aaa', subject='', body='', files=None):
@@ -155,6 +186,7 @@ def _usb_cs():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems=set(),
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
 
@@ -166,7 +198,25 @@ def _usb_cs_with_artifacts():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems={'drivers/usb/core/hub'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
+    )
+
+
+def _dtb_cs(dtb_stems=None):
+    """compiled_sets for a product with DTB artifact evidence only (no kconfig).
+
+    J (v16.4.0): used to test the DTS/DTSI voting path when only DTB evidence
+    is present.  available=False because dtb_stems alone do NOT activate the
+    kconfig filter -- they activate only the DTS/DTSI voting branch.
+    """
+    return dict(
+        compiled_files=set(),
+        compiled_dirs=set(),
+        artifact_stems=set(),
+        log_basenames=set(),
+        dtb_stems=set(dtb_stems or []),
+        available=False,
     )
 
 
@@ -425,6 +475,7 @@ def test_file_has_artifact_full_path_log_stem_exact_match():
         compiled_dirs=set(),          # no kconfig coverage at all
         artifact_stems={'arch/arm/kernel/setup'},  # from log, routed by H.2
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     assert _file_has_artifact('arch/arm/kernel/setup.c', cs) is True
@@ -439,6 +490,7 @@ def test_file_has_artifact_full_path_log_stem_no_cross_arch_match():
         compiled_dirs={'arch/arm/kernel/', 'arch/s390/kernel/'},
         artifact_stems={'arch/arm/kernel/setup'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     # s390 setup.c must not match the arm artifact stem
@@ -471,6 +523,7 @@ def test_builtin_o_only_commit_not_kept_by_artifact_evidence():
         compiled_dirs={'drivers/gpu/drm/'},   # trailing slash -- real st03 form
         artifact_stems={'drivers/gpu/drm/drm_drv'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(files=['drivers/gpu/drm/built-in.o'])
@@ -486,6 +539,7 @@ def test_builtin_o_only_commit_dropped_when_kconfig_required():
         compiled_dirs={'drivers/gpu/drm/'},   # trailing slash -- real st03 form
         artifact_stems={'drivers/gpu/drm/drm_drv'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(files=['drivers/gpu/drm/built-in.o'])
@@ -503,6 +557,7 @@ def test_file_has_artifact_log_match_requires_compiled_dir():
         compiled_dirs={'drivers/usb/'},   # trailing slash
         artifact_stems=set(),
         log_basenames={'hub'},
+        dtb_stems=set(),
         available=True,
     )
     assert not _file_has_artifact('sound/usb/hub.c', cs)
@@ -517,6 +572,7 @@ def test_file_has_artifact_log_match_requires_compiled_dir_deep():
         compiled_dirs={'drivers/net/ethernet/intel/'},   # trailing slash
         artifact_stems=set(),
         log_basenames={'e1000e'},
+        dtb_stems=set(),
         available=True,
     )
     assert _file_has_artifact('drivers/net/ethernet/intel/e1000e.c', cs)
@@ -529,6 +585,7 @@ def test_file_has_artifact_log_match_via_compiled_files():
         compiled_dirs=set(),
         artifact_stems=set(),
         log_basenames={'hub'},
+        dtb_stems=set(),
         available=True,
     )
     assert _file_has_artifact('drivers/usb/hub.c', cs)
@@ -541,6 +598,7 @@ def test_file_has_artifact_no_log_no_stem_returns_false():
         compiled_dirs={'drivers/usb/'},   # trailing slash
         artifact_stems=set(),
         log_basenames={'hub'},
+        dtb_stems=set(),
         available=True,
     )
     assert not _file_has_artifact('drivers/usb/core.c', cs)
@@ -553,6 +611,7 @@ def test_log_basename_cross_tree_commit_not_kept():
         compiled_dirs={'drivers/usb/'},   # trailing slash
         artifact_stems=set(),
         log_basenames={'hub'},
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(files=['sound/usb/hub.c'])
@@ -568,6 +627,7 @@ def test_log_basename_same_dir_commit_kept():
         compiled_dirs={'drivers/usb/'},   # trailing slash
         artifact_stems=set(),
         log_basenames={'hub'},
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(files=['drivers/usb/hub.c'])
@@ -606,6 +666,7 @@ def test_artifact_evidence_keeps_commit():
         compiled_dirs=set(),
         artifact_stems={'drivers/usb/core/hub'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     action, reason, dbg = filter_decision(c, cs, {}, False)
@@ -616,7 +677,8 @@ def test_kconfig_miss_drops_commit():
     c = _commit(files=['drivers/usb/core/hub.c'])
     cs = dict(
         compiled_files=set(), compiled_dirs=set(),
-        artifact_stems=set(), log_basenames=set(), available=True,
+        artifact_stems=set(), log_basenames=set(),
+        dtb_stems=set(), available=True,
     )
     action, reason, dbg = filter_decision(
         c, cs, {'require_kconfig_coverage': True}, True)
@@ -627,7 +689,8 @@ def test_kconfig_coverage_not_required_keeps():
     c = _commit(files=['drivers/usb/core/hub.c'])
     cs = dict(
         compiled_files=set(), compiled_dirs=set(),
-        artifact_stems=set(), log_basenames=set(), available=True,
+        artifact_stems=set(), log_basenames=set(),
+        dtb_stems=set(), available=True,
     )
     action, _, _dbg = filter_decision(
         c, cs, {'require_kconfig_coverage': False}, True)
@@ -654,7 +717,8 @@ def test_zero_file_commit_not_dropped_by_kconfig():
     cs = dict(
         compiled_files={'drivers/usb/hub.c'},
         compiled_dirs={'drivers/usb/'},
-        artifact_stems=set(), log_basenames=set(), available=True,
+        artifact_stems=set(), log_basenames=set(),
+        dtb_stems=set(), available=True,
     )
     c = _commit(sha='zf004', subject='random merge', files=[])
     action, reason, dbg = filter_decision(
@@ -728,7 +792,8 @@ def test_debug_detail_kconfig_covered_populated():
     c = _commit(files=['drivers/usb/core/hub.c'])
     cs = dict(
         compiled_files={'drivers/usb/core/hub.c'},
-        compiled_dirs=set(), artifact_stems=set(), log_basenames=set(), available=True,
+        compiled_dirs=set(), artifact_stems=set(), log_basenames=set(),
+        dtb_stems=set(), available=True,
     )
     _, _, dbg = filter_decision(c, cs, {}, True)
     assert 'drivers/usb/core/hub.c' in dbg['l2half_kconfig_covered_files']
@@ -739,7 +804,8 @@ def test_debug_detail_kconfig_uncovered_populated():
     c = _commit(files=['net/unrelated.c'])
     cs = dict(
         compiled_files={'drivers/usb/core/hub.c'},
-        compiled_dirs=set(), artifact_stems=set(), log_basenames=set(), available=True,
+        compiled_dirs=set(), artifact_stems=set(), log_basenames=set(),
+        dtb_stems=set(), available=True,
     )
     _, _, dbg = filter_decision(
         c, cs, {'require_kconfig_coverage': True}, True)
@@ -880,6 +946,7 @@ def test_kconfig_file_in_compiled_dir_keeps():
         compiled_dirs={'drivers/usb/'},
         artifact_stems=set(),
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(
@@ -964,6 +1031,7 @@ def test_kconfig_uncovered_plus_artifact_keeps_via_artifact():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems={'drivers/usb/core/hub'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(
@@ -985,6 +1053,7 @@ def test_kconfig_covered_dir_trailing_slash_normalisation():
         compiled_dirs={'net/core/'},   # trailing slash, as stored by st03
         artifact_stems=set(),
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     assert _file_is_kconfig_covered('net/core/Kconfig', cs) is True
@@ -1020,6 +1089,7 @@ def test_file_has_artifact_log_trailing_slash_normalisation():
         compiled_dirs={'drivers/usb/core/'},   # trailing slash -- real st03 form
         artifact_stems=set(),
         log_basenames={'hub'},
+        dtb_stems=set(),
         available=True,
     )
     assert _file_has_artifact('drivers/usb/core/hub.c', cs) is True
@@ -1035,6 +1105,7 @@ def test_file_has_artifact_log_root_file_not_rescued_by_dir():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems=set(),
         log_basenames={'Makefile'},
+        dtb_stems=set(),
         available=True,
     )
     assert _file_has_artifact('Makefile', cs) is False
@@ -1048,6 +1119,7 @@ def test_file_has_artifact_log_sibling_dir_not_rescued():
         compiled_dirs={'drivers/usb/core/'},   # core/ only, not host/
         artifact_stems=set(),
         log_basenames={'xhci'},
+        dtb_stems=set(),
         available=True,
     )
     assert _file_has_artifact('drivers/usb/host/xhci.c', cs) is False
@@ -1140,6 +1212,7 @@ def test_header_only_commit_keeps_via_kconfig_when_covered():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems={'drivers/usb/core/hub'},   # real artifacts present
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(
@@ -1179,6 +1252,7 @@ def test_header_only_commit_keeps_regardless_of_artifact_availability():
         compiled_dirs={'include/linux/'},
         artifact_stems=set(),
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(
@@ -1196,6 +1270,7 @@ def test_header_only_commit_keeps_regardless_of_artifact_availability():
         compiled_dirs={'include/linux/'},
         artifact_stems={'drivers/usb/core/hub'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     action2, reason2, _ = filter_decision(
@@ -1229,6 +1304,7 @@ def test_build_meta_parent_dir_kept_via_artifact_prefix():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems={'drivers/usb/core/hub'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(
@@ -1250,6 +1326,7 @@ def test_build_meta_unrelated_dir_dropped_when_require():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems={'drivers/usb/core/hub'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(
@@ -1271,6 +1348,7 @@ def test_build_meta_prefix_fallback_no_artifacts_drops():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems=set(),          # no real artifacts
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(
@@ -1295,6 +1373,7 @@ def test_root_build_meta_always_kept_dir_has_artifact_coverage():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems={'drivers/usb/core/hub'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(
@@ -1319,6 +1398,7 @@ def test_reason_kconfig_coverage_for_covered_header():
         compiled_dirs={'net/core/'},
         artifact_stems={'net/core/sock'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(
@@ -1339,6 +1419,7 @@ def test_reason_kconfig_coverage_for_covered_build_meta():
         compiled_dirs={'net/core/'},
         artifact_stems={'net/core/sock'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(
@@ -1361,6 +1442,7 @@ def test_debug_has_real_artifacts_true_when_stems_present():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems={'drivers/usb/core/hub'},
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     c = _commit(files=['drivers/usb/core/hub.c'])
@@ -1394,6 +1476,7 @@ def test_source_not_in_artifact_drops_when_real_artifacts_present():
         compiled_dirs={'drivers/usb/core/'},
         artifact_stems={'drivers/usb/core/hub'},     # only hub is built
         log_basenames=set(),
+        dtb_stems=set(),
         available=True,
     )
     # different.c is in the compiled dir (kconfig covered) but NOT in artifacts
@@ -1436,3 +1519,288 @@ def test_source_no_real_artifacts_falls_back_to_kconfig():
         c, cs, {'require_kconfig_coverage': True}, True)
     assert action == 'keep'
     assert reason == 'kconfig_coverage'
+
+
+# ==============================================================================
+# v16.4.0 (J) -- DTB artifact coverage for DTS/DTSI files
+# ==============================================================================
+
+# -- Helper unit tests ---------------------------------------------------------
+
+def test_file_is_dts_dot_dts():
+    """J (v16.4.0): .dts files are classified as DTS."""
+    assert _file_is_dts('arch/arm/boot/dts/exynos5410-odroidxu.dts') is True
+
+
+def test_file_is_dts_dot_dtsi():
+    """J (v16.4.0): .dtsi files are classified as DTS."""
+    assert _file_is_dts('arch/arm/boot/dts/exynos5.dtsi') is True
+
+
+def test_file_is_dts_dot_c_is_not_dts():
+    assert _file_is_dts('drivers/usb/hub.c') is False
+
+
+def test_file_is_dts_dot_h_is_not_dts():
+    assert _file_is_dts('include/linux/usb.h') is False
+
+
+def test_file_is_dts_makefile_is_not_dts():
+    assert _file_is_dts('arch/arm/boot/dts/Makefile') is False
+
+
+def test_has_dtb_evidence_true_when_dtb_stems_present():
+    """J (v16.4.0): _has_dtb_evidence returns True when dtb_stems is non-empty."""
+    cs = dict(dtb_stems={'arch/arm/boot/dts/exynos5410-odroidxu'})
+    assert _has_dtb_evidence(cs) is True
+
+
+def test_has_dtb_evidence_false_when_empty():
+    """J (v16.4.0): _has_dtb_evidence returns False when dtb_stems is empty."""
+    cs = dict(dtb_stems=set())
+    assert _has_dtb_evidence(cs) is False
+
+
+def test_has_dtb_evidence_false_when_key_absent():
+    """J (v16.4.0): _has_dtb_evidence returns False when key not in dict."""
+    assert _has_dtb_evidence({}) is False
+
+
+def test_file_has_dtb_matching_stem():
+    """J (v16.4.0): a .dts file whose stem is in dtb_stems returns True."""
+    cs = dict(dtb_stems={'arch/arm/boot/dts/exynos5410-odroidxu'})
+    assert _file_has_dtb('arch/arm/boot/dts/exynos5410-odroidxu.dts', cs) is True
+
+
+def test_file_has_dtb_dtsi_matching_stem():
+    """J (v16.4.0): a .dtsi file whose stem is in dtb_stems returns True."""
+    cs = dict(dtb_stems={'arch/arm/boot/dts/exynos5'})
+    assert _file_has_dtb('arch/arm/boot/dts/exynos5.dtsi', cs) is True
+
+
+def test_file_has_dtb_no_match():
+    """J (v16.4.0): a .dts file whose stem is absent from dtb_stems returns False."""
+    cs = dict(dtb_stems={'arch/arm/boot/dts/exynos5410-odroidxu'})
+    assert _file_has_dtb('arch/arm/boot/dts/am335x-bone.dts', cs) is False
+
+
+def test_file_has_dtb_empty_dtb_stems():
+    """J (v16.4.0): empty dtb_stems always returns False."""
+    cs = dict(dtb_stems=set())
+    assert _file_has_dtb('arch/arm/boot/dts/exynos5410-odroidxu.dts', cs) is False
+
+
+# -- build_compiled_sets: dtb_stems field --------------------------------------
+
+def test_build_compiled_sets_dtb_stems_from_both_sources():
+    """J (v16.4.0): dtb_stems merges built_dtb_stems_from_log and
+    built_dtb_artifacts_from_dir into a single set."""
+    pm = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+        'built_dtb_stems_from_log':     ['arch/arm/boot/dts/exynos5410-odroidxu'],
+        'built_dtb_artifacts_from_dir': ['arch/arm/boot/dts/exynos5800-peach-pi'],
+    }
+    cs = build_compiled_sets(pm)
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in cs['dtb_stems']
+    assert 'arch/arm/boot/dts/exynos5800-peach-pi' in cs['dtb_stems']
+
+
+def test_build_compiled_sets_dtb_stems_log_only():
+    """J (v16.4.0): dtb_stems populated from log when no dir artifacts."""
+    pm = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+        'built_dtb_stems_from_log':     ['arch/arm/boot/dts/exynos5410-odroidxu'],
+        'built_dtb_artifacts_from_dir': [],
+    }
+    cs = build_compiled_sets(pm)
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in cs['dtb_stems']
+    assert len(cs['dtb_stems']) == 1
+
+
+def test_build_compiled_sets_dtb_stems_dir_only():
+    """J (v16.4.0): dtb_stems populated from dir scan when no log artifacts."""
+    pm = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+        'built_dtb_stems_from_log':     [],
+        'built_dtb_artifacts_from_dir': ['arch/arm/boot/dts/exynos5800-peach-pi'],
+    }
+    cs = build_compiled_sets(pm)
+    assert 'arch/arm/boot/dts/exynos5800-peach-pi' in cs['dtb_stems']
+    assert len(cs['dtb_stems']) == 1
+
+
+def test_build_compiled_sets_dtb_stems_empty_when_no_dtb_artifacts():
+    """J (v16.4.0): dtb_stems is empty (not absent) when no DTB artifacts exist."""
+    pm = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+    }
+    cs = build_compiled_sets(pm)
+    assert 'dtb_stems' in cs
+    assert cs['dtb_stems'] == set()
+
+
+def test_build_compiled_sets_dtb_stems_do_not_set_available():
+    """J (v16.4.0): dtb_stems alone must NOT set available=True.
+    DTB evidence is supplemental; kconfig filter activation requires
+    compiled_files, artifact_stems, or log_basenames to be non-empty."""
+    pm = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [],
+        'built_dtb_stems_from_log':     ['arch/arm/boot/dts/exynos5410-odroidxu'],
+        'built_dtb_artifacts_from_dir': [],
+    }
+    cs = build_compiled_sets(pm)
+    assert cs['available'] is False, (
+        'dtb_stems alone must not activate the kconfig filter (available must stay False)')
+    assert 'arch/arm/boot/dts/exynos5410-odroidxu' in cs['dtb_stems']
+
+
+# -- filter_decision: DTS/DTSI voting ------------------------------------------
+
+def test_dts_commit_keeps_when_dtb_stem_matches():
+    """J (v16.4.0): a DTS commit whose file's path stem is in dtb_stems must
+    be kept via build_artifact."""
+    cs = _dtb_cs(['arch/arm/boot/dts/exynos5410-odroidxu'])
+    c = _commit(
+        sha='dts_keep_01',
+        subject='ARM: dts: exynos: fix USB roles on Odroid XU',
+        files=['arch/arm/boot/dts/exynos5410-odroidxu.dts'],
+    )
+    action, reason, dbg = filter_decision(c, cs, {}, False)
+    assert action == 'keep'
+    assert reason == 'build_artifact'
+
+
+def test_dts_commit_drops_when_dtb_evidence_present_no_match():
+    """J (v16.4.0): a DTS commit touching a board NOT in dtb_stems must be
+    dropped when DTB evidence exists (i.e. the product builds some DTBs
+    but not this board's)."""
+    cs = _dtb_cs(['arch/arm/boot/dts/exynos5800-peach-pi'])  # different board
+    c = _commit(
+        sha='dts_drop_01',
+        subject='ARM: dts: exynos: fix USB 3.0 ports on Odroid XU',
+        files=['arch/arm/boot/dts/exynos5410-odroidxu.dts'],
+    )
+    action, reason, dbg = filter_decision(c, cs, {}, False)
+    assert action == 'drop'
+    assert reason == 'no_kconfig_coverage'
+
+
+def test_dts_commit_neutral_when_no_dtb_evidence():
+    """J (v16.4.0): a DTS commit must NOT be dropped when no DTB evidence is
+    present (product does not provide DTB build output).  It falls through to
+    L0 default keep, preserving the pre-J behaviour."""
+    cs = _dtb_cs([])  # no DTB stems at all; available=False
+    c = _commit(
+        sha='dts_neutral_01',
+        subject='ARM: dts: exynos: add display node',
+        files=['arch/arm/boot/dts/exynos5410-odroidxu.dts'],
+    )
+    action, reason, dbg = filter_decision(c, cs, {}, False)
+    assert action == 'keep'
+    assert reason == 'default', (
+        'DTS file must fall through to L0 when no DTB evidence; got reason=%r' % reason)
+
+
+def test_dtsi_commit_keeps_when_dtb_stem_matches():
+    """J (v16.4.0): .dtsi files are treated identically to .dts files."""
+    cs = _dtb_cs(['arch/arm/boot/dts/exynos5'])
+    c = _commit(
+        sha='dtsi_keep_01',
+        subject='ARM: dts: exynos5: fix reset pins',
+        files=['arch/arm/boot/dts/exynos5.dtsi'],
+    )
+    action, reason, dbg = filter_decision(c, cs, {}, False)
+    assert action == 'keep'
+    assert reason == 'build_artifact'
+
+
+def test_dts_commit_drops_correct_reason():
+    """J (v16.4.0): a dropped DTS commit has reason 'no_kconfig_coverage'."""
+    cs = _dtb_cs(['arch/arm/boot/dts/exynos5800-peach-pi'])
+    c = _commit(
+        sha='dts_reason_01',
+        subject='ARM: dts: am33xx: fix cpu0 operating points',
+        files=['arch/arm/boot/dts/am335x-bone.dts'],
+    )
+    action, reason, dbg = filter_decision(c, cs, {}, False)
+    assert action == 'drop'
+    assert reason == 'no_kconfig_coverage'
+
+
+def test_dts_commit_kept_reason_is_build_artifact():
+    """J (v16.4.0): a kept DTS commit has reason 'build_artifact'."""
+    cs = _dtb_cs(['arch/arm/boot/dts/am335x-bone'])
+    c = _commit(
+        sha='dts_reason_02',
+        subject='ARM: dts: am33xx: fix cpu0 operating points',
+        files=['arch/arm/boot/dts/am335x-bone.dts'],
+    )
+    action, reason, dbg = filter_decision(c, cs, {}, False)
+    assert action == 'keep'
+    assert reason == 'build_artifact'
+
+
+def test_dts_mixed_commit_keeps_when_dtb_stem_matches():
+    """J (v16.4.0): a commit that touches both a DTS file with a matching DTB
+    stem and a source file outside the kconfig filter must be kept via
+    build_artifact (DTS keep vote wins)."""
+    cs = _dtb_cs(['arch/arm/boot/dts/exynos5410-odroidxu'])
+    c = _commit(
+        sha='dts_mixed_01',
+        subject='ARM: dts+driver: Odroid XU USB fix',
+        files=[
+            'arch/arm/boot/dts/exynos5410-odroidxu.dts',
+            'drivers/usb/host/xhci-exynos.c',  # source not in any artifact
+        ],
+    )
+    action, reason, dbg = filter_decision(c, cs, {}, False)
+    assert action == 'keep'
+    assert reason == 'build_artifact'
+
+
+def test_dts_only_dtb_evidence_activates_l2half():
+    """J (v16.4.0): the L2half DTS voting branch is entered when ONLY dtb_stems
+    is non-empty (available=False).  This confirms the guard condition
+    `if compiled_sets.get('available') or _has_dtb_evidence(compiled_sets)`
+    correctly activates for DTB-only evidence."""
+    # cs with dtb_stems but available=False (no kconfig/artifact evidence)
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs=set(),
+        artifact_stems=set(),
+        log_basenames=set(),
+        dtb_stems={'arch/arm/boot/dts/exynos5410-odroidxu'},
+        available=False,
+    )
+    # DTS file with matching stem: must be kept, NOT fall through to default
+    c_keep = _commit(
+        sha='dtb_only_keep',
+        files=['arch/arm/boot/dts/exynos5410-odroidxu.dts'],
+    )
+    action_k, reason_k, _ = filter_decision(c_keep, cs, {}, False)
+    assert action_k == 'keep'
+    assert reason_k == 'build_artifact'
+
+    # DTS file with no matching stem: must be dropped
+    c_drop = _commit(
+        sha='dtb_only_drop',
+        files=['arch/arm/boot/dts/am335x-bone.dts'],
+    )
+    action_d, reason_d, _ = filter_decision(c_drop, cs, {}, False)
+    assert action_d == 'drop'
+    assert reason_d == 'no_kconfig_coverage'
