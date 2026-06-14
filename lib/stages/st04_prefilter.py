@@ -9,19 +9,53 @@ Filter hierarchy (higher level wins):
         rationale is that a path blacklist entry means "this subsystem is not
         relevant", not "any commit that merely touches this subsystem is junk".
         Only commits where every file lives under a blacklisted prefix are dropped.
-  L2half build artifact evidence -> KEEP
-  L2half kconfig coverage miss   -> DROP  (no rescue)
-        The keyword whitelist is a *scoring* concept, not a filter concept.
-        If no build evidence is available at all (compiled_files empty, no
-        artifacts, no log) the filter is inactive (available=False) and every
-        commit is kept for scoring to resolve.
+  L2half file-type-aware evidence evaluation -> KEEP or DROP
+        Each file is classified by type and evaluated accordingly:
+
+        File type       | Evaluation rule
+        ----------------+---------------------------------------------------------
+        source          | .c .S .cc .cpp .cxx .c++
+          artifact hit  |   -> KEEP (build_artifact)
+          no hit,       |
+           real arts    |   -> DROP vote (not in product build)
+          no hit,       |
+           no real arts |   -> kconfig coverage check (require active)
+          no hit,       |      covered -> KEEP (kconfig_coverage)
+           no real arts |      uncovered -> DROP vote
+        header          | .h .hpp .hxx .h++
+          (any context) |   -> kconfig coverage check (require active)
+                        |      covered -> KEEP (kconfig_coverage)
+                        |      uncovered -> DROP vote
+                        |   always use kconfig regardless of artifact availability
+        build-meta      | Kconfig, Makefile, Kbuild, Makefile.*, Kconfig.*, *.mk
+          dir covered   |   -> KEEP (kconfig_coverage)
+          dir not covd, |
+           real arts &&  |
+           dir-prefix   |
+           art match    |   -> KEEP (build_artifact)  [path-prefix fallback]
+          dir not covd, |
+           require active|   -> DROP vote
+          root-level    |   -> always KEEP (kconfig_coverage)
+        other           | docs, dts, txt, MAINTAINERS, …
+          (any context) |   neutral — never vote DROP; falls to L0 keep
+
+        Decision after per-file voting:
+          any keep_via_artifact  -> KEEP (build_artifact)
+          any keep_via_kconfig   -> KEEP (kconfig_coverage)
+          any vote_drop          -> DROP (no_kconfig_coverage)
+          all neutral            -> fall through to L0
+
+        The filter is inactive (available=False) when compiled_files is empty
+        and no artifacts/log evidence is present; every commit is kept for
+        scoring to resolve.
+
   L0  default                    -> KEEP
 
 Zero-file commits (merge commits, tag objects):
   A commit with no files bypasses all path/artifact/kconfig layers and
   is kept unconditionally with reason='no_files_layer'.
 
-Design contract (v14.1.0):
+Design contract (v14.1.0 / v16.1.0):
   The prefilter answers exactly one question: is this commit built in the
   product?  Keywords are irrelevant to that question -- they describe
   importance/severity, not build membership.  All keyword and path-whitelist
@@ -31,6 +65,17 @@ Design contract (v14.1.0):
   structurally never relevant regardless of build evidence (e.g.
   Documentation/, tools/testing/).  SHA overrides are kept for explicit
   per-commit operator decisions.
+
+  File-type classification (v16.1.0):
+    The prefilter uses file type to determine WHICH evidence source is
+    authoritative for each file in a commit:
+    - source files: build artifacts are authoritative; kconfig coverage is
+      only used when no real artifact evidence exists at all.
+    - header files: kconfig coverage is always authoritative (headers never
+      produce build artifacts directly).
+    - build-meta files: kconfig coverage first; path-prefix artifact coverage
+      as fallback when real artifacts are present.
+    - other files: always neutral; never cause a DROP.
 
 v12.0.0 (A.1) -- filter_decision() returns a 3-tuple
   (action, reason, debug_detail) where debug_detail is a dict keyed by:
@@ -87,46 +132,45 @@ v16.0.0 changes (C -- Kconfig/Makefile directory-scoped coverage):
            configures is built into the product), or when the file lives at
            the kernel root (fdir == '', e.g. the top-level Makefile/Kconfig).
 
-           Previously, _is_build_system_file() returned True for any such file
-           regardless of location, causing false-keeps for commits touching
-           e.g. fs/btrfs/Kconfig when CONFIG_BTRFS_FS was absent from the
-           product .config.  The file matched _is_build_system_file() -> True,
-           which short-circuited the coverage check and kept the commit as if
-           it were product-relevant.
-
-           The fix is consistent with the design contract: the prefilter
-           answers "is this commit built in the product?"  A Kconfig or
-           Makefile in an uncovered subsystem directory is not built.
-
-           Additionally, the compiled_dirs membership check is now performed
-           with a trailing-slash normalisation (fdir + '/') to match the form
-           stored in compiled_dirs by st03 _derive_config_dirs().  This makes
-           the directory lookup reliable for all file types, not just
-           build-system files.
-
-           Root-level exception: files at the kernel root (os.path.dirname
-           returns '') are always considered covered -- the top-level Kconfig
-           and Makefile are unconditionally product-relevant.
-
 v16.0.1 changes (D -- artifact trailing-slash normalisation):
   D     -- _file_has_artifact(): applied the same trailing-slash normalisation
            to the compiled_dirs membership check that was applied to
-           _file_is_kconfig_covered() in v16.0.0.  Prior to this fix,
-           os.path.dirname() returns paths without a trailing slash (e.g.
-           "drivers/usb/core") while compiled_dirs stores entries with one
-           (e.g. "drivers/usb/core/"), causing the directory-scope guard for
-           log_basenames to always fail silently.  Log-basename artifact hits
-           were therefore only accepted via the exact compiled_files match,
-           making the directory-scope guard effectively dead code since
-           v13.0.1 (v12.0.2) when _derive_config_dirs() began storing
-           trailing-slash paths.
+           _file_is_kconfig_covered() in v16.0.0.
 
-           Effect: commits whose files are identified via build-log basenames
-           AND whose directory is in compiled_dirs are now correctly kept via
-           the build_artifact layer, as originally intended by the
-           directory-scope guard design (v12.0.2).
+v16.1.0 changes (F -- file-type-aware L2half):
+  F     -- filter_decision(): L2half replaced with a per-file type-aware voting
+           loop.  New helpers: _file_is_header(), _file_is_source(),
+           _dir_has_artifact_coverage(), _has_real_artifact_evidence().
 
-prefilter_debug.json schema (v14.1.0):
+           Key behavioural changes vs v16.0.1:
+
+           1. Header-only commits: headers are always evaluated against
+              kconfig coverage regardless of artifact availability.
+              Previously, a header commit in a compiled dir was kept only
+              if _file_has_artifact() fired (which it never does for .h
+              files since they produce no .o).  Now headers are always
+              evaluated via _file_is_kconfig_covered(), consistent with the
+              fact that header files are always built as part of compilation.
+
+           2. Kconfig/Makefile path-prefix fallback: when real artifact
+              evidence is present (artifact_stems or log_basenames non-empty)
+              and a build-meta file's directory is NOT in compiled_dirs
+              but IS a prefix of a compiled artifact path, the file is
+              kept via build_artifact.  This handles the common case where
+              a Kconfig/Makefile sits one level above the compiled subdir
+              (e.g. drivers/usb/Kconfig when drivers/usb/core/ is compiled).
+
+           3. New debug field: l2half_has_real_artifacts (bool) -- signals
+              whether artifact_stems / log_basenames were non-empty, making
+              it easy to distinguish config-map-only runs from full-artifact
+              runs in prefilter_debug.json.
+
+           4. New keep reason: 'kconfig_coverage' -- emitted when a commit
+              is kept via kconfig/directory coverage rather than a direct
+              artifact hit.  Replaces the implicit 'default' reason that
+              was previously emitted for header/build-meta keeps.
+
+prefilter_debug.json schema (v16.1.0):
   {
     "summary": {
       "total_commits":   <int>,
@@ -150,6 +194,7 @@ prefilter_debug.json schema (v14.1.0):
           "sha", "files", "filter_enabled", "kconfig_required",
           "l3_commit_wl_match", "l3_commit_bl_match",
           "l2a_path_bl_matches",
+          "l2half_has_real_artifacts",
           "l2half_artifact_files",
           "l2half_kconfig_covered_files",
           "l2half_kconfig_uncovered_files"
@@ -180,6 +225,8 @@ from lib.manifest import CACHE_FILES, NSTAGES
 from lib.schema import validate_commit_list, validate_filtered_commit_list
 
 _BUILD_SYS_NAMES = frozenset({'Makefile', 'Kbuild', 'Kconfig'})
+_HEADER_EXTENSIONS = frozenset({'.h', '.hpp', '.hxx', '.h++'})
+_SOURCE_EXTENSIONS = frozenset({'.c', '.S', '.cc', '.cpp', '.cxx', '.c++'})
 
 
 def _is_build_system_file(path):
@@ -190,6 +237,67 @@ def _is_build_system_file(path):
         return True
     _, ext = os.path.splitext(base)
     return ext in ('.mk',)
+
+
+def _file_is_header(path):
+    """Return True if *path* is a C/C++ header file.
+
+    Headers never produce a build artifact directly (.h -> no .o).
+    They are always evaluated against kconfig coverage regardless of whether
+    real artifact evidence is available.
+    """
+    _, ext = os.path.splitext(path)
+    return ext in _HEADER_EXTENSIONS
+
+
+def _file_is_source(path):
+    """Return True if *path* is a compiled source file (.c, .S, .cc, …).
+
+    Source files produce build artifacts (.o/.ko).  When real artifact evidence
+    is present (artifact_stems or log_basenames non-empty), only a direct
+    artifact hit counts as evidence for a source file; kconfig coverage alone
+    is insufficient.
+    """
+    _, ext = os.path.splitext(path)
+    return ext in _SOURCE_EXTENSIONS
+
+
+def _has_real_artifact_evidence(cs):
+    """Return True when the product_map contains real build-tree artifacts.
+
+    'Real' means built_artifacts_from_dir or built_objects_from_log were
+    supplied by the user; config_enabled_map alone does NOT count as artifact
+    evidence.  This distinction matters for source files: when real artifacts
+    are available, a source file not found in artifact_stems is confidently
+    absent from the build.  Without real artifacts, kconfig coverage is used
+    as a proxy.
+    """
+    return bool(cs.get('artifact_stems') or cs.get('log_basenames'))
+
+
+def _dir_has_artifact_coverage(path, cs):
+    """Return True when any artifact stem lives under *path*'s parent directory.
+
+    Used as a path-prefix fallback for build-meta files (Kconfig, Makefile,
+    Kbuild, *.mk): if the directory that contains the build-meta file has
+    at least one compiled artifact underneath it, the build-meta file is
+    considered product-relevant even if its exact directory does not appear
+    in compiled_dirs.
+
+    Example: drivers/usb/Kconfig is kept when drivers/usb/core/hub is in
+    artifact_stems (drivers/usb/ is a prefix of drivers/usb/core/).
+
+    Root exception: files at the kernel root (os.path.dirname returns '')
+    are always considered covered -- the top-level Kconfig and Makefile are
+    unconditionally product-relevant.
+    """
+    fdir = os.path.dirname(path)
+    if not fdir:
+        return True  # root-level build-meta always relevant
+    fdir_slash = fdir.rstrip('/') + '/'
+    if fdir_slash in cs['compiled_dirs']:
+        return True
+    return any(s.startswith(fdir_slash) for s in cs['artifact_stems'])
 
 
 def build_compiled_sets(product_map):
@@ -410,11 +518,13 @@ def filter_decision(commit, compiled_sets, filter_cfg, kconfig_enabled):
     evaluates keyword whitelist/blacklist or path whitelist patterns.  Those
     are scoring concepts handled exclusively by stage 05.
 
+    v16.1.0 (F): L2half replaced with a per-file type-aware voting loop.
+    See module docstring for the full decision table.
+
     Only the following signals are evaluated:
       L3  SHA whitelist / blacklist  -- explicit operator per-commit overrides
       L2a path_blacklist ALL files   -- structural path exclusions
-      L2half build artifact evidence -- files confirmed built in the product
-      L2half kconfig coverage miss   -- files absent from the product build
+      L2half file-type-aware voting  -- per-file keep/drop votes
       L0  default keep
 
     debug_detail keys:
@@ -425,6 +535,7 @@ def filter_decision(commit, compiled_sets, filter_cfg, kconfig_enabled):
       l3_commit_wl_match            -- {pattern, value} or None
       l3_commit_bl_match            -- {pattern, value} or None
       l2a_path_bl_matches           -- [{pattern, file}, ...]
+      l2half_has_real_artifacts     -- bool: artifact_stems or log_basenames non-empty
       l2half_artifact_files         -- [file, ...] with artifact evidence
       l2half_kconfig_covered_files  -- [file, ...] with kconfig coverage
       l2half_kconfig_uncovered_files-- [file, ...] without kconfig coverage
@@ -469,6 +580,9 @@ def filter_decision(commit, compiled_sets, filter_cfg, kconfig_enabled):
     if files and compiled_sets.get('available'):
         artifact_files = [f for f in files if _file_has_artifact(f, compiled_sets)]
 
+    # -- Real artifact flag (v16.1.0) ------------------------------------------
+    real_artifacts = _has_real_artifact_evidence(compiled_sets)
+
     # -- Build debug_detail dict -----------------------------------------------
     def _debug():
         return {
@@ -479,6 +593,7 @@ def filter_decision(commit, compiled_sets, filter_cfg, kconfig_enabled):
             'l3_commit_wl_match':             l3_wl_match,
             'l3_commit_bl_match':             l3_bl_match,
             'l2a_path_bl_matches':            [],
+            'l2half_has_real_artifacts':      real_artifacts,
             'l2half_artifact_files':          artifact_files,
             'l2half_kconfig_covered_files':   kconfig_covered,
             'l2half_kconfig_uncovered_files': kconfig_uncovered,
@@ -508,13 +623,56 @@ def filter_decision(commit, compiled_sets, filter_cfg, kconfig_enabled):
         d['l2a_path_bl_matches'] = _collect_file_hits(path_bl, files)
         return 'drop', 'path_blacklist_all', d
 
-    # L2half build artifact evidence
-    if artifact_files:
-        return 'keep', 'build_artifact', _debug()
+    # L2half -- file-type-aware voting (v16.1.0 / F)
+    if compiled_sets.get('available'):
+        keep_via_artifact = []   # direct artifact hit
+        keep_via_kconfig  = []   # kconfig/dir coverage hit
+        vote_drop         = []   # file actively votes DROP
+        # 'other' files are neutral and do not appear in any list
 
-    # L2half kconfig coverage miss
-    if kconfig_enabled and require:
-        if not kconfig_covered:
+        for f in files:
+            if _file_is_source(f):
+                # Source files: artifact is the authoritative evidence.
+                # Fall back to kconfig only when no real artifacts exist.
+                if f in artifact_files:
+                    keep_via_artifact.append(f)
+                elif real_artifacts:
+                    # Real artifacts available but this file has none -> not built
+                    vote_drop.append(f)
+                elif kconfig_enabled and require:
+                    if _file_is_kconfig_covered(f, compiled_sets):
+                        keep_via_kconfig.append(f)
+                    else:
+                        vote_drop.append(f)
+                # else: no real artifacts, require inactive -> neutral
+
+            elif _file_is_header(f):
+                # Header files: never produce artifacts; always use kconfig.
+                if kconfig_enabled and require:
+                    if _file_is_kconfig_covered(f, compiled_sets):
+                        keep_via_kconfig.append(f)
+                    else:
+                        vote_drop.append(f)
+                # else: require inactive -> neutral
+
+            elif _is_build_system_file(f):
+                # Build-meta files: kconfig dir coverage first;
+                # path-prefix artifact fallback when real artifacts present.
+                if _file_is_kconfig_covered(f, compiled_sets):
+                    keep_via_kconfig.append(f)
+                elif real_artifacts and _dir_has_artifact_coverage(f, compiled_sets):
+                    keep_via_artifact.append(f)
+                elif kconfig_enabled and require:
+                    vote_drop.append(f)
+                # else: neutral
+
+            # other files (docs, dts, txt, MAINTAINERS, …): neutral, skip
+
+        if keep_via_artifact:
+            return 'keep', 'build_artifact', _debug()
+        if keep_via_kconfig:
+            return 'keep', 'kconfig_coverage', _debug()
+        if vote_drop:
             return 'drop', 'no_kconfig_coverage', _debug()
 
     # L0 default keep
