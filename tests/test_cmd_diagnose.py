@@ -15,6 +15,8 @@ Coverage:
   - SHA ambiguity warning
   - final section: stage_reached, in_report, summary strings
   - meta section: required keys, no config/work_dir leakage
+  - meta.pipeline_version sourced from prepare_summary.json cache (v16.2.0)
+  - meta.pipeline_version fallback for pre-v16.2.0 caches
   - body NOT truncated
   - internal fields absent from commit section
   - search priority (relevant wins over filtered)
@@ -540,6 +542,39 @@ def test_meta_generated_at_is_utc_iso(tmp_path):
     ts = r['meta']['generated_at']
     assert ts.endswith('Z')
     assert 'T' in ts
+
+
+def test_meta_pipeline_version_from_prepare_summary(tmp_path):
+    """pipeline_version in meta must be read from prepare_summary.json (v16.2.0)."""
+    cache = _cache(tmp_path)
+    _write(os.path.join(cache, CACHE_FILES['prepare_summary']),
+           {'pipeline_version': 'v99.0.0', 'profiles': [], 'rule_counts': {}})
+
+    r = diagnose_commit(cache, 'aabbccdd')
+    assert r['meta']['pipeline_version'] == 'v99.0.0', (
+        'pipeline_version must be taken from prepare_summary.json, not the running code'
+    )
+
+
+def test_meta_pipeline_version_fallback_when_prepare_summary_absent(tmp_path):
+    """When prepare_summary.json is missing, pipeline_version falls back gracefully."""
+    cache = _cache(tmp_path)
+    # do NOT write prepare_summary.json
+
+    r = diagnose_commit(cache, 'aabbccdd')
+    assert r['meta']['pipeline_version'] == 'unknown (cache predates v16.2.0)', (
+        'Fallback version string must be returned when prepare_summary.json is absent'
+    )
+
+
+def test_meta_pipeline_version_fallback_when_key_absent(tmp_path):
+    """When prepare_summary.json exists but lacks pipeline_version, fallback is used."""
+    cache = _cache(tmp_path)
+    _write(os.path.join(cache, CACHE_FILES['prepare_summary']),
+           {'profiles': ['net'], 'rule_counts': {'net': 3}})
+
+    r = diagnose_commit(cache, 'aabbccdd')
+    assert r['meta']['pipeline_version'] == 'unknown (cache predates v16.2.0)'
 
 
 # ---------------------------------------------------------------------------

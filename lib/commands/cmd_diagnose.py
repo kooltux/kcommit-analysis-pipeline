@@ -14,6 +14,7 @@ Usage
 
 Cache files read (all optional; missing files are noted in warnings)
 --------------------------------------------------------------------
+  prepare_summary.json            stage 00 -- pipeline version + profile summary
   commits.json                    stage 01 -- raw collected commits
   prefilter_kept_commits.json     stage 04 -- commits that passed the prefilter
   filtered_commits.json           stage 04 -- commits dropped by the prefilter
@@ -25,7 +26,12 @@ Cache files read (all optional; missing files are noted in warnings)
 
 Output JSON top-level keys
 --------------------------
-  meta               -- tool version, cache_dir, sha_query, generated_at (UTC)
+  meta               -- pipeline_version (from cache), cache_dir, sha_query,
+                        generated_at (UTC)
+                        NOTE: pipeline_version reflects the version that
+                        produced the cache, NOT the currently running code.
+                        Old caches that predate v16.2.0 will show
+                        "unknown (cache predates v16.2.0)".
   commit             -- every raw commit field: sha, sha12, subject,
                         author_name, author_email, author_time, files, stats, body
   kernel_annotations -- is_fix, has_cve, has_syzbot, has_stable_cc
@@ -408,6 +414,7 @@ def diagnose_commit(cache_dir, sha_query):
     """Read pipeline cache files and return a complete diagnosis dict."""
     warnings = []
 
+    prepare_summary    = _load(cache_dir, 'prepare_summary',    warnings)
     relevant           = _load(cache_dir, 'relevant',           warnings) or []
     postfilter_dropped = _load(cache_dir, 'postfilter_dropped', warnings) or []
     scored             = _load(cache_dir, 'scored',             warnings) or []
@@ -416,6 +423,13 @@ def diagnose_commit(cache_dir, sha_query):
     all_commits        = _load(cache_dir, 'commits',            warnings) or []
     prefilter_debug    = _load(cache_dir, 'prefilter_debug',    warnings)
     postfilter_debug   = _load(cache_dir, 'postfilter_debug',   warnings)
+
+    # pipeline_version reflects the version that produced the cache, not the
+    # currently running code.  Stored in prepare_summary.json since v16.2.0.
+    cached_version = None
+    if isinstance(prepare_summary, dict):
+        cached_version = prepare_summary.get('pipeline_version')
+    pipeline_version = cached_version or 'unknown (cache predates v16.2.0)'
 
     all_pools = (relevant + postfilter_dropped + scored
                  + prefilter_kept + filtered + all_commits)
@@ -477,7 +491,7 @@ def diagnose_commit(cache_dir, sha_query):
 
     return {
         'meta': {
-            'pipeline_version': VERSION,
+            'pipeline_version': pipeline_version,
             'cache_dir':        cache_dir,
             'sha_query':        sha_query,
             'generated_at':     datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z',

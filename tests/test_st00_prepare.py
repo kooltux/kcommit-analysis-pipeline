@@ -54,48 +54,61 @@ def _make_cfg(tmp_path):
 def test_st00_run_with_example_config(tmp_path):
     """Stage 00 must compile rules and write both cache files without error."""
     from lib.stages import st00_prepare
-    from lib.manifest import CACHE_FILES
+    from lib.manifest import CACHE_FILES, VERSION
 
     cfg   = _make_cfg(tmp_path)
     cache = cfg['paths']['cache_dir']
 
-    # Bypass git rev-parse — we have no live kernel repo in CI
+    # Bypass git rev-parse -- we have no live kernel repo in CI
     with patch('lib.stages.st00_prepare.validate_inputs',
                return_value=([], ['notice: git validation skipped in test'])):
         summary = st00_prepare.run(cfg, cache)
 
-    # ── compiled_rules.json must exist and be valid JSON ──────────────────────
+    # -- compiled_rules.json must exist and be valid JSON --------------------
     compiled_path = os.path.join(cache, CACHE_FILES['compiled_rules'])
     assert os.path.isfile(compiled_path), 'compiled_rules.json not written'
     with open(compiled_path) as f:
         compiled = json.load(f)
     assert isinstance(compiled, dict), 'compiled_rules.json is not a dict'
 
-    # ── prepare_summary.json must exist ──────────────────────────────────────
+    # -- prepare_summary.json must exist -------------------------------------
     summary_path = os.path.join(cache, CACHE_FILES['prepare_summary'])
     assert os.path.isfile(summary_path), 'prepare_summary.json not written'
     with open(summary_path) as f:
         on_disk = json.load(f)
 
-    # ── all 3 active profiles must be compiled ───────────────────────────────
+    # -- all 3 active profiles must be compiled ------------------------------
     expected_profiles = {'performance', 'security_fixes', 'security_features'}
     assert expected_profiles.issubset(set(compiled.keys())), (
         f"Missing profiles in compiled_rules: "
         f"{expected_profiles - set(compiled.keys())}"
     )
 
-    # ── each profile must have at least one rule compiled ────────────────────
+    # -- each profile must have at least one rule compiled -------------------
     for pname in expected_profiles:
         rules = compiled[pname].get('rules', {})
         assert rules, f"Profile {pname!r} has no compiled rules"
 
-    # ── summary return value must list the 3 profiles ────────────────────────
+    # -- summary return value must list the 3 profiles -----------------------
     assert set(summary.get('profiles', [])) == expected_profiles
     for pname in expected_profiles:
         assert summary['rule_counts'].get(pname, 0) > 0, (
             f"Profile {pname!r} has rule_count=0 in summary"
         )
 
-    # ── on-disk summary matches in-memory return value ───────────────────────
+    # -- on-disk summary matches in-memory return value ----------------------
     assert on_disk['profiles'] == summary['profiles']
     assert on_disk['rule_counts'] == summary['rule_counts']
+
+    # -- pipeline_version is written to prepare_summary.json (v16.2.0) ------
+    assert 'pipeline_version' in on_disk, (
+        'prepare_summary.json must contain pipeline_version'
+    )
+    assert on_disk['pipeline_version'] == VERSION, (
+        f"pipeline_version on disk {on_disk['pipeline_version']!r} "
+        f"does not match manifest VERSION {VERSION!r}"
+    )
+    assert 'pipeline_version' in summary, (
+        'run() return value must include pipeline_version'
+    )
+    assert summary['pipeline_version'] == VERSION

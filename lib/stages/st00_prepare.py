@@ -1,7 +1,7 @@
 """Stage 00 logic: compile rules and validate configuration."""
 import os
 from lib.config import save_json
-from lib.manifest import CACHE_FILES
+from lib.manifest import CACHE_FILES, VERSION
 from lib.profile_rules import compile_rules_for_config, active_profile_names
 from lib.validation import validate_inputs
 
@@ -20,6 +20,7 @@ def run(cfg, cache):
 
     names   = active_profile_names(cfg)
     summary = {
+        'pipeline_version': VERSION,
         'profiles': names,
         'rule_counts': {
             pname: len((compiled.get(pname) or {}).get('rules', {}))
