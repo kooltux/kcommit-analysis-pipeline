@@ -14,6 +14,9 @@ to verify that the old config_text: noise source no longer fires.
 v16.5.0: raw_rule_total_capped removed from scoring trace.  Tests updated:
   test_score_commit_includes_rule_trace_details: asserts raw_rule_total and
   final_score only; confirms 'raw_rule_total_capped' key is absent.
+  test_score_commit_no_cap_above_100: 5 rules × weight 60 → score must be 300.
+  test_score_commit_multiplier_scales_raw_total: 2 rules × weight 40, pmult=0.5
+  → final_score == 40.
 """
 import os
 

@@ -350,6 +350,7 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
                     },
                 }
 
+        # v16.5.0: no cap — raw total goes directly into the multiplier
         final  = int(per_rule_total * pmult)
         profile_trace['raw_rule_total'] = per_rule_total
         profile_trace['final_score']    = final
