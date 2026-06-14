@@ -7,7 +7,11 @@
 - Loads all active profile JSON files and resolves rule directories.
 - Compiles rule patterns into `compiled_rules.json` (deduplicated: each
   rule body stored once, referenced by name from each profile).
-- Writes `prepare_summary.json` with active profile names and rule counts.
+- Writes `prepare_summary.json` with active profile names, rule counts, and
+  `pipeline_version` (the VERSION string of the binary that ran this stage).
+  The `pipeline_version` field is read by `diagnose` to report the exact
+  pipeline version that produced the cache, not the version of whatever binary
+  is running at diagnose time (v16.2.0).
 
 ### Stage 01 — collect_commits
 - Runs `git log <rev_old>..<rev_new> --name-only` (optionally `--numstat`,
@@ -77,6 +81,29 @@
   The root exception (`Kconfig`, `Makefile`, `Kbuild` at the tree root) is
   preserved because those files are structurally product-relevant for any
   kernel build.
+- **File-type-aware L2½ voting** (v16.1.0) — `filter_decision()` applies
+  per-file type-aware votes before aggregating the final keep/drop decision:
+
+  | File type | Real artifacts present | Vote |
+  |---|---|---|
+  | source (`.c .S .cc .cpp`) | yes, artifact hit | `build_artifact` |
+  | source | yes, no artifact hit | `vote_drop` |
+  | source | no | kconfig fallback |
+  | header (`.h .hpp`) | — | kconfig fallback (always) |
+  | build-meta (`Kconfig Makefile *.mk`) | — | kconfig fallback; then artifact dir-prefix fallback |
+  | other | — | neutral |
+
+  "Real artifacts present" means `artifact_stems` or `log_basenames` is
+  non-empty, i.e. the build system provided direct `.o` evidence.
+
+  A commit is dropped (`no_kconfig_coverage`) when at least one file votes
+  DROP and no file votes KEEP.  The new keep reason `'kconfig_coverage'`
+  replaces the implicit `'default'` for header and build-meta files kept via
+  directory coverage.
+
+  The new debug field `l2half_has_real_artifacts` (bool) in every
+  `debug_detail` records whether real artifact evidence was present at
+  decision time.
 - Zero-file commits (merge commits, tag objects) bypass path/artifact/kconfig
   layers and use the distinct keep reason `no_files_layer` when they reach
   the default path without keyword matches.
@@ -129,12 +156,18 @@ Output JSON top-level keys:
 
 | Key | Content |
 |---|---|
-| `meta` | Tool version, cache_dir, sha_query, generated_at (UTC), note |
+| `meta` | `pipeline_version` (from cache — the version that ran stage 00, not the running binary), `cache_dir`, `sha_query`, `generated_at` (UTC), `note` |
 | `commit` | All raw commit fields: sha, sha12, subject, author, files, stats, body (never truncated) |
 | `kernel_annotations` | is_fix, has_cve, has_syzbot, has_stable_cc |
 | `pipeline_stages` | stage_01_collect, stage_04_prefilter, stage_05_scoring, stage_06_postfilter |
 | `final` | stage_reached, stage_label, rank, score, in_report, summary sentence |
 | `warnings` | Data quality / consistency notes (missing files, SHA ambiguity, etc.) |
+
+`pipeline_version` in `meta` is read from `prepare_summary.json` written by
+stage 00 of the run being diagnosed.  If that file is absent or predates
+v16.2.0 (key not present), the value is `"unknown (cache predates v16.2.0)"`.
+This ensures `pipeline_version` always describes the cache, not the diagnostic
+tool itself.
 
 Missing cache files are reported in `warnings`; they do not cause a crash.
 The `stage_05_scoring` and `stage_06_postfilter` sections are `null` when the
@@ -190,6 +223,55 @@ stale cache files before re-running.
 | `lib/logsetup.py` | Logging configuration |
 | `lib/stages/` | Stage business logic (one module per stage) |
 | `lib/commands/cmd_diagnose.py` | `diagnose` subcommand (cache-read only) |
+
+
+## v16.2.0 changes
+
+- `lib/stages/st00_prepare.py` — `run()` now writes `pipeline_version: VERSION`
+  into `prepare_summary.json`.  This records the exact version that ran stage 00
+  — and therefore built the cache — at pipeline execution time.
+
+- `lib/commands/cmd_diagnose.py` — `meta.pipeline_version` now comes from
+  `prepare_summary.json`, not from the running binary's `VERSION` constant.
+  Fallback `"unknown (cache predates v16.2.0)"` when the file is absent or the
+  key is missing (caches produced by earlier versions).
+
+- Tests: 2 new assertions in `tests/test_st00_prepare.py`; 3 new tests in
+  `tests/test_cmd_diagnose.py` (version-from-cache, absent-file fallback,
+  missing-key fallback).
+
+
+## v16.1.0 changes
+
+- Stage 04 (`filter_decision`): introduced **file-type-aware L2½ voting** (F).
+
+  **New helpers:**
+  - `_file_is_header(path)` — `.h .hpp .hxx .h++`
+  - `_file_is_source(path)` — `.c .S .cc .cpp .cxx .c++`
+  - `_has_real_artifact_evidence(compiled_sets)` — `True` when
+    `artifact_stems` or `log_basenames` non-empty
+  - `_dir_has_artifact_coverage(path, compiled_sets)` — `True` when any
+    artifact stem is a path-prefix of the file's parent directory
+
+  **Motivation:** The flat two-step check could not distinguish:
+  1. **Header-only commits** — `.h` files never appear in `artifact_stems`
+     (the build system produces `.o` objects, not header objects).  Headers
+     must always fall back to kconfig coverage; the absence of artifact
+     evidence is meaningless for them.
+  2. **Source files with real artifact evidence** — when `artifact_stems` or
+     `log_basenames` is non-empty, a source file absent from the artifact set
+     should be dropped, not silently kept via kconfig alone.  Real build
+     evidence makes kconfig-only coverage insufficient for source files.
+
+  **New keep reason:** `'kconfig_coverage'` — explicit reason for header and
+  build-meta files kept via kconfig or directory coverage.
+
+  **New debug field:** `l2half_has_real_artifacts` (bool) in every
+  `debug_detail`.
+
+- Tests: 36 new tests in `tests/test_prefilter.py` (F section); helper unit
+  tests, header-only commit coverage, build-meta prefix fallback,
+  `'kconfig_coverage'` reason assertions, `l2half_has_real_artifacts` field.
 
 
 ## v16.0.1 changes

@@ -2,6 +2,136 @@
 
 All notable changes to this project will be documented in this file.
 
+## v16.2.0 — diagnose: pipeline_version from cache, not running code (2026-06-14)
+
+### Fixed
+
+- `lib/commands/cmd_diagnose.py` — `meta.pipeline_version` now reflects the
+  version that **produced the cache**, not the version of the currently running
+  code.
+
+  **Root cause.**  `diagnose_commit()` set `meta.pipeline_version = VERSION`,
+  imported from `lib/manifest.py` at import time.  When the running binary was
+  newer than the cache being read (e.g. diagnosing a run produced by v16.0.1
+  with a v16.2.0 binary), the reported version was wrong — it showed the
+  binary's version, not the run's.
+
+  **Fix (two parts):**
+
+  1. `lib/stages/st00_prepare.py` — `run()` now writes
+     `pipeline_version: VERSION` into `prepare_summary.json` alongside
+     `profiles` and `rule_counts`.  This records the version that ran stage 00
+     — and therefore produced the cache — at the time of the run.
+
+  2. `lib/commands/cmd_diagnose.py` — `diagnose_commit()` loads
+     `prepare_summary.json` and reads `pipeline_version` from it.  If the file
+     is absent or predates v16.2.0 (key not present), the value falls back to
+     the explicit string `"unknown (cache predates v16.2.0)"` instead of
+     silently reporting the wrong version.
+
+  The `note` field in `meta` already states "No pipeline code was executed";
+  the corrected `pipeline_version` makes that statement fully accurate.
+
+### Tests
+
+- `tests/test_st00_prepare.py`:
+  - Assert `pipeline_version` key present in both `on_disk` summary and
+    `run()` return value.
+  - Assert value equals `VERSION` from manifest.
+
+- `tests/test_cmd_diagnose.py` — 3 new tests:
+
+  | Test | Assertion |
+  |---|---|
+  | `test_meta_pipeline_version_from_prepare_summary` | version taken from cache file, not running code |
+  | `test_meta_pipeline_version_fallback_when_prepare_summary_absent` | file missing → `"unknown (cache predates v16.2.0)"` |
+  | `test_meta_pipeline_version_fallback_when_key_absent` | file exists but key missing → fallback string |
+
+### Version
+
+- `MANIFEST.json` version bumped `v16.0.1` → `v16.2.0`.
+
+---
+
+## v16.1.0 — prefilter: file-type-aware L2half voting (2026-06-14)
+
+### Changed (F — file-type-aware L2half)
+
+- `lib/stages/st04_prefilter.py` — the L2½ block in `filter_decision()` now
+  applies **per-file type-aware voting** instead of a flat two-step check.
+
+  **Root cause / motivation.**  The previous L2½ logic evaluated all files the
+  same way.  This created two classes of silent false-keeps:
+
+  1. **Header-only commits** — `.h` files can never appear in `artifact_stems`
+     (the build system produces `.o` objects, not header objects).  The old
+     code therefore fell through to the default keep for header-only commits
+     regardless of kconfig coverage, because `_file_has_artifact()` always
+     returns `False` for headers.  After v16.1.0, headers are always evaluated
+     against kconfig coverage, and the absence of artifact evidence is
+     irrelevant to the decision.
+
+  2. **Source files with real artifact evidence** — when `artifact_stems` or
+     `log_basenames` were populated, a source file that was absent from the
+     artifact set was still kept via kconfig coverage alone.  With real build
+     evidence present, kconfig-only coverage for a source file is insufficient;
+     only a direct artifact hit is authoritative.  After v16.1.0, source files
+     are kept only via a direct artifact hit when real evidence exists; kconfig
+     coverage is used as a proxy only when no artifact evidence is available
+     (existing behaviour for no-`.config` runs preserved).
+
+  **New helpers:**
+
+  | Helper | Purpose |
+  |---|---|
+  | `_file_is_header(path)` | `.h .hpp .hxx .h++` → True |
+  | `_file_is_source(path)` | `.c .S .cc .cpp .cxx .c++` → True |
+  | `_has_real_artifact_evidence(cs)` | True when `artifact_stems` or `log_basenames` non-empty |
+  | `_dir_has_artifact_coverage(path, cs)` | True when any artifact stem lives under path's parent directory (prefix match) |
+
+  **Per-file voting decision table:**
+
+  | File type | Real artifacts present | Vote |
+  |---|---|---|
+  | source | yes, artifact hit | `build_artifact` |
+  | source | yes, no hit | `vote_drop` |
+  | source | no | kconfig fallback |
+  | header | — | kconfig fallback (always) |
+  | build-meta | — | kconfig fallback; then artifact prefix fallback |
+  | other | — | neutral (no vote) |
+
+  A commit is dropped (`no_kconfig_coverage`) when at least one file votes
+  DROP and no file votes KEEP.
+
+  **New keep reason:** `'kconfig_coverage'` — replaces the implicit `'default'`
+  for header and build-meta files kept via kconfig/directory coverage.
+
+  **New debug field:** `l2half_has_real_artifacts` (bool) in every
+  `debug_detail`, recording whether real artifact evidence was present at
+  decision time.
+
+### Tests (F)
+
+- `tests/test_prefilter.py` — 36 new tests covering:
+  - Helper unit tests (`_file_is_header`, `_file_is_source`,
+    `_has_real_artifact_evidence`, `_dir_has_artifact_coverage`)
+  - Header-only commits: keep when covered, drop when not, with/without
+    artifacts
+  - Build-meta prefix fallback: parent-dir kept, unrelated dir dropped,
+    no-artifact fallback inactive
+  - `'kconfig_coverage'` reason for headers and build-meta
+  - `l2half_has_real_artifacts` debug field presence and value
+  - Source file behaviour with real artifacts present
+  - Existing tests asserting `reason == 'keep'` generically updated to
+    assert `reason == 'kconfig_coverage'` explicitly.
+
+### Version
+
+- `MANIFEST.json` version bumped `v16.0.1` → `v16.1.0` (now superseded by
+  `v16.2.0`).
+
+---
+
 ## v16.0.1 — prefilter: _file_has_artifact trailing-slash normalisation (2026-06-13)
 
 ### Fixed (D — artifact directory-scope normalisation)
