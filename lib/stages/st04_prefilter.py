@@ -179,6 +179,27 @@ vG changes (graceful degradation -- no build artifacts):
            and prevents misleading evidence tags when build context is partial
            or absent.
 
+v16.3.0 changes (H.2 -- full-path stems for build-log objects):
+  H.2   -- build_compiled_sets(): built_objects_from_log entries are now
+           full-path stems (e.g. 'arch/arm/kernel/setup') rather than bare
+           basenames ('setup').  This is produced by st03 _extract_log_objects()
+           v16.3.0.
+
+           Routing in build_compiled_sets():
+           - Entries that contain a directory component (os.path.dirname non-empty)
+             are added directly to artifact_stems.  The existing _file_has_artifact()
+             full-path-stem lookup handles them with no further change, and the
+             cross-architecture false-positive (arch/s390/kernel/setup.c matching
+             a log entry for arch/arm/kernel/setup.o) is eliminated.
+           - Entries with no directory component (bare basename stem, produced
+             when the build log token had no path) are still added to log_basenames
+             so the existing directory-scoped fallback in _file_has_artifact()
+             is preserved for that edge case.
+
+           _has_real_artifact_evidence() and _dir_has_artifact_coverage() are
+           unchanged; they continue to check artifact_stems and log_basenames
+           respectively, and both benefit automatically from the rerouting above.
+
 prefilter_debug.json schema (v16.1.0):
   {
     "summary": {
@@ -324,6 +345,15 @@ def build_compiled_sets(product_map):
     source is non-empty (config_enabled_map, built_artifacts_from_dir, or
     built_objects_from_log), not solely on config_enabled_map.
 
+    v16.3.0 (H.2): built_objects_from_log entries are now full-path stems
+    (e.g. 'arch/arm/kernel/setup') produced by st03 _extract_log_objects()
+    v16.3.0.  Routing:
+    - Entries with a directory component go directly into artifact_stems for
+      precise full-path matching, eliminating cross-architecture false positives.
+    - Entries without a directory component (bare basename stems from log tokens
+      that had no path) continue to go into log_basenames so the existing
+      directory-scoped fallback in _file_has_artifact() is preserved.
+
     Design contract:
       available=True  -> at least one evidence source is non-empty; commits with
                          zero coverage across all sources are confidently dropped.
@@ -356,11 +386,18 @@ def build_compiled_sets(product_map):
         stem, _ = os.path.splitext(p)
         artifact_stems.add(stem)
 
+    # v16.3.0 (H.2): built_objects_from_log now stores full-path stems when
+    # the build-log token had a directory component, and bare basename stems
+    # when it did not.  Route accordingly:
+    #   - full-path stem (has directory) -> artifact_stems (precise match)
+    #   - bare basename stem (no directory) -> log_basenames (dir-scoped fallback)
     log_basenames = set()
     for p in (product_map.get('built_objects_from_log', []) or []):
-        bn = os.path.basename(p)
-        stem, _ = os.path.splitext(bn)
-        log_basenames.add(stem)
+        stem, _ = os.path.splitext(p)
+        if os.path.dirname(stem):
+            artifact_stems.add(stem)
+        else:
+            log_basenames.add(stem)
 
     has_evidence = bool(compiled_files or artifact_stems or log_basenames)
     if not has_evidence:
@@ -380,13 +417,14 @@ def _file_has_artifact(f, cs):
     Two evidence sources are checked in order:
 
     1. ``artifact_stems`` -- full path stems derived from ``built_artifacts_from_dir``
-       (e.g. ``'drivers/usb/core/hub'``).  A full-path stem match is precise and
-       needs no further qualification.
+       and from ``built_objects_from_log`` entries that contained a directory
+       component (v16.3.0 H.2).  A full-path stem match is precise and needs no
+       further qualification.
 
-    2. ``log_basenames`` -- bare filename stems derived from build-log tokens
-       (e.g. ``'hub'`` from ``hub.o``).  Directory-scoped: a log-basename hit is
-       only accepted when the file's parent directory is in ``compiled_dirs`` or
-       the file itself is in ``compiled_files``.
+    2. ``log_basenames`` -- bare filename stems from ``built_objects_from_log``
+       entries that had no directory component in the build log token (v16.3.0 H.2).
+       Directory-scoped: a log-basename hit is only accepted when the file's parent
+       directory is in ``compiled_dirs`` or the file itself is in ``compiled_files``.
 
     Trailing-slash normalisation (v16.0.1):
        ``compiled_dirs`` stores entries with a trailing slash (as produced by st03

@@ -20,7 +20,15 @@ config_enabled_dirs   -- directories derived from config_enabled_map.  Equivalen
                          consistent view.
 enabled_configs       -- flat list of 'CONFIG_X=y/m' strings from .config (Pass 1 of
                          load_kernel_config_symbols()).
-built_objects_from_log  -- .o/.ko basenames extracted from kernel/yocto build logs.
+built_objects_from_log  -- .o/.ko path stems extracted from kernel/yocto build logs.
+                           Tokens with a directory component store the full relative
+                           path stem (e.g. 'arch/arm/kernel/setup' from
+                           'arch/arm/kernel/setup.o'); bare tokens (no directory)
+                           store only the basename stem (e.g. 'hub' from 'hub.o').
+                           v16.3.0 (H.2): changed from bare basenames to full-path
+                           stems to eliminate cross-architecture false positives
+                           (e.g. arch/s390/kernel/setup.c matching a log entry
+                           for arch/arm/kernel/setup.o).
 built_artifacts_from_dir -- .o/.ko relative paths found by scanning build_dir.
 kbuild_files          -- absolute paths of every Makefile/Kbuild in source_dir.
 dts_roots             -- DTS root directories from config.
@@ -33,6 +41,14 @@ v13.0.1 changes (Bug-1 fix):
   -- Added config_enabled_dirs: directories derived from config_enabled_map,
      replacing the runtime-derived compiled_dirs in build_compiled_sets().
   -- _derive_config_dirs() is now called for both maps; no logic change.
+
+v16.3.0 (H.2):
+  -- _extract_log_objects(): stores full relative path stems instead of bare
+     basenames when the build-log token contains a directory component.
+     Bare tokens (no path) continue to store only the basename stem.
+     This eliminates cross-architecture false positives where two files share a
+     common basename (e.g. arch/arm/kernel/setup.c and arch/s390/kernel/setup.c
+     both matching stem 'setup' under the old scheme).
 """
 import logging
 import os
@@ -85,7 +101,23 @@ def _filter_to_enabled(config_map, enabled_configs_raw):
 
 
 def _extract_log_objects(lines):
-    """Extract compiled object basenames from build log lines.
+    """Extract compiled object path stems from build log lines.
+
+    Returns a sorted list of path stems:
+    - When a log token contains a directory component (e.g.
+      ``arch/arm/kernel/setup.o``), the full relative path stem is stored
+      (``arch/arm/kernel/setup``).  This eliminates cross-architecture
+      false positives where two architectures share a common basename
+      (e.g. ``arch/arm/kernel/setup.o`` and ``arch/s390/kernel/setup.o``
+      would previously both collapse to the same bare stem ``setup``).
+    - When the token has no directory component (bare filename, e.g.
+      ``hub.o``), only the basename stem is stored (``hub``).  This
+      preserves the existing directory-scoped fallback in
+      ``_file_has_artifact()`` for cases where the build log did not
+      capture a full path.
+
+    A leading ``./`` prefix is stripped so that ``./arch/arm/kernel/setup.o``
+    and ``arch/arm/kernel/setup.o`` produce the same stem.
 
     Kbuild directory-aggregator placeholders (``built-in.o``, ``built-in.a``)
     are excluded.  These are synthetic intermediate linker inputs produced
@@ -93,6 +125,9 @@ def _extract_log_objects(lines):
     them would add the stem ``built-in`` to ``log_basenames``, causing the
     stage-04 L2half artifact check to spuriously keep every commit whose filename
     starts with ``built-in``.
+
+    v16.3.0 (H.2): changed from bare-basename storage to full-path-stem storage
+    for tokens that include a directory component.
     """
     objs = set()
     for line in (lines or []):
@@ -101,7 +136,11 @@ def _extract_log_objects(lines):
                 bn = os.path.basename(tok)
                 if bn in KBUILD_PLACEHOLDER_NAMES:
                     continue
-                objs.add(bn)
+                stem, _ = os.path.splitext(tok)
+                # Strip leading ./ so ./path/to/file and path/to/file are identical
+                if stem.startswith('./'):
+                    stem = stem[2:]
+                objs.add(stem)
     return sorted(objs)
 
 

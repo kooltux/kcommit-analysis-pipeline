@@ -16,6 +16,20 @@ v13.0.1 changes:
   -- _setup(): when kbuild_map=None, explicitly removes any pre-existing
      kbuild_map.json from the cache dir so that "no kbuild map" is
      guaranteed even if tmp_path reuse or name collision left a stale file.
+
+v16.3.0 (H.2 -- full-path stems for build-log objects):
+  -- _extract_log_objects() now returns full-path stems (directory stripped
+     of extension) instead of raw tokens with extension.  Bare-filename
+     tokens (no directory) continue to be returned as-is including extension.
+  -- Updated tests to assert on full-path stem form:
+       test_extract_log_objects_basic
+       test_extract_log_objects_ko
+       test_extract_log_objects_excludes_builtin_o
+       test_extract_log_objects_excludes_builtin_a
+       test_extract_log_objects_builtin_mixed_with_real
+       test_run_extracts_log_objects
+       test_run_builtin_o_excluded_from_log_objects
+       test_run_builtin_a_excluded_from_log_objects
 """
 import json, os
 from unittest.mock import patch
@@ -69,17 +83,22 @@ def test_derive_config_dirs_no_dirname():
 
 
 # -- _extract_log_objects ------------------------------------------------------
+# H.2 (v16.3.0): _extract_log_objects() returns full-path stems for entries
+# that have a directory component (extension stripped), and raw tokens for
+# bare-filename entries.  Tests updated accordingly.
 
 def test_extract_log_objects_basic():
+    """H.2: full-path .o -> stem 'drivers/net/core' (no extension)."""
     lines = ['  CC      drivers/net/core.o', '  LD      vmlinux']
     objs = _extract_log_objects(lines)
-    assert any('core.o' in o for o in objs)
+    assert any('drivers/net/core' in o for o in objs)
 
 
 def test_extract_log_objects_ko():
+    """H.2: full-path .ko -> stem 'drivers/usb/host/xhci-hcd' (no extension)."""
     lines = ['  LD      drivers/usb/host/xhci-hcd.ko']
     objs = _extract_log_objects(lines)
-    assert any('xhci-hcd.ko' in o for o in objs)
+    assert any('drivers/usb/host/xhci-hcd' in o for o in objs)
 
 
 def test_extract_log_objects_none():
@@ -102,23 +121,25 @@ def test_extract_log_objects_sorted():
 
 
 def test_extract_log_objects_excludes_builtin_o():
+    """H.2: built-in.o excluded; drm_drv.o -> stem 'drivers/gpu/drm/drm_drv'."""
     lines = [
         '  LD      drivers/gpu/drm/built-in.o',
         '  CC      drivers/gpu/drm/drm_drv.o',
     ]
     objs = _extract_log_objects(lines)
-    assert 'built-in.o' not in objs
-    assert 'drm_drv.o' in objs
+    assert not any('built-in' in o for o in objs)
+    assert 'drivers/gpu/drm/drm_drv' in objs
 
 
 def test_extract_log_objects_excludes_builtin_a():
+    """H.2: built-in.a excluded; skbuff.o -> stem 'net/core/skbuff'."""
     lines = [
         '  AR      net/core/built-in.a',
         '  CC      net/core/skbuff.o',
     ]
     objs = _extract_log_objects(lines)
-    assert 'built-in.a' not in objs
-    assert 'skbuff.o' in objs
+    assert not any('built-in' in o for o in objs)
+    assert 'net/core/skbuff' in objs
 
 
 def test_extract_log_objects_builtin_only_returns_empty():
@@ -130,6 +151,7 @@ def test_extract_log_objects_builtin_only_returns_empty():
 
 
 def test_extract_log_objects_builtin_mixed_with_real():
+    """H.2: full-path stems returned for real objects, built-ins excluded."""
     lines = [
         '  LD      drivers/gpu/built-in.o',
         '  CC      drivers/gpu/drm/drm_mode.o',
@@ -137,10 +159,9 @@ def test_extract_log_objects_builtin_mixed_with_real():
         '  CC      drivers/net/core/skbuff.o',
     ]
     objs = _extract_log_objects(lines)
-    assert 'built-in.o' not in objs
-    assert 'built-in.a' not in objs
-    assert 'drm_mode.o' in objs
-    assert 'skbuff.o' in objs
+    assert not any('built-in' in o for o in objs)
+    assert 'drivers/gpu/drm/drm_mode' in objs
+    assert 'drivers/net/core/skbuff' in objs
 
 
 # -- _filter_to_enabled (v13.0.1 Bug-1) ----------------------------------------
@@ -289,10 +310,11 @@ def test_run_no_kbuild_map_no_source_dir(tmp_path):
 
 
 def test_run_extracts_log_objects(tmp_path):
+    """H.2 (v16.3.0): built_objects_from_log contains full-path stems."""
     ctx = _build_context(build_log=['  CC drivers/net/core.o'])
     cache, cfg = _setup(tmp_path, ctx=ctx)
     pm = run(cfg, cache)
-    assert any('core.o' in o for o in pm['built_objects_from_log'])
+    assert any('drivers/net/core' in o for o in pm['built_objects_from_log'])
 
 
 def test_run_enabled_configs(tmp_path):
@@ -345,25 +367,27 @@ def test_run_history_map_error_graceful(tmp_path, monkeypatch):
 
 
 def test_run_builtin_o_excluded_from_log_objects(tmp_path):
+    """H.2 (v16.3.0): built-in.o excluded; drm_drv.o -> stem 'drivers/gpu/drm/drm_drv'."""
     ctx = _build_context(build_log=[
         '  LD      drivers/gpu/drm/built-in.o',
         '  CC      drivers/gpu/drm/drm_drv.o',
     ])
     cache, cfg = _setup(tmp_path, ctx=ctx)
     pm = run(cfg, cache)
-    assert 'built-in.o' not in pm['built_objects_from_log']
-    assert 'drm_drv.o' in pm['built_objects_from_log']
+    assert not any('built-in' in o for o in pm['built_objects_from_log'])
+    assert 'drivers/gpu/drm/drm_drv' in pm['built_objects_from_log']
 
 
 def test_run_builtin_a_excluded_from_log_objects(tmp_path):
+    """H.2 (v16.3.0): built-in.a excluded; skbuff.o -> stem 'net/core/skbuff'."""
     ctx = _build_context(build_log=[
         '  AR      net/core/built-in.a',
         '  CC      net/core/skbuff.o',
     ])
     cache, cfg = _setup(tmp_path, ctx=ctx)
     pm = run(cfg, cache)
-    assert 'built-in.a' not in pm['built_objects_from_log']
-    assert 'skbuff.o' in pm['built_objects_from_log']
+    assert not any('built-in' in o for o in pm['built_objects_from_log'])
+    assert 'net/core/skbuff' in pm['built_objects_from_log']
 
 
 # -- Bug-1 regression: disabled symbol excluded from config_enabled_map --------

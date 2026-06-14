@@ -105,6 +105,24 @@ v16.1.0 (F -- file-type-aware L2half):
                 test_source_not_in_artifact_drops_when_real_artifacts_present()
                 test_source_in_artifact_keeps_when_real_artifacts_present()
                 test_source_no_real_artifacts_falls_back_to_kconfig()
+
+v16.3.0 (H.2 -- full-path stems for build-log objects):
+  H.2   -- build_compiled_sets(): full-path stems from built_objects_from_log
+           (entries whose os.path.dirname is non-empty) are routed to
+           artifact_stems rather than log_basenames.  Bare-basename stems
+           (no directory component) continue to go to log_basenames.
+           Updated:
+             test_build_compiled_sets_cem_empty_but_log_basenames_available_true
+               -- log token 'drivers/usb/core/hub.o' now routes to artifact_stems;
+                  renamed to test_build_compiled_sets_log_full_path_routes_to_artifact_stems.
+           Added:
+             test_build_compiled_sets_log_full_path_routes_to_artifact_stems()
+             test_build_compiled_sets_log_bare_basename_routes_to_log_basenames()
+             test_build_compiled_sets_log_mixed_full_and_bare_routing()
+             test_build_compiled_sets_log_full_path_available_true()
+             test_build_compiled_sets_log_full_path_prevents_cross_arch_false_positive()
+             test_file_has_artifact_full_path_log_stem_exact_match()
+             test_file_has_artifact_full_path_log_stem_no_cross_arch_match()
 """
 import os
 import re
@@ -297,17 +315,136 @@ def test_build_compiled_sets_cem_empty_but_artifacts_available_true():
     assert 'drivers/usb/core/hub' in cs['artifact_stems']
 
 
-def test_build_compiled_sets_cem_empty_but_log_basenames_available_true():
-    """Bug-2: log objects alone make available=True."""
+# ==============================================================================
+# v16.3.0 (H.2) -- full-path stems routed to artifact_stems
+# ==============================================================================
+
+def test_build_compiled_sets_log_full_path_routes_to_artifact_stems():
+    """H.2 (v16.3.0): a built_objects_from_log entry with a directory component
+    (full-path stem) must be added to artifact_stems, not log_basenames.
+
+    Previously: 'drivers/usb/core/hub' -> log_basenames (bare 'hub')
+    Now:        'drivers/usb/core/hub' -> artifact_stems (full path stem)
+    """
     pm = {
         'config_enabled_map':       {},
         'config_enabled_dirs':      [],
         'built_artifacts_from_dir': [],
-        'built_objects_from_log':   ['drivers/usb/core/hub.o'],
+        'built_objects_from_log':   ['drivers/usb/core/hub'],
+    }
+    cs = build_compiled_sets(pm)
+    assert 'drivers/usb/core/hub' in cs['artifact_stems'], (
+        'full-path log stem must be in artifact_stems')
+    assert 'hub' not in cs['log_basenames'], (
+        'basename must NOT be added to log_basenames when path is present')
+    assert cs['available'] is True
+
+
+def test_build_compiled_sets_log_bare_basename_routes_to_log_basenames():
+    """H.2 (v16.3.0): a built_objects_from_log entry with NO directory component
+    (bare basename stem) must still be added to log_basenames, preserving the
+    directory-scoped fallback behaviour."""
+    pm = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   ['hub'],
+    }
+    cs = build_compiled_sets(pm)
+    assert 'hub' in cs['log_basenames'], (
+        'bare basename stem must remain in log_basenames')
+    assert 'hub' not in cs['artifact_stems'], (
+        'bare basename must NOT appear in artifact_stems')
+    assert cs['available'] is True
+
+
+def test_build_compiled_sets_log_mixed_full_and_bare_routing():
+    """H.2 (v16.3.0): full-path and bare-basename log entries in the same
+    product_map are routed to the correct sets independently."""
+    pm = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   [
+            'arch/arm/kernel/setup',   # has directory -> artifact_stems
+            'hub',                     # bare basename -> log_basenames
+        ],
+    }
+    cs = build_compiled_sets(pm)
+    assert 'arch/arm/kernel/setup' in cs['artifact_stems']
+    assert 'hub' in cs['log_basenames']
+    assert 'setup' not in cs['log_basenames'], (
+        'basename of a full-path stem must not bleed into log_basenames')
+    assert 'hub' not in cs['artifact_stems']
+
+
+def test_build_compiled_sets_log_full_path_available_true():
+    """H.2 (v16.3.0): full-path log stems alone must make available=True."""
+    pm = {
+        'config_enabled_map':       {},
+        'config_enabled_dirs':      [],
+        'built_artifacts_from_dir': [],
+        'built_objects_from_log':   ['arch/arm/kernel/setup'],
     }
     cs = build_compiled_sets(pm)
     assert cs['available'] is True
-    assert 'hub' in cs['log_basenames']
+
+
+def test_build_compiled_sets_log_full_path_prevents_cross_arch_false_positive():
+    """H.2 (v16.3.0): the cross-architecture false positive scenario.
+
+    Before H.2: 'arch/arm/kernel/setup.o' in build log -> bare stem 'setup'
+    added to log_basenames, causing arch/s390/kernel/setup.c to be kept
+    via directory-scoped fallback (when arch/s390/kernel/ was in compiled_dirs).
+
+    After H.2: the full-path stem 'arch/arm/kernel/setup' is in artifact_stems.
+    _file_has_artifact('arch/s390/kernel/setup.c') looks for the stem
+    'arch/s390/kernel/setup' in artifact_stems -- not found -- then checks
+    log_basenames -- 'setup' is not there either -- so correctly returns False.
+    """
+    pm = {
+        'config_enabled_map':  {'CONFIG_ARM': ['arch/arm/kernel/setup.c']},
+        'config_enabled_dirs': ['arch/arm/kernel/'],
+        'built_artifacts_from_dir': [],
+        # st03 v16.3.0 produces a full-path stem (no .o extension stored)
+        'built_objects_from_log': ['arch/arm/kernel/setup'],
+    }
+    cs = build_compiled_sets(pm)
+    # ARM file: artifact_stems full-path match -> kept
+    assert _file_has_artifact('arch/arm/kernel/setup.c', cs) is True
+    # s390 file: neither full-path stem nor log_basenames match -> not kept
+    assert _file_has_artifact('arch/s390/kernel/setup.c', cs) is False, (
+        'cross-architecture false positive: s390 setup.c must NOT match arm log entry')
+
+
+def test_file_has_artifact_full_path_log_stem_exact_match():
+    """H.2 (v16.3.0): _file_has_artifact() finds a full-path log stem via
+    artifact_stems regardless of compiled_dirs membership."""
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs=set(),          # no kconfig coverage at all
+        artifact_stems={'arch/arm/kernel/setup'},  # from log, routed by H.2
+        log_basenames=set(),
+        available=True,
+    )
+    assert _file_has_artifact('arch/arm/kernel/setup.c', cs) is True
+    assert _file_has_artifact('arch/s390/kernel/setup.c', cs) is False
+
+
+def test_file_has_artifact_full_path_log_stem_no_cross_arch_match():
+    """H.2 (v16.3.0): verify that when the log stem is a full path, a file in
+    a sibling architecture directory does NOT get a false artifact hit."""
+    cs = dict(
+        compiled_files=set(),
+        compiled_dirs={'arch/arm/kernel/', 'arch/s390/kernel/'},
+        artifact_stems={'arch/arm/kernel/setup'},
+        log_basenames=set(),
+        available=True,
+    )
+    # s390 setup.c must not match the arm artifact stem
+    assert _file_has_artifact('arch/s390/kernel/setup.c', cs) is False
+    # arm setup.c must match
+    assert _file_has_artifact('arch/arm/kernel/setup.c', cs) is True
 
 
 # -- built-in.o exclusion ------------------------------------------------------
