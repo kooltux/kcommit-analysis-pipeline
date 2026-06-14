@@ -34,11 +34,19 @@ directories are resolved from `paths.rules_dirs`.
 ### Scoring contribution
 
 ```
-profile_score = min(sum(matching rule weights), 100) × profile_weight / 100
+raw_rule_total = sum of weights of all matching rules in this profile
+profile_score  = int(raw_rule_total × profile_weight / 100)
+commit score   = sum of profile_score across all active profiles
 ```
 
-Rule points are capped at 100 before weight scaling.
-The final commit score is the sum of all active profile scores.
+Rule weights accumulate without an upper bound: a commit that fires more
+rules — or heavier rules — always scores strictly higher than one that fires
+fewer within the same profile. The profile weight (0–100, set in
+`profiles.active`) then scales that raw total proportionally before
+contributing to the final commit score.
+
+The scoring trace in the commit JSON exposes `raw_rule_total` and
+`final_score` per profile so each step can be inspected independently.
 
 ## Rules
 

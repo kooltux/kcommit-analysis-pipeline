@@ -27,6 +27,17 @@ vG changes (graceful degradation -- no build artifacts):
   degradation.  touched_paths_guess renamed to _touched_paths_guess in st04
   (private field, excluded from JSON output ordering).
 
+v16.5.0 changes (scoring formula -- remove per-profile cap):
+  score_commit(): removed the min(per_rule_total, 100) cap that was applied
+  before the profile multiplier.  Rule weights now accumulate without bound,
+  so a commit that fires many rules in a profile scores higher than one that
+  fires fewer -- the cap was silently discarding that signal.
+  Formula change:
+    before: final = int(min(raw_total, 100) * pmult)
+    after:  final = int(raw_total * pmult)
+  'raw_rule_total_capped' removed from the per-profile trace dict; only
+  'raw_rule_total' and 'final_score' are emitted.
+
 Pattern match provenance:
   _all_matches() now accepts an optional *sources* argument — a list of
   (filepath, lineno) tuples parallel to *patterns* — and includes
@@ -234,7 +245,18 @@ def _collect_product_evidence(commit, product_map):
 
 
 def score_commit(commit, product_map, profile_rules, cfg=None):
-    """Score a single commit against all active profiles."""
+    """Score a single commit against all active profiles.
+
+    Scoring formula (v16.5.0 -- no cap):
+      raw_rule_total = sum of weights of all matching rules in the profile
+      final_score    = int(raw_rule_total * profile_multiplier)
+      commit score   = sum of final_score across all active profiles
+
+    Rule weights accumulate without an upper bound so that a commit matching
+    more / heavier rules always ranks strictly higher than one that matches
+    fewer -- the previous min(..., 100) cap was silently discarding that
+    signal.
+    """
     if profile_rules:
         precompile_rules(profile_rules)
 
@@ -277,12 +299,11 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
                 'commit_whitelist':   _all_matches(merged.get('commit_whitelist',   []), [commit_sha]),
                 'commit_blacklist':   sha_black,
             },
-            'blocked':      blocked,
-            'block_reason': 'profile_blacklist' if blocked else '',
-            'rules':                  {},
-            'raw_rule_total':         0,
-            'raw_rule_total_capped':  0,
-            'final_score':            0,
+            'blocked':        blocked,
+            'block_reason':   'profile_blacklist' if blocked else '',
+            'rules':          {},
+            'raw_rule_total': 0,
+            'final_score':    0,
         }
 
         per_rule_total = 0
@@ -329,13 +350,11 @@ def score_commit(commit, product_map, profile_rules, cfg=None):
                     },
                 }
 
-        capped = min(per_rule_total, 100)
-        final  = int(capped * pmult)
-        profile_trace['raw_rule_total']        = per_rule_total
-        profile_trace['raw_rule_total_capped'] = capped
-        profile_trace['final_score']           = final
-        scoring_trace['profiles'][pname]       = profile_trace
-        profile_scores[pname]                  = final
+        final  = int(per_rule_total * pmult)
+        profile_trace['raw_rule_total'] = per_rule_total
+        profile_trace['final_score']    = final
+        scoring_trace['profiles'][pname] = profile_trace
+        profile_scores[pname]            = final
 
         profile_hit = any(profile_trace['merged_matches'].get(k)
                           for k in profile_trace['merged_matches'])

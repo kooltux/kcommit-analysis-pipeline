@@ -10,6 +10,10 @@ new T1 full-path-stem logic.  test_evidence_build_log_hit updated to use a
 real object path and supply config_enabled_dirs so the T2 directory-scope guard
 fires.  test_evidence_config_text_hit replaced by test_evidence_no_config_text_tag
 to verify that the old config_text: noise source no longer fires.
+
+v16.5.0: raw_rule_total_capped removed from scoring trace.  Tests updated:
+  test_score_commit_includes_rule_trace_details: asserts raw_rule_total and
+  final_score only; confirms 'raw_rule_total_capped' key is absent.
 """
 import os
 
@@ -224,6 +228,12 @@ def test_extract_meta_multiple_flags():
 
 
 def test_score_commit_includes_rule_trace_details():
+    """v16.5.0: trace contains raw_rule_total and final_score; no cap field.
+
+    Two rules fire (r1 weight=30, r2 weight=20).  With no cap and a 100%
+    profile multiplier the final_score must equal raw_rule_total (50).
+    'raw_rule_total_capped' must NOT appear in the trace.
+    """
     commit = {'commit': 'abc123', 'subject': 'usb fix', 'body': 'CVE-2026-1234',
               'files': ['drivers/usb/core.c']}
     product_map = {
@@ -252,5 +262,56 @@ def test_score_commit_includes_rule_trace_details():
     trace = out['scoring']['trace']['profiles']['sec']
     assert trace['raw_rule_total'] == 50
     assert trace['final_score'] == 50
+    assert 'raw_rule_total_capped' not in trace
     assert trace['rules']['r1']['matched'] is True
-    assert trace['rules']['r1']['score']
+    assert trace['rules']['r1']['score'] == 30
+
+
+def test_score_commit_no_cap_above_100():
+    """v16.5.0: scores are NOT capped at 100 — multiple heavy rules accumulate.
+
+    Five rules each with weight=60 all fire.  raw_rule_total = 300.
+    With profile multiplier 100% the final_score must be 300, not 100.
+    """
+    rules = {f'r{i}': {'keywords_whitelist': ['net:'], 'keywords_blacklist': [],
+                        'path_whitelist': [], 'path_blacklist': [],
+                        'commit_whitelist': [], 'commit_blacklist': [],
+                        'weight': 60} for i in range(5)}
+    pr = {'networking': {
+        'description': '', 'rules': rules,
+        'merged': {'keywords_whitelist': ['net:'], 'keywords_blacklist': [],
+                   'path_whitelist': [], 'path_blacklist': [],
+                   'commit_whitelist': [], 'commit_blacklist': []}}}
+    precompile_rules(pr)
+    commit = {'commit': 'x', 'subject': 'net: big fix', 'body': '', 'files': []}
+    r = score_commit(commit, {}, pr)
+    assert r['scoring']['profiles']['networking'] == 300
+    assert r['score'] == 300
+
+
+def test_score_commit_multiplier_scales_raw_total():
+    """v16.5.0: profile multiplier applies directly to raw_rule_total.
+
+    Two rules fire (weight=40 each) -> raw_rule_total=80.  Profile weight=50
+    -> pmult=0.5 -> final_score = int(80 * 0.5) = 40.
+    """
+    rules = {'r1': {'keywords_whitelist': ['usb:'], 'keywords_blacklist': [],
+                    'path_whitelist': [], 'path_blacklist': [],
+                    'commit_whitelist': [], 'commit_blacklist': [],
+                    'weight': 40},
+             'r2': {'keywords_whitelist': ['hub'], 'keywords_blacklist': [],
+                    'path_whitelist': [], 'path_blacklist': [],
+                    'commit_whitelist': [], 'commit_blacklist': [],
+                    'weight': 40}}
+    pr = {'usb': {
+        'description': '', 'rules': rules,
+        'merged': {'keywords_whitelist': ['usb:', 'hub'], 'keywords_blacklist': [],
+                   'path_whitelist': [], 'path_blacklist': [],
+                   'commit_whitelist': [], 'commit_blacklist': []}}}
+    precompile_rules(pr)
+    commit = {'commit': 'y', 'subject': 'usb: hub fix', 'body': '', 'files': []}
+    r = score_commit(commit, {}, pr, {'profiles': {'active': {'usb': 50}}})
+    trace = r['scoring']['trace']['profiles']['usb']
+    assert trace['raw_rule_total'] == 80
+    assert trace['final_score'] == 40
+    assert r['score'] == 40

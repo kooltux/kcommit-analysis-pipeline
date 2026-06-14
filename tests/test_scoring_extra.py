@@ -7,6 +7,10 @@ read by _collect_product_evidence().
 vG: _commit() helper updated: 'touched_paths_guess' renamed to
 '_touched_paths_guess' (private field, no longer used by
 _collect_product_evidence; kept only as a debug annotation by st04).
+
+v16.5.0: test_score_commit_capped_at_100_per_profile replaced by
+test_score_commit_no_cap_extra — verifies that the old cap is gone and
+high rule-weight totals are preserved as-is.
 """
 import pytest
 
@@ -146,8 +150,14 @@ def test_score_commit_no_profiles():
     assert r['matched_profiles'] == []
 
 
-def test_score_commit_capped_at_100_per_profile():
-    """Multiple heavy rules can't push a single profile above 100."""
+def test_score_commit_no_cap_extra():
+    """v16.5.0: per-profile scores are NOT capped at 100.
+
+    Five rules each with weight=60 all fire on the same commit — they all
+    match 'net:' in the subject.  raw_rule_total = 300.  With the default
+    100% multiplier the profile score must be 300, not 100.
+    This replaces the old test_score_commit_capped_at_100_per_profile.
+    """
     rules = {f'r{i}': {'keywords_whitelist': ['net:'], 'keywords_blacklist': [],
                         'path_whitelist': [], 'path_blacklist': [],
                         'commit_whitelist': [], 'commit_blacklist': [],
@@ -159,7 +169,8 @@ def test_score_commit_capped_at_100_per_profile():
                    'commit_whitelist': [], 'commit_blacklist': []}}}
     precompile_rules(pr)
     r = score_commit(_commit(subject='net: big fix'), {}, pr)
-    assert r['scoring']['profiles']['networking'] <= 100
+    assert r['scoring']['profiles']['networking'] == 300
+    assert r['score'] == 300
 
 
 def test_score_commit_product_evidence_config_map():
