@@ -11,6 +11,22 @@ v13.0.1 changes:
   that product_evidence tags reference only symbols that are actually enabled
   in the product .config, not the full Kbuild universe.
 
+vG changes (graceful degradation -- no build artifacts):
+  _collect_product_evidence(): removed touched_paths_guess-based loops
+  (config_dir:, artifact:, build_log: via keyword heuristics) and the
+  config_text: loop (CONFIG symbol name vs commit message text matching).
+  All three were noise sources: they fired on keyword guesses, not actual
+  commit files, producing misleading evidence tags when build context was
+  partial or absent.
+  Replaced with file-accurate loops:
+    T1 artifact:  -- full-path stem against built_artifacts_from_dir
+    T2 build_log: -- basename stem against built_objects_from_log, scoped
+                     to compiled_dirs (same guard as st04 _file_has_artifact)
+  T3 config_map: loop unchanged (already file-accurate).
+  When T1/T2 are absent, evidence is empty except for T3 -- correct graceful
+  degradation.  touched_paths_guess renamed to _touched_paths_guess in st04
+  (private field, excluded from JSON output ordering).
+
 Pattern match provenance:
   _all_matches() now accepts an optional *sources* argument — a list of
   (filepath, lineno) tuples parallel to *patterns* — and includes
@@ -30,7 +46,7 @@ def order_commit_details(commit):
     ordered = {}
     first = [
         'commit', 'subject', 'author_name', 'author_email', 'author_time',
-        'files', 'stats', 'touched_paths_guess', 'meta', 'product_evidence',
+        'files', 'stats', 'meta', 'product_evidence',
         'matched_profiles', 'scoring', 'body', '_filter_reason',
     ]
     for key in first:
@@ -138,21 +154,38 @@ def extract_commit_meta(commit):
 
 
 def _collect_product_evidence(commit, product_map):
-    """Collect informational product-coverage evidence tags for *commit*."""
-    commit_files  = set(commit.get('files', []) or [])
-    touched       = set(commit.get('touched_paths_guess') or [])
-    full_lower    = ((commit.get('subject', '') or '') + '\n' +
-                     (commit.get('body', '') or '')).lower()
+    """Collect informational product-coverage evidence tags for *commit*.
+
+    Three evidence sources, all anchored to *actual commit files* (not guessed
+    paths derived from the subject text):
+
+    T3 config_map: -- the commit file path (or its directory) matches a path
+       associated with an enabled CONFIG symbol in config_enabled_map.
+
+    T1 artifact:   -- the commit file's full-path stem is found in
+       built_artifacts_from_dir (exact match, e.g. drivers/usb/core/hub).
+
+    T2 build_log:  -- the commit file's basename stem is found in
+       built_objects_from_log, AND the file's directory is in
+       config_enabled_dirs (same directory-scoped guard as _file_has_artifact
+       in st04 to avoid cross-tree false positives).
+
+    When T1/T2 are absent (no build artifacts or log provided), only T3 fires.
+    When all three are absent (no product_map), evidence is empty.
+    This ensures graceful degradation: partial or missing build context never
+    produces misleading evidence tags.
+    """
+    commit_files = set(commit.get('files', []) or [])
 
     cem           = (product_map or {}).get('config_enabled_map', {}) or {}
     ced           = list((product_map or {}).get('config_enabled_dirs', []) or [])
-    enabled_cfgs  = set((product_map or {}).get('enabled_configs', []) or [])
     build_log_set = set((product_map or {}).get('built_objects_from_log', []) or [])
     artifact_set  = set((product_map or {}).get('built_artifacts_from_dir', []) or [])
 
     evidence     = []
     matched_syms = set()
 
+    # T3: config_map -- exact commit-file match against config_enabled_map paths
     for sym, sym_paths in cem.items():
         for sp in (sym_paths or []):
             sp_dir = os.path.dirname(sp)
@@ -163,28 +196,39 @@ def _collect_product_evidence(commit, product_map):
                     matched_syms.add(sym)
                 break
 
-    for tp in touched:
-        for cd in ced:
-            if cd.startswith(tp) or tp.startswith(cd.rstrip('/')):
-                evidence.append('config_dir:%s' % cd)
-                break
+    # T1: artifact -- full-path stem match against actual commit files
+    artifact_stems = set()
+    for p in artifact_set:
+        stem, _ = os.path.splitext(p)
+        artifact_stems.add(stem)
+    for cf in commit_files:
+        stem, _ = os.path.splitext(cf)
+        if stem in artifact_stems:
+            evidence.append('artifact:%s' % cf)
 
-    for tp in touched:
-        base = os.path.basename(tp.rstrip('/'))
-        if not base:
-            continue
-        for line in build_log_set:
-            if base in line:
-                evidence.append('build_log:%s' % base)
-                break
-        for art in artifact_set:
-            if base in art:
-                evidence.append('artifact:%s' % base)
-                break
-
-    for sym in enabled_cfgs:
-        if sym.startswith('CONFIG_') and sym[7:].lower() in full_lower:
-            evidence.append('config_text:%s' % sym)
+    # T2: build_log -- basename-stem match scoped to compiled dirs
+    # Uses the same directory-scoped guard as _file_has_artifact() in st04:
+    # a log-basename hit is only accepted when the file's parent directory is
+    # in compiled_dirs (config_enabled_dirs) or the file itself is in
+    # compiled_files (config_enabled_map paths).  This prevents cross-tree
+    # false positives where a common basename (e.g. 'core') matches log
+    # entries from an unrelated subsystem.
+    log_stems = set()
+    for p in build_log_set:
+        bn = os.path.basename(p)
+        s, _ = os.path.splitext(bn)
+        log_stems.add(s)
+    compiled_dirs_set = set(ced)
+    compiled_files_set = set()
+    for paths in cem.values():
+        compiled_files_set.update(paths)
+    for cf in commit_files:
+        bn_stem, _ = os.path.splitext(os.path.basename(cf))
+        if bn_stem in log_stems:
+            fdir = os.path.dirname(cf)
+            fdir_norm = (fdir.rstrip('/') + '/') if fdir else ''
+            if (fdir and fdir_norm in compiled_dirs_set) or cf in compiled_files_set:
+                evidence.append('build_log:%s' % bn_stem)
 
     return sorted(set(evidence))
 

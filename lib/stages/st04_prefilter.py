@@ -90,8 +90,7 @@ v12.0.0 (A.1) -- filter_decision() returns a 3-tuple
 v13.0.0 changes (E.1.1-E.1.6, E.6):
   E.1.1 -- _file_has_artifact() called only once per commit in filter_decision();
            result reused for both the guard condition and debug capture.
-  E.1.2 -- kconfig_covered / kconfig_uncovered computed unconditionally before
-           the drop decision so debug output is always accurate.
+  E.1.2 -- kconfig_covered/uncovered populated in debug unconditionally.
   E.1.4 -- L2a semantics documented: only drops when ALL files are blacklisted.
   E.1.5 -- zero-file commits get explicit early handling.
   E.1.6 -- build_compiled_sets(): removed ambiguous else-branch that added raw
@@ -169,6 +168,16 @@ v16.1.0 changes (F -- file-type-aware L2half):
               is kept via kconfig/directory coverage rather than a direct
               artifact hit.  Replaces the implicit 'default' reason that
               was previously emitted for header/build-meta keeps.
+
+vG changes (graceful degradation -- no build artifacts):
+  G2    -- run(): renamed c['touched_paths_guess'] to c['_touched_paths_guess'].
+           The field is still populated by infer_touched_paths() for debugging
+           purposes but is now a private field (underscore prefix) that is
+           excluded from JSON output ordering in order_commit_details() and
+           from product evidence collection in _collect_product_evidence().
+           This decouples the enrichment heuristic from the evidence pipeline
+           and prevents misleading evidence tags when build context is partial
+           or absent.
 
 prefilter_debug.json schema (v16.1.0):
   {
@@ -693,8 +702,8 @@ def run(cfg, cache):
     total = len(commits)
     step  = max(1, total // 50)
     for i, c in enumerate(commits):
-        c['meta']                = extract_commit_meta(c)
-        c['touched_paths_guess'] = infer_touched_paths(c.get('subject', ''), cfg)
+        c['meta']                 = extract_commit_meta(c)
+        c['_touched_paths_guess'] = infer_touched_paths(c.get('subject', ''), cfg)
         if i % step == 0 or i == total - 1:
             update_stage_progress(4, NSTAGES, 0.4 * (i + 1) / max(total, 1),
                                   'enriching', n_done=i + 1, n_total=total)

@@ -3,6 +3,10 @@
 v13.0.1: test_score_commit_product_evidence_config_map updated to supply
 config_enabled_map instead of config_to_paths, matching the new field
 read by _collect_product_evidence().
+
+vG: _commit() helper updated: 'touched_paths_guess' renamed to
+'_touched_paths_guess' (private field, no longer used by
+_collect_product_evidence; kept only as a debug annotation by st04).
 """
 import pytest
 
@@ -19,7 +23,7 @@ def _commit(sha='abc', subject='net: fix skb', body='', files=None):
         'commit': sha, 'subject': subject, 'body': body or '',
         'author_name': 'Dev', 'author_time': 0,
         'files': files or ['drivers/net/core.c'],
-        'meta': {}, 'touched_paths_guess': [],
+        'meta': {}, '_touched_paths_guess': [],
     }
 
 

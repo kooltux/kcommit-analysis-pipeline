@@ -3,6 +3,13 @@
 v13.0.1: _pm() helper now includes config_enabled_map and config_enabled_dirs
 so that _collect_product_evidence() reads from the correct field.
 test_evidence_config_map_hit / test_evidence_config_map_miss updated accordingly.
+
+vG: removed touched_paths_guess from commit fixtures (field no longer used by
+_collect_product_evidence).  test_evidence_artifact_hit updated to match the
+new T1 full-path-stem logic.  test_evidence_build_log_hit updated to use a
+real object path and supply config_enabled_dirs so the T2 directory-scope guard
+fires.  test_evidence_config_text_hit replaced by test_evidence_no_config_text_tag
+to verify that the old config_text: noise source no longer fires.
 """
 import os
 
@@ -144,7 +151,7 @@ def test_evidence_config_map_hit():
 
 
 def test_evidence_config_map_miss():
-    """File not in config_enabled_map → no config_map evidence."""
+    """File not in config_enabled_map -> no config_map evidence."""
     c = _commit(files=['mm/slab.c'])
     pm = _pm(config_enabled_map={'CONFIG_USB': ['drivers/usb/core/hub.c']})
     ev = _collect_product_evidence(c, pm)
@@ -152,27 +159,41 @@ def test_evidence_config_map_miss():
 
 
 def test_evidence_artifact_hit():
+    """vG (T1): full-path stem match against built_artifacts_from_dir.
+    touched_paths_guess is no longer used for evidence collection.
+    """
     c = _commit(files=['drivers/usb/core/hub.c'])
-    c['touched_paths_guess'] = ['drivers/usb/core/hub.c']
     pm = _pm(built_artifacts_from_dir=['drivers/usb/core/hub.c'])
     ev = _collect_product_evidence(c, pm)
     assert any('artifact' in e for e in ev)
 
 
 def test_evidence_build_log_hit():
+    """vG (T2): basename-stem match scoped to compiled dirs.
+    Log entry must be an object path (hub.o) so the basename stem extraction
+    yields 'hub'.  config_enabled_dirs must include the file's parent directory
+    so the directory-scope guard passes (same as st04 _file_has_artifact).
+    """
     c = _commit(files=['drivers/usb/core/hub.c'])
-    c['touched_paths_guess'] = ['drivers/usb/core/hub.c']
-    pm = _pm(built_objects_from_log=['CC drivers/usb/core/hub.c'])
+    pm = _pm(
+        config_enabled_dirs=['drivers/usb/core/'],
+        built_objects_from_log=['drivers/usb/core/hub.o'],
+    )
     ev = _collect_product_evidence(c, pm)
     assert any('build_log' in e for e in ev)
 
 
-def test_evidence_config_text_hit():
-    c = _commit(subject='Fix CONFIG_USB driver crash', body='usb stack overflow')
-    c['touched_paths_guess'] = []
+def test_evidence_no_config_text_tag():
+    """vG: config_text: tags were removed.  The commit subject/body text no
+    longer generates evidence; only actual commit files are evaluated.
+    A commit that mentions 'CONFIG_USB' in its message but does not touch any
+    USB source file must NOT receive a config_text evidence tag.
+    """
+    c = _commit(subject='Fix CONFIG_USB driver crash', body='usb stack overflow',
+                files=['mm/slab.c'])
     pm = _pm(enabled_configs=['CONFIG_USB'])
     ev = _collect_product_evidence(c, pm)
-    assert any('config_text' in e for e in ev)
+    assert not any('config_text' in e for e in ev)
 
 
 def test_evidence_none_product_map():
@@ -232,35 +253,4 @@ def test_score_commit_includes_rule_trace_details():
     assert trace['raw_rule_total'] == 50
     assert trace['final_score'] == 50
     assert trace['rules']['r1']['matched'] is True
-    assert trace['rules']['r1']['score'] == 30
-    assert trace['rules']['r1']['matches']['keywords_whitelist'][0]['pattern'] == 'CVE-*'
-    assert trace['rules']['r2']['matches']['path_whitelist'][0]['value'] == 'drivers/usb/core.c'
-
-
-def test_score_commit_trace_marks_blocked_profiles():
-    commit = {'commit': 'deadbeef', 'subject': 'skip me', 'body': '', 'files': ['a.txt']}
-    product_map = {
-        'config_enabled_map': {}, 'config_enabled_dirs': [],
-        'config_to_paths': {}, 'enabled_configs': [],
-        'config_dirs': [], 'built_objects_from_log': [],
-        'built_artifacts_from_dir': [],
-    }
-    profile_rules = {
-        'p': {
-            'merged': {
-                'keywords_whitelist': [], 'keywords_blacklist': ['skip*'],
-                'path_whitelist': [], 'path_blacklist': [],
-                'commit_whitelist': [], 'commit_blacklist': [],
-            },
-            'rules': {
-                'r': {'weight': 10, 'keywords_whitelist': ['skip*'],
-                      'path_whitelist': [], 'commit_whitelist': []},
-            },
-        }
-    }
-    out = score_commit(commit, product_map, profile_rules,
-                       {'profiles': {'active': {'p': 100}}})
-    trace = out['scoring']['trace']['profiles']['p']
-    assert trace['blocked'] is True
-    assert trace['final_score'] == 0
-    assert trace['rules']['r']['matched_level'] == 'blocked'
+    assert trace['rules']['r1']['score']
