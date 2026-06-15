@@ -23,6 +23,16 @@ Changes:
              Data comes from run_stats stage_05_scoring.score_distribution
              and per-profile score_max/score_min/score_avg already
              computed by _build_stage05() in run_stats.py.
+  v16.9.0 — Context section added at the top of the left pane.
+           — Exposes kernel.rev_old, kernel.rev_new (commit range),
+             build_dir/kernel_build_log/yocto_build_log/dts_roots/
+             kernel_config presence as yes/no artifact flags.
+           — avg/median bug fixed: _sidebar_payload() now accepts an
+             optional run_stats_data kwarg (the full pipeline_run_stats
+             dict) and reads stage_05_scoring top-level fields from it;
+             falls back to the legacy report_stats path.
+           — "evaluation" / "Parameters" section removed from the
+             sidebar payload; it is no longer rendered in the left pane.
 """
 import json
 import os
@@ -130,14 +140,91 @@ def _commit_row(i, c, is_filtered=False, all_profiles=None):
 
 
 # ---------------------------------------------------------------------------
+# Context payload helpers
+# ---------------------------------------------------------------------------
+
+def _bool_flag(value):
+    """Return 'yes' / 'no' / None depending on whether value is a truthy path/bool."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return 'yes' if value else 'no'
+    if isinstance(value, (list, tuple)):
+        return 'yes' if value else 'no'
+    s = str(value).strip()
+    return 'yes' if s else None
+
+
+def _build_context(cfg, report_stats):
+    """Build the context dict surfaced at the top of the left pane (v16.9.0).
+
+    Exposes:
+      rev_old / rev_new  — the analyzed commit range from kernel config
+      rev_range          — combined 'rev_old..rev_new' string
+      git_range          — from evaluation block (may differ if overridden)
+      kernel_version     — kernel version string if available
+      artifacts          — dict of artifact-type → 'yes'/'no'
+      profiles           — comma-separated list of active profiles
+      title              — report title
+    """
+    kernel  = (cfg.get('kernel')  or {}) if isinstance(cfg, dict) else {}
+    reports = (cfg.get('reports') or {}) if isinstance(cfg, dict) else {}
+    profs   = (cfg.get('profiles') or {}).get('active', {}) if isinstance(cfg, dict) else {}
+
+    rev_old = kernel.get('rev_old') or ''
+    rev_new = kernel.get('rev_new') or ''
+    rev_range = f'{rev_old}..{rev_new}' if rev_old and rev_new else (rev_old or rev_new or '')
+
+    # Evaluation block may carry a git_range computed from git.base_rev/head_rev
+    eval_info  = (report_stats or {}).get('evaluation') or {}
+    git_range  = eval_info.get('git_range') or rev_range or ''
+    kernel_ver = kernel.get('kernel_version') or eval_info.get('kernel_revision') or ''
+
+    artifacts = {}
+    if _bool_flag(kernel.get('build_dir')):
+        artifacts['build_dir'] = _bool_flag(kernel.get('build_dir'))
+    if _bool_flag(kernel.get('kernel_build_log')):
+        artifacts['kernel_build_log'] = _bool_flag(kernel.get('kernel_build_log'))
+    if _bool_flag(kernel.get('yocto_build_log')):
+        artifacts['yocto_build_log'] = _bool_flag(kernel.get('yocto_build_log'))
+    if _bool_flag(kernel.get('kernel_config')):
+        artifacts['kernel_config'] = _bool_flag(kernel.get('kernel_config'))
+    if _bool_flag(kernel.get('dts_roots')):
+        artifacts['dts_roots'] = _bool_flag(kernel.get('dts_roots'))
+
+    # If no artifact flags were set from kernel section, still show the block
+    # but empty — the JS will render a note.
+
+    active_profiles = sorted(profs.keys()) if isinstance(profs, dict) else []
+
+    return {
+        'rev_old':        rev_old or None,
+        'rev_new':        rev_new or None,
+        'rev_range':      rev_range or None,
+        'git_range':      git_range or None,
+        'kernel_version': kernel_ver or None,
+        'artifacts':      artifacts,
+        'profiles':       active_profiles,
+        'title':          reports.get('title') or None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Sidebar payload
 # ---------------------------------------------------------------------------
 
-def _sidebar_payload(report_stats, profile_summary):
+def _sidebar_payload(report_stats, profile_summary, run_stats_data=None):
     """Build the sidebar dict consumed by the JS left-pane renderer.
 
-    v16.6.0: exposes score_distribution and per-profile score_max/min
-    so the JS can render the histogram and distribution stats.
+    v16.9.0 changes:
+      - run_stats_data: the full pipeline_run_stats dict (written by
+        build_run_stats() at the end of stage 07).  When provided, the
+        stage_05_scoring top-level fields (score_max, score_min, score_avg,
+        score_median, score_distribution) are read from it directly, fixing
+        the avg/median = 0 bug that occurred when only report_stats was
+        available (which does not carry stage_05_scoring).
+      - 'evaluation' key removed from the returned dict; the JS Parameters
+        section is gone.
     """
     rs  = report_stats or {}
     ps  = profile_summary or {}
@@ -162,9 +249,12 @@ def _sidebar_payload(report_stats, profile_summary):
         if rs.get(k) is not None:
             ann[k] = rs[k]
 
-    # v16.6.0: build richer per-profile data from run_stats stage_05_scoring
-    # when available, falling back to the legacy profile_summary dict.
-    st05_full = rs.get('stage_05_scoring') or {}
+    # v16.9.0: prefer run_stats_data (full pipeline_run_stats) for the
+    # stage_05_scoring block — it contains the correct global avg/median.
+    # Fall back to the legacy rs.get('stage_05_scoring') path for backwards
+    # compatibility when run_stats_data is not passed.
+    rsd = run_stats_data or {}
+    st05_full = rsd.get('stage_05_scoring') or rs.get('stage_05_scoring') or {}
     st05_profiles_full = st05_full.get('profiles') or {}
 
     profiles_sidebar = {}
@@ -178,16 +268,18 @@ def _sidebar_payload(report_stats, profile_summary):
             'score_distribution': full.get('score_distribution') or [],
         }
 
-    # v16.6.0: global score distribution from stage_05_scoring
+    # v16.9.0: global score distribution and stats — now correctly read from
+    # the top-level of stage_05_scoring (populated by run_stats._build_stage05
+    # since v16.8.0).  When run_stats_data is supplied these fields are always
+    # present and non-zero.
     score_dist = (st05_full.get('score_distribution') or {}).get('items') or []
 
-    # Compute global min/max/avg from the rows directly if stage_05 is available
     st05_glob = {
-        'score_max':     int(st05_full.get('score_max', score_hi or 0) or 0),
-        'score_min':     int(st05_full.get('score_min', score_lo or 0) or 0),
-        'score_avg':     round(float(st05_full.get('score_avg', 0) or 0), 1),
-        'score_median':  round(float(st05_full.get('score_median', 0) or 0), 1),
-        'distribution':  score_dist,
+        'score_max':    int(st05_full.get('score_max', score_hi or 0) or 0),
+        'score_min':    int(st05_full.get('score_min', score_lo or 0) or 0),
+        'score_avg':    round(float(st05_full.get('score_avg', 0) or 0), 1),
+        'score_median': round(float(st05_full.get('score_median', 0) or 0), 1),
+        'distribution': score_dist,
     }
 
     try:
@@ -223,11 +315,12 @@ def _sidebar_payload(report_stats, profile_summary):
     }
 
     sidebar = {
-        'funnel':      funnel,
-        'stage_05':    {k: v for k, v in stage_05.items() if v is not None},
-        'stage_06':    {k: v for k, v in stage_06.items() if v is not None},
+        'funnel':   funnel,
+        'stage_05': {k: v for k, v in stage_05.items() if v is not None},
+        'stage_06': {k: v for k, v in stage_06.items() if v is not None},
         'annotations': ann,
-        'evaluation':  rs.get('evaluation') or {},
+        # 'evaluation' intentionally omitted in v16.9.0 — the Parameters
+        # section has been replaced by the Context block rendered separately.
     }
 
     drop_reasons = rs.get('st04_drop_reasons')
@@ -250,8 +343,16 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
                          is_filtered=False, templates_dir=None,
                          detail_mode='embedded', commit_index_path=None,
                          commit_detail_root=None, embed_compression='none',
-                         metadata_path=None):
-    """Write HTML report to *output_path*."""
+                         metadata_path=None, cfg=None, run_stats_data=None):
+    """Write HTML report to *output_path*.
+
+    New kwargs (v16.9.0):
+      cfg            -- full pipeline config dict; used to build the Context
+                        block (kernel.rev_old/rev_new, artifact flags, etc.).
+      run_stats_data -- full pipeline_run_stats dict returned/written by
+                        build_run_stats(); provides correct global score_avg
+                        and score_median for the Score Distribution block.
+    """
     if templates_dir is None:
         templates_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -307,12 +408,17 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         'profiles':     eval_info.get('profiles'),
     }
 
+    # ── Context block (v16.9.0) ───────────────────────────────────────────
+    context = _build_context(cfg or {}, report_stats)
+
     # ── KC_UI payload ─────────────────────────────────────────────────────
     kc_ui = {
         'meta':        meta,
+        'context':     context,
         'columns':     cols,
         'rows':        rows,
-        'sidebar':     _sidebar_payload(report_stats, profile_summary),
+        'sidebar':     _sidebar_payload(report_stats, profile_summary,
+                                        run_stats_data=run_stats_data),
         'detail_root': commit_detail_root or '',
         'is_filtered': bool(is_filtered),
     }

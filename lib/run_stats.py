@@ -16,9 +16,18 @@ Design rules
 * All aggregation is done here at write time; the HTML page does zero math.
 
 v14.1.0: initial implementation.
+v16.8.0: _build_stage05() now emits score_max, score_min, score_avg and
+         score_median at the top level of the stage_05_scoring dict so that
+         html_report._sidebar_payload() can read them directly.  Previously
+         those fields only existed inside the per-profile sub-dicts, which
+         caused the global avg/median to always display 0 in the HTML report.
+v16.12.0: replaced fixed 100+ score buckets with dynamic equal-width
+          histogram using observed score range (lo/hi/mid/label/count).
 """
 import datetime
+import math
 import os
+import statistics
 from collections import Counter
 
 from lib.config import load_json, save_json
@@ -29,30 +38,68 @@ from lib.manifest import CACHE_FILES, VERSION
 # Score bucket helpers
 # ---------------------------------------------------------------------------
 
-_BUCKET_DEFS = [
-    (0,   0,   '0'),
-    (1,   9,   '1-9'),
-    (10,  19,  '10-19'),
-    (20,  29,  '20-29'),
-    (30,  49,  '30-49'),
-    (50,  74,  '50-74'),
-    (75,  99,  '75-99'),
-    (100, 10 ** 9, '100+'),
-]
+def _nice_step(span, target_bins=16):
+    """Return a human-friendly histogram step for the observed score span."""
+    if span <= 0:
+        return 1
+    raw = float(span) / max(1, int(target_bins))
+    mag = 10 ** math.floor(math.log10(raw))
+    for mult in (1, 2, 2.5, 5, 10):
+        step = mult * mag
+        if step >= raw:
+            return max(1, int(step))
+    return max(1, int(10 * mag))
 
 
-def _bucket_label(score):
-    s = int(score or 0)
-    for lo, hi, label in _BUCKET_DEFS:
-        if lo <= s <= hi:
-            return label
-    return '100+'
+def _score_dist(commits, target_bins=16):
+    """Return an equal-width histogram over the observed score range.
 
+    Each bucket item has the shape:
+        {'label': '0-24', 'lo': 0, 'hi': 24, 'mid': 12.0, 'count': N}
 
-def _score_dist(commits):
-    """Return score-distribution items list for *commits*, all buckets."""
-    c = Counter(_bucket_label(x.get('score', 0)) for x in commits)
-    return [{'bucket': b[2], 'count': int(c.get(b[2], 0))} for b in _BUCKET_DEFS]
+    The range is computed from the actual min/max of the supplied commits
+    so the chart always spans the full observed domain.
+    """
+    scores = [int(x.get('score', 0) or 0) for x in commits]
+    if not scores:
+        return []
+
+    lo = min(scores)
+    hi = max(scores)
+
+    if lo == hi:
+        return [{
+            'label': str(lo),
+            'lo': lo,
+            'hi': hi,
+            'mid': float(lo),
+            'count': len(scores),
+        }]
+
+    step = _nice_step(hi - lo, target_bins=target_bins)
+    start = int(math.floor(lo / step) * step)
+    end = int(math.ceil(hi / step) * step)
+    if end <= hi:
+        end += step
+
+    edges = list(range(start, end + 1, step))
+    bins = []
+    for i in range(len(edges) - 1):
+        b_lo = int(edges[i])
+        b_hi = int(edges[i + 1] - 1)
+        bins.append({
+            'label': f'{b_lo}-{b_hi}',
+            'lo': b_lo,
+            'hi': b_hi,
+            'mid': (b_lo + b_hi) / 2.0,
+            'count': 0,
+        })
+
+    for s in scores:
+        idx = min(int((s - start) // step), len(bins) - 1)
+        bins[idx]['count'] += 1
+
+    return bins
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +224,18 @@ def _build_stage04(filtered, prefilter_kept, pf_sum, product_map, filter_cfg):
 # ---------------------------------------------------------------------------
 
 def _build_stage05(scored):
-    """Aggregate stage-05 scoring stats from scored_commits.json."""
+    """Aggregate stage-05 scoring stats from scored_commits.json.
+
+    v16.8.0: emits score_max, score_min, score_avg, score_median at the
+    top level of the returned dict (in addition to the per-profile
+    equivalents inside 'profiles').  html_report._sidebar_payload() reads
+    these top-level fields to populate the global Score Distribution block;
+    without them it falls back to 0, causing wrong avg / median display.
+
+    v16.12.0: per-profile and global score_distribution now use
+    dynamic equal-width bins over the observed score range instead of
+    fixed 100+ buckets.
+    """
     profiles_hit  = Counter()
     profile_data  = {}   # pname -> accumulator dict
 
@@ -196,7 +254,7 @@ def _build_stage05(scored):
                 'score_max':  0,
                 'score_min':  None,
                 'rules_hit':  Counter(),
-                'score_bins': Counter(),
+                'raw_scores': [],
             })
             s = int(pd.get('final_score', 0) or 0)
             if s > 0:
@@ -204,7 +262,7 @@ def _build_stage05(scored):
             d['score_sum'] += s
             d['score_max']  = max(d['score_max'], s)
             d['score_min']  = s if d['score_min'] is None else min(d['score_min'], s)
-            d['score_bins'][_bucket_label(s)] += 1
+            d['raw_scores'].append(s)
             for rname, rd in (pd.get('rules') or {}).items():
                 if isinstance(rd, dict) and rd.get('matched'):
                     d['rules_hit'][rname] += 1
@@ -218,17 +276,37 @@ def _build_stage05(scored):
             'score_avg':          round(d['score_sum'] / cnt, 1) if cnt else 0,
             'score_max':          d['score_max'],
             'score_min':          d['score_min'] if d['score_min'] is not None else 0,
-            'score_distribution': [{'bucket': b[2], 'count': int(d['score_bins'].get(b[2], 0))}
-                                    for b in _BUCKET_DEFS],
+            'score_distribution': _score_dist(
+                [{'score': s} for s in d['raw_scores']]
+            ),
             'rules_hit':          [{'rule': k, 'count': int(v)}
                                     for k, v in sorted(d['rules_hit'].items(),
                                                        key=lambda kv: (-kv[1], kv[0]))],
         }
 
+    # ------------------------------------------------------------------
+    # Global score statistics across ALL scored commits
+    # (including zero-score commits — consistent with the distribution).
+    # These top-level fields are read by html_report._sidebar_payload()
+    # to populate the Score Distribution stat block.
+    # ------------------------------------------------------------------
+    all_scores = [int(c.get('score', 0) or 0) for c in scored]
+    nonzero    = [s for s in all_scores if s > 0]
+
+    g_max    = max(all_scores)          if all_scores else 0
+    g_min    = min(nonzero)             if nonzero    else 0
+    g_avg    = round(statistics.mean(all_scores),          1) if all_scores else 0
+    g_median = round(statistics.median(all_scores),        1) if all_scores else 0
+
     return {
         'total_scored':           len(scored),
-        'zero_score_commits':     sum(1 for c in scored if int(c.get('score', 0) or 0) == 0),
+        'zero_score_commits':     sum(1 for s in all_scores if s == 0),
         'multi_profile_commits':  sum(1 for c in scored if len(c.get('matched_profiles') or []) > 1),
+        # Global score stats — consumed by html_report._sidebar_payload()
+        'score_max':              g_max,
+        'score_min':              g_min,
+        'score_avg':              g_avg,
+        'score_median':           g_median,
         'score_distribution':     {'items': _score_dist(scored)},
         'profiles_hit':           {'items': _rank_items(profiles_hit, 'profile')},
         'profiles':               profiles_out,

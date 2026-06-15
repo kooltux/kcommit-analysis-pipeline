@@ -1,6 +1,7 @@
 """Tests for lib.html_report — template handling and HTML output (v15)."""
 import json
 import os
+import re
 
 from lib.html_report import generate_html_report
 
@@ -26,6 +27,13 @@ def _kc_ui(txt):
     idx = txt.index(marker) + len(marker)
     obj, _ = json.JSONDecoder().raw_decode(txt, idx)
     return obj
+
+
+def _strip_comments(js):
+    """Remove /* ... */ and // ... comment blocks from JS source."""
+    js = re.sub(r'/\*.*?\*/', '', js, flags=re.DOTALL)
+    js = re.sub(r'//[^\n]*', '', js)
+    return js
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +259,15 @@ def test_html_report_sidebar_handles_missing_stage_counts(tmp_path):
     assert sb['funnel']['collected'] is None
 
 
-def test_html_report_sidebar_includes_evaluation_config(tmp_path):
+def test_html_report_sidebar_no_evaluation_key(tmp_path):
+    """v16.9.0: 'evaluation' must no longer appear in the sidebar payload.
+
+    The Parameters/Evaluation Config section was removed in v16.9.0.
+    Relevant fields (git_range, kernel_revision) are now exposed via
+    UI.context (built by _build_context()) instead of the sidebar.
+    Passing an 'evaluation' dict in report_stats must have no effect on
+    the sidebar — the key must be absent.
+    """
     out = tmp_path / 'report.html'
     rs = {
         'evaluation': {
@@ -264,9 +280,50 @@ def test_html_report_sidebar_includes_evaluation_config(tmp_path):
     }
     generate_html_report([], {}, rs, str(out))
     sb = _kc_ui(out.read_text())['sidebar']
-    ev = sb['evaluation']
-    assert ev.get('git_range') == 'abc..def'
-    assert ev.get('kernel_revision') == 'v6.1'
+    assert 'evaluation' not in sb
+
+
+def test_html_report_context_block_present(tmp_path):
+    """v16.9.0: UI.context must be present and contain expected fields.
+
+    When cfg is passed with kernel.rev_old/rev_new, the context block
+    must expose rev_range, rev_old, rev_new.  When cfg is omitted the
+    block is still present (all fields None/empty) and must not crash.
+    """
+    out = tmp_path / 'report.html'
+    cfg = {
+        'kernel': {
+            'rev_old': 'v6.1',
+            'rev_new': 'v6.6',
+            'build_dir': '/build',
+            'kernel_build_log': '/build/build.log',
+        },
+        'profiles': {'active': {'security': 100, 'network': 80}},
+    }
+    generate_html_report([], {}, {}, str(out), cfg=cfg)
+    ui  = _kc_ui(out.read_text())
+    ctx = ui['context']
+    assert ctx['rev_old']   == 'v6.1'
+    assert ctx['rev_new']   == 'v6.6'
+    assert ctx['rev_range'] == 'v6.1..v6.6'
+    assert ctx['artifacts']['build_dir']        == 'yes'
+    assert ctx['artifacts']['kernel_build_log'] == 'yes'
+    assert set(ctx['profiles']) == {'security', 'network'}
+
+
+def test_html_report_context_block_present_without_cfg(tmp_path):
+    """UI.context is always present even when cfg is not supplied."""
+    out = tmp_path / 'report.html'
+    generate_html_report([], {}, {}, str(out))
+    ui  = _kc_ui(out.read_text())
+    assert 'context' in ui
+    ctx = ui['context']
+    # All fields are None or empty when no cfg is provided
+    assert ctx['rev_old']   is None
+    assert ctx['rev_new']   is None
+    assert ctx['rev_range'] is None
+    assert ctx['artifacts'] == {}
+    assert ctx['profiles']  == []
 
 
 # ---------------------------------------------------------------------------
@@ -562,3 +619,30 @@ def test_summary_js_has_per_profile_score_columns():
     assert 'score_' in js          # key prefix used for per-profile columns
     assert 'PROFILE_NAMES' in js   # profile name universe computed at startup
     assert '_profile' in js        # column marker used in rowHtml()
+
+
+def test_summary_js_has_context_section():
+    """v16.9.0: JS must render the Analysis Context section from UI.context."""
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    assert 'UI.context' in js or 'CTX' in js
+    assert 'Analysis Context' in js
+
+
+def test_summary_js_no_evaluation_config_section():
+    """v16.9.0: JS executable code must NOT render an Evaluation Config section.
+
+    The string 'Evaluation Config' may appear in comments (e.g. change-log),
+    but must not appear in any executable code path — specifically, the old
+    'SB.evaluation' guard and its surrounding renderEvaluationConfig() call
+    must be gone entirely.
+    """
+    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html', 'summary.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    code = _strip_comments(js)
+    assert 'Evaluation Config' not in code
+    assert 'SB.evaluation'     not in code

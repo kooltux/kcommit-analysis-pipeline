@@ -1,22 +1,37 @@
-/* kcommit-analysis-pipeline — v16.7.0 UI
+/* kcommit-analysis-pipeline — v16.12.0 UI
  *
  * Reads everything from window.__KC_UI__ (serialised by html_report.py at
  * generation time from config + JSON outputs — zero hardcoding).
  *
  * Structure of __KC_UI__:
  *   meta          – tool version, run date, git range, title, subtitle
+ *   context       – rev_range, kernel_version, artifacts, profiles (v16.9.0)
  *   columns       – [{key, label, type, options?}] for table columns
  *   rows          – flat commit rows for the table
- *   sidebar       – {funnel, stages, profiles, evaluation, annotations}
+ *   sidebar       – {funnel, stage_04, stage_05, stage_06, annotations}
  *   detail_root   – path prefix for per-commit sidecar JSON (e.g. './commits')
  *   is_filtered   – bool: this is the filtered-commits view
  *
- * v16.7.0 changes:
- *   Tooltip positioning: position:fixed + getBoundingClientRect() so the
- *   bubble always renders in the correct viewport position, regardless of
- *   overflow:hidden ancestors or scroll offset.
- *   Pane resize: width set in rem (px / rootFontSize) so drag-resize
- *   stays proportional when browser zoom changes the root font size.
+ * v16.11.0 changes:
+ *   Score distribution chart completely redesigned as a smooth curve:
+ *   • The histogram bars are GONE — replaced by a single filled-area
+ *     distribution curve built with Catmull-Rom → cubic Bézier splines.
+ *   • The filled area under the curve uses a vertical gradient: opaque
+ *     at the bottom, transparent at the top, so the fill reads as a
+ *     "mountain" shape without obscuring the curve itself.
+ *   • A subtle tick mark + count label is shown below the x-axis at each
+ *     bucket position so the viewer can still read raw counts on hover
+ *     (<title> tooltip on the invisible hit-target rect per bucket).
+ *   • Avg and median markers are kept: full-height dashed lines with
+ *     floating pill labels (shifted vertically when they overlap).
+ *   • Stat pills row (Max/Min/Avg/Median) unchanged above the chart.
+ *   • All colours from --kc-chart-* tokens only — no Nexus var(--color-*)
+ *     references that would be undefined in summary.css.
+ *
+ * v16.12.0 changes:
+ *   Score distribution buckets are now dynamic (observed range, equal-width).
+ *   Each bucket item has numeric lo/hi/mid/label fields; legacy bucket/100+
+ *   parsing has been removed.  scoreToX() interpolates within lo–hi bounds.
  */
 (function () {
   'use strict';
@@ -25,15 +40,11 @@
   const UI    = window.__KC_UI__      || {};
   const STORE = window.__KC_COMMITS__ || {};
   const META  = UI.meta    || {};
+  const CTX   = UI.context || {};
   const SB    = UI.sidebar || {};
   const DROOT = (UI.detail_root || './commits').replace(/\/+$/, '');
 
-  /* ---- Build effective column list -----------------------------------
-   * The generator emits a base set of columns.  We expand it here by
-   * injecting one numeric column per profile  (key = "score_<profile>")
-   * immediately after the combined "score" column.  This is done on the
-   * client so the generator does not need to enumerate profiles twice.
-   * -------------------------------------------------------------------*/
+  /* ---- Build effective column list ----------------------------------- */
   const BASE_COLS   = UI.columns || [];
   const PROFILE_NAMES = (() => {
     const names = new Set();
@@ -41,21 +52,18 @@
     return [...names].sort();
   })();
 
-  // Insert per-profile score columns after the "score" column
   const COLS = (() => {
     const out = [];
     for (const col of BASE_COLS) {
       out.push(col);
       if (col.key === 'score' && PROFILE_NAMES.length) {
-        for (const p of PROFILE_NAMES) {
+        for (const p of PROFILE_NAMES)
           out.push({ key: `score_${p}`, label: p, type: 'number', _profile: p });
-        }
       }
     }
     return out.filter(c => c.key !== 'profile_scores');
   })();
 
-  // Enrich rows with per-profile score keys
   const ROWS = (UI.rows || []).map(r => {
     const out = Object.assign({}, r);
     for (const p of PROFILE_NAMES) {
@@ -65,11 +73,9 @@
     return out;
   });
 
-  /* Row lookup by sha12 or full sha */
   const rowBySha = Object.create(null);
   ROWS.forEach(r => { rowBySha[r.sha12] = r; if (r.sha) rowBySha[r.sha] = r; });
 
-  /* ---- Distinct-value index for autofilter selects ------------------*/
   const COL_DISTINCT = Object.create(null);
   COLS.forEach(col => {
     const vals = new Set();
@@ -92,9 +98,7 @@
   }
 
   function escNl(s) {
-    return esc(s)
-      .replace(/\\n/g, '<br>')
-      .replace(/\n/g,  '<br>');
+    return esc(s).replace(/\\n/g, '<br>').replace(/\n/g, '<br>');
   }
 
   function fmtDate(ts) {
@@ -121,9 +125,6 @@
     return (arr || []).map(p => `<span class="kc-chip">${esc(p)}</span>`).join(' ');
   }
 
-  /* kv — key/value row.  Optional tooltip text adds a ⓘ icon whose
-   * bubble is positioned via JS (positionTooltip) using position:fixed,
-   * so it is never clipped by overflow:hidden ancestors. */
   function kv(label, val, tip) {
     const tipHtml = tip
       ? `<i class="kc-info-icon" role="button" aria-label="${esc(label)} help" tabindex="0">i<span class="kc-tooltip">${esc(tip)}</span></i>`
@@ -142,40 +143,276 @@
     </div>`;
   }
 
-  /* ---- Score histogram helper ---- */
+  /* =========================================================
+   * renderScoreChart(distItems, ss)   — v16.12.0
+   *
+   * Smooth filled-area distribution curve (no histogram bars).
+   *
+   * Layout
+   * ──────
+   *   W=240, H=130  total SVG viewBox
+   *   ML=28  MR=8   left/right margins
+   *   MT=20  MB=28  top (pill labels) / bottom (x-axis ticks + labels)
+   *   Plot area: 204 × 82 px
+   *
+   * Drawing
+   * ───────
+   *   1. Compute a Gaussian KDE at each bucket centre (BW=1.0).
+   *   2. Convert the N sample points to screen coords.
+   *   3. Build a smooth cubic Bézier path (Catmull-Rom conversion).
+   *   4. Close the path downward to the baseline → filled area.
+   *   5. Apply a linearGradient fill: opaque at baseline, 20% opacity
+   *      at the curve peak — so the fill looks like a lit mountain.
+   *   6. Draw the stroke on top of the fill in the same colour.
+   *   7. Invisible hit-target <rect> per bucket with a <title> tooltip
+   *      showing "label: count" so raw counts are accessible on hover.
+   *   8. Avg/median dashed vertical markers with floating pill labels.
+   *      Marker positions are interpolated using numeric lo/hi bounds.
+   *   9. Light baseline rule; x-axis tick marks + rotated labels.
+   *
+   * Colours: 100% --kc-chart-* tokens.
+   * =========================================================
+   */
+  function renderScoreChart(distItems, ss) {
+    if (!distItems || !distItems.length) return '';
+
+    /* ── stat pills row ── */
+    let statsHtml = '';
+    if (ss) {
+      const pills = [];
+      if (ss.score_max    != null) pills.push(['Max',    ss.score_max]);
+      if (ss.score_min    != null) pills.push(['Min',    ss.score_min]);
+      if (ss.score_avg    != null) pills.push(['Avg',    ss.score_avg]);
+      if (ss.score_median != null) pills.push(['Median', ss.score_median]);
+      if (pills.length) {
+        statsHtml = `<div class="kc-dist-stats">${
+          pills.map(([label, val]) =>
+            `<div class="kc-dist-stat">
+              <span class="kc-dist-stat-label">${esc(label)}</span>
+              <span class="kc-dist-stat-value">${esc(val)}</span>
+            </div>`
+          ).join('')
+        }</div>`;
+      }
+    }
+
+    /* ── SVG layout ── */
+    const W  = 240, H  = 130;
+    const ML = 28,  MR = 8;
+    const MT = 20,  MB = 28;
+    const PW = W - ML - MR;
+    const PH = H - MT - MB;
+    const N  = distItems.length;
+    const counts = distItems.map(b => b.count || 0);
+
+    /* ── Gaussian KDE (bandwidth = 1.0 bucket widths) ── */
+    const BW = 1.0;
+    const kdeRaw = counts.map((_, xi) => {
+      let sum = 0;
+      counts.forEach((c, i) => {
+        const u = (xi - i) / BW;
+        sum += c * Math.exp(-0.5 * u * u);
+      });
+      return sum;
+    });
+    const kdeMax = Math.max(1, ...kdeRaw);
+
+    /* ── Screen-space points ── */
+    /* Each bucket centre is evenly spaced across the plot width.
+       We use N-1 intervals so the first point sits at x=ML and the
+       last at x=ML+PW, giving maximum horizontal spread. */
+    function ptX(i) {
+      return N < 2 ? ML + PW / 2 : ML + (i / (N - 1)) * PW;
+    }
+    function ptY(kde) {
+      return MT + PH - (kde / kdeMax) * PH * 0.90;   /* 90% of plot height */
+    }
+
+    const pts = kdeRaw.map((k, i) => ({ x: ptX(i), y: ptY(k) }));
+
+    /* ── Catmull-Rom → cubic Bézier ── */
+    function crToCubic(p0, p1, p2, p3) {
+      const alpha = 0.5;
+      const cp1x = p1.x + (p2.x - p0.x) / 6 * alpha * 2;
+      const cp1y = p1.y + (p2.y - p0.y) / 6 * alpha * 2;
+      const cp2x = p2.x - (p3.x - p1.x) / 6 * alpha * 2;
+      const cp2y = p2.y - (p3.y - p1.y) / 6 * alpha * 2;
+      return { cp1x, cp1y, cp2x, cp2y };
+    }
+
+    let curvePath = `M ${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(0, i - 1)];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[Math.min(pts.length - 1, i + 2)];
+      const { cp1x, cp1y, cp2x, cp2y } = crToCubic(p0, p1, p2, p3);
+      curvePath += ` C ${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+    }
+
+    /* Closed path for the fill: go down to baseline on both ends */
+    const baseline = MT + PH;
+    const fillPath = `${curvePath} L ${pts[pts.length-1].x.toFixed(1)},${baseline} L ${pts[0].x.toFixed(1)},${baseline} Z`;
+
+    /* ── Unique gradient id (avoids conflicts if multiple charts on page) ── */
+    const gradId = `kc-curve-grad-${Math.random().toString(36).slice(2,8)}`;
+
+    const defs = `<defs>
+      <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"   stop-color="var(--kc-chart-curve-fill)" stop-opacity="0.28"/>
+        <stop offset="100%" stop-color="var(--kc-chart-curve-fill)" stop-opacity="0.06"/>
+      </linearGradient>
+    </defs>`;
+
+    /* ── Filled area ── */
+    const fillElem = `<path d="${fillPath}" fill="url(#${gradId})"/>`;
+
+    /* ── Curve stroke ── */
+    const strokeElem = `<path d="${curvePath}" fill="none"
+      stroke="var(--kc-chart-curve-stroke)" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round"/>`;
+
+    /* ── Invisible per-bucket hit targets (for tooltip hover) ── */
+    const hitTargets = distItems.map((b, i) => {
+      const cx  = ptX(i);
+      const tw  = N < 2 ? PW : PW / (N - 1);
+      const tx  = cx - tw / 2;
+      return `<rect x="${tx.toFixed(1)}" y="${MT}" width="${tw.toFixed(1)}" height="${PH}"
+        fill="transparent" stroke="none">
+        <title>${esc(b.label || '')}: ${b.count || 0}</title>
+      </rect>`;
+    }).join('');
+
+    /* ── Baseline rule ── */
+    const baseRule = `<line x1="${ML}" y1="${baseline}" x2="${ML+PW}" y2="${baseline}"
+      stroke="var(--kc-chart-axis-label)" stroke-width="0.6" opacity="0.35"/>`;
+
+    /* ── X-axis ticks + labels ── */
+    const xAxis = distItems.map((b, i) => {
+      const cx = ptX(i);
+      const ty = baseline + 4;
+      return `<line x1="${cx.toFixed(1)}" y1="${baseline}" x2="${cx.toFixed(1)}" y2="${(baseline+3).toFixed(1)}"
+          stroke="var(--kc-chart-axis-label)" stroke-width="0.7" opacity="0.5"/>
+        <text
+          transform="rotate(-40,${cx.toFixed(1)},${ty})"
+          x="${cx.toFixed(1)}" y="${ty}"
+          text-anchor="end"
+          font-size="6"
+          fill="var(--kc-chart-axis-label)"
+          font-family="inherit">${esc(b.label || '')}</text>`;
+    }).join('');
+
+    /* ── Avg / Median marker helper ──
+     * Maps a score value to an x position by interpolating within the
+     * numeric lo–hi bounds of the bucket it falls into.
+     * Returns null when score is outside the entire distribution range.
+     */
+    function scoreToX(score) {
+      const s = parseFloat(score);
+      if (isNaN(s) || !distItems.length) return null;
+
+      for (let i = 0; i < distItems.length; i++) {
+        const lo = Number(distItems[i].lo);
+        const hi = Number(distItems[i].hi);
+        if (s >= lo && s <= hi) {
+          if (i === distItems.length - 1 || hi <= lo) return ptX(i);
+          const frac = (s - lo) / (hi - lo);
+          return ptX(i) + frac * (ptX(i + 1) - ptX(i));
+        }
+      }
+
+      if (s < Number(distItems[0].lo)) return ptX(0);
+      return ptX(distItems.length - 1);
+    }
+
+    const pillH = 11, pillR = 3;
+    let markers = '';
+
+    if (ss) {
+      let avgX = null, medX = null;
+
+      if (ss.score_avg != null) {
+        avgX = scoreToX(ss.score_avg) ?? (ML + PW / 2);
+        const label = `avg ${ss.score_avg}`;
+        const pw    = label.length * 4.2 + 6;
+        const px    = Math.min(W - pw - 2, Math.max(2, avgX - pw / 2));
+        const textY = MT - 4;
+        markers += `
+          <line x1="${avgX.toFixed(1)}" y1="${MT}" x2="${avgX.toFixed(1)}" y2="${baseline}"
+            stroke="var(--kc-chart-avg-line)" stroke-width="1.2"
+            stroke-dasharray="3,2.5" opacity="0.9"/>
+          <rect x="${px.toFixed(1)}" y="${(textY - pillH + 2).toFixed(1)}"
+            width="${pw.toFixed(1)}" height="${pillH}"
+            rx="${pillR}" ry="${pillR}"
+            fill="var(--kc-chart-avg-line)" opacity="0.15"/>
+          <text x="${avgX.toFixed(1)}" y="${textY.toFixed(1)}"
+            text-anchor="middle" font-size="7"
+            fill="var(--kc-chart-avg-line)"
+            font-family="inherit" font-weight="600">${esc(String(label))}</text>`;
+      }
+
+      if (ss.score_median != null) {
+        medX = scoreToX(ss.score_median) ?? (ML + PW / 2);
+        const label  = `med ${ss.score_median}`;
+        const pw     = label.length * 4.2 + 6;
+        const px     = Math.min(W - pw - 2, Math.max(2, medX - pw / 2));
+        /* shift pill up if avg is within 18px */
+        const textY  = (avgX != null && Math.abs(avgX - medX) < 18)
+          ? MT - 14
+          : MT - 4;
+        markers += `
+          <line x1="${medX.toFixed(1)}" y1="${MT}" x2="${medX.toFixed(1)}" y2="${baseline}"
+            stroke="var(--kc-chart-med-line)" stroke-width="1.2"
+            stroke-dasharray="3,2.5" opacity="0.9"/>
+          <rect x="${px.toFixed(1)}" y="${(textY - pillH + 2).toFixed(1)}"
+            width="${pw.toFixed(1)}" height="${pillH}"
+            rx="${pillR}" ry="${pillR}"
+            fill="var(--kc-chart-med-line)" opacity="0.15"/>
+          <text x="${medX.toFixed(1)}" y="${textY.toFixed(1)}"
+            text-anchor="middle" font-size="7"
+            fill="var(--kc-chart-med-line)"
+            font-family="inherit" font-weight="600">${esc(String(label))}</text>`;
+      }
+    }
+
+    const svg = `<svg class="kc-score-svg"
+      viewBox="0 0 ${W} ${H}" width="100%"
+      aria-label="Score distribution curve" role="img">
+      ${defs}
+      ${baseRule}
+      ${fillElem}
+      ${strokeElem}
+      ${hitTargets}
+      ${markers}
+      ${xAxis}
+    </svg>`;
+
+    return statsHtml + svg;
+  }
+
+  /* =========================================================
+   * Legacy plain-bar histogram — still used for per-profile
+   * mini-histograms inside the Profiles section where the
+   * narrow width makes the SVG chart impractical.
+   * =========================================================
+   */
   function renderHistogram(distItems) {
     if (!distItems || !distItems.length) return '';
     const maxCount = Math.max(1, ...distItems.map(b => b.count || 0));
     return `<div class="kc-histogram">${
       distItems.map(b => {
-        const cnt  = b.count || 0;
-        const pct  = Math.round((cnt / maxCount) * 100);
-        const zero = b.bucket === '0';
-        const cls  = zero ? 'kc-hist-bar kc-hist-zero' : 'kc-hist-bar';
-        const cntCls = cnt === 0 ? 'kc-hist-count kc-muted' : 'kc-hist-count';
+        const cnt    = b.count || 0;
+        const pct    = Math.round((cnt / maxCount) * 100);
+        const label  = b.label || '';
+        const isZero = cnt === 0;
+        const cls    = 'kc-hist-bar' + (isZero ? ' kc-hist-zero' : '');
+        const cntCls = isZero ? 'kc-hist-count kc-muted' : 'kc-hist-count';
         return `<div class="kc-hist-row">
-          <span class="kc-hist-bucket">${esc(b.bucket)}</span>
+          <span class="kc-hist-bucket">${esc(label)}</span>
           <div class="kc-hist-bar-wrap"><div class="${cls}" style="width:${pct}%"></div></div>
           <span class="${cntCls}">${cnt}</span>
         </div>`;
       }).join('')
-    }</div>`;
-  }
-
-  /* ---- Score stat block (min/max/avg/median) ---- */
-  function renderScoreStats(ss) {
-    if (!ss) return '';
-    const items = [];
-    if (ss.score_max != null) items.push({ label: 'Max',    val: ss.score_max });
-    if (ss.score_min != null) items.push({ label: 'Min',    val: ss.score_min });
-    if (ss.score_avg != null) items.push({ label: 'Avg',    val: ss.score_avg });
-    if (ss.score_median != null) items.push({ label: 'Median', val: ss.score_median });
-    if (!items.length) return '';
-    return `<div class="kc-dist-stats">${
-      items.map(i => `<div class="kc-dist-stat">
-        <span class="kc-dist-stat-label">${esc(i.label)}</span>
-        <span class="kc-dist-stat-value">${esc(i.val)}</span>
-      </div>`).join('')
     }</div>`;
   }
 
@@ -198,53 +435,25 @@
       .catch(() => null);
   }
 
-  /* ========= Tooltip positioning (position:fixed) =========
-   *
-   * Because the tooltip uses position:fixed it escapes every
-   * overflow:hidden ancestor.  We compute the viewport-relative
-   * position from the icon's bounding rect and write it as inline
-   * style on the .kc-tooltip element before the bubble becomes
-   * visible, so the arrow always points at the correct icon.
-   *
-   * Layout (above the icon, horizontally centred on it):
-   *
-   *   +----[ tooltip bubble ]----+
-   *                ▼  (arrow)
-   *              [i icon]
-   *
-   * We clamp so the bubble never overflows the left or right
-   * viewport edge (8px margin on each side).
-   */
+  /* ========= Tooltip positioning (position:fixed) ========= */
   function positionTooltip(icon) {
     const tip = icon.querySelector('.kc-tooltip');
     if (!tip) return;
-
-    /* Reset any previous inline placement so offsetWidth is accurate */
     tip.style.left = '0';
     tip.style.top  = '0';
-
     const iconRect = icon.getBoundingClientRect();
     const tipW     = tip.offsetWidth  || 220;
     const tipH     = tip.offsetHeight || 40;
-    const GAP      = 8;   /* px between arrow tip and icon top edge */
-    const MARGIN   = 8;   /* min distance from viewport edges */
-
-    /* Preferred: centred on icon, above it */
+    const GAP = 8, MARGIN = 8;
     let left = iconRect.left + iconRect.width / 2 - tipW / 2;
     let top  = iconRect.top  - tipH - GAP;
-
-    /* Clamp horizontally */
     left = Math.max(MARGIN, Math.min(left, window.innerWidth - tipW - MARGIN));
-
-    /* If not enough room above, flip below the icon */
     if (top < MARGIN) {
       top = iconRect.bottom + GAP;
-      /* Flip the CSS arrow to point upward when bubble is below */
       tip.classList.add('kc-tooltip-below');
     } else {
       tip.classList.remove('kc-tooltip-below');
     }
-
     tip.style.left = `${Math.round(left)}px`;
     tip.style.top  = `${Math.round(top)}px`;
   }
@@ -264,14 +473,11 @@
   const savedTheme = localStorage.getItem('kc-theme') ||
     (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   applyTheme(savedTheme);
-
   document.getElementById('kc-theme-btn')
     ?.addEventListener('click', () =>
       applyTheme(html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
 
   /* ========= Pane collapse / resize ========= */
-
-  /* Returns the current root font-size in px (respects browser zoom). */
   function rootFontSizePx() {
     return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   }
@@ -303,22 +509,20 @@
   initPane(document.getElementById('kc-pane-right'), 'kc-right-collapsed', 'kc-right-toggle');
   updateCollapseIcons();
 
-  /* Left-pane drag resize — width stored/set in rem so zoom doesn't break it */
   document.querySelectorAll('.kc-handle').forEach(handle => {
     if (handle.id === 'kc-right-handle') return;
     const target = handle.previousElementSibling;
     if (!target) return;
     let startX, startW;
     handle.addEventListener('mousedown', e => {
-      startX = e.clientX;
-      startW = target.getBoundingClientRect().width;
+      startX = e.clientX; startW = target.getBoundingClientRect().width;
       handle.classList.add('dragging');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
     });
     window.addEventListener('mousemove', e => {
       if (!handle.classList.contains('dragging')) return;
-      const rem = rootFontSizePx();
+      const rem  = rootFontSizePx();
       const newW = Math.max(180, Math.min(700, startW + e.clientX - startX));
       target.style.width = `${(newW / rem).toFixed(3)}rem`;
     });
@@ -329,15 +533,13 @@
     });
   });
 
-  /* Right-pane drag resize */
   (function () {
     const rHandle = document.getElementById('kc-right-handle');
     const rPane   = document.getElementById('kc-pane-right');
     if (!rHandle || !rPane) return;
     let startX, startW;
     rHandle.addEventListener('mousedown', e => {
-      startX = e.clientX;
-      startW = rPane.getBoundingClientRect().width;
+      startX = e.clientX; startW = rPane.getBoundingClientRect().width;
       rHandle.classList.add('dragging');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
@@ -360,7 +562,6 @@
     const bar = document.getElementById('kc-topbar-pills');
     if (!bar) return;
     const pills = [];
-
     function localTzLabel() {
       try {
         const parts = new Intl.DateTimeFormat(undefined, {
@@ -370,24 +571,19 @@
         return tz ? tz.value : '';
       } catch (_) { return ''; }
     }
-
     if (META.version) pills.push(esc(META.version));
-
     if (META.generated_at) {
       const ts = String(META.generated_at).slice(0, 16);
       const tz = localTzLabel();
       pills.push(`Run: ${esc(ts)}${tz ? ` ${esc(tz)}` : ''}`);
     }
-
     if (META.git_range) {
       const parts = String(META.git_range).split('..');
-      if (parts.length === 2) {
+      if (parts.length === 2)
         pills.push(`From ${esc(parts[0].trim())} to ${esc(parts[1].trim())}`);
-      } else {
+      else
         pills.push(`Range: ${esc(META.git_range)}`);
-      }
     }
-
     if (META.kernel_ver) pills.push(`Kernel: ${esc(META.kernel_ver)}`);
     bar.innerHTML = pills.map(p => `<span class="kc-meta-pill">${p}</span>`).join('');
   })();
@@ -399,7 +595,6 @@
 
     let html = '';
 
-    /* ---- Tooltip definitions for stat labels ---- */
     const TIPS = {
       'Collected':          'Total commits fetched from git in the configured SHA range.',
       'Prefilter dropped':  'Commits removed by stage 04 before scoring (e.g. no Kconfig coverage, path blacklist).',
@@ -425,14 +620,78 @@
       'Median':             'Middle value when commit scores are sorted — less sensitive to outliers than the mean.',
     };
 
+    /* =========================================================
+     * Analysis Context section (v16.9.0, labels refreshed v16.9.1)
+     * Renders scope / revision range / build inputs / profiles
+     * from UI.context (CTX).
+     * =========================================================
+     */
+    (function renderContext() {
+      const hasAny = CTX.rev_range || CTX.git_range || CTX.kernel_version ||
+        (CTX.profiles && CTX.profiles.length) ||
+        (CTX.artifacts && Object.keys(CTX.artifacts).length);
+      if (!hasAny) return;
+
+      html += `<div class="kc-section-head">Scope</div>`;
+      html += `<div class="kc-stat-block">`;
+      html += `<div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udd00</span>Revision range</div>`;
+      html += `<div class="kc-stat-block-body">`;
+
+      const range = CTX.rev_range || CTX.git_range;
+      if (range) {
+        const parts = String(range).split('..');
+        if (parts.length === 2) {
+          html += kv('From', `<code class="kc-mono">${esc(parts[0].trim())}</code>`);
+          html += kv('To',   `<code class="kc-mono">${esc(parts[1].trim())}</code>`);
+        } else {
+          html += kv('Range', `<code class="kc-mono">${esc(range)}</code>`);
+        }
+      }
+
+      if (CTX.kernel_version)
+        html += kv('Kernel', `<code class="kc-mono">${esc(CTX.kernel_version)}</code>`);
+
+      html += `</div></div>`;
+
+      const artEntries = Object.entries(CTX.artifacts || {});
+      if (artEntries.length) {
+        const ARTIFACT_LABELS = {
+          build_dir:          'Build dir',
+          kernel_build_log:   'Kernel build log',
+          yocto_build_log:    'Yocto build log',
+          kernel_config:      'Kernel config',
+          dts_roots:          'DTS roots',
+        };
+        html += `<div class="kc-stat-block">`;
+        html += `<div class="kc-stat-block-head"><span class="kc-icon">\ud83e\udde9</span>Build inputs</div>`;
+        html += `<div class="kc-stat-block-body">`;
+        artEntries.forEach(([key, val]) => {
+          const label = ARTIFACT_LABELS[key] || key.replace(/_/g, ' ');
+          const badge = val === 'yes'
+            ? `<span class="kc-badge kc-badge-yes">\u2714\ufe0f yes</span>`
+            : `<span class="kc-badge kc-badge-no">\u2014 no</span>`;
+          html += kv(label, badge);
+        });
+        html += `</div></div>`;
+      }
+
+      if (CTX.profiles && CTX.profiles.length) {
+        html += `<div class="kc-stat-block">`;
+        html += `<div class="kc-stat-block-head"><span class="kc-icon">\ud83c\udfaf</span>Scoring profiles</div>`;
+        html += `<div class="kc-stat-block-body">`;
+        html += `<div style="display:flex;flex-wrap:wrap;gap:4px;padding:2px 0">`;
+        CTX.profiles.forEach(p => { html += `<span class="kc-chip">${esc(p)}</span>`; });
+        html += `</div></div></div>`;
+      }
+    })();
+
     /* — Funnel — */
     const f = SB.funnel || {};
     if (f.collected != null) {
       const total = f.collected || 1;
-
       function fRow(label, val, cls) {
-        const pct    = Math.round((val / total) * 100);
-        const tip    = TIPS[label] || '';
+        const pct = Math.round((val / total) * 100);
+        const tip = TIPS[label] || '';
         const tipHtml = tip
           ? `<i class="kc-info-icon" role="button" aria-label="${esc(label)} help" tabindex="0">i<span class="kc-tooltip">${esc(tip)}</span></i>`
           : '';
@@ -442,7 +701,6 @@
           <span class="kc-fn-val">${val}</span>
         </div>`;
       }
-
       html += `<div class="kc-section-head">Pipeline Funnel</div>`;
       html += `<div class="kc-stat-block">
         <div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udd0d</span>Commit flow</div>
@@ -470,7 +728,6 @@
         html += kv(item.reason, `<strong>${item.count}</strong>`);
       });
       html += `</div></div>`;
-
       if ((st4.dropped_subsystems || {}).items?.length) {
         html += `<div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udcc2</span>Top dropped subsystems</div>
@@ -501,9 +758,8 @@
       if (dist.length || ss.score_max != null) {
         html += `<div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udcca</span>Score distribution</div>
-          <div class="kc-stat-block-body">
-            ${renderScoreStats(ss)}
-            ${renderHistogram(dist)}
+          <div class="kc-stat-block-body kc-chart-body">
+            ${renderScoreChart(dist, ss)}
           </div>
         </div>`;
       }
@@ -516,14 +772,13 @@
         Object.keys(profs).sort().forEach(p => {
           const d = profs[p];
           const metaParts = [];
-          if (d.score_avg  != null) metaParts.push(`<span class="kc-pmeta-item">avg <strong>${d.score_avg}</strong></span>`);
-          if (d.score_min  != null && d.score_min !== d.score_max)
+          if (d.score_avg != null) metaParts.push(`<span class="kc-pmeta-item">avg <strong>${d.score_avg}</strong></span>`);
+          if (d.score_min != null && d.score_min !== d.score_max)
             metaParts.push(`<span class="kc-pmeta-item">min <strong>${d.score_min}</strong></span>`);
-          if (d.score_max  != null) metaParts.push(`<span class="kc-pmeta-item">max <strong>${d.score_max}</strong></span>`);
+          if (d.score_max != null) metaParts.push(`<span class="kc-pmeta-item">max <strong>${d.score_max}</strong></span>`);
           const metaRow  = metaParts.length ? `<div class="kc-profile-meta">${metaParts.join('')}</div>` : '';
           const profHist = (d.score_distribution || []).length
-            ? renderHistogram(d.score_distribution)
-            : '';
+            ? renderHistogram(d.score_distribution) : '';
           html += `<li style="flex-direction:column;align-items:flex-start;gap:2px;padding:6px 2px">
             <div style="display:flex;align-items:baseline;gap:6px;width:100%">
               <span class="kc-pname">${esc(p)}</span>
@@ -544,19 +799,19 @@
         <div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\u2705</span>Threshold filter</div>
           <div class="kc-stat-block-body">
-            ${kv('Threshold',   `<strong>${esc(st6.threshold ?? '\u2014')}</strong>`,          TIPS['Threshold'])}
-            ${kv('Kept',        `<strong>${esc(st6.kept      || 0)}</strong>`,                  TIPS['Kept'])}
-            ${kv('Dropped',     `<strong>${esc(st6.dropped   || 0)}</strong>`,                  TIPS['Dropped'])}
-            ${kv('Top score',   `<strong>${esc(st6.top_score || 0)}</strong>`,                  TIPS['Top score'])}
-            ${kv('Bottom kept', `<strong>${esc(st6.bottom_kept_score || 0)}</strong>`,          TIPS['Bottom kept'])}
+            ${kv('Threshold',   `<strong>${esc(st6.threshold ?? '\u2014')}</strong>`,      TIPS['Threshold'])}
+            ${kv('Kept',        `<strong>${esc(st6.kept      || 0)}</strong>`,              TIPS['Kept'])}
+            ${kv('Dropped',     `<strong>${esc(st6.dropped   || 0)}</strong>`,              TIPS['Dropped'])}
+            ${kv('Top score',   `<strong>${esc(st6.top_score || 0)}</strong>`,              TIPS['Top score'])}
+            ${kv('Bottom kept', `<strong>${esc(st6.bottom_kept_score || 0)}</strong>`,      TIPS['Bottom kept'])}
           </div>
         </div>`;
     }
 
-    /* — Kernel annotations — */
+    /* — Patch signals (kernel annotations) — */
     const ann = SB.annotations || {};
     if (ann.total_commits) {
-      html += `<div class="kc-section-head">Kernel Annotations</div>
+      html += `<div class="kc-section-head">Patch Signals</div>
         <div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udd16</span>Flags (total \u2192 kept)</div>
           <div class="kc-stat-block-body">
@@ -568,40 +823,19 @@
         </div>`;
     }
 
-    /* — Evaluation config — */
-    const ev = SB.evaluation || {};
-    if (Object.keys(ev).length) {
-      html += `<div class="kc-section-head">Evaluation Config</div>
-        <div class="kc-stat-block">
-          <div class="kc-stat-block-head"><span class="kc-icon">\u2699\ufe0f</span>Parameters</div>
-          <div class="kc-stat-block-body">`;
-      Object.entries(ev).forEach(([k, v]) => {
-        if (v != null && v !== '') html += kv(k.replace(/_/g, ' '), esc(String(v)));
-      });
-      html += `</div></div>`;
-    }
-
     body.innerHTML = html;
 
-    /* ---- Tooltip positioning via position:fixed ----
-     *
-     * mouseenter / focus  → compute position + show
-     * mouseleave / blur   → hide (unless .kc-tip-open from click)
-     * click               → toggle .kc-tip-open for touch/KB
-     * document click      → close all open tips
-     */
+    /* ---- Tooltip event wiring ---- */
     body.addEventListener('mouseenter', e => {
       const icon = e.target.closest('.kc-info-icon');
       if (!icon) return;
       positionTooltip(icon);
     }, true);
-
     body.addEventListener('focusin', e => {
       const icon = e.target.closest('.kc-info-icon');
       if (!icon) return;
       positionTooltip(icon);
     });
-
     body.addEventListener('click', e => {
       const icon = e.target.closest('.kc-info-icon');
       if (!icon) {
@@ -613,12 +847,8 @@
       const wasOpen = icon.classList.contains('kc-tip-open');
       body.querySelectorAll('.kc-info-icon.kc-tip-open')
           .forEach(el => el.classList.remove('kc-tip-open'));
-      if (!wasOpen) {
-        positionTooltip(icon);
-        icon.classList.add('kc-tip-open');
-      }
+      if (!wasOpen) { positionTooltip(icon); icon.classList.add('kc-tip-open'); }
     });
-
     body.addEventListener('keydown', e => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       const icon = e.target.closest('.kc-info-icon');
@@ -648,7 +878,6 @@
     const distinct = COL_DISTINCT[col.key] || [];
     const useList  = (col.type === 'select' && (col.options || []).length) ||
                      (distinct.length > 0 && distinct.length < 20);
-
     if (useList) {
       const options = col.options?.length ? col.options : distinct;
       const sel = document.createElement('select');
@@ -658,13 +887,10 @@
         options.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
       sel.addEventListener('change', scheduleFilter);
       fth.appendChild(sel);
-
       if (col.type === 'number') {
         const inp = document.createElement('input');
-        inp.type = 'text';
-        inp.placeholder = '> < =';
-        inp.style.width = '48px';
-        inp.style.marginTop = '2px';
+        inp.type = 'text'; inp.placeholder = '> < =';
+        inp.style.width = '48px'; inp.style.marginTop = '2px';
         inp.dataset.filterKey  = col.key;
         inp.dataset.filterRole = 'text';
         inp.addEventListener('input', scheduleFilter);
@@ -672,8 +898,7 @@
       }
     } else {
       const inp = document.createElement('input');
-      inp.type = 'text';
-      inp.placeholder = 'Filter\u2026';
+      inp.type = 'text'; inp.placeholder = 'Filter\u2026';
       inp.dataset.filterKey  = col.key;
       inp.dataset.filterRole = 'text';
       inp.addEventListener('input', scheduleFilter);
@@ -683,29 +908,21 @@
 
   function buildHead() {
     if (!thead) return;
-    const sortRow   = document.createElement('tr');
-    sortRow.className = 'kc-sort-row';
-    const filterRow = document.createElement('tr');
-    filterRow.className = 'kc-filter-row';
-
+    const sortRow   = document.createElement('tr'); sortRow.className = 'kc-sort-row';
+    const filterRow = document.createElement('tr'); filterRow.className = 'kc-filter-row';
     COLS.forEach(col => {
       const th = document.createElement('th');
       th.innerHTML = `${esc(col.label)} <em class="kc-sort-icon" data-key="${esc(col.key)}"></em>`;
       th.addEventListener('click', () => {
         if (sortKey === col.key) sortDir = -sortDir;
         else { sortKey = col.key; sortDir = 1; }
-        updateSortIcons();
-        applySort();
-        renderRows();
-        applyFilters();
+        updateSortIcons(); applySort(); renderRows(); applyFilters();
       });
       sortRow.appendChild(th);
-
       const fth = document.createElement('th');
       buildFilterCtrl(col, fth);
       filterRow.appendChild(fth);
     });
-
     thead.innerHTML = '';
     thead.appendChild(sortRow);
     thead.appendChild(filterRow);
@@ -730,20 +947,17 @@
     const cells = COLS.map(col => {
       let v = r[col.key];
       if (v == null) v = '';
-      if (col.key === 'sha12') {
+      if (col.key === 'sha12')
         return `<td class="kc-td-sha"><a href="#" class="kc-sha-link"
           data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${esc(r.sha12)}</a></td>`;
-      }
       if (col.key === 'score' || col._profile) {
         const num = parseFloat(v) || 0;
         return `<td class="kc-td-num">${num > 0 ? scorePill(num) : '<span class="kc-muted">\u2014</span>'}</td>`;
       }
-      if (col.key === 'profiles') {
+      if (col.key === 'profiles')
         return `<td>${chips(Array.isArray(v) ? v : [v])}</td>`;
-      }
-      if (col.key === 'date') {
+      if (col.key === 'date')
         return `<td class="kc-td-num">${esc(fmtDate(v))}</td>`;
-      }
       return `<td>${esc(Array.isArray(v) ? v.join('; ') : v)}</td>`;
     }).join('');
     return `<tr data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${cells}</tr>`;
@@ -793,15 +1007,12 @@
       else                   textVals[key]   = el.value || '';
       colFilters[key] = el.value || '';
     });
-
     const global  = (globalSrch?.value || '').trim().toLowerCase();
     const gTokens = global ? global.split(/\s+/).filter(Boolean) : [];
-
     let shown = 0;
     sortedRows.forEach(r => {
       const tr = tbody?.querySelector(`tr[data-sha12="${CSS.escape(r.sha12)}"]`);
       if (!tr) return;
-
       let ok = COLS.every(col => {
         const sv = (selectVals[col.key] || '').trim();
         const tv = (textVals[col.key]   || '').trim();
@@ -810,7 +1021,6 @@
         if (tv && !matchToken(cv, tv)) return false;
         return true;
       });
-
       if (ok && gTokens.length) {
         const hay = Object.values(r)
           .map(v => Array.isArray(v) ? v.join(' ') : String(v ?? '')).join(' ').toLowerCase();
@@ -819,7 +1029,6 @@
       tr.classList.toggle('kc-hidden', !ok);
       if (ok) shown++;
     });
-
     visibleCount = shown;
     if (liveCount) liveCount.textContent = `Showing ${shown} of ${ROWS.length} commits`;
     if (noMatch)   noMatch.classList.toggle('kc-visible', shown === 0);
@@ -848,7 +1057,7 @@
   });
 
   /* ========= Detail panel ========= */
-  const rightPane  = document.getElementById('kc-pane-right');
+  const rightPane = document.getElementById('kc-pane-right');
 
   function activateTab(name) {
     document.querySelectorAll('.kc-tab').forEach(t => {
@@ -884,10 +1093,10 @@
     const cls   = dropped ? 'kc-decision-dropped' : 'kc-decision-kept';
     const label = dropped ? '\u2718 Dropped' : '\u2714 Kept';
     let items = [];
-    if (reason && !dropped)  items.push(KEEP_MAP[reason] || `Keep reason: ${reason}`);
+    if (reason && !dropped) items.push(KEEP_MAP[reason] || `Keep reason: ${reason}`);
     else if (reason && dropped) items.push(DROP_MAP[reason] || `Drop reason: ${reason}`);
     else items.push(score > 0 ? 'Passed pipeline and scored above threshold.' : 'No explicit reason recorded.');
-    if (!dropped && score > 0)           items.push(`Final score: ${score}`);
+    if (!dropped && score > 0) items.push(`Final score: ${score}`);
     if (!dropped && (row.profiles||[]).length)
       items.push(`Matched profiles: ${(row.profiles||[]).join(', ')}`);
     return `<div class="${cls}">
@@ -927,7 +1136,6 @@
     const blocked = pt.blocked;
     const rules   = pt.rules || {};
     const cls     = scoreClass(score);
-
     let html = `<div class="kc-detail-card">
       <div class="kc-detail-card-head">
         <span class="kc-chip">${esc(pname)}</span>
@@ -937,12 +1145,9 @@
           : `<span class="kc-muted" style="font-size:11px">\u00d7${mult}</span>`}
       </div>
       <div class="kc-detail-card-body">`;
-
     if (Object.keys(rules).length) {
       html += `<table class="kc-trace-table">
-        <thead><tr>
-          <th>Rule</th><th>Wt</th><th>Match</th><th>Score</th><th>Patterns matched</th>
-        </tr></thead><tbody>`;
+        <thead><tr><th>Rule</th><th>Wt</th><th>Match</th><th>Score</th><th>Patterns matched</th></tr></thead><tbody>`;
       Object.keys(rules).sort().forEach(rname => {
         const rd      = rules[rname] || {};
         const matched = rd.matched;
@@ -950,16 +1155,12 @@
         const rowCls  = blocked ? 'kc-rule-blocked' : (matched ? 'kc-rule-matched' : '');
         const icon    = blocked ? '\u25a0' : (matched ? '\u2714' : '\u2715');
         const iconCol = blocked ? 'var(--muted)' : (matched ? 'var(--success)' : 'var(--muted)');
-
         let badgesHtml = '<span class="kc-muted">\u2014</span>';
         if (allHits.length) {
           badgesHtml = allHits.map(m => {
-            const pat     = m.pattern     || '';
-            const srcFile = m.source_file || null;
-            const srcLine = m.source_line || null;
-            const start   = m.match_start;
-            const end     = m.match_end;
-            const value   = m.value       || '';
+            const pat = m.pattern || '', srcFile = m.source_file || null;
+            const srcLine = m.source_line || null, start = m.match_start, end = m.match_end;
+            const value = m.value || '';
             let srcBadge = '';
             if (srcFile) {
               const label = `${ruleNameFromPath(srcFile) || rname}:${pathStem(srcFile)}:${srcLine}`;
@@ -1007,7 +1208,6 @@
     const c  = commit || {};
     const sc = c.scoring || {};
     const profiles = sc.profiles || {};
-
     let overview = '';
     overview += detailCard('Commit', [
       kv('SHA',      `<code class="kc-mono">${esc(c.commit || row.sha || row.sha12)}</code>`),
@@ -1017,25 +1217,20 @@
       kv('Score',    scorePill(c.score ?? row.score)),
       kv('Profiles', chips(c.matched_profiles || row.profiles || [])),
     ].join(''), '\ud83d\udcc4');
-
     overview += detailCard('Decision', renderDecision(row, c), '\u2696\ufe0f');
-
     if ((c.product_evidence || []).length) {
       overview += detailCard('Product Evidence',
         `<ul style="padding-left:1.2rem;margin:0">${
           (c.product_evidence||[]).map(e=>`<li><code class="kc-mono">${esc(e)}</code></li>`).join('')
         }</ul>`, '\ud83d\udce6');
     }
-
     if (c.body) {
       const bodyPreview = c.body.length > 4000 ? c.body.slice(0,4000)+'\n\u2026' : c.body;
       overview += detailCard('Full Commit Message',
         `<div class="kc-commit-body">${escNl(bodyPreview)}</div>`, '\ud83d\udcdd');
     }
-
     document.getElementById('kc-tab-overview').innerHTML = overview;
 
-    /* ---- Scoring tab ---- */
     const traceProfiles = ((sc.trace||{}).profiles) || {};
     let scoring = '';
     if (Object.keys(traceProfiles).length) {
@@ -1053,11 +1248,9 @@
       scoring = `<p class="kc-muted">No scoring data available for this commit.</p>`;
     }
     document.getElementById('kc-tab-scoring').innerHTML = scoring;
-
     document.getElementById('kc-tab-files').innerHTML = renderFiles(c);
     document.getElementById('kc-tab-raw').innerHTML =
       `<pre class="kc-raw-pre">${esc(JSON.stringify(c,null,2))}</pre>`;
-
     activateTab('overview');
   }
 
@@ -1090,9 +1283,9 @@
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       const visible = Array.from(tbody?.querySelectorAll('tr:not(.kc-hidden)')||[]);
       if (!visible.length) return;
-      const active = tbody?.querySelector('tr.kc-row-active');
-      const idx    = visible.indexOf(active);
-      const next   = e.key === 'ArrowDown'
+      const active  = tbody?.querySelector('tr.kc-row-active');
+      const idx     = visible.indexOf(active);
+      const next    = e.key === 'ArrowDown'
         ? visible[idx+1] || visible[0]
         : visible[idx-1] || visible[visible.length-1];
       if (next) { openDetail(next.dataset.sha12, next.dataset.sha); next.scrollIntoView({block:'nearest'}); }

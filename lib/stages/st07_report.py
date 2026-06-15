@@ -35,6 +35,15 @@ Changes:
                   statistics for the HTML report right-pane "Global Stats"
                   panel.  'pipeline_run_stats.json' is added to
                   report_stats['generated_files'].
+  v16.9.0       — build_run_stats() is now called BEFORE the HTML report is
+                  generated, and its return value is passed to
+                  generate_html_report() as run_stats_data.  This supplies
+                  the correct stage_05_scoring top-level fields (score_avg,
+                  score_median, score_max, score_min) to the HTML generator,
+                  fixing the avg/median = 0 display bug.
+                — cfg is passed to generate_html_report() so that the new
+                  Context section can read kernel.rev_old/rev_new and
+                  artifact presence flags.
 """
 import csv
 import json
@@ -187,7 +196,7 @@ def _write_table_json(path, commits, include_reason=False):
         rows.append(order_commit_details(row))
     _save_ordered_json(path, rows)
 
-# ── Per-profile statistics ──────────────────────────────────────────────────────────────
+# ── Per-profile statistics ───────────────────────────────────────────────────────────
 
 def _profile_summary(scored, profile_rules):
     """Per-profile commit count, total score, and average score."""
@@ -222,7 +231,7 @@ def _profile_matrix(scored):
     return header, rows
 
 
-# ── Coverage metrics (promoted to report_stats) ────────────────────────────────────────────
+# ── Coverage metrics (promoted to report_stats) ──────────────────────────────────────────────
 
 def _coverage_metrics(scored):
     """Return diagnostic coverage counters included in report_stats.json.
@@ -242,9 +251,10 @@ def _coverage_metrics(scored):
 def _build_evaluation_block(cfg, outputs, html_detail_mode, top_n, threshold):
     """A.4 / D.14: Build the evaluation metadata block for report_stats.
 
-    This dict is rendered in the Evaluation sidebar section of the HTML
-    report via generate_html_report().  All values are optional strings;
-    missing / empty fields are omitted by the sidebar renderer.
+    This dict is stored in report_stats['evaluation'] and in
+    report_metadata.json.  It is no longer rendered as a sidebar 'Parameters'
+    section in the HTML left pane (removed in v16.9.0); instead the Context
+    block in html_report._build_context() provides the relevant fields.
     """
     git       = cfg.get('git', {}) or {}
     reports   = cfg.get('reports', {}) or {}
@@ -275,7 +285,7 @@ def _save_ordered_json(path, data):
         json.dump(data, f, indent=2)
         f.write('\n')
 
-# ── Output helpers ───────────────────────────────────────────────────────────────
+# ── Output helpers ─────────────────────────────────────────────────────────
 
 def _resolve_outputs(cfg):
     """Return the set of output format names to produce.
@@ -350,7 +360,7 @@ def _load_profile_rules_safe(cfg, cache):
             return {}
 
 
-# ── Stage entry point ──────────────────────────────────────────────────────────────
+# ── Stage entry point ────────────────────────────────────────────────────────
 
 def run(cfg, cache, outdir):
     # A.3: import real TTY progress bar with the correct call signature:
@@ -458,7 +468,8 @@ def run(cfg, cache, outdir):
         'score_lowest':             min(_scores_all) if _scores_all else 0,
         'score_avg':                round(sum(_scores_all) / len(_scores_all), 1) if _scores_all else 0,
         **_coverage_metrics(scored),
-        # A.4 / D.14: Evaluation block for HTML sidebar
+        # A.4 / D.14: Evaluation block — stored in report_stats.json and
+        # report_metadata.json but no longer rendered as a sidebar section.
         'evaluation': _build_evaluation_block(
             cfg, outputs, html_detail_mode, top_n, _threshold),
     }
@@ -633,18 +644,29 @@ def run(cfg, cache, outdir):
         else:
             logging.warning("'ods' output requested but lib.spreadsheet not available")
 
+    # v16.9.0: build_run_stats() is now called BEFORE the HTML report so that
+    # its return value (pipeline_run_stats dict with correct score_avg/median)
+    # can be forwarded to generate_html_report() as run_stats_data.
+    _update_stage7_progress(5, _STAGE7_MILESTONES, 'Building run statistics')
+    run_stats_data = None
+    try:
+        _prs_path = os.path.join(outdir, CACHE_FILES['run_stats'])
+        run_stats_data = build_run_stats(cfg, cache, outdir)
+        _emit(_prs_path)
+    except Exception as _e:
+        logging.warning('pipeline_run_stats.json write failed: %s', _e)
+
     # HTML
-    _update_stage7_progress(5, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
+    _update_stage7_progress(6, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
     if 'html' in outputs:
         try:
             _save_ordered_json(os.path.join(outdir, 'report_metadata.json'), metadata)
             _emit(os.path.join(outdir, 'report_metadata.json'))
-            _update_stage7_progress(6, _STAGE7_MILESTONES, 'Writing HTML commit index JSON')
+            _update_stage7_progress(7, _STAGE7_MILESTONES, 'Generating HTML report')
             _hp = os.path.join(outdir, 'relevant_commits.html')
             _tp = os.path.join(outdir, 'relevant_commits.table.json')
             _write_table_json(_tp, scored, include_reason=False)
             _emit(_tp)
-            _update_stage7_progress(7, _STAGE7_MILESTONES, 'Generating HTML report')
             generate_html_report(
                 scored, prof_summary, report_stats, _hp,
                 title=title,
@@ -654,6 +676,8 @@ def run(cfg, cache, outdir):
                 commit_detail_root='./commits',
                 embed_compression=html_embed_compression,
                 metadata_path='./report_metadata.json' if html_detail_mode == 'sidecar' else None,
+                cfg=cfg,
+                run_stats_data=run_stats_data,
             )
             _emit(_hp)
         except Exception as e:
@@ -674,6 +698,8 @@ def run(cfg, cache, outdir):
                     commit_detail_root='./commits',
                     embed_compression=html_embed_compression,
                     metadata_path='./report_metadata.json' if html_detail_mode == 'sidecar' else None,
+                    cfg=cfg,
+                    run_stats_data=run_stats_data,
                 )
                 _emit(_fhp)
             except Exception as e:
@@ -686,14 +712,6 @@ def run(cfg, cache, outdir):
             _rt_finish_line()
         except Exception as _e:
             logging.debug('finish_progress_line (st07) failed: %s', _e)
-
-    # v14.1.0: write exhaustive pipeline_run_stats.json for HTML right-pane
-    try:
-        _prs_path = os.path.join(outdir, CACHE_FILES['run_stats'])
-        build_run_stats(cfg, cache, outdir)
-        _emit(_prs_path)
-    except Exception as _e:
-        logging.warning('pipeline_run_stats.json write failed: %s', _e)
 
     # Embed generated_files list, then write report_stats.json last
     report_stats['generated_files'] = sorted(set(

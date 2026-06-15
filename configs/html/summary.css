@@ -1,9 +1,22 @@
-/* kcommit-analysis-pipeline — v16.7.0 UI
+/* kcommit-analysis-pipeline — v16.11.0 UI
    Three-pane resizable layout, collapsible sidebars, light+dark themes.
    All colours driven by CSS custom-properties; no colour is hardcoded.
+
+   v16.9.1: Added SVG score-chart tokens so the histogram renders
+   correctly in both light and dark mode.  The JS (renderScoreChart)
+   references --color-* vars that don't exist in this file; replaced
+   with aliases (--kc-chart-*) that ARE defined here and map cleanly
+   to the light and dark palettes.
+
+   v16.11.0: renderScoreChart() redesigned as a smooth filled-area
+   distribution curve (no histogram bars).  Two new tokens added:
+     --kc-chart-curve-fill   — fill colour under the curve (gradient)
+     --kc-chart-curve-stroke — stroke colour of the curve line
+   Old bar-tier tokens (--kc-chart-bar-*) are kept for the per-profile
+   mini-histograms rendered by the legacy renderHistogram() helper.
 */
 
-/* ── Design tokens ────────────────────────────────────────────── */
+/* ── Design tokens ──────────────────────────────────────────────── */
 :root {
   color-scheme: light dark;
 
@@ -38,6 +51,39 @@
   --hi-bg:   #dafbe1; --hi-fg:   #116329;
   --mid-bg:  #fff8c5; --mid-fg:  #7d4e00;
   --low-bg:  #ffebe9; --low-fg:  #82071e;
+
+  /* ── SVG chart tokens ─────────────────────────────────────────────
+   *
+   * Curve chart (v16.11.0 — renderScoreChart):
+   *   --kc-chart-curve-fill   : fill colour fed into the SVG linearGradient
+   *                             (gradient adds opacity: 0.28→0.06 top→bottom)
+   *   --kc-chart-curve-stroke : stroke colour of the smooth curve line
+   *
+   * Bar chart (renderHistogram — per-profile mini-histograms only):
+   *   --kc-chart-bar-zero/low/mid/hi  : bucket tier colours
+   *
+   * Shared markers:
+   *   --kc-chart-avg-line     : avg vertical dashed line + pill label
+   *   --kc-chart-med-line     : median vertical dashed line + pill label
+   *   --kc-chart-axis-label   : x/y tick label text
+   *   --kc-chart-axis-max     : y-axis max-count label (faint)
+   * ----------------------------------------------------------------- */
+
+  /* Curve — a warm teal that reads clearly on the beige/white light bg */
+  --kc-chart-curve-fill:   #0969da;   /* same as --accent for coherence   */
+  --kc-chart-curve-stroke: #0550ae;   /* one step darker for contrast     */
+
+  /* Bar tiers (legacy, per-profile mini-histograms) */
+  --kc-chart-bar-zero:    #9ba3aa;
+  --kc-chart-bar-low:     #cf222e;
+  --kc-chart-bar-mid:     #9a6700;
+  --kc-chart-bar-hi:      #1a7f37;
+
+  /* Markers */
+  --kc-chart-avg-line:    #9a6700;
+  --kc-chart-med-line:    #0550ae;
+  --kc-chart-axis-label:  #57606a;
+  --kc-chart-axis-max:    #9ba3aa;
 
   /* Layout — rem-based so browser zoom scales the layout correctly.
      1rem = 16px at default zoom.  300px → 18.75rem, 380px → 23.75rem. */
@@ -75,9 +121,31 @@ html[data-theme="dark"] {
   --hi-bg:   #1a3a26; --hi-fg:   #56d364;
   --mid-bg:  #2d2208; --mid-fg:  #e3b341;
   --low-bg:  #2d1117; --low-fg:  #ff7b72;
+
+  /* ── SVG chart tokens — dark overrides ──────────────────────────
+   * Brighter values for dark #0d1117 background.
+   * Curve uses the bright accent blue so it stands out against the
+   * very dark pane background without washing out.
+   * ----------------------------------------------------------------- */
+
+  /* Curve — bright accent blue on dark bg */
+  --kc-chart-curve-fill:   #58a6ff;
+  --kc-chart-curve-stroke: #79c0ff;
+
+  /* Bar tiers (legacy) */
+  --kc-chart-bar-zero:    #6e7681;
+  --kc-chart-bar-low:     #ff7b72;
+  --kc-chart-bar-mid:     #e3b341;
+  --kc-chart-bar-hi:      #3fb950;
+
+  /* Markers */
+  --kc-chart-avg-line:    #e3b341;
+  --kc-chart-med-line:    #79c0ff;
+  --kc-chart-axis-label:  #8b949e;
+  --kc-chart-axis-max:    #484f58;
 }
 
-/* ── Reset ─────────────────────────────────────────────────── */
+/* ── Reset ─────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 html { scroll-behavior: smooth; height: 100%; }
 body {
@@ -93,7 +161,7 @@ body {
 a { color: var(--accent); }
 button, input, select, textarea { font: inherit; cursor: pointer; }
 
-/* ── App shell ────────────────────────────────────────────── */
+/* ── App shell ──────────────────────────────────────────── */
 .kc-app {
   height: 100%;
   display: flex;
@@ -101,7 +169,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   min-height: 0;
 }
 
-/* ── Top bar ────────────────────────────────────────────────── */
+/* ── Top bar ────────────────────────────────────────────── */
 .kc-topbar {
   height: var(--top-h);
   flex-shrink: 0;
@@ -163,7 +231,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 }
 .kc-theme-btn:hover { border-color: var(--accent); color: var(--accent); }
 
-/* ── Three-pane layout ────────────────────────────────────────── */
+/* ── Three-pane layout ───────────────────────────────────────────── */
 .kc-layout {
   flex: 1;
   min-height: 0;
@@ -238,7 +306,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   justify-content: space-between;
 }
 
-/* ── Resize handles ────────────────────────────────────────────── */
+/* ── Resize handles ─────────────────────────────────────────────── */
 .kc-handle {
   width: var(--handle);
   flex-shrink: 0;
@@ -299,7 +367,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 }
 .kc-pane.kc-collapsed .kc-rail-label { display: block; }
 
-/* ── Left pane sections ──────────────────────────────────────────── */
+/* ── Left pane sections ────────────────────────────────────────────── */
 .kc-section-head {
   font-size: 10.5px;
   font-weight: 700;
@@ -355,7 +423,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   max-width: 180px;
 }
 
-/* ── Tooltip: info icon + floating bubble ────────────────────────────
+/* ── Tooltip: info icon + floating bubble ────────────────────────────────────
  *
  * The bubble uses position:fixed so it is never clipped by any
  * overflow:hidden ancestor (stat blocks, pane-body scroll container,
@@ -465,7 +533,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   pointer-events: auto;
 }
 
-/* ── Funnel bar ──────────────────────────────────────────────────── */
+/* ── Funnel bar ────────────────────────────────────────────────── */
 .kc-funnel-bar {
   display: flex;
   flex-direction: column;
@@ -529,7 +597,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   line-height: 1.6;
 }
 
-/* ── Middle pane — toolbar + table ─────────────────────────────────── */
+/* ── Middle pane — toolbar + table ─────────────────────────────────────── */
 .kc-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -667,7 +735,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   margin: 1px;
 }
 
-/* ── Right pane — commit detail ───────────────────────────────────── */
+/* ── Right pane — commit detail ───────────────────────────────────────── */
 .kc-detail-header {
   background: var(--bg3);
   border-bottom: 1px solid var(--border);
@@ -680,7 +748,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   color: var(--muted);
 }
 
-/* ── Detail tab bar ───────────────────────────────────────────── */
+/* ── Detail tab bar ─────────────────────────────────────────────── */
 .kc-detail-tabs {
   display: flex;
   flex-shrink: 0;
@@ -765,7 +833,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 }
 .kc-detail-card-body { padding: 10px; }
 
-/* ── Commit message body ──────────────────────────────────────────── */
+/* ── Commit message body ─────────────────────────────────────────────── */
 .kc-commit-body {
   font-family: var(--mono);
   font-size: 11.5px;
@@ -877,7 +945,10 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   border: 1px solid var(--border);
 }
 
-/* ── Score distribution histogram ────────────────────────────────── */
+/* ── Score distribution — legacy plain-bar histogram ─────────────────────
+ * Used for per-profile mini-histograms inside the Profiles section.
+ * The main Score Distribution block uses the SVG curve below.
+ * ------------------------------------------------------------------ */
 .kc-histogram {
   margin-top: 6px;
   display: flex;
@@ -919,7 +990,48 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   font-weight: 600;
 }
 
-/* ── Score distribution stat row (min/max/avg/median) ─────────────── */
+/* ── SVG score-distribution curve (v16.11.0) ─────────────────────────────
+ *
+ * renderScoreChart() in summary.js inlines an <svg> containing:
+ *   <defs><linearGradient>  — vertical gradient for the fill area
+ *   <path> (fill)           — closed path creating the filled mountain
+ *   <path> (stroke)         — the smooth Catmull-Rom/Bézier curve line
+ *   <rect> (transparent)    — per-bucket hit targets with <title> tooltips
+ *   <line> (markers)        — avg / median dashed vertical lines
+ *   <rect>+<text> (pills)   — floating pill labels for avg / median
+ *   <line> (baseline)       — thin horizontal rule at y = MT+PH
+ *   <line>+<text> (x-axis)  — tick marks + rotated bucket labels
+ *
+ * ALL colours in the SVG are driven by CSS custom properties so the
+ * chart responds correctly to light ↔ dark theme switching.
+ *
+ * IMPORTANT: SVG presentation attributes in the JS template literals
+ * reference var(--kc-chart-*) tokens only.  Do NOT use var(--color-*)
+ * Nexus tokens here — they are not defined in this stylesheet.
+ * ------------------------------------------------------------------ */
+
+/* Chart body: subtle tinted background */
+.kc-chart-body {
+  padding: 4px 6px 2px;
+  background: color-mix(in srgb, var(--bg3) 60%, var(--bg2));
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+
+/* The SVG element itself */
+.kc-score-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  overflow: visible;   /* allow axis labels at edges to show */
+}
+
+/* Axis label text fallback (JS sets fill inline) */
+.kc-score-svg text {
+  fill: var(--kc-chart-axis-label);
+}
+
+/* ── Score distribution stat row (min/max/avg/median) ─────────────────── */
 .kc-dist-stats {
   display: flex;
   gap: 10px;
@@ -946,7 +1058,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   color: var(--text);
 }
 
-/* ── Per-profile mini-stats ──────────────────────────────────────── */
+/* ── Per-profile mini-stats ───────────────────────────────────────────── */
 .kc-profile-meta {
   display: flex;
   gap: 8px;
@@ -956,7 +1068,26 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 .kc-pmeta-item { color: var(--muted); }
 .kc-pmeta-item strong { color: var(--text); font-variant-numeric: tabular-nums; }
 
-/* ── Utility classes ────────────────────────────────────────────── */
+/* ── Scope section badges (artifact presence flags) ───────────────────── */
+.kc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.kc-badge-yes {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
+}
+.kc-badge-no {
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  color: var(--muted);
+}
+
+/* ── Utility classes ───────────────────────────────────────────────── */
 .kc-hidden  { display: none !important; }
 .kc-muted   { color: var(--muted); }
 .kc-bold    { font-weight: 700; }
@@ -964,10 +1095,10 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 
 /* ── Responsive ─────────────────────────────────────────────────── */
 /* rem breakpoints match the rem-based pane tokens above */
-@media (max-width: 68.75rem) {   /* ≈1100px */
+@media (max-width: 68.75rem) {   /* ≈ 1100px */
   :root { --left-w: 16.25rem; --right-w: 20rem; }  /* 260px / 320px */
 }
-@media (max-width: 56.25rem) {   /* ≈900px */
+@media (max-width: 56.25rem) {   /* ≈ 900px */
   body { overflow: auto; }
   .kc-layout { flex-direction: column; overflow: visible; }
   .kc-pane-left, .kc-pane-right {
