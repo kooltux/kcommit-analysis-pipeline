@@ -1,37 +1,7 @@
-/* kcommit-analysis-pipeline — v16.12.0 UI
+/* kcommit-analysis-pipeline — v16.12.3 UI
  *
- * Reads everything from window.__KC_UI__ (serialised by html_report.py at
- * generation time from config + JSON outputs — zero hardcoding).
- *
- * Structure of __KC_UI__:
- *   meta          – tool version, run date, git range, title, subtitle
- *   context       – rev_range, kernel_version, artifacts, profiles (v16.9.0)
- *   columns       – [{key, label, type, options?}] for table columns
- *   rows          – flat commit rows for the table
- *   sidebar       – {funnel, stage_04, stage_05, stage_06, annotations}
- *   detail_root   – path prefix for per-commit sidecar JSON (e.g. './commits')
- *   is_filtered   – bool: this is the filtered-commits view
- *
- * v16.11.0 changes:
- *   Score distribution chart completely redesigned as a smooth curve:
- *   • The histogram bars are GONE — replaced by a single filled-area
- *     distribution curve built with Catmull-Rom → cubic Bézier splines.
- *   • The filled area under the curve uses a vertical gradient: opaque
- *     at the bottom, transparent at the top, so the fill reads as a
- *     "mountain" shape without obscuring the curve itself.
- *   • A subtle tick mark + count label is shown below the x-axis at each
- *     bucket position so the viewer can still read raw counts on hover
- *     (<title> tooltip on the invisible hit-target rect per bucket).
- *   • Avg and median markers are kept: full-height dashed lines with
- *     floating pill labels (shifted vertically when they overlap).
- *   • Stat pills row (Max/Min/Avg/Median) unchanged above the chart.
- *   • All colours from --kc-chart-* tokens only — no Nexus var(--color-*)
- *     references that would be undefined in summary.css.
- *
- * v16.12.0 changes:
- *   Score distribution buckets are now dynamic (observed range, equal-width).
- *   Each bucket item has numeric lo/hi/mid/label fields; legacy bucket/100+
- *   parsing has been removed.  scoreToX() interpolates within lo–hi bounds.
+ * v16.12.3: Remove "Stage 05 — " and "Stage 06 — " prefixes from section
+ *           labels; keep only "SCORING" and "POSTFILTER".
  */
 (function () {
   'use strict';
@@ -145,38 +115,11 @@
 
   /* =========================================================
    * renderScoreChart(distItems, ss)   — v16.12.0
-   *
-   * Smooth filled-area distribution curve (no histogram bars).
-   *
-   * Layout
-   * ──────
-   *   W=240, H=130  total SVG viewBox
-   *   ML=28  MR=8   left/right margins
-   *   MT=20  MB=28  top (pill labels) / bottom (x-axis ticks + labels)
-   *   Plot area: 204 × 82 px
-   *
-   * Drawing
-   * ───────
-   *   1. Compute a Gaussian KDE at each bucket centre (BW=1.0).
-   *   2. Convert the N sample points to screen coords.
-   *   3. Build a smooth cubic Bézier path (Catmull-Rom conversion).
-   *   4. Close the path downward to the baseline → filled area.
-   *   5. Apply a linearGradient fill: opaque at baseline, 20% opacity
-   *      at the curve peak — so the fill looks like a lit mountain.
-   *   6. Draw the stroke on top of the fill in the same colour.
-   *   7. Invisible hit-target <rect> per bucket with a <title> tooltip
-   *      showing "label: count" so raw counts are accessible on hover.
-   *   8. Avg/median dashed vertical markers with floating pill labels.
-   *      Marker positions are interpolated using numeric lo/hi bounds.
-   *   9. Light baseline rule; x-axis tick marks + rotated labels.
-   *
-   * Colours: 100% --kc-chart-* tokens.
    * =========================================================
    */
   function renderScoreChart(distItems, ss) {
     if (!distItems || !distItems.length) return '';
 
-    /* ── stat pills row ── */
     let statsHtml = '';
     if (ss) {
       const pills = [];
@@ -196,7 +139,6 @@
       }
     }
 
-    /* ── SVG layout ── */
     const W  = 240, H  = 130;
     const ML = 28,  MR = 8;
     const MT = 20,  MB = 28;
@@ -205,7 +147,6 @@
     const N  = distItems.length;
     const counts = distItems.map(b => b.count || 0);
 
-    /* ── Gaussian KDE (bandwidth = 1.0 bucket widths) ── */
     const BW = 1.0;
     const kdeRaw = counts.map((_, xi) => {
       let sum = 0;
@@ -217,20 +158,15 @@
     });
     const kdeMax = Math.max(1, ...kdeRaw);
 
-    /* ── Screen-space points ── */
-    /* Each bucket centre is evenly spaced across the plot width.
-       We use N-1 intervals so the first point sits at x=ML and the
-       last at x=ML+PW, giving maximum horizontal spread. */
     function ptX(i) {
       return N < 2 ? ML + PW / 2 : ML + (i / (N - 1)) * PW;
     }
     function ptY(kde) {
-      return MT + PH - (kde / kdeMax) * PH * 0.90;   /* 90% of plot height */
+      return MT + PH - (kde / kdeMax) * PH * 0.90;
     }
 
     const pts = kdeRaw.map((k, i) => ({ x: ptX(i), y: ptY(k) }));
 
-    /* ── Catmull-Rom → cubic Bézier ── */
     function crToCubic(p0, p1, p2, p3) {
       const alpha = 0.5;
       const cp1x = p1.x + (p2.x - p0.x) / 6 * alpha * 2;
@@ -250,11 +186,9 @@
       curvePath += ` C ${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
     }
 
-    /* Closed path for the fill: go down to baseline on both ends */
     const baseline = MT + PH;
     const fillPath = `${curvePath} L ${pts[pts.length-1].x.toFixed(1)},${baseline} L ${pts[0].x.toFixed(1)},${baseline} Z`;
 
-    /* ── Unique gradient id (avoids conflicts if multiple charts on page) ── */
     const gradId = `kc-curve-grad-${Math.random().toString(36).slice(2,8)}`;
 
     const defs = `<defs>
@@ -264,15 +198,11 @@
       </linearGradient>
     </defs>`;
 
-    /* ── Filled area ── */
-    const fillElem = `<path d="${fillPath}" fill="url(#${gradId})"/>`;
-
-    /* ── Curve stroke ── */
+    const fillElem   = `<path d="${fillPath}" fill="url(#${gradId})"/>`;
     const strokeElem = `<path d="${curvePath}" fill="none"
       stroke="var(--kc-chart-curve-stroke)" stroke-width="2"
       stroke-linecap="round" stroke-linejoin="round"/>`;
 
-    /* ── Invisible per-bucket hit targets (for tooltip hover) ── */
     const hitTargets = distItems.map((b, i) => {
       const cx  = ptX(i);
       const tw  = N < 2 ? PW : PW / (N - 1);
@@ -283,11 +213,9 @@
       </rect>`;
     }).join('');
 
-    /* ── Baseline rule ── */
     const baseRule = `<line x1="${ML}" y1="${baseline}" x2="${ML+PW}" y2="${baseline}"
       stroke="var(--kc-chart-axis-label)" stroke-width="0.6" opacity="0.35"/>`;
 
-    /* ── X-axis ticks + labels ── */
     const xAxis = distItems.map((b, i) => {
       const cx = ptX(i);
       const ty = baseline + 4;
@@ -302,15 +230,9 @@
           font-family="inherit">${esc(b.label || '')}</text>`;
     }).join('');
 
-    /* ── Avg / Median marker helper ──
-     * Maps a score value to an x position by interpolating within the
-     * numeric lo–hi bounds of the bucket it falls into.
-     * Returns null when score is outside the entire distribution range.
-     */
     function scoreToX(score) {
       const s = parseFloat(score);
       if (isNaN(s) || !distItems.length) return null;
-
       for (let i = 0; i < distItems.length; i++) {
         const lo = Number(distItems[i].lo);
         const hi = Number(distItems[i].hi);
@@ -320,7 +242,6 @@
           return ptX(i) + frac * (ptX(i + 1) - ptX(i));
         }
       }
-
       if (s < Number(distItems[0].lo)) return ptX(0);
       return ptX(distItems.length - 1);
     }
@@ -356,7 +277,6 @@
         const label  = `med ${ss.score_median}`;
         const pw     = label.length * 4.2 + 6;
         const px     = Math.min(W - pw - 2, Math.max(2, medX - pw / 2));
-        /* shift pill up if avg is within 18px */
         const textY  = (avgX != null && Math.abs(avgX - medX) < 18)
           ? MT - 14
           : MT - 4;
@@ -391,9 +311,7 @@
   }
 
   /* =========================================================
-   * Legacy plain-bar histogram — still used for per-profile
-   * mini-histograms inside the Profiles section where the
-   * narrow width makes the SVG chart impractical.
+   * Legacy plain-bar histogram — per-profile mini-histograms
    * =========================================================
    */
   function renderHistogram(distItems) {
@@ -435,7 +353,7 @@
       .catch(() => null);
   }
 
-  /* ========= Tooltip positioning (position:fixed) ========= */
+  /* ========= Tooltip positioning ========= */
   function positionTooltip(icon) {
     const tip = icon.querySelector('.kc-tooltip');
     if (!tip) return;
@@ -621,9 +539,7 @@
     };
 
     /* =========================================================
-     * Analysis Context section (v16.9.0, labels refreshed v16.9.1)
-     * Renders scope / revision range / build inputs / profiles
-     * from UI.context (CTX).
+     * Analysis Context section
      * =========================================================
      */
     (function renderContext() {
@@ -739,10 +655,10 @@
       }
     }
 
-    /* — Stage 05 scoring — */
+    /* — Scoring (was Stage 05) — */
     const st5 = SB.stage_05 || {};
     if (Object.keys(st5).length) {
-      html += `<div class="kc-section-head">Stage 05 \u2014 Scoring</div>`;
+      html += `<div class="kc-section-head">SCORING</div>`;
 
       html += `<div class="kc-stat-block">
         <div class="kc-stat-block-head"><span class="kc-icon">\u2605</span>Score summary</div>
@@ -792,10 +708,10 @@
       }
     }
 
-    /* — Stage 06 postfilter — */
+    /* — Postfilter (was Stage 06) — */
     const st6 = SB.stage_06 || {};
     if (Object.keys(st6).length) {
-      html += `<div class="kc-section-head">Stage 06 \u2014 Postfilter</div>
+      html += `<div class="kc-section-head">POSTFILTER</div>
         <div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\u2705</span>Threshold filter</div>
           <div class="kc-stat-block-body">
