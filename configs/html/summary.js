@@ -1,4 +1,4 @@
-/* kcommit-analysis-pipeline — v16.6.0 UI
+/* kcommit-analysis-pipeline — v16.7.0 UI
  *
  * Reads everything from window.__KC_UI__ (serialised by html_report.py at
  * generation time from config + JSON outputs — zero hardcoding).
@@ -11,10 +11,12 @@
  *   detail_root   – path prefix for per-commit sidecar JSON (e.g. './commits')
  *   is_filtered   – bool: this is the filtered-commits view
  *
- * v16.6.0 additions:
- *   Left pane – tooltips (ⓘ icon) on every stat label.
- *   Left pane – Score distribution section: global histogram + min/max/avg.
- *   Left pane – Per-profile min/max/avg mini-stats under each profile.
+ * v16.7.0 changes:
+ *   Tooltip positioning: position:fixed + getBoundingClientRect() so the
+ *   bubble always renders in the correct viewport position, regardless of
+ *   overflow:hidden ancestors or scroll offset.
+ *   Pane resize: width set in rem (px / rootFontSize) so drag-resize
+ *   stays proportional when browser zoom changes the root font size.
  */
 (function () {
   'use strict';
@@ -50,15 +52,11 @@
         }
       }
     }
-    // Remove the old combined profile_scores column (replaced by per-profile)
     return out.filter(c => c.key !== 'profile_scores');
   })();
 
   // Enrich rows with per-profile score keys
   const ROWS = (UI.rows || []).map(r => {
-    const scoring = (r._scoring_profiles) || {};
-    // Per-profile scores are stored by html_report.py on each row as
-    // score_<profile>.  Fall back to 0 if absent.
     const out = Object.assign({}, r);
     for (const p of PROFILE_NAMES) {
       const k = `score_${p}`;
@@ -107,7 +105,6 @@
       const p = x => String(x).padStart(2, '0');
       return `${d.getUTCFullYear()}-${p(d.getUTCMonth()+1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
     }
-    // Already a string — ensure HH:MM is preserved (up to 16 chars = "YYYY-MM-DD HH:MM")
     return String(ts).slice(0, 16);
   }
 
@@ -124,8 +121,9 @@
     return (arr || []).map(p => `<span class="kc-chip">${esc(p)}</span>`).join(' ');
   }
 
-  /* kv — key/value row.  Optional tooltip text adds a ⓘ icon next to
-   * the label; hovering (desktop) or clicking (mobile) reveals the tip. */
+  /* kv — key/value row.  Optional tooltip text adds a ⓘ icon whose
+   * bubble is positioned via JS (positionTooltip) using position:fixed,
+   * so it is never clipped by overflow:hidden ancestors. */
   function kv(label, val, tip) {
     const tipHtml = tip
       ? `<i class="kc-info-icon" role="button" aria-label="${esc(label)} help" tabindex="0">i<span class="kc-tooltip">${esc(tip)}</span></i>`
@@ -200,6 +198,57 @@
       .catch(() => null);
   }
 
+  /* ========= Tooltip positioning (position:fixed) =========
+   *
+   * Because the tooltip uses position:fixed it escapes every
+   * overflow:hidden ancestor.  We compute the viewport-relative
+   * position from the icon's bounding rect and write it as inline
+   * style on the .kc-tooltip element before the bubble becomes
+   * visible, so the arrow always points at the correct icon.
+   *
+   * Layout (above the icon, horizontally centred on it):
+   *
+   *   +----[ tooltip bubble ]----+
+   *                ▼  (arrow)
+   *              [i icon]
+   *
+   * We clamp so the bubble never overflows the left or right
+   * viewport edge (8px margin on each side).
+   */
+  function positionTooltip(icon) {
+    const tip = icon.querySelector('.kc-tooltip');
+    if (!tip) return;
+
+    /* Reset any previous inline placement so offsetWidth is accurate */
+    tip.style.left = '0';
+    tip.style.top  = '0';
+
+    const iconRect = icon.getBoundingClientRect();
+    const tipW     = tip.offsetWidth  || 220;
+    const tipH     = tip.offsetHeight || 40;
+    const GAP      = 8;   /* px between arrow tip and icon top edge */
+    const MARGIN   = 8;   /* min distance from viewport edges */
+
+    /* Preferred: centred on icon, above it */
+    let left = iconRect.left + iconRect.width / 2 - tipW / 2;
+    let top  = iconRect.top  - tipH - GAP;
+
+    /* Clamp horizontally */
+    left = Math.max(MARGIN, Math.min(left, window.innerWidth - tipW - MARGIN));
+
+    /* If not enough room above, flip below the icon */
+    if (top < MARGIN) {
+      top = iconRect.bottom + GAP;
+      /* Flip the CSS arrow to point upward when bubble is below */
+      tip.classList.add('kc-tooltip-below');
+    } else {
+      tip.classList.remove('kc-tooltip-below');
+    }
+
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top  = `${Math.round(top)}px`;
+  }
+
   /* ========= Theme ========= */
   const html = document.documentElement;
 
@@ -221,6 +270,12 @@
       applyTheme(html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
 
   /* ========= Pane collapse / resize ========= */
+
+  /* Returns the current root font-size in px (respects browser zoom). */
+  function rootFontSizePx() {
+    return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  }
+
   function initPane(pane, storageKey, btnId) {
     if (!pane) return;
     const stored = localStorage.getItem(storageKey);
@@ -248,20 +303,24 @@
   initPane(document.getElementById('kc-pane-right'), 'kc-right-collapsed', 'kc-right-toggle');
   updateCollapseIcons();
 
+  /* Left-pane drag resize — width stored/set in rem so zoom doesn't break it */
   document.querySelectorAll('.kc-handle').forEach(handle => {
     if (handle.id === 'kc-right-handle') return;
     const target = handle.previousElementSibling;
     if (!target) return;
     let startX, startW;
     handle.addEventListener('mousedown', e => {
-      startX = e.clientX; startW = target.getBoundingClientRect().width;
+      startX = e.clientX;
+      startW = target.getBoundingClientRect().width;
       handle.classList.add('dragging');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
     });
     window.addEventListener('mousemove', e => {
       if (!handle.classList.contains('dragging')) return;
-      target.style.width = Math.max(180, Math.min(700, startW + e.clientX - startX)) + 'px';
+      const rem = rootFontSizePx();
+      const newW = Math.max(180, Math.min(700, startW + e.clientX - startX));
+      target.style.width = `${(newW / rem).toFixed(3)}rem`;
     });
     window.addEventListener('mouseup', () => {
       handle.classList.remove('dragging');
@@ -270,20 +329,24 @@
     });
   });
 
+  /* Right-pane drag resize */
   (function () {
     const rHandle = document.getElementById('kc-right-handle');
     const rPane   = document.getElementById('kc-pane-right');
     if (!rHandle || !rPane) return;
     let startX, startW;
     rHandle.addEventListener('mousedown', e => {
-      startX = e.clientX; startW = rPane.getBoundingClientRect().width;
+      startX = e.clientX;
+      startW = rPane.getBoundingClientRect().width;
       rHandle.classList.add('dragging');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
     });
     window.addEventListener('mousemove', e => {
       if (!rHandle.classList.contains('dragging')) return;
-      rPane.style.width = Math.max(220, Math.min(700, startW + startX - e.clientX)) + 'px';
+      const rem  = rootFontSizePx();
+      const newW = Math.max(220, Math.min(700, startW + startX - e.clientX));
+      rPane.style.width = `${(newW / rem).toFixed(3)}rem`;
     });
     window.addEventListener('mouseup', () => {
       rHandle.classList.remove('dragging');
@@ -298,23 +361,19 @@
     if (!bar) return;
     const pills = [];
 
-	function localTzLabel() {
+    function localTzLabel() {
       try {
         const parts = new Intl.DateTimeFormat(undefined, {
-          hour: '2-digit',
-          minute: '2-digit',
-          timeZoneName: 'short',
+          hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
         }).formatToParts(new Date());
         const tz = parts.find(p => p.type === 'timeZoneName');
         return tz ? tz.value : '';
-      } catch (_) {
-        return '';
-      }
-	}
+      } catch (_) { return ''; }
+    }
 
     if (META.version) pills.push(esc(META.version));
 
-	if (META.generated_at) {
+    if (META.generated_at) {
       const ts = String(META.generated_at).slice(0, 16);
       const tz = localTzLabel();
       pills.push(`Run: ${esc(ts)}${tz ? ` ${esc(tz)}` : ''}`);
@@ -342,29 +401,24 @@
 
     /* ---- Tooltip definitions for stat labels ---- */
     const TIPS = {
-      // Funnel
       'Collected':          'Total commits fetched from git in the configured SHA range.',
       'Prefilter dropped':  'Commits removed by stage 04 before scoring (e.g. no Kconfig coverage, path blacklist).',
       'Scored':             'Commits that reached the scoring engine (stage 05).',
       'Postfilter dropped': 'Scored commits below the minimum score threshold — excluded from the report.',
       'Final report':       'Commits that passed all pipeline stages and appear in this report.',
       'Pass rate':          'Percentage of collected commits that made it into the final report.',
-      // Stage 05
       'Total scored':       'Number of commits processed by the scoring engine in stage 05.',
       'Zero-score':         'Commits where every scoring rule evaluated to 0 — no profile matched or all weights were zero.',
       'Multi-profile':      'Commits matched by more than one profile simultaneously; their scores are summed.',
-      // Stage 06
       'Threshold':          'Minimum score a commit must achieve to be included in the final report (stage 06 postfilter).',
       'Kept':               'Commits at or above the threshold — included in the report.',
       'Dropped':            'Commits below the threshold — excluded from the report.',
       'Top score':          'Highest score seen among all scored commits.',
       'Bottom kept':        'Lowest score among commits that passed the postfilter threshold.',
-      // Annotations
       'is_fix':             'Commits whose message contains a Fixes: tag referencing a prior commit.',
       'has_cve':            'Commits that mention a CVE identifier in their message body.',
       'has_syzbot':         'Commits that reference a syzbot bug report.',
       'stable_cc':          'Commits with a Cc: stable@vger.kernel.org line requesting stable backport.',
-      // Score distribution
       'Max':                'Highest score achieved by any single commit in the scored set.',
       'Min':                'Lowest score among commits that scored > 0.',
       'Avg':                'Arithmetic mean of all commit scores (including zero-score commits).',
@@ -433,7 +487,6 @@
     if (Object.keys(st5).length) {
       html += `<div class="kc-section-head">Stage 05 \u2014 Scoring</div>`;
 
-      /* Score summary card */
       html += `<div class="kc-stat-block">
         <div class="kc-stat-block-head"><span class="kc-icon">\u2605</span>Score summary</div>
         <div class="kc-stat-block-body">
@@ -443,7 +496,6 @@
         </div>
       </div>`;
 
-      /* Score distribution card — histogram + min/max/avg */
       const ss   = st5.score_stats || {};
       const dist = ss.distribution || [];
       if (dist.length || ss.score_max != null) {
@@ -456,7 +508,6 @@
         </div>`;
       }
 
-      /* Profiles card */
       const profs = st5.profiles || {};
       if (Object.keys(profs).length) {
         html += `<div class="kc-stat-block">
@@ -464,14 +515,12 @@
           <div class="kc-stat-block-body"><ul class="kc-profile-list">`;
         Object.keys(profs).sort().forEach(p => {
           const d = profs[p];
-          /* mini-stats: avg, min, max when available */
           const metaParts = [];
           if (d.score_avg  != null) metaParts.push(`<span class="kc-pmeta-item">avg <strong>${d.score_avg}</strong></span>`);
           if (d.score_min  != null && d.score_min !== d.score_max)
             metaParts.push(`<span class="kc-pmeta-item">min <strong>${d.score_min}</strong></span>`);
           if (d.score_max  != null) metaParts.push(`<span class="kc-pmeta-item">max <strong>${d.score_max}</strong></span>`);
           const metaRow  = metaParts.length ? `<div class="kc-profile-meta">${metaParts.join('')}</div>` : '';
-          /* mini histogram for this profile */
           const profHist = (d.score_distribution || []).length
             ? renderHistogram(d.score_distribution)
             : '';
@@ -534,21 +583,49 @@
 
     body.innerHTML = html;
 
-    /* ---- Tooltip click-toggle for touch/mobile ---- */
+    /* ---- Tooltip positioning via position:fixed ----
+     *
+     * mouseenter / focus  → compute position + show
+     * mouseleave / blur   → hide (unless .kc-tip-open from click)
+     * click               → toggle .kc-tip-open for touch/KB
+     * document click      → close all open tips
+     */
+    body.addEventListener('mouseenter', e => {
+      const icon = e.target.closest('.kc-info-icon');
+      if (!icon) return;
+      positionTooltip(icon);
+    }, true);
+
+    body.addEventListener('focusin', e => {
+      const icon = e.target.closest('.kc-info-icon');
+      if (!icon) return;
+      positionTooltip(icon);
+    });
+
     body.addEventListener('click', e => {
       const icon = e.target.closest('.kc-info-icon');
-      if (!icon) { body.querySelectorAll('.kc-info-icon.kc-tip-open').forEach(el => el.classList.remove('kc-tip-open')); return; }
+      if (!icon) {
+        body.querySelectorAll('.kc-info-icon.kc-tip-open')
+            .forEach(el => el.classList.remove('kc-tip-open'));
+        return;
+      }
       e.stopPropagation();
       const wasOpen = icon.classList.contains('kc-tip-open');
-      body.querySelectorAll('.kc-info-icon.kc-tip-open').forEach(el => el.classList.remove('kc-tip-open'));
-      if (!wasOpen) icon.classList.add('kc-tip-open');
+      body.querySelectorAll('.kc-info-icon.kc-tip-open')
+          .forEach(el => el.classList.remove('kc-tip-open'));
+      if (!wasOpen) {
+        positionTooltip(icon);
+        icon.classList.add('kc-tip-open');
+      }
     });
-    /* Keyboard: Enter/Space on ⓘ icon toggles tooltip */
+
     body.addEventListener('keydown', e => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       const icon = e.target.closest('.kc-info-icon');
       if (!icon) return;
       e.preventDefault();
+      const opening = !icon.classList.contains('kc-tip-open');
+      if (opening) positionTooltip(icon);
       icon.classList.toggle('kc-tip-open');
     });
   })();
