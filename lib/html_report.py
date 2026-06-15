@@ -16,6 +16,13 @@ Changes:
              globals.  Template is a static shell (no __BODY__ marker).
            — Per-profile score columns: each row now carries score_<profile>
              keys; JS expands these into individual table columns.
+  v16.6.0 — Left-pane enhancements:
+           — Tooltips on every stat label (ⓘ icon, click to toggle on
+             mobile, hover on desktop).
+           — Score distribution section: histogram + min/max/avg/median.
+             Data comes from run_stats stage_05_scoring.score_distribution
+             and per-profile score_max/score_min/score_avg already
+             computed by _build_stage05() in run_stats.py.
 """
 import json
 import os
@@ -127,7 +134,11 @@ def _commit_row(i, c, is_filtered=False, all_profiles=None):
 # ---------------------------------------------------------------------------
 
 def _sidebar_payload(report_stats, profile_summary):
-    """Build the sidebar dict consumed by the JS left-pane renderer."""
+    """Build the sidebar dict consumed by the JS left-pane renderer.
+
+    v16.6.0: exposes score_distribution and per-profile score_max/min
+    so the JS can render the histogram and distribution stats.
+    """
     rs  = report_stats or {}
     ps  = profile_summary or {}
 
@@ -151,12 +162,33 @@ def _sidebar_payload(report_stats, profile_summary):
         if rs.get(k) is not None:
             ann[k] = rs[k]
 
+    # v16.6.0: build richer per-profile data from run_stats stage_05_scoring
+    # when available, falling back to the legacy profile_summary dict.
+    st05_full = rs.get('stage_05_scoring') or {}
+    st05_profiles_full = st05_full.get('profiles') or {}
+
     profiles_sidebar = {}
     for pname, pd in sorted(ps.items()):
+        full = st05_profiles_full.get(pname) or {}
         profiles_sidebar[pname] = {
             'commits_scored': pd.get('commit_count', pd.get('count', 0)),
             'score_avg':      round(float(pd.get('avg_score', 0) or 0), 1),
+            'score_max':      int(full.get('score_max', 0) or 0),
+            'score_min':      int(full.get('score_min', 0) or 0),
+            'score_distribution': full.get('score_distribution') or [],
         }
+
+    # v16.6.0: global score distribution from stage_05_scoring
+    score_dist = (st05_full.get('score_distribution') or {}).get('items') or []
+
+    # Compute global min/max/avg from the rows directly if stage_05 is available
+    st05_glob = {
+        'score_max':     int(st05_full.get('score_max', score_hi or 0) or 0),
+        'score_min':     int(st05_full.get('score_min', score_lo or 0) or 0),
+        'score_avg':     round(float(st05_full.get('score_avg', 0) or 0), 1),
+        'score_median':  round(float(st05_full.get('score_median', 0) or 0), 1),
+        'distribution':  score_dist,
+    }
 
     try:
         pass_rate = round((rep_total / max(int(collected or 0), 1)) * 100, 1)
@@ -179,6 +211,7 @@ def _sidebar_payload(report_stats, profile_summary):
         'zero_score_commits':    zero_prof,
         'multi_profile_commits': rs.get('commits_multi_profile'),
         'profiles':              profiles_sidebar,
+        'score_stats':           st05_glob,
     }
 
     stage_06 = {

@@ -1,4 +1,4 @@
-/* kcommit-analysis-pipeline — v15.0.0 UI
+/* kcommit-analysis-pipeline — v16.6.0 UI
  *
  * Reads everything from window.__KC_UI__ (serialised by html_report.py at
  * generation time from config + JSON outputs — zero hardcoding).
@@ -10,6 +10,11 @@
  *   sidebar       – {funnel, stages, profiles, evaluation, annotations}
  *   detail_root   – path prefix for per-commit sidecar JSON (e.g. './commits')
  *   is_filtered   – bool: this is the filtered-commits view
+ *
+ * v16.6.0 additions:
+ *   Left pane – tooltips (ⓘ icon) on every stat label.
+ *   Left pane – Score distribution section: global histogram + min/max/avg.
+ *   Left pane – Per-profile min/max/avg mini-stats under each profile.
  */
 (function () {
   'use strict';
@@ -119,8 +124,16 @@
     return (arr || []).map(p => `<span class="kc-chip">${esc(p)}</span>`).join(' ');
   }
 
-  function kv(label, val) {
-    return `<div class="kc-kv"><span class="kc-kv-label">${esc(label)}</span><span class="kc-kv-value">${val}</span></div>`;
+  /* kv — key/value row.  Optional tooltip text adds a ⓘ icon next to
+   * the label; hovering (desktop) or clicking (mobile) reveals the tip. */
+  function kv(label, val, tip) {
+    const tipHtml = tip
+      ? `<i class="kc-info-icon" role="button" aria-label="${esc(label)} help" tabindex="0">i<span class="kc-tooltip">${esc(tip)}</span></i>`
+      : '';
+    const labelHtml = tip
+      ? `<span class="kc-kv-label"><span class="kc-kv-label-wrap">${esc(label)}${tipHtml}</span></span>`
+      : `<span class="kc-kv-label">${esc(label)}</span>`;
+    return `<div class="kc-kv">${labelHtml}<span class="kc-kv-value">${val}</span></div>`;
   }
 
   function detailCard(title, bodyHtml, icon) {
@@ -129,6 +142,43 @@
       <div class="kc-detail-card-head">${ico}${esc(title)}</div>
       <div class="kc-detail-card-body">${bodyHtml}</div>
     </div>`;
+  }
+
+  /* ---- Score histogram helper ---- */
+  function renderHistogram(distItems) {
+    if (!distItems || !distItems.length) return '';
+    const maxCount = Math.max(1, ...distItems.map(b => b.count || 0));
+    return `<div class="kc-histogram">${
+      distItems.map(b => {
+        const cnt  = b.count || 0;
+        const pct  = Math.round((cnt / maxCount) * 100);
+        const zero = b.bucket === '0';
+        const cls  = zero ? 'kc-hist-bar kc-hist-zero' : 'kc-hist-bar';
+        const cntCls = cnt === 0 ? 'kc-hist-count kc-muted' : 'kc-hist-count';
+        return `<div class="kc-hist-row">
+          <span class="kc-hist-bucket">${esc(b.bucket)}</span>
+          <div class="kc-hist-bar-wrap"><div class="${cls}" style="width:${pct}%"></div></div>
+          <span class="${cntCls}">${cnt}</span>
+        </div>`;
+      }).join('')
+    }</div>`;
+  }
+
+  /* ---- Score stat block (min/max/avg/median) ---- */
+  function renderScoreStats(ss) {
+    if (!ss) return '';
+    const items = [];
+    if (ss.score_max != null) items.push({ label: 'Max',    val: ss.score_max });
+    if (ss.score_min != null) items.push({ label: 'Min',    val: ss.score_min });
+    if (ss.score_avg != null) items.push({ label: 'Avg',    val: ss.score_avg });
+    if (ss.score_median != null) items.push({ label: 'Median', val: ss.score_median });
+    if (!items.length) return '';
+    return `<div class="kc-dist-stats">${
+      items.map(i => `<div class="kc-dist-stat">
+        <span class="kc-dist-stat-label">${esc(i.label)}</span>
+        <span class="kc-dist-stat-value">${esc(i.val)}</span>
+      </div>`).join('')
+    }</div>`;
   }
 
   function sidecarPath(sha) {
@@ -262,17 +312,14 @@
       }
 	}
 
-    /* FIX 1: VERSION already includes the leading 'v' — do not add another */
     if (META.version) pills.push(esc(META.version));
 
-	/* FIX 2: Show full datetime HH:MM + local timezone */
-    if (META.generated_at) {
+	if (META.generated_at) {
       const ts = String(META.generated_at).slice(0, 16);
       const tz = localTzLabel();
       pills.push(`Run: ${esc(ts)}${tz ? ` ${esc(tz)}` : ''}`);
     }
 
-    /* FIX 3: Git range as "from <sha> to <sha>" */
     if (META.git_range) {
       const parts = String(META.git_range).split('..');
       if (parts.length === 2) {
@@ -293,16 +340,50 @@
 
     let html = '';
 
+    /* ---- Tooltip definitions for stat labels ---- */
+    const TIPS = {
+      // Funnel
+      'Collected':          'Total commits fetched from git in the configured SHA range.',
+      'Prefilter dropped':  'Commits removed by stage 04 before scoring (e.g. no Kconfig coverage, path blacklist).',
+      'Scored':             'Commits that reached the scoring engine (stage 05).',
+      'Postfilter dropped': 'Scored commits below the minimum score threshold — excluded from the report.',
+      'Final report':       'Commits that passed all pipeline stages and appear in this report.',
+      'Pass rate':          'Percentage of collected commits that made it into the final report.',
+      // Stage 05
+      'Total scored':       'Number of commits processed by the scoring engine in stage 05.',
+      'Zero-score':         'Commits where every scoring rule evaluated to 0 — no profile matched or all weights were zero.',
+      'Multi-profile':      'Commits matched by more than one profile simultaneously; their scores are summed.',
+      // Stage 06
+      'Threshold':          'Minimum score a commit must achieve to be included in the final report (stage 06 postfilter).',
+      'Kept':               'Commits at or above the threshold — included in the report.',
+      'Dropped':            'Commits below the threshold — excluded from the report.',
+      'Top score':          'Highest score seen among all scored commits.',
+      'Bottom kept':        'Lowest score among commits that passed the postfilter threshold.',
+      // Annotations
+      'is_fix':             'Commits whose message contains a Fixes: tag referencing a prior commit.',
+      'has_cve':            'Commits that mention a CVE identifier in their message body.',
+      'has_syzbot':         'Commits that reference a syzbot bug report.',
+      'stable_cc':          'Commits with a Cc: stable@vger.kernel.org line requesting stable backport.',
+      // Score distribution
+      'Max':                'Highest score achieved by any single commit in the scored set.',
+      'Min':                'Lowest score among commits that scored > 0.',
+      'Avg':                'Arithmetic mean of all commit scores (including zero-score commits).',
+      'Median':             'Middle value when commit scores are sorted — less sensitive to outliers than the mean.',
+    };
+
     /* — Funnel — */
     const f = SB.funnel || {};
     if (f.collected != null) {
       const total = f.collected || 1;
 
-      /* FIX 4: simplified funnel — drop "kept" rows, keep logical flow */
       function fRow(label, val, cls) {
-        const pct = Math.round((val / total) * 100);
+        const pct    = Math.round((val / total) * 100);
+        const tip    = TIPS[label] || '';
+        const tipHtml = tip
+          ? `<i class="kc-info-icon" role="button" aria-label="${esc(label)} help" tabindex="0">i<span class="kc-tooltip">${esc(tip)}</span></i>`
+          : '';
         return `<div class="kc-funnel-row ${cls}">
-          <span class="kc-fn-label">${esc(label)}</span>
+          <span class="kc-fn-label"><span class="kc-kv-label-wrap">${esc(label)}${tipHtml}</span></span>
           <div class="kc-fbar"><div class="kc-fbar-fill" style="width:${pct}%"></div></div>
           <span class="kc-fn-val">${val}</span>
         </div>`;
@@ -319,7 +400,7 @@
             ${fRow('Postfilter dropped', f.postfilter_dropped || 0, 'drop')}
             ${fRow('Final report',       f.final_report       || 0, 'kept')}
           </div>
-          ${kv('Pass rate', `<strong>${esc(f.pass_rate_pct || 0)}%</strong>`)}
+          ${kv('Pass rate', `<strong>${esc(f.pass_rate_pct || 0)}%</strong>`, TIPS['Pass rate'])}
         </div>
       </div>`;
     }
@@ -327,7 +408,7 @@
     /* — Stage 04 prefilter — */
     const st4 = SB.stage_04 || {};
     if (Object.keys(st4).length) {
-      html += `<div class="kc-section-head">Stage 04 — Prefilter</div>
+      html += `<div class="kc-section-head">Stage 04 \u2014 Prefilter</div>
         <div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udeab</span>Drop reasons</div>
           <div class="kc-stat-block-body">`;
@@ -350,16 +431,32 @@
     /* — Stage 05 scoring — */
     const st5 = SB.stage_05 || {};
     if (Object.keys(st5).length) {
-      html += `<div class="kc-section-head">Stage 05 — Scoring</div>
-        <div class="kc-stat-block">
-          <div class="kc-stat-block-head"><span class="kc-icon">\u2605</span>Score summary</div>
+      html += `<div class="kc-section-head">Stage 05 \u2014 Scoring</div>`;
+
+      /* Score summary card */
+      html += `<div class="kc-stat-block">
+        <div class="kc-stat-block-head"><span class="kc-icon">\u2605</span>Score summary</div>
+        <div class="kc-stat-block-body">
+          ${kv('Total scored',   `<strong>${esc(st5.total_scored || 0)}</strong>`,          TIPS['Total scored'])}
+          ${kv('Zero-score',     `<strong>${esc(st5.zero_score_commits || 0)}</strong>`,    TIPS['Zero-score'])}
+          ${kv('Multi-profile',  `<strong>${esc(st5.multi_profile_commits || 0)}</strong>`, TIPS['Multi-profile'])}
+        </div>
+      </div>`;
+
+      /* Score distribution card — histogram + min/max/avg */
+      const ss   = st5.score_stats || {};
+      const dist = ss.distribution || [];
+      if (dist.length || ss.score_max != null) {
+        html += `<div class="kc-stat-block">
+          <div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udcca</span>Score distribution</div>
           <div class="kc-stat-block-body">
-            ${kv('Total scored',  `<strong>${esc(st5.total_scored || 0)}</strong>`)}
-            ${kv('Zero-score',    `<strong>${esc(st5.zero_score_commits || 0)}</strong>`)}
-            ${kv('Multi-profile',`<strong>${esc(st5.multi_profile_commits || 0)}</strong>`)}
+            ${renderScoreStats(ss)}
+            ${renderHistogram(dist)}
           </div>
         </div>`;
+      }
 
+      /* Profiles card */
       const profs = st5.profiles || {};
       if (Object.keys(profs).length) {
         html += `<div class="kc-stat-block">
@@ -367,10 +464,24 @@
           <div class="kc-stat-block-body"><ul class="kc-profile-list">`;
         Object.keys(profs).sort().forEach(p => {
           const d = profs[p];
-          html += `<li>
-            <span class="kc-pname">${esc(p)}</span>
-            <span class="kc-pbadge">${d.commits_scored}</span>
-            <span class="kc-muted" style="font-size:11px">ø${d.score_avg}</span>
+          /* mini-stats: avg, min, max when available */
+          const metaParts = [];
+          if (d.score_avg  != null) metaParts.push(`<span class="kc-pmeta-item">avg <strong>${d.score_avg}</strong></span>`);
+          if (d.score_min  != null && d.score_min !== d.score_max)
+            metaParts.push(`<span class="kc-pmeta-item">min <strong>${d.score_min}</strong></span>`);
+          if (d.score_max  != null) metaParts.push(`<span class="kc-pmeta-item">max <strong>${d.score_max}</strong></span>`);
+          const metaRow  = metaParts.length ? `<div class="kc-profile-meta">${metaParts.join('')}</div>` : '';
+          /* mini histogram for this profile */
+          const profHist = (d.score_distribution || []).length
+            ? renderHistogram(d.score_distribution)
+            : '';
+          html += `<li style="flex-direction:column;align-items:flex-start;gap:2px;padding:6px 2px">
+            <div style="display:flex;align-items:baseline;gap:6px;width:100%">
+              <span class="kc-pname">${esc(p)}</span>
+              <span class="kc-pbadge">${d.commits_scored}</span>
+            </div>
+            ${metaRow}
+            ${profHist}
           </li>`;
         });
         html += `</ul></div></div>`;
@@ -380,15 +491,15 @@
     /* — Stage 06 postfilter — */
     const st6 = SB.stage_06 || {};
     if (Object.keys(st6).length) {
-      html += `<div class="kc-section-head">Stage 06 — Postfilter</div>
+      html += `<div class="kc-section-head">Stage 06 \u2014 Postfilter</div>
         <div class="kc-stat-block">
           <div class="kc-stat-block-head"><span class="kc-icon">\u2705</span>Threshold filter</div>
           <div class="kc-stat-block-body">
-            ${kv('Threshold',      `<strong>${esc(st6.threshold ?? '\u2014')}</strong>`)}
-            ${kv('Kept',           `<strong>${esc(st6.kept      || 0)}</strong>`)}
-            ${kv('Dropped',        `<strong>${esc(st6.dropped   || 0)}</strong>`)}
-            ${kv('Top score',      `<strong>${esc(st6.top_score || 0)}</strong>`)}
-            ${kv('Bottom kept',    `<strong>${esc(st6.bottom_kept_score || 0)}</strong>`)}
+            ${kv('Threshold',   `<strong>${esc(st6.threshold ?? '\u2014')}</strong>`,          TIPS['Threshold'])}
+            ${kv('Kept',        `<strong>${esc(st6.kept      || 0)}</strong>`,                  TIPS['Kept'])}
+            ${kv('Dropped',     `<strong>${esc(st6.dropped   || 0)}</strong>`,                  TIPS['Dropped'])}
+            ${kv('Top score',   `<strong>${esc(st6.top_score || 0)}</strong>`,                  TIPS['Top score'])}
+            ${kv('Bottom kept', `<strong>${esc(st6.bottom_kept_score || 0)}</strong>`,          TIPS['Bottom kept'])}
           </div>
         </div>`;
     }
@@ -398,12 +509,12 @@
     if (ann.total_commits) {
       html += `<div class="kc-section-head">Kernel Annotations</div>
         <div class="kc-stat-block">
-          <div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udd16</span>Flags (total → kept)</div>
+          <div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udd16</span>Flags (total \u2192 kept)</div>
           <div class="kc-stat-block-body">
-            ${kv('is_fix',     `${esc(ann.is_fix||0)} \u2192 ${esc(ann.is_fix_and_kept||0)}`)}
-            ${kv('has_cve',    `${esc(ann.has_cve||0)} \u2192 ${esc(ann.has_cve_and_kept||0)}`)}
-            ${kv('has_syzbot', `${esc(ann.has_syzbot||0)} \u2192 ${esc(ann.has_syzbot_and_kept||0)}`)}
-            ${kv('stable_cc',  `${esc(ann.has_stable_cc||0)} \u2192 ${esc(ann.has_stable_cc_and_kept||0)}`)}
+            ${kv('is_fix',     `${esc(ann.is_fix||0)} \u2192 ${esc(ann.is_fix_and_kept||0)}`,         TIPS['is_fix'])}
+            ${kv('has_cve',    `${esc(ann.has_cve||0)} \u2192 ${esc(ann.has_cve_and_kept||0)}`,       TIPS['has_cve'])}
+            ${kv('has_syzbot', `${esc(ann.has_syzbot||0)} \u2192 ${esc(ann.has_syzbot_and_kept||0)}`, TIPS['has_syzbot'])}
+            ${kv('stable_cc',  `${esc(ann.has_stable_cc||0)} \u2192 ${esc(ann.has_stable_cc_and_kept||0)}`, TIPS['stable_cc'])}
           </div>
         </div>`;
     }
@@ -422,6 +533,24 @@
     }
 
     body.innerHTML = html;
+
+    /* ---- Tooltip click-toggle for touch/mobile ---- */
+    body.addEventListener('click', e => {
+      const icon = e.target.closest('.kc-info-icon');
+      if (!icon) { body.querySelectorAll('.kc-info-icon.kc-tip-open').forEach(el => el.classList.remove('kc-tip-open')); return; }
+      e.stopPropagation();
+      const wasOpen = icon.classList.contains('kc-tip-open');
+      body.querySelectorAll('.kc-info-icon.kc-tip-open').forEach(el => el.classList.remove('kc-tip-open'));
+      if (!wasOpen) icon.classList.add('kc-tip-open');
+    });
+    /* Keyboard: Enter/Space on ⓘ icon toggles tooltip */
+    body.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const icon = e.target.closest('.kc-info-icon');
+      if (!icon) return;
+      e.preventDefault();
+      icon.classList.toggle('kc-tip-open');
+    });
   })();
 
   /* ========= Table ========= */
@@ -438,10 +567,6 @@
   const colFilters = Object.create(null);
   COLS.forEach(c => { colFilters[c.key] = ''; });
 
-  /* FIX 5: autofilter — render a <select> + text <input> combo when a
-   * column has fewer than 20 distinct values, otherwise just text input.
-   * Both controls share the same data-filter-key so applyFilters() reads
-   * the select value when non-empty and falls back to the text input. */
   function buildFilterCtrl(col, fth) {
     const distinct = COL_DISTINCT[col.key] || [];
     const useList  = (col.type === 'select' && (col.options || []).length) ||
@@ -457,7 +582,6 @@
       sel.addEventListener('change', scheduleFilter);
       fth.appendChild(sel);
 
-      /* Also add a free-text input for >/< and regex on numeric cols */
       if (col.type === 'number') {
         const inp = document.createElement('input');
         inp.type = 'text';
@@ -472,7 +596,7 @@
     } else {
       const inp = document.createElement('input');
       inp.type = 'text';
-      inp.placeholder = 'Filter…';
+      inp.placeholder = 'Filter\u2026';
       inp.dataset.filterKey  = col.key;
       inp.dataset.filterRole = 'text';
       inp.addEventListener('input', scheduleFilter);
@@ -525,7 +649,6 @@
     return String(v);
   }
 
-  /* FIX 6: per-profile score columns rendered as scorePill */
   function rowHtml(r) {
     const cells = COLS.map(col => {
       let v = r[col.key];
@@ -536,7 +659,7 @@
       }
       if (col.key === 'score' || col._profile) {
         const num = parseFloat(v) || 0;
-        return `<td class="kc-td-num">${num > 0 ? scorePill(num) : '<span class="kc-muted">—</span>'}</td>`;
+        return `<td class="kc-td-num">${num > 0 ? scorePill(num) : '<span class="kc-muted">\u2014</span>'}</td>`;
       }
       if (col.key === 'profiles') {
         return `<td>${chips(Array.isArray(v) ? v : [v])}</td>`;
@@ -583,11 +706,7 @@
     try { return new RegExp(pat).test(s); } catch { return s.includes(t); }
   }
 
-  /* FIX 5 (cont.): applyFilters reads select value first, then text input.
-   * For a column that has both controls, the select acts as primary and the
-   * text input as secondary — both must match (AND logic). */
   function applyFilters() {
-    // Rebuild per-column filter values from all controls
     const selectVals = Object.create(null);
     const textVals   = Object.create(null);
     document.querySelectorAll('[data-filter-key]').forEach(el => {
@@ -595,7 +714,7 @@
       const role = el.dataset.filterRole || 'text';
       if (role === 'select') selectVals[key] = el.value || '';
       else                   textVals[key]   = el.value || '';
-      colFilters[key] = el.value || '';  // legacy compat
+      colFilters[key] = el.value || '';
     });
 
     const global  = (globalSrch?.value || '').trim().toLowerCase();
@@ -683,7 +802,7 @@
       path_blacklist_all:    'Every touched file matched the path blacklist.',
       no_kconfig_coverage:   'No Kconfig build evidence for any touched file.',
       score_below_threshold: `Score ${score} is below the minimum threshold (${SB.stage_06?.threshold ?? '?'}).`,
-      no_files_layer:        'Zero-file structural commit — included without scoring.',
+      no_files_layer:        'Zero-file structural commit \u2014 included without scoring.',
     };
     const cls   = dropped ? 'kc-decision-dropped' : 'kc-decision-kept';
     const label = dropped ? '\u2718 Dropped' : '\u2714 Kept';
@@ -738,7 +857,7 @@
         <span class="kc-score-pill ${cls}">${esc(score)}</span>
         ${blocked
           ? `<span style="color:var(--danger);font-weight:700">\u26d4 BLOCKED${pt.block_reason ? ` \u2014 ${esc(pt.block_reason)}` : ''}</span>`
-          : `<span class="kc-muted" style="font-size:11px">×${mult}</span>`}
+          : `<span class="kc-muted" style="font-size:11px">\u00d7${mult}</span>`}
       </div>
       <div class="kc-detail-card-body">`;
 
@@ -844,8 +963,8 @@
     let scoring = '';
     if (Object.keys(traceProfiles).length) {
       scoring += `<p class="kc-muted" style="font-size:11.5px;margin:0 0 8px">
-        Formula per profile: <code>min(&sum;rule_weights,100)&times;multiplier</code>.
-        Combined score=&sum; of all profile final scores.
+        Formula per profile: <code>raw_rule_total &times; profile_weight/100</code>.
+        Combined score = &sum; of all profile final scores.
         Pattern badges show the <strong>matched pattern</strong>,
         source <em>rule:file:line</em>, and a highlighted excerpt.</p>`;
       Object.keys(traceProfiles).sort().forEach(p =>
