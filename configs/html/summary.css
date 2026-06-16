@@ -1,13 +1,16 @@
-/* kcommit-analysis-pipeline — v16.12.5 UI
+/* kcommit-analysis-pipeline — v16.12.6 UI
    Three-pane resizable layout, collapsible sidebars, light+dark themes.
    All colours driven by CSS custom-properties; no colour is hardcoded.
 
+   v16.12.6: Fix 7 bugs from audit:
+     BUG-01 Replace colored side-border on decision cards with tinted bg.
+     BUG-02 Remove hardcoded --thead-sort-h (now set dynamically by JS).
+     BUG-05 Add .kc-tooltip-below::after rule (arrow flips when below).
+     BUG-06 Fix kc-live-count wrapping inside flex-wrap toolbar.
+     BUG-07 Remove dead tbody tr { border-bottom } under border-separate.
+     (BUG-03 confirmed non-issue; BUG-04 left as low-priority note in JS)
    v16.12.5: Fix commit-flow funnel column misalignment.
-             .kc-funnel-bar is now the single grid container
-             (grid-template-columns: max-content 1fr auto).
-             .kc-funnel-row uses display:contents — same pattern as
-             the histogram fix in v16.12.4.
-   v16.12.4: Fix histogram column misalignment (display:contents).
+   v16.12.4: Fix per-profile histogram layout (display:contents).
    v16.12.3: Section labels SCORING / POSTFILTER (JS change).
    v16.12.2: Fix per-profile histogram layout (CSS grid).
    v16.12.1: Fix gap between sticky sort-row and filter-row in thead.
@@ -86,7 +89,11 @@
   --radius:    10px;
   --radius-sm: 6px;
 
-  --thead-sort-h:   30px;
+  /* BUG-02: --thead-sort-h is no longer a static token here.
+     JS reads sortRow.offsetHeight after each buildHead() and writes
+     it as an inline style on <table> (or on .kc-table-wrap as a
+     CSS custom property override). See summary.js updateFilterOffset(). */
+  --thead-sort-h:   30px;   /* fallback only — overridden by JS */
   --thead-filter-h: 33px;
 
   /* Typography */
@@ -451,6 +458,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   text-align: left;
   transition: opacity .12s ease, visibility .12s ease;
 }
+/* Arrow — default: tooltip is ABOVE the icon, arrow points down */
 .kc-tooltip::after {
   content: '';
   position: absolute;
@@ -459,6 +467,13 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   transform: translateX(-50%);
   border: 5px solid transparent;
   border-top-color: var(--text);
+}
+/* BUG-05: tooltip flipped BELOW the icon — arrow points up */
+.kc-tooltip.kc-tooltip-below::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--text);
 }
 .kc-info-icon:hover         .kc-tooltip,
 .kc-info-icon:focus-visible .kc-tooltip,
@@ -571,7 +586,21 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   transition: border-color .15s, color .15s;
 }
 .kc-toolbar-btn:hover { border-color: var(--accent); color: var(--accent); }
-.kc-live-count { font-size: 11.5px; color: var(--muted); white-space: nowrap; margin-left: auto; }
+/* BUG-06: live count stays pinned to the right on the FIRST row.
+   flex-shrink:0 + margin-left:auto works fine when nothing wraps.
+   When the toolbar does wrap, order:999 + flex-basis:100% pushes the
+   count to its own last line, still right-aligned. */
+.kc-live-count {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  margin-left: auto;
+  flex-shrink: 0;
+  order: 999;
+}
+@media (max-width: 480px) {
+  .kc-live-count { flex-basis: 100%; text-align: right; margin-left: 0; }
+}
 .kc-table-wrap { flex: 1; overflow: auto; position: relative; }
 
 /* ── Table — sticky header (v16.12.1) ──────────────────────────────
@@ -581,6 +610,9 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
  * Each <thead> <tr> is sticky independently with its own top offset.
  * The sort-row bottom border uses inset box-shadow so it travels with
  * the sticky cell and never leaves a gap.
+ *
+ * BUG-07: Removed the dead `tbody tr { border-bottom }` rule that had
+ * no effect under border-collapse:separate (only cell borders render).
  * ------------------------------------------------------------------ */
 .kc-table {
   width: 100%;
@@ -595,7 +627,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 }
 .kc-table thead tr.kc-filter-row {
   position: sticky;
-  top: var(--thead-sort-h);
+  top: var(--thead-sort-h); /* fallback; JS overrides via inline style */
   z-index: 5;
 }
 .kc-table tr.kc-sort-row th {
@@ -640,8 +672,10 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(9,105,218,.1);
 }
+/* BUG-07: tbody tr border-bottom removed — has no effect under
+   border-collapse:separate; cell borders (td) are the only ones
+   that render. */
 .kc-table tbody tr {
-  border-bottom: 1px solid var(--border);
   transition: background .08s;
   cursor: pointer;
 }
@@ -795,21 +829,23 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   word-break: break-word;
   white-space: pre-wrap;
 }
+/* BUG-01: Replace colored side-border with tinted background + bold
+   status label. No border-left painted edge. */
 .kc-decision-kept {
-  background: var(--hi-bg);
-  color: var(--hi-fg);
-  border-left: 3px solid var(--success);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: color-mix(in srgb, var(--hi-bg) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--success) 25%, var(--border));
+  border-radius: var(--radius-sm);
   padding: 8px 12px;
   font-size: 12.5px;
+  color: var(--hi-fg);
 }
 .kc-decision-dropped {
-  background: var(--low-bg);
-  color: var(--low-fg);
-  border-left: 3px solid var(--danger);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: color-mix(in srgb, var(--low-bg) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 25%, var(--border));
+  border-radius: var(--radius-sm);
   padding: 8px 12px;
   font-size: 12.5px;
+  color: var(--low-fg);
 }
 .kc-decision-title { font-weight: 700; margin-bottom: 5px; }
 .kc-decision-items { padding-left: 16px; margin: 0; }

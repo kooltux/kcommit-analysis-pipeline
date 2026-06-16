@@ -1,5 +1,13 @@
-/* kcommit-analysis-pipeline — v16.12.3 UI
+/* kcommit-analysis-pipeline — v16.12.6 UI
  *
+ * v16.12.6: Bug fixes from audit:
+ *   BUG-02 updateFilterOffset() measures sortRow.offsetHeight after
+ *          buildHead() and on window resize; writes the value as a
+ *          CSS custom property on .kc-table-wrap so the filter row's
+ *          `top` is always exact, even when column labels wrap.
+ *   BUG-04 Right-pane drag: sign is correct for a left-edge handle
+ *          (drag left = grow, drag right = shrink). Added comment to
+ *          document the intentional direction; no behaviour change.
  * v16.12.3: Remove "Stage 05 — " and "Stage 06 — " prefixes from section
  *           labels; keep only "SCORING" and "POSTFILTER".
  */
@@ -465,6 +473,10 @@
     window.addEventListener('mousemove', e => {
       if (!rHandle.classList.contains('dragging')) return;
       const rem  = rootFontSizePx();
+      /* BUG-04 note: the right pane's handle sits on its LEFT edge.
+         Dragging left (e.clientX decreases) → startX - e.clientX > 0 → pane grows. ✔
+         Dragging right (e.clientX increases) → startX - e.clientX < 0 → pane shrinks. ✔
+         This is the correct physical behaviour for a left-edge handle. */
       const newW = Math.max(220, Math.min(700, startW + startX - e.clientX));
       rPane.style.width = `${(newW / rem).toFixed(3)}rem`;
     });
@@ -779,6 +791,7 @@
   /* ========= Table ========= */
   const tbody     = document.getElementById('kc-tbody');
   const thead     = document.getElementById('kc-thead');
+  const tableWrap = document.getElementById('kc-table-wrap');
   const globalSrch= document.getElementById('kc-global-search');
   const liveCount = document.getElementById('kc-live-count');
   const noMatch   = document.getElementById('kc-no-match');
@@ -789,6 +802,22 @@
   let visibleCount = ROWS.length;
   const colFilters = Object.create(null);
   COLS.forEach(c => { colFilters[c.key] = ''; });
+
+  /* =========================================================
+   * BUG-02: updateFilterOffset
+   * Measures the rendered height of the sort row and writes it
+   * as --thead-sort-h on the table-wrap element so the filter
+   * row's `top` is always exact — even when column labels wrap
+   * at narrow widths or high zoom levels.
+   * =========================================================
+   */
+  function updateFilterOffset() {
+    if (!thead || !tableWrap) return;
+    const sortRow = thead.querySelector('tr.kc-sort-row');
+    if (!sortRow) return;
+    const h = sortRow.offsetHeight;
+    tableWrap.style.setProperty('--thead-sort-h', `${h}px`);
+  }
 
   function buildFilterCtrl(col, fth) {
     const distinct = COL_DISTINCT[col.key] || [];
@@ -842,6 +871,8 @@
     thead.innerHTML = '';
     thead.appendChild(sortRow);
     thead.appendChild(filterRow);
+    /* BUG-02: measure actual sort-row height after DOM insertion */
+    requestAnimationFrame(updateFilterOffset);
   }
 
   function updateSortIcons() {
@@ -1207,6 +1238,10 @@
       if (next) { openDetail(next.dataset.sha12, next.dataset.sha); next.scrollIntoView({block:'nearest'}); }
     }
   });
+
+  /* BUG-02: re-measure filter offset whenever the window is resized
+     (e.g. zoom change, font scaling, responsive breakpoint). */
+  window.addEventListener('resize', updateFilterOffset);
 
   /* ========= Bootstrap ========= */
   buildHead();
