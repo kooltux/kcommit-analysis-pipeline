@@ -1,4 +1,20 @@
-/* kcommit-analysis-pipeline — v16.12.6 UI
+/* kcommit-analysis-pipeline — v16.14.0 UI
+ *
+ * v16.14.0: Unified two-tab HTML report.
+ *   — Reads window.__KC_UI__.tabs to detect two-tab mode.
+ *   — Tab bar rendered above the table toolbar when tabs are present.
+ *   — switchTab(name) swaps the active dataset (columns + rows + store),
+ *     rebuilds the table head, re-renders rows, resets filters, and
+ *     clears the right detail panel.
+ *   — Filtered tab uses filtered_columns / filtered_rows from KC_UI
+ *     and window.__KC_FILTERED_COMMITS__ as its detail store.
+ *   — rowHtml() dispatches on activeTab: filtered rows render a
+ *     filter_stage badge + drop reason; no score pill, no profile chips.
+ *   — openDetail() dispatches on activeTab: filtered tab calls
+ *     populateFilteredDetail() which shows metadata + drop decision
+ *     (prefilter_debug) + commit message; hides scoring tabs.
+ *   — liveCount and export CSV filename update per active tab.
+ *   — Legacy single-tab mode (no UI.tabs) is fully unchanged.
  *
  * v16.12.6: Bug fixes from audit:
  *   BUG-02 updateFilterOffset() measures sortRow.offsetHeight after
@@ -15,14 +31,18 @@
   'use strict';
 
   /* ========= Globals ========= */
-  const UI    = window.__KC_UI__      || {};
-  const STORE = window.__KC_COMMITS__ || {};
+  const UI    = window.__KC_UI__              || {};
+  const STORE = window.__KC_COMMITS__         || {};
+  const FSTORE= window.__KC_FILTERED_COMMITS__|| {};
   const META  = UI.meta    || {};
   const CTX   = UI.context || {};
   const SB    = UI.sidebar || {};
   const DROOT = (UI.detail_root || './commits').replace(/\/+$/, '');
 
-  /* ---- Build effective column list ----------------------------------- */
+  /* ---- Two-tab mode detection ---------------------------------------- */
+  const TABS_CFG = UI.tabs || null;   // null → legacy single-tab mode
+
+  /* ---- Relevant tab dataset ------------------------------------------ */
   const BASE_COLS   = UI.columns || [];
   const PROFILE_NAMES = (() => {
     const names = new Set();
@@ -30,7 +50,7 @@
     return [...names].sort();
   })();
 
-  const COLS = (() => {
+  const REL_COLS = (() => {
     const out = [];
     for (const col of BASE_COLS) {
       out.push(col);
@@ -42,7 +62,7 @@
     return out.filter(c => c.key !== 'profile_scores');
   })();
 
-  const ROWS = (UI.rows || []).map(r => {
+  const REL_ROWS = (UI.rows || []).map(r => {
     const out = Object.assign({}, r);
     for (const p of PROFILE_NAMES) {
       const k = `score_${p}`;
@@ -51,22 +71,42 @@
     return out;
   });
 
-  const rowBySha = Object.create(null);
-  ROWS.forEach(r => { rowBySha[r.sha12] = r; if (r.sha) rowBySha[r.sha] = r; });
+  /* ---- Filtered tab dataset ------------------------------------------ */
+  const FILT_COLS = UI.filtered_columns || [];
+  const FILT_ROWS = UI.filtered_rows    || [];
 
-  const COL_DISTINCT = Object.create(null);
-  COLS.forEach(col => {
-    const vals = new Set();
-    ROWS.forEach(r => {
-      const v = r[col.key];
-      if (Array.isArray(v)) v.forEach(x => vals.add(String(x)));
-      else if (v != null && v !== '') vals.add(String(v));
+  /* ---- Active dataset state (mutable) --------------------------------- */
+  let activeTab  = 'relevant';   // 'relevant' | 'filtered'
+  let COLS       = REL_COLS;
+  let ROWS       = REL_ROWS;
+  let sortedRows = REL_ROWS.slice();
+
+  /* ---- SHA → row lookup (both datasets) ------------------------------ */
+  const rowBySha = Object.create(null);
+  REL_ROWS.forEach(r => { rowBySha[r.sha12] = r; if (r.sha) rowBySha[r.sha] = r; });
+
+  const filtRowBySha = Object.create(null);
+  FILT_ROWS.forEach(r => { filtRowBySha[r.sha12] = r; if (r.sha) filtRowBySha[r.sha] = r; });
+
+  /* ---- Per-column distinct value cache (built lazily per tab) --------- */
+  function buildDistinct(cols, rows) {
+    const dist = Object.create(null);
+    cols.forEach(col => {
+      const vals = new Set();
+      rows.forEach(r => {
+        const v = r[col.key];
+        if (Array.isArray(v)) v.forEach(x => vals.add(String(x)));
+        else if (v != null && v !== '') vals.add(String(v));
+      });
+      dist[col.key] = [...vals].sort((a, b) => {
+        const na = parseFloat(a), nb = parseFloat(b);
+        return (!isNaN(na) && !isNaN(nb)) ? na - nb : a.localeCompare(b);
+      });
     });
-    COL_DISTINCT[col.key] = [...vals].sort((a, b) => {
-      const na = parseFloat(a), nb = parseFloat(b);
-      return (!isNaN(na) && !isNaN(nb)) ? na - nb : a.localeCompare(b);
-    });
-  });
+    return dist;
+  }
+
+  let COL_DISTINCT = buildDistinct(REL_COLS, REL_ROWS);
 
   /* ========= Helpers ========= */
 
@@ -101,6 +141,11 @@
 
   function chips(arr) {
     return (arr || []).map(p => `<span class="kc-chip">${esc(p)}</span>`).join(' ');
+  }
+
+  function stageBadge(stage) {
+    const cls = stage === 'prefilter' ? 'kc-chip-prefilter' : 'kc-chip-postfilter';
+    return `<span class="kc-chip ${cls}">${esc(stage || '\u2014')}</span>`;
   }
 
   function kv(label, val, tip) {
@@ -359,6 +404,14 @@
         return data;
       })
       .catch(() => null);
+  }
+
+  function fetchFilteredCommit(sha12, fullSha) {
+    // Filtered commits are always embedded in __KC_FILTERED_COMMITS__;
+    // no sidecar fetch needed (slim store is inlined at boot time).
+    return Promise.resolve(
+      FSTORE[fullSha] || FSTORE[sha12] || null
+    );
   }
 
   /* ========= Tooltip positioning ========= */
@@ -788,6 +841,50 @@
     });
   })();
 
+  /* ========= Report-level tab bar (two-tab mode only) ========= */
+  (function () {
+    if (!TABS_CFG) return;   // single-tab mode — nothing to render
+    const toolbar = document.getElementById('kc-toolbar');
+    if (!toolbar) return;
+    const bar = document.createElement('div');
+    bar.className = 'kc-report-tab-bar';
+    bar.setAttribute('role', 'tablist');
+    bar.setAttribute('aria-label', 'Report tabs');
+    TABS_CFG.forEach(tab => {
+      const btn = document.createElement('button');
+      btn.className = 'kc-report-tab' + (tab.id === 'relevant' ? ' kc-active' : '');
+      btn.dataset.reportTab = tab.id;
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-selected', tab.id === 'relevant' ? 'true' : 'false');
+      btn.innerHTML = `${esc(tab.label)} <span class="kc-tab-count">${esc(String(tab.count))}</span>`;
+      btn.addEventListener('click', () => switchTab(tab.id));
+      bar.appendChild(btn);
+    });
+    toolbar.insertAdjacentElement('beforebegin', bar);
+  })();
+
+  /* ========= Dataset switcher ========= */
+  function switchTab(name) {
+    if (name === activeTab) return;
+    activeTab  = name;
+    COLS       = name === 'filtered' ? FILT_COLS : REL_COLS;
+    ROWS       = name === 'filtered' ? FILT_ROWS : REL_ROWS;
+    sortedRows = ROWS.slice();
+    sortKey    = null;
+    sortDir    = 1;
+    COL_DISTINCT = buildDistinct(COLS, ROWS);
+    /* update tab bar aria state */
+    document.querySelectorAll('.kc-report-tab').forEach(btn => {
+      const active = btn.dataset.reportTab === name;
+      btn.classList.toggle('kc-active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    clearDetailPanel();
+    buildHead();
+    renderRows();
+    applyFilters();
+  }
+
   /* ========= Table ========= */
   const tbody     = document.getElementById('kc-tbody');
   const thead     = document.getElementById('kc-thead');
@@ -891,6 +988,23 @@
   }
 
   function rowHtml(r) {
+    if (activeTab === 'filtered') {
+      /* Slim rendering for filtered commits: stage badge + reason; no score/profiles */
+      const cells = COLS.map(col => {
+        let v = r[col.key];
+        if (v == null) v = '';
+        if (col.key === 'sha12')
+          return `<td class="kc-td-sha"><a href="#" class="kc-sha-link"
+            data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${esc(r.sha12)}</a></td>`;
+        if (col.key === 'filter_stage')
+          return `<td>${stageBadge(v)}</td>`;
+        if (col.key === 'date')
+          return `<td class="kc-td-num">${esc(fmtDate(v))}</td>`;
+        return `<td>${esc(Array.isArray(v) ? v.join('; ') : v)}</td>`;
+      }).join('');
+      return `<tr data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${cells}</tr>`;
+    }
+    /* Default: relevant commits */
     const cells = COLS.map(col => {
       let v = r[col.key];
       if (v == null) v = '';
@@ -909,8 +1023,6 @@
     }).join('');
     return `<tr data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${cells}</tr>`;
   }
-
-  let sortedRows = ROWS.slice();
 
   function applySort() {
     if (!sortKey) return;
@@ -998,13 +1110,18 @@
     const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = UI.is_filtered ? 'kcommit-filtered.csv' : 'kcommit-report.csv';
+    a.download = activeTab === 'filtered' ? 'kcommit-filtered.csv' : 'kcommit-report.csv';
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   });
 
   /* ========= Detail panel ========= */
   const rightPane = document.getElementById('kc-pane-right');
+
+  function clearDetailPanel() {
+    tbody?.querySelectorAll('tr').forEach(tr => tr.classList.remove('kc-row-active'));
+    document.querySelectorAll('.kc-tab-panel').forEach(p => { p.innerHTML = ''; p.classList.remove('kc-active'); });
+  }
 
   function activateTab(name) {
     document.querySelectorAll('.kc-tab').forEach(t => {
@@ -1201,8 +1318,60 @@
     activateTab('overview');
   }
 
+  /* =========================================================
+   * populateFilteredDetail  — v16.14.0
+   * Right-pane renderer for filtered-tab commits.
+   * Shows metadata + drop decision + prefilter_debug detail.
+   * Scoring/files tabs are blanked out (not applicable).
+   * =========================================================
+   */
+  function populateFilteredDetail(row, commit) {
+    const c   = commit || {};
+    const dbg = c.prefilter_debug || {};
+    let overview = '';
+
+    overview += detailCard('Commit', [
+      kv('SHA',          `<code class="kc-mono">${esc(c.commit || row.sha || row.sha12)}</code>`),
+      kv('Subject',      esc(c.subject || row.subject || '')),
+      kv('Author',       esc((c.author_name || row.author || '') + (c.author_email ? ` <${c.author_email}>` : ''))),
+      kv('Date',         esc(fmtDate(c.author_time || row.date))),
+      kv('Filter stage', stageBadge(row.filter_stage || '')),
+      kv('Drop reason',  esc(row.reason || dbg.drop_reason || '\u2014')),
+    ].join(''), '\ud83d\udcc4');
+
+    /* Drop decision card — pulled from prefilter_debug when present */
+    const decItems = [];
+    if (dbg.drop_reason)         decItems.push(kv('Reason code',        esc(dbg.drop_reason)));
+    if (dbg.matched_subsystems?.length)
+      decItems.push(kv('Matched subsystems', esc(dbg.matched_subsystems.join(', '))));
+    if (dbg.unmatched_paths?.length)
+      decItems.push(kv('Unmatched paths',    esc(dbg.unmatched_paths.join(', '))));
+    if (dbg.all_files_blacklisted != null)
+      decItems.push(kv('All files blacklisted', esc(String(dbg.all_files_blacklisted))));
+    if (decItems.length) {
+      overview += detailCard('Drop Decision', decItems.join(''), '\u2696\ufe0f');
+    }
+
+    if (c.body) {
+      const bodyPreview = c.body.length > 4000 ? c.body.slice(0,4000)+'\n\u2026' : c.body;
+      overview += detailCard('Full Commit Message',
+        `<div class="kc-commit-body">${escNl(bodyPreview)}</div>`, '\ud83d\udcdd');
+    }
+
+    document.getElementById('kc-tab-overview').innerHTML = overview;
+    document.getElementById('kc-tab-scoring').innerHTML =
+      `<p class="kc-muted" style="padding:var(--space-4)">Not applicable \u2014 this commit was dropped before or after scoring and is not in the final report.</p>`;
+    document.getElementById('kc-tab-files').innerHTML =
+      `<p class="kc-muted" style="padding:var(--space-4)">Not applicable \u2014 file coverage data is only available for relevant commits.</p>`;
+    document.getElementById('kc-tab-raw').innerHTML =
+      `<pre class="kc-raw-pre">${esc(JSON.stringify(c, null, 2))}</pre>`;
+    activateTab('overview');
+  }
+
   function openDetail(sha12, fullSha) {
-    const row = rowBySha[sha12] || rowBySha[fullSha] || {};
+    /* Resolve row from the active dataset's lookup map */
+    const lookup = activeTab === 'filtered' ? filtRowBySha : rowBySha;
+    const row = lookup[sha12] || lookup[fullSha] || {};
     tbody?.querySelectorAll('tr').forEach(tr =>
       tr.classList.toggle('kc-row-active', tr.dataset.sha12 === sha12));
     document.querySelectorAll('.kc-tab-panel').forEach(p => { p.innerHTML=''; p.classList.remove('kc-active'); });
@@ -1213,7 +1382,13 @@
       localStorage.setItem('kc-right-collapsed','0');
       updateCollapseIcons();
     }
-    fetchCommit(sha12, fullSha||sha12).then(commit => populateDetail(row, commit));
+    if (activeTab === 'filtered') {
+      fetchFilteredCommit(sha12, fullSha || sha12)
+        .then(commit => populateFilteredDetail(row, commit));
+    } else {
+      fetchCommit(sha12, fullSha || sha12)
+        .then(commit => populateDetail(row, commit));
+    }
   }
 
   document.addEventListener('click', e => {

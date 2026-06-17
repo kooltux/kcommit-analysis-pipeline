@@ -33,6 +33,26 @@ Changes:
              falls back to the legacy report_stats path.
            — "evaluation" / "Parameters" section removed from the
              sidebar payload; it is no longer rendered in the left pane.
+  v16.14.0 — Unified two-tab HTML report.
+           — generate_html_report() accepts a new optional kwarg
+             filtered_commits (list of pre- + postfilter dropped commits).
+             When supplied, window.__KC_UI__ gains:
+               tabs             — [{id, label, count}, ...]
+               filtered_columns — slim column definitions (rank, sha12,
+                                  subject, author, date, filter_stage,
+                                  reason) — no score/profile columns
+               filtered_rows    — one slim row dict per filtered commit
+               filtered_store   — sha12 → slim commit dict (metadata +
+                                  prefilter_debug only; scoring stripped)
+             The JS tab switcher in summary.js reads these keys and
+             renders the filtered tab with a purpose-built detail panel.
+           — is_filtered parameter and _FILTERED_EXTRA tuple removed;
+             tab logic in the JS replaces them.
+           — _FILTERED_COLUMNS constant defines the filtered tab columns.
+           — _filtered_commit_row() builds slim row dicts; filter_stage
+             is derived from presence of prefilter_debug on the commit.
+           — _filtered_commit_store_entry() strips scoring fields from
+             the commit dict stored in filtered_store.
 """
 import json
 import os
@@ -77,7 +97,7 @@ def _fmt_date(ts):
 
 
 # ---------------------------------------------------------------------------
-# Column definitions
+# Column definitions — relevant tab
 # ---------------------------------------------------------------------------
 
 # Base columns — profile_scores is removed; JS inserts per-profile columns
@@ -92,23 +112,18 @@ _COMMIT_COLUMNS = [
     ('profiles', 'Profiles', 'select'),
 ]
 
-_FILTERED_EXTRA = ('reason', 'Filter reason', 'string')
 
-
-def _columns_def(is_filtered, profile_names):
-    """Return JS column-definition list."""
+def _columns_def(profile_names):
+    """Return JS column-definition list for the relevant-commits tab."""
     cols = [{'key': k, 'label': l, 'type': t} for k, l, t in _COMMIT_COLUMNS]
     for col in cols:
         if col['key'] == 'profiles' and profile_names:
             col['options'] = sorted(profile_names)
-    if is_filtered:
-        k, l, t = _FILTERED_EXTRA
-        cols.append({'key': k, 'label': l, 'type': t})
     return cols
 
 
-def _commit_row(i, c, is_filtered=False, all_profiles=None):
-    """Serialize one commit to a flat dict for the JS rows array.
+def _commit_row(i, c, all_profiles=None):
+    """Serialize one relevant commit to a flat dict for the JS rows array.
 
     Per-profile scores are stored as ``score_<profile>`` keys so that the
     browser-side JS can render one column per profile without any extra
@@ -134,9 +149,88 @@ def _commit_row(i, c, is_filtered=False, all_profiles=None):
     for p in (all_profiles or []):
         row[f'score_{p}'] = float(prof_scores.get(p) or 0)
 
-    if is_filtered:
-        row['reason'] = c.get('_filter_reason', '')
     return row
+
+
+# ---------------------------------------------------------------------------
+# Column definitions — filtered tab (v16.14.0)
+# ---------------------------------------------------------------------------
+
+# Slim column set for the filtered tab.  Intentionally omits score, profiles,
+# and all score_<profile> keys — those fields are meaningless for commits that
+# were dropped before (or immediately after) the scoring stage.
+_FILTERED_COLUMNS = [
+    ('rank',         'Rank',         'number'),
+    ('sha12',        'SHA',          'string'),
+    ('subject',      'Subject',      'string'),
+    ('author',       'Author',       'string'),
+    ('date',         'Date',         'date'),
+    ('filter_stage', 'Filter stage', 'select'),
+    ('reason',       'Drop reason',  'string'),
+]
+
+_FILTERED_STAGE_OPTIONS = ['prefilter', 'postfilter']
+
+
+def _filtered_columns_def():
+    """Return JS column-definition list for the filtered-commits tab."""
+    cols = [{'key': k, 'label': l, 'type': t} for k, l, t in _FILTERED_COLUMNS]
+    for col in cols:
+        if col['key'] == 'filter_stage':
+            col['options'] = _FILTERED_STAGE_OPTIONS
+    return cols
+
+
+def _filtered_commit_row(i, c):
+    """Serialize one filtered commit to a slim flat dict.
+
+    filter_stage is derived from the presence of prefilter_debug on the
+    commit: commits carrying that key were dropped by the prefilter stage
+    (st04); all others were dropped by the postfilter (st06).
+
+    drop_reason is read from prefilter_debug.drop_reason when available,
+    falling back to the legacy _filter_reason field written by st06.
+    """
+    sha   = (c.get('commit') or '')
+    sha12 = sha[:12]
+
+    pf_debug = c.get('prefilter_debug') or {}
+    if pf_debug:
+        filter_stage = 'prefilter'
+        reason = (pf_debug.get('drop_reason')
+                  or pf_debug.get('reason')
+                  or c.get('_filter_reason', ''))
+    else:
+        filter_stage = 'postfilter'
+        reason = c.get('_filter_reason', '')
+
+    return {
+        'rank':         i,
+        'sha12':        sha12,
+        'sha':          sha,
+        'subject':      c.get('subject') or '',
+        'author':       c.get('author_name') or '',
+        'date':         _fmt_date(c.get('author_time')),
+        'filter_stage': filter_stage,
+        'reason':       reason,
+    }
+
+
+# Scoring-related keys stripped from the filtered_store entries so that
+# the detail panel cannot accidentally render irrelevant scoring data.
+_SCORING_KEYS = frozenset({
+    'scoring', 'score', 'matched_profiles', 'product_evidence',
+    'coverage', '_rank', '_filter_reason',
+})
+
+
+def _filtered_commit_store_entry(c):
+    """Return a slim commit dict suitable for filtered_store.
+
+    Retains: commit identity fields, commit message metadata, files list,
+    and prefilter_debug.  Strips all scoring-related keys.
+    """
+    return {k: v for k, v in c.items() if k not in _SCORING_KEYS}
 
 
 # ---------------------------------------------------------------------------
@@ -191,9 +285,6 @@ def _build_context(cfg, report_stats):
         artifacts['kernel_config'] = _bool_flag(kernel.get('kernel_config'))
     if _bool_flag(kernel.get('dts_roots')):
         artifacts['dts_roots'] = _bool_flag(kernel.get('dts_roots'))
-
-    # If no artifact flags were set from kernel section, still show the block
-    # but empty — the JS will render a note.
 
     active_profiles = sorted(profs.keys()) if isinstance(profs, dict) else []
 
@@ -340,11 +431,22 @@ def _sidebar_payload(report_stats, profile_summary, run_stats_data=None):
 
 def generate_html_report(commits, profile_summary, report_stats, output_path,
                          title='kcommit-analysis-pipeline',
-                         is_filtered=False, templates_dir=None,
+                         filtered_commits=None,
+                         templates_dir=None,
                          detail_mode='embedded', commit_index_path=None,
                          commit_detail_root=None, embed_compression='none',
                          metadata_path=None, cfg=None, run_stats_data=None):
-    """Write HTML report to *output_path*.
+    """Write a unified HTML report to *output_path*.
+
+    When *filtered_commits* is supplied (non-empty list), the report renders
+    a two-tab UI:
+      Tab 1 — Relevant Commits  (existing 3-pane layout, all columns)
+      Tab 2 — Filtered Commits  (slim columns: rank, sha, subject, author,
+                                  date, filter_stage, drop reason; no scoring
+                                  data; purpose-built detail panel)
+
+    When *filtered_commits* is None or empty, the report is identical to
+    the pre-v16.14.0 single-tab layout (zero regression).
 
     New kwargs (v16.9.0):
       cfg            -- full pipeline config dict; used to build the Context
@@ -352,6 +454,11 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
       run_stats_data -- full pipeline_run_stats dict returned/written by
                         build_run_stats(); provides correct global score_avg
                         and score_median for the Score Distribution block.
+
+    New kwargs (v16.14.0):
+      filtered_commits -- list of pre- + postfilter dropped commit dicts.
+                          When provided, adds tabs/filtered_columns/
+                          filtered_rows/filtered_store to window.__KC_UI__.
     """
     if templates_dir is None:
         templates_dir = os.path.join(
@@ -368,8 +475,9 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
 
     generated = time.strftime('%Y-%m-%d %H:%M')
     commits   = commits or []
+    filtered  = filtered_commits or []
 
-    # ── Profile name universe ─────────────────────────────────────────────
+    # ── Profile name universe (relevant tab only) ─────────────────────────
     all_profile_names = sorted({
         p
         for c in commits
@@ -377,15 +485,15 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     })
 
     # ── Column definitions ────────────────────────────────────────────────
-    cols = _columns_def(is_filtered, all_profile_names)
+    cols = _columns_def(all_profile_names)
 
-    # ── Row data ──────────────────────────────────────────────────────────
+    # ── Row data (relevant tab) ───────────────────────────────────────────
     rows = [
-        _commit_row(i, c, is_filtered, all_profile_names)
+        _commit_row(i, c, all_profile_names)
         for i, c in enumerate(commits, 1)
     ]
 
-    # ── Embed full commit detail (embedded mode) ───────────────────────────
+    # ── Embed full commit detail — relevant tab (embedded mode) ───────────
     commit_store = {}
     if detail_mode == 'embedded':
         for c in commits:
@@ -394,6 +502,31 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
             detail = order_commit_details(c)
             if sha12: commit_store[sha12] = detail
             if sha:   commit_store[sha]   = detail
+
+    # ── Filtered tab data (v16.14.0) ──────────────────────────────────────
+    tabs             = None
+    filtered_cols    = None
+    filtered_rows    = None
+    filtered_store   = None
+
+    if filtered:
+        tabs = [
+            {'id': 'relevant', 'label': 'Relevant Commits', 'count': len(commits)},
+            {'id': 'filtered', 'label': 'Filtered Commits',  'count': len(filtered)},
+        ]
+        filtered_cols  = _filtered_columns_def()
+        filtered_rows  = [
+            _filtered_commit_row(i, c)
+            for i, c in enumerate(filtered, 1)
+        ]
+        # Slim store: sha12 → metadata + prefilter_debug, no scoring keys
+        filtered_store = {}
+        for c in filtered:
+            sha   = (c.get('commit') or '')
+            sha12 = sha[:12]
+            entry = _filtered_commit_store_entry(c)
+            if sha12: filtered_store[sha12] = entry
+            if sha:   filtered_store[sha]   = entry
 
     # ── Meta ──────────────────────────────────────────────────────────────
     rs        = report_stats or {}
@@ -420,16 +553,28 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         'sidebar':     _sidebar_payload(report_stats, profile_summary,
                                         run_stats_data=run_stats_data),
         'detail_root': commit_detail_root or '',
-        'is_filtered': bool(is_filtered),
     }
 
-    ui_json    = json.dumps(kc_ui,        default=str, separators=(',', ':'))
-    store_json = json.dumps(commit_store, default=str, separators=(',', ':'))
+    # Tabs payload — only present when filtered commits were supplied
+    if tabs is not None:
+        kc_ui['tabs']              = tabs
+        kc_ui['filtered_columns']  = filtered_cols
+        kc_ui['filtered_rows']     = filtered_rows
+
+    ui_json    = json.dumps(kc_ui,            default=str, separators=(',', ':'))
+    store_json = json.dumps(commit_store,     default=str, separators=(',', ':'))
 
     boot_parts = [
         f'window.__KC_UI__={ui_json};',
         f'window.__KC_COMMITS__={store_json};',
     ]
+
+    # Filtered store serialised separately to keep the main KC_UI payload
+    # lean and allow the JS to load it lazily on first tab switch.
+    if filtered_store is not None:
+        fstore_json = json.dumps(filtered_store, default=str, separators=(',', ':'))
+        boot_parts.append(f'window.__KC_FILTERED_COMMITS__={fstore_json};')
+
     if commit_detail_root:
         boot_parts.append(
             'window.__KC_COMMIT_DETAIL_ROOT__=' +
