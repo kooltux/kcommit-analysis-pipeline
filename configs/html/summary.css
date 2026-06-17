@@ -1,7 +1,15 @@
-/* kcommit-analysis-pipeline — v16.12.7 UI
+/* kcommit-analysis-pipeline — v16.13.0 UI
    Three-pane resizable layout, collapsible sidebars, light+dark themes.
    All colours driven by CSS custom-properties; no colour is hardcoded.
 
+   v16.13.0: Report tab bar theming aligned to commit-detail tabs.
+             .kc-report-tab-bar / .kc-report-tab now mirror
+             .kc-detail-tabs / .kc-tab exactly — same background,
+             same border-bottom separator, same 2 px underline active
+             indicator, same muted→accent colour transition.
+             Added table-loader overlay: .kc-table-loader fades in
+             when the filtered-commits tab is building its DOM, giving
+             a visual waiter so the UI never looks frozen.
    v16.12.7: Fix .kc-kv layout — commit detail "Commit" section content
              was packed against the right edge and unreadable.
              justify-content:space-between + max-width:180px on the value
@@ -228,6 +236,47 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   transition: border-color .15s, color .15s;
 }
 .kc-theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Report tab bar (top of middle pane) ────────────────────────────
+ *
+ * v16.13.0: Mirrors .kc-detail-tabs / .kc-tab from the right pane
+ * exactly — same bg, same border-bottom separator, same 2px underline
+ * active indicator, same muted → accent colour transition.
+ * The container has no bottom border of its own; the toolbar below it
+ * provides that visual boundary.
+ * ------------------------------------------------------------------ */
+.kc-report-tab-bar {
+  display: flex;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 0 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.kc-report-tab-bar::-webkit-scrollbar { display: none; }
+.kc-report-tab {
+  padding: 9px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color .12s, border-bottom-color .12s;
+}
+.kc-report-tab:hover {
+  color: var(--text);
+  border-bottom-color: var(--border);
+}
+.kc-report-tab.kc-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 700;
+}
 
 /* ── Three-pane layout ──────────────────────────────────────────── */
 .kc-layout {
@@ -626,6 +675,53 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   .kc-live-count { flex-basis: 100%; text-align: right; margin-left: 0; }
 }
 .kc-table-wrap { flex: 1; overflow: auto; position: relative; }
+
+/* ── Table loader overlay (v16.13.0) ────────────────────────────────
+ *
+ * Shown while the filtered-commits tab builds its DOM rows.
+ * .kc-table-loader is injected once by JS into .kc-table-wrap;
+ * JS adds/removes .kc-loader-active to show/hide it.
+ *
+ * Spinner uses a pure CSS border animation — no SVG, no images.
+ * opacity transition provides a gentle fade rather than a hard flash.
+ * pointer-events:none while hidden so it never blocks table clicks.
+ * ------------------------------------------------------------------ */
+.kc-table-loader {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease;
+  z-index: 4;
+}
+.kc-table-loader.kc-loader-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+.kc-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: kc-spin .7s linear infinite;
+}
+@keyframes kc-spin {
+  to { transform: rotate(360deg); }
+}
+.kc-loader-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .kc-spinner { animation: none; border-top-color: var(--accent); }
+}
 
 /* ── Table — sticky header (v16.12.1) ──────────────────────────────
  *
@@ -1085,4 +1181,5 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 }
 @media (prefers-reduced-motion: reduce) {
   .kc-pane, .kc-pane-right, .kc-tooltip { transition: none; }
+  .kc-spinner { animation: none; }
 }
