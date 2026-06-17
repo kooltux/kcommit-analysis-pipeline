@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## v16.14.1 — fix: tab switcher invisible due to missing id on toolbar div (2026-06-17)
+
+### Fixed
+
+- `configs/html/report.html` — the toolbar `<div>` had only
+  `class="kc-toolbar"` and no `id` attribute.
+
+  The JS tab-bar init block in `summary.js` does
+  `document.getElementById('kc-toolbar')`, which returned `null`, so
+  `insertAdjacentElement('beforebegin', bar)` was never called and the
+  **Relevant / Filtered** tab switcher was silently dropped — it never
+  appeared in the rendered report even when `window.__KC_UI__.tabs` was
+  correctly populated.
+
+  **Fix:** added `id="kc-toolbar"` to the toolbar div.  Also added
+  `id="kc-table-wrap"` to the table-wrap div for consistency with the
+  `updateFilterOffset()` CSS custom-property write.
+
+---
+
 ## v16.14.0 — unified HTML report: filtered commits embedded in relevant_commits.html (2026-06-17)
 
 ### Changed

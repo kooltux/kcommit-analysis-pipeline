@@ -57,7 +57,7 @@ __COMMITS_DATA__
 
     <!-- CENTRE PANE: Commit table -->
     <main id="kc-pane-mid" class="kc-pane kc-pane-mid" aria-label="Commit table">
-      <div class="kc-toolbar">
+      <div id="kc-toolbar" class="kc-toolbar">
         <input id="kc-global-search" class="kc-global-search"
                type="search" placeholder="&#128269;  Search all columns&hellip;" aria-label="Global search">
         <button id="kc-clear-filters" class="kc-toolbar-btn" title="Clear all filters">&#10005; Clear filters</button>
@@ -65,7 +65,7 @@ __COMMITS_DATA__
         <span   id="kc-live-count"    class="kc-live-count"></span>
       </div>
 
-      <div class="kc-table-wrap">
+      <div class="kc-table-wrap" id="kc-table-wrap">
         <table id="kc-table" class="kc-table" aria-label="Commit results">
           <thead id="kc-thead"></thead>
           <tbody id="kc-tbody"></tbody>
