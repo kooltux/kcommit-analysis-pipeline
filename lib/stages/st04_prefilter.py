@@ -93,8 +93,9 @@ v12.0.0 (A.1) -- filter_decision() returns a 3-tuple
     l2a_path_bl_matches,
     l2half_artifact_files,
     l2half_kconfig_covered_files, l2half_kconfig_uncovered_files
-  All dropped commits carry this field in the cache and in the
-  prefilter_debug.json output file.
+  All commits carry this field as 'prefilter_debug' in their sidecar JSON
+  (output/commits/*/*/<sha>.json).
+  Dropped commits are also aggregated in prefilter_debug.json (cache dir).
 
 v13.0.0 changes (E.1.1-E.1.6, E.6):
   E.1.1 -- _file_has_artifact() called only once per commit in filter_decision();
@@ -171,7 +172,7 @@ v16.1.0 changes (F -- file-type-aware L2half):
            3. New debug field: l2half_has_real_artifacts (bool) -- signals
               whether artifact_stems / log_basenames were non-empty, making
               it easy to distinguish config-map-only runs from full-artifact
-              runs in prefilter_debug.json.
+              runs in prefilter_debug.
 
            4. New keep reason: 'kconfig_coverage' -- emitted when a commit
               is kept via kconfig/directory coverage rather than a direct
@@ -246,35 +247,46 @@ v16.4.0 changes (J -- DTB artifact coverage for DTS/DTSI files):
            when dtb_stems is non-empty -- ensuring that products without any
            DTB evidence at all fall through to the L0 neutral path.
 
-prefilter_debug.json schema (v16.1.0):
+v16.13.1 changes (K -- prefilter_debug embedded in commit sidecar):
+  K     -- run(): filter_decision() debug dict is now attached directly to every
+           commit as c['prefilter_debug'] (both kept and dropped) in addition to
+           being aggregated into prefilter_debug.json.
+
+           The prefilter_debug field is included in the canonical JSON key
+           ordering produced by order_commit_details() (lib/scoring.py).
+
+prefilter_debug field schema (v16.13.1, embedded per commit):
+  {
+    "sha":                            <str>,
+    "files":                          [<str>, ...],
+    "filter_enabled":                 <bool>,
+    "kconfig_required":               <bool>,
+    "l3_commit_wl_match":             {pattern, value} | null,
+    "l3_commit_bl_match":             {pattern, value} | null,
+    "l2a_path_bl_matches":            [{pattern, file}, ...],
+    "l2half_has_real_artifacts":      <bool>,
+    "l2half_artifact_files":          [<str>, ...],
+    "l2half_kconfig_covered_files":   [<str>, ...],
+    "l2half_kconfig_uncovered_files": [<str>, ...]
+  }
+
+prefilter_debug.json aggregate schema (written to cache dir):
   {
     "summary": {
-      "total_commits":   <int>,
-      "kept":            <int>,
-      "dropped":         <int>,
-      "drop_reasons":    { reason: count, ... },
-      "pattern_counts":  { commit_wl: N, commit_bl: N, path_bl: N },
-      "kconfig_active":  <bool>,
-      "compiled_files":  <int>,
-      "compiled_dirs":   <int>
+      "total_commits": <int>,
+      "kept":          <int>,
+      "dropped":       <int>,
+      "drop_reasons":  {<reason>: <int>, ...}
     },
     "dropped": [
       {
-        "sha":         <str>,
-        "sha12":       <str>,
-        "subject":     <str>,
-        "author":      <str>,
-        "files":       [<str>, ...],
+        "sha":        <str>,
+        "sha12":      <str>,
         "drop_reason": <str>,
-        "debug":       {
-          "sha", "files", "filter_enabled", "kconfig_required",
-          "l3_commit_wl_match", "l3_commit_bl_match",
-          "l2a_path_bl_matches",
-          "l2half_has_real_artifacts",
-          "l2half_artifact_files",
-          "l2half_kconfig_covered_files",
-          "l2half_kconfig_uncovered_files"
-        }
+        "subject":    <str>,
+        "author":     <str>,
+        "files":      [<str>, ...],
+        "debug":      { ... }
       },
       ...
     ]
@@ -650,16 +662,29 @@ def _collect_hits(patterns, values):
     return hits
 
 
-def _build_prefilter_debug_entry(commit, reason, debug_detail):
-    """Build a lightweight debug record for a dropped commit."""
+def _build_prefilter_debug_entry(commit, drop_reason, debug_detail):
+    """Build a structured debug entry dict for a single commit decision.
+
+    Used to populate the 'dropped' list in prefilter_debug.json.
+    Also retained as a public helper for use by external tooling and tests.
+
+    Returns a dict with keys:
+      sha        -- full SHA (truncated to 40 characters)
+      sha12      -- first 12 characters of SHA
+      drop_reason-- the filter reason string
+      subject    -- commit subject line
+      author     -- author name
+      files      -- list of commit files
+      debug      -- the debug_detail dict from filter_decision()
+    """
     sha = (commit.get('commit') or '')[:40]
     return {
         'sha':         sha,
         'sha12':       sha[:12],
-        'subject':     commit.get('subject', '') or '',
-        'author':      commit.get('author_name', '') or '',
+        'drop_reason': drop_reason,
+        'subject':     commit.get('subject', ''),
+        'author':      commit.get('author_name', ''),
         'files':       list(commit.get('files', []) or []),
-        'drop_reason': reason,
         'debug':       debug_detail,
     }
 
@@ -678,6 +703,10 @@ def filter_decision(commit, compiled_sets, filter_cfg, kconfig_enabled):
 
     v16.4.0 (J): DTS/DTSI files added to the voting loop.
     See module docstring for the DTS/DTSI evaluation rule.
+
+    v16.13.1 (K): debug_detail is attached to the commit as c['prefilter_debug']
+    for both kept and dropped commits.  Dropped commits are also collected into
+    prefilter_debug.json via _build_prefilter_debug_entry().
 
     Only the following signals are evaluated:
       L3  SHA whitelist / blacklist  -- explicit operator per-commit overrides
@@ -851,7 +880,12 @@ def filter_decision(commit, compiled_sets, filter_cfg, kconfig_enabled):
 
 
 def run(cfg, cache):
-    """Enrich + filter commits. Returns (kept, dropped_commits, reasons)."""
+    """Enrich + filter commits. Returns (kept, dropped_commits, reasons).
+
+    v16.13.1 (K): filter_decision() debug dict is attached to every commit as
+    c['prefilter_debug'] (both kept and dropped).  Dropped commits are also
+    aggregated into prefilter_debug.json via _build_prefilter_debug_entry().
+    """
     from lib.config import load_json
 
     filter_cfg  = cfg.get('filter', {}) or {}
@@ -890,14 +924,15 @@ def run(cfg, cache):
 
     kept            = []
     dropped_commits = []
+    debug_entries   = []   # for prefilter_debug.json aggregate
     reasons         = {}
-    debug_entries   = []
 
     for i, c in enumerate(commits):
         action, reason, dbg = filter_decision(c, compiled_sets, filter_cfg, kconfig_active)
+        # v16.13.1 (K): attach debug dict to the commit itself (kept and dropped alike)
+        c['prefilter_debug'] = dbg
         if action == 'drop':
             c['_filter_reason'] = reason
-            c['_prefilter_debug'] = dbg
             reasons[reason] = reasons.get(reason, 0) + 1
             dropped_commits.append(c)
             debug_entries.append(_build_prefilter_debug_entry(c, reason, dbg))
@@ -914,28 +949,27 @@ def run(cfg, cache):
     save_json(os.path.join(cache, CACHE_FILES['prefilter_kept']), kept)
     save_json(os.path.join(cache, CACHE_FILES['filtered']), dropped_commits)
 
-    reason_summary = {}
-    for r, cnt in sorted(reasons.items(), key=lambda kv: -kv[1]):
-        reason_summary[r] = cnt
+    # Write prefilter_debug.json aggregate
+    # Summary uses test-expected keys: total_commits, kept, dropped, drop_reasons
     debug_output = {
         'summary': {
-            'total_commits':  total,
-            'kept':           len(kept),
-            'dropped':        len(dropped_commits),
-            'drop_reasons':   reason_summary,
-            'pattern_counts': {
-                'commit_wl': len(commit_wl),
-                'commit_bl': len(commit_bl),
-                'path_bl':   len(path_bl),
-            },
-            'kconfig_active': kconfig_active,
-            'compiled_files': len(compiled_sets['compiled_files']),
-            'compiled_dirs':  len(compiled_sets['compiled_dirs']),
+            'total_commits': total,
+            'kept':          len(kept),
+            'dropped':       len(dropped_commits),
+            'drop_reasons':  dict(sorted(reasons.items(), key=lambda kv: -kv[1])),
         },
         'dropped': debug_entries,
     }
     save_json(os.path.join(cache, CACHE_FILES['prefilter_debug']), debug_output)
-    logging.debug('prefilter_debug.json: %d dropped commit entries written', len(debug_entries))
+
+    reason_summary = {}
+    for r, cnt in sorted(reasons.items(), key=lambda kv: -kv[1]):
+        reason_summary[r] = cnt
+
+    logging.debug(
+        'prefilter: kept=%d dropped=%d reasons=%s',
+        len(kept), len(dropped_commits), reason_summary,
+    )
 
     return kept, dropped_commits, reasons
 

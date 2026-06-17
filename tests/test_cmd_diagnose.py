@@ -68,7 +68,9 @@ def _make_commit(sha='aabbccdd1122', subject='net: fix skb', files=None,
     if filter_reason:
         c['_filter_reason'] = filter_reason
     if prefilter_debug:
-        c['_prefilter_debug'] = prefilter_debug
+        # Store under the production key 'prefilter_debug' (no underscore prefix)
+        # so that cmd_diagnose._stage04() can read it via c.get('prefilter_debug').
+        c['prefilter_debug'] = prefilter_debug
     if matched_profiles:
         c['matched_profiles'] = matched_profiles
     if product_evidence:

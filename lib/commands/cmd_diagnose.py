@@ -18,11 +18,18 @@ Cache files read (all optional; missing files are noted in warnings)
   commits.json                    stage 01 -- raw collected commits
   prefilter_kept_commits.json     stage 04 -- commits that passed the prefilter
   filtered_commits.json           stage 04 -- commits dropped by the prefilter
-  prefilter_debug.json            stage 04 -- per-dropped-commit debug detail
   scored_commits.json             stage 05 -- all scored commits
   relevant_commits.json           stage 06 -- commits kept after postfilter
   postfilter_dropped_commits.json stage 06 -- commits dropped by postfilter
   postfilter_debug.json           stage 06 -- postfilter summary (threshold, dist)
+
+  NOTE (v16.13.1): per-commit prefilter debug data is now embedded directly
+  in each commit as the 'prefilter_debug' field (present in both
+  filtered_commits.json and prefilter_kept_commits.json).  The aggregate
+  prefilter_debug.json file is still written by stage 04 and contains the
+  summary counts (total_commits, kept, dropped, drop_reasons) plus the
+  full dropped-commit list.  cmd_diagnose reads the per-commit embedded field
+  directly and does NOT need to load the aggregate file.
 
 Output JSON top-level keys
 --------------------------
@@ -45,10 +52,10 @@ Output JSON top-level keys
                         in_report, summary (one human sentence)
   warnings           -- data quality / consistency notes
 
-Stage 04 prefilter section detail (v14.1.0)
--------------------------------------------
+Stage 04 prefilter section detail (v14.1.0 / v16.13.1)
+-------------------------------------------------------
 For DROPPED commits the section contains the full filter_decision() debug
-trace, exactly as written by st04_prefilter.py:
+trace, read from the commit's embedded 'prefilter_debug' field (v16.13.1):
   outcome, reason, filter_enabled, kconfig_required
   layers:
     L3_sha_whitelist / L3_sha_blacklist   -- force-keep / force-drop SHA match
@@ -155,8 +162,13 @@ def _kernel_annotations(c):
 
 # -- Stage 04 ----------------------------------------------------------------
 
-def _stage04(c, prefilter_debug_data):
+def _stage04(c):
     """Build stage_04_prefilter section.
+
+    v16.13.1 (K): prefilter debug data is now embedded directly in the commit
+    as c['prefilter_debug'] for both kept and dropped commits.  cmd_diagnose
+    reads the per-commit embedded field directly; it does not load the
+    aggregate prefilter_debug.json file (which is still written by stage 04).
 
     v14.1.0: layers dict no longer contains kw_wl_rescue_suppressed,
     L2b_path_wl_matches, L1a_kw_wl_matches, L1b_kw_bl_matches.
@@ -165,15 +177,9 @@ def _stage04(c, prefilter_debug_data):
     drop_reason = c.get('_filter_reason')
 
     if drop_reason:
-        dbg = dict(c.get('_prefilter_debug') or {})
-
-        if prefilter_debug_data:
-            sha_full = (c.get('commit') or '')
-            for entry in (prefilter_debug_data.get('dropped') or []):
-                entry_sha = entry.get('sha') or ''
-                if sha_full.startswith(entry_sha[:12]) or entry_sha.startswith(sha_full[:12]):
-                    dbg = dict(entry.get('debug') or dbg)
-                    break
+        # v16.13.1 (K): debug data is embedded directly in the commit.
+        # The field is 'prefilter_debug' (no underscore prefix).
+        dbg = dict(c.get('prefilter_debug') or {})
 
         return {
             'outcome':          'dropped',
@@ -421,7 +427,6 @@ def diagnose_commit(cache_dir, sha_query):
     prefilter_kept     = _load(cache_dir, 'prefilter_kept',     warnings) or []
     filtered           = _load(cache_dir, 'filtered',           warnings) or []
     all_commits        = _load(cache_dir, 'commits',            warnings) or []
-    prefilter_debug    = _load(cache_dir, 'prefilter_debug',    warnings)
     postfilter_debug   = _load(cache_dir, 'postfilter_debug',   warnings)
 
     # pipeline_version reflects the version that produced the cache, not the
@@ -481,7 +486,9 @@ def diagnose_commit(cache_dir, sha_query):
         'sha':   commit.get('commit') or None,
     }
 
-    s04 = _stage04(commit, prefilter_debug)
+    # v16.13.1 (K): prefilter_debug is now embedded in the commit dict directly.
+    # _stage04() reads c['prefilter_debug'] rather than the old aggregate file.
+    s04 = _stage04(commit)
 
     s05 = None
     s06 = None

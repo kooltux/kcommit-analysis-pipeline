@@ -58,7 +58,7 @@ def order_commit_details(commit):
     first = [
         'commit', 'subject', 'author_name', 'author_email', 'author_time',
         'files', 'stats', 'meta', 'product_evidence',
-        'matched_profiles', 'scoring', 'body', '_filter_reason',
+        'matched_profiles', 'scoring', 'body', '_filter_reason', 'prefilter_debug',
     ]
     for key in first:
         if key in commit:

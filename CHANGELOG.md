@@ -2,6 +2,78 @@
 
 All notable changes to this project will be documented in this file.
 
+## v16.13.1 — prefilter: embed debug dict in every commit (2026-06-17)
+
+### Changed (K — prefilter_debug embedded in commit)
+
+- `lib/stages/st04_prefilter.py` — `run()` now attaches the
+  `filter_decision()` debug dict directly to every commit as
+  `c['prefilter_debug']` (both kept **and** dropped), in addition to
+  aggregating dropped-commit entries into `prefilter_debug.json`.
+
+  **Motivation.**  Previously, `cmd_diagnose` had to cross-reference the
+  aggregate `prefilter_debug.json` to retrieve the debug trace for a dropped
+  commit — a two-file lookup that could silently return stale or mismatched
+  data when the cache was partially regenerated.  Embedding the debug dict
+  directly in the commit makes the data self-contained: any reader of
+  `filtered_commits.json` or `prefilter_kept_commits.json` has the full
+  decision trace without a second cache read.
+
+  **Changes in `st04_prefilter.py`:**
+  - `run()`: `c['prefilter_debug'] = dbg` written for **every** commit
+    (kept and dropped alike) immediately after `filter_decision()` returns.
+  - Dropped commits no longer carry `c['_prefilter_debug']` (underscore
+    prefix); the field is now `c['prefilter_debug']` (no prefix) to match
+    the key used in the aggregate file and in `cmd_diagnose`.
+  - `_build_prefilter_debug_entry()` docstring expanded; parameter renamed
+    `reason` → `drop_reason` for clarity.
+  - `prefilter_debug.json` aggregate summary trimmed to the four keys that
+    tests assert (`total_commits`, `kept`, `dropped`, `drop_reasons`);  the
+    operational-metadata fields (`pattern_counts`, `kconfig_active`,
+    `compiled_files`, `compiled_dirs`) removed from the summary block —
+    they added noise without diagnostic value in the aggregate view.
+  - Debug log line updated: `prefilter_debug.json: N dropped commit entries
+    written` → `prefilter: kept=N dropped=N reasons={...}`.
+  - Module docstring updated: per-commit embedded schema documented;
+    aggregate `prefilter_debug.json` schema trimmed to match.
+  - Version change history (K section) added to module docstring.
+
+- `lib/scoring.py` — `order_commit_details()` `first` list extended with
+  `'prefilter_debug'` so the new field appears in a stable position in
+  serialised commit JSON.
+
+- `lib/manifest.py` — `CACHE_FILES['prefilter_debug']` comment updated from
+  `"per-dropped-commit debug detail"` to `"per-commit prefilter decision log"`.
+
+- `lib/commands/cmd_diagnose.py`:
+  - `_stage04(c, prefilter_debug_data)` → `_stage04(c)`: the aggregate-file
+    parameter removed entirely.  The function now reads
+    `c.get('prefilter_debug')` directly.
+  - `diagnose_commit()`: `_load(cache_dir, 'prefilter_debug', warnings)` call
+    removed; `prefilter_debug` local variable removed; `_stage04(commit,
+    prefilter_debug)` call simplified to `_stage04(commit)`.
+  - Module docstring `Cache files read` list: `prefilter_debug.json` entry
+    removed; `NOTE (v16.13.1)` paragraph added explaining the new embedded
+    approach.
+  - `Stage 04 prefilter section detail` docstring updated to reference the
+    embedded field.
+
+### Tests
+
+- `tests/test_cmd_diagnose.py` — `_make_commit()` helper: `prefilter_debug`
+  kwarg now stores the dict under the production key `'prefilter_debug'`
+  (no underscore prefix) instead of `'_prefilter_debug'`, matching the
+  updated `run()` behaviour.
+
+  No new tests required: existing `test_found_in_filtered_full_layer_detail`
+  and related tests fully exercise the embedded-field path.
+
+### Version
+
+- `MANIFEST.json` version bumped `v16.2.0` → `v16.13.1`.
+
+---
+
 ## v16.2.0 — diagnose: pipeline_version from cache, not running code (2026-06-14)
 
 ### Fixed
