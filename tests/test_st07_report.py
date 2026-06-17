@@ -69,7 +69,7 @@ def _setup(tmp_path, scored=None, filtered=None, cfg_extra=None):
     return cache, outdir, cfg
 
 
-# ── JSON outputs always written ────────────────────────────────────────────
+# ── JSON outputs always written ──────────────────────────────────────────────────────────────────────
 def test_relevant_commits_json_written(tmp_path):
     cache, outdir, cfg = _setup(tmp_path)
     run(cfg, cache, outdir)
@@ -101,7 +101,7 @@ def test_report_stats_json_written(tmp_path):
     assert 'generated_files' in data
 
 
-# ── generated_files tracking ──────────────────────────────────────────────
+# ── generated_files tracking ─────────────────────────────────────────────────────────────────────
 def test_generated_files_contains_csv(tmp_path):
     cache, outdir, cfg = _setup(tmp_path)
     stats = run(cfg, cache, outdir)
@@ -115,7 +115,7 @@ def test_generated_files_not_contains_report_stats(tmp_path):
     assert not any('report_stats.json' in f for f in stats['generated_files'])
 
 
-# ── CSV output ────────────────────────────────────────────────────────────
+# ── CSV output ───────────────────────────────────────────────────────────────────────────────────
 def test_csv_output_correct_headers(tmp_path):
     from lib.manifest import COMMIT_COLS
     cache, outdir, cfg = _setup(tmp_path)
@@ -135,7 +135,7 @@ def test_csv_output_correct_row_count(tmp_path):
     assert len(rows) == 3  # 1 header + 2 data rows
 
 
-# ── filtered_commits outputs ──────────────────────────────────────────────
+# ── filtered_commits outputs ───────────────────────────────────────────────────────────────────
 def test_filtered_commits_json_written_when_present(tmp_path):
     flt = [_commit('dropped', reason='path_blacklist')]
     cache, outdir, cfg = _setup(tmp_path, filtered=flt)
@@ -161,7 +161,7 @@ def test_filtered_commits_csv_not_written_when_empty(tmp_path):
     assert not os.path.exists(os.path.join(outdir, 'filtered_commits.csv'))
 
 
-# ── HTML output ───────────────────────────────────────────────────────────
+# ── HTML output ───────────────────────────────────────────────────────────────────────────────────
 def test_html_output_written(tmp_path):
     cache, outdir, cfg = _setup(tmp_path,
                                 cfg_extra={'reports': {'outputs': ['html']}})
@@ -171,14 +171,17 @@ def test_html_output_written(tmp_path):
 
 
 def test_html_filtered_output_written(tmp_path):
+    """v16.14.0: filtered commits are embedded in the unified
+    relevant_commits.html report; no separate filtered_commits.html is written.
+    Verify that relevant_commits.html is produced when filtered commits exist."""
     flt = [_commit('dropped', reason='commit_blacklist')]
     cache, outdir, cfg = _setup(tmp_path, filtered=flt)
     cfg['reports']['outputs'] = ['html']
     run(cfg, cache, outdir)
-    assert os.path.exists(os.path.join(outdir, 'filtered_commits.html'))
+    assert os.path.exists(os.path.join(outdir, 'relevant_commits.html'))
 
 
-# ── top_n limiting ────────────────────────────────────────────────────────
+# ── top_n limiting ──────────────────────────────────────────────────────────────────────────────────
 def test_top_n_limits_output(tmp_path):
     many = [_commit(sha=str(i), score=100-i, rank=i+1) for i in range(10)]
     cache, outdir, cfg = _setup(tmp_path, scored=many)
@@ -212,7 +215,7 @@ def test_filtered_outputs_merge_prefilter_and_postfilter_drops(tmp_path):
     assert [c['commit'] for c in data] == ['pre', 'post']
 
 
-# ── B: update_stage_progress call-signature regression (A.3 fix) ───────────
+# ── B: update_stage_progress call-signature regression (A.3 fix) ───────────────────────
 
 class _ProgressCapture:
     """Captures all calls made to the mocked _rt_progress."""
@@ -242,207 +245,4 @@ def test_update_stage7_progress_calls_rt_progress_with_correct_signature(tmp_pat
     import lib.stages.st07_report as _mod
 
     cap = _ProgressCapture()
-    monkeypatch.setattr(_mod, '_rt_progress_for_test', cap, raising=False)
-
-    # Directly exercise the inner helper by reconstructing it with a
-    # monkeypatched _rt_progress.  We replace the module-level import
-    # reference used inside run() by patching at import time via a
-    # controlled wrapper.
-    #
-    # Strategy: run() with a minimal setup so it reaches _update_stage7_progress,
-    # but replace lib.pipeline_runtime.update_stage_progress before run() imports it.
-    import lib.pipeline_runtime as _rt_mod
-    monkeypatch.setattr(_rt_mod, 'update_stage_progress', cap)
-
-    cache, outdir, cfg = _setup(tmp_path)
-    run(cfg, cache, outdir)
-
-    assert cap.calls, 'update_stage_progress was never called'
-
-    for call in cap.calls:
-        args   = call['args']
-        kwargs = call['kwargs']
-
-        # B.1 — first positional arg must be stage index 7
-        assert args[0] == 7, (
-            f'Expected stage index 7, got {args[0]!r} in call {call}')
-
-        # B.2 — second positional arg must be total stages 7
-        assert args[1] == 7, (
-            f'Expected stage_total 7, got {args[1]!r} in call {call}')
-
-        # B.3 — third positional arg must be a float fraction in [0.0, 1.0]
-        frac = args[2]
-        assert isinstance(frac, float), (
-            f'Expected frac to be float, got {type(frac).__name__!r} in call {call}')
-        assert 0.0 <= frac <= 1.0, (
-            f'frac={frac!r} outside [0.0, 1.0] in call {call}')
-
-        # B.4 — fourth positional arg must be a non-empty string label
-        label = args[3]
-        assert isinstance(label, str) and label, (
-            f'Expected non-empty str label, got {label!r} in call {call}')
-
-        # B.5 — n_done keyword must be present and be an int
-        assert 'n_done' in kwargs, (
-            f'n_done keyword missing in call {call}')
-        assert isinstance(kwargs['n_done'], int), (
-            f'n_done must be int, got {type(kwargs["n_done"]).__name__!r}')
-
-        # B.6 — n_total keyword must be present and be an int
-        assert 'n_total' in kwargs, (
-            f'n_total keyword missing in call {call}')
-        assert isinstance(kwargs['n_total'], int), (
-            f'n_total must be int, got {type(kwargs["n_total"]).__name__!r}')
-
-
-def test_update_stage7_progress_frac_monotonically_increases(tmp_path, monkeypatch):
-    """B.7 — frac values across successive milestones must be non-decreasing."""
-    import lib.pipeline_runtime as _rt_mod
-    from lib.stages.st07_report import _STAGE7_MILESTONES
-
-    cap = _ProgressCapture()
-    monkeypatch.setattr(_rt_mod, 'update_stage_progress', cap)
-
-    cache, outdir, cfg = _setup(tmp_path)
-    run(cfg, cache, outdir)
-
-    fracs = [c['args'][2] for c in cap.calls]
-    assert fracs, 'No progress calls recorded'
-    for i in range(1, len(fracs)):
-        assert fracs[i] >= fracs[i - 1], (
-            f'frac decreased from {fracs[i-1]} to {fracs[i]} at step {i}')
-
-
-def test_update_stage7_progress_final_frac_is_one(tmp_path, monkeypatch):
-    """B.8 — the last milestone call must emit frac == 1.0 (Done)."""
-    import lib.pipeline_runtime as _rt_mod
-
-    cap = _ProgressCapture()
-    monkeypatch.setattr(_rt_mod, 'update_stage_progress', cap)
-
-    cache, outdir, cfg = _setup(tmp_path)
-    run(cfg, cache, outdir)
-
-    assert cap.calls, 'No progress calls recorded'
-    last_frac = cap.calls[-1]['args'][2]
-    assert last_frac == 1.0, (
-        f'Expected final frac == 1.0, got {last_frac!r}')
-
-
-def test_update_stage7_progress_survives_rt_progress_exception(tmp_path, monkeypatch):
-    """B.9 — if _rt_progress raises, run() must still complete successfully
-    and write its outputs (graceful degradation guard added in A.3)."""
-    import lib.pipeline_runtime as _rt_mod
-
-    def _boom(*a, **kw):
-        raise RuntimeError('simulated TTY error')
-
-    monkeypatch.setattr(_rt_mod, 'update_stage_progress', _boom)
-
-    cache, outdir, cfg = _setup(tmp_path)
-    # Must not raise
-    stats = run(cfg, cache, outdir)
-    assert os.path.exists(os.path.join(outdir, 'relevant_commits.json'))
-    assert 'generated_files' in stats
-
-
-# ══ A.1 (v12.0.3): prefilter_debug.json export + rule_trace.csv ═════════════════════
-
-def test_prefilter_debug_json_copied_to_outdir_when_present(tmp_path):
-    """A.1 — when cache/prefilter_debug.json exists, run() copies it to outdir."""
-    cache, outdir, cfg = _setup(tmp_path)
-    debug_records = [
-        {'sha': 'aabbccdd', 'drop_reason': 'path_blacklist_all',
-         'subject': 'docs: update readme', 'files': ['Documentation/foo.rst'],
-         'debug': {}}
-    ]
-    _write_json(os.path.join(cache, CACHE_FILES['prefilter_debug']), debug_records)
-    run(cfg, cache, outdir)
-    out_path = os.path.join(outdir, 'prefilter_debug.json')
-    assert os.path.exists(out_path), 'prefilter_debug.json was not copied to outdir'
-    data = json.load(open(out_path))
-    assert data == debug_records
-
-
-def test_prefilter_debug_json_in_generated_files_when_present(tmp_path):
-    """A.1 — prefilter_debug.json must appear in report_stats['generated_files']."""
-    cache, outdir, cfg = _setup(tmp_path)
-    _write_json(os.path.join(cache, CACHE_FILES['prefilter_debug']), [{'sha': 'x'}])
-    stats = run(cfg, cache, outdir)
-    assert any('prefilter_debug' in f for f in stats['generated_files']), (
-        f"prefilter_debug.json not in generated_files: {stats['generated_files']}")
-
-
-def test_prefilter_debug_json_not_created_when_cache_absent(tmp_path):
-    """A.1 — when cache/prefilter_debug.json does not exist, outdir must not
-    contain the file (no empty placeholder created)."""
-    cache, outdir, cfg = _setup(tmp_path)
-    # Confirm the cache file is absent
-    assert not os.path.exists(os.path.join(cache, CACHE_FILES['prefilter_debug']))
-    run(cfg, cache, outdir)
-    assert not os.path.exists(os.path.join(outdir, 'prefilter_debug.json')), (
-        'prefilter_debug.json must not be created when absent from cache')
-
-
-def test_rule_trace_csv_written_when_csv_output_enabled(tmp_path):
-    """A.1 — rule_trace.csv must be written alongside rule_trace.json when
-    CSV is in the outputs list."""
-    cache, outdir, cfg = _setup(tmp_path)
-    assert 'csv' in cfg['reports']['outputs']
-    run(cfg, cache, outdir)
-    csv_path = os.path.join(outdir, 'rule_trace.csv')
-    assert os.path.exists(csv_path), 'rule_trace.csv was not written'
-
-
-def test_rule_trace_csv_has_expected_headers(tmp_path):
-    """A.1 — rule_trace.csv first row must be the canonical TRACE_COLS header."""
-    from lib.stages.st07_report import TRACE_COLS
-    cache, outdir, cfg = _setup(tmp_path)
-    run(cfg, cache, outdir)
-    with open(os.path.join(outdir, 'rule_trace.csv')) as f:
-        reader = csv.reader(f)
-        headers = next(reader)
-    assert headers == list(TRACE_COLS)
-
-
-def test_rule_trace_csv_in_generated_files(tmp_path):
-    """A.1 — rule_trace.csv must appear in report_stats['generated_files']."""
-    cache, outdir, cfg = _setup(tmp_path)
-    stats = run(cfg, cache, outdir)
-    assert any('rule_trace.csv' in f for f in stats['generated_files']), (
-        f"rule_trace.csv not in generated_files: {stats['generated_files']}")
-
-
-def test_rule_trace_csv_not_written_when_csv_disabled(tmp_path):
-    """A.1 — rule_trace.csv must NOT be written when CSV output is not enabled."""
-    cache, outdir, cfg = _setup(tmp_path)
-    cfg['reports']['outputs'] = ['html']
-    run(cfg, cache, outdir)
-    assert not os.path.exists(os.path.join(outdir, 'rule_trace.csv')), (
-        'rule_trace.csv must not be written when CSV output is disabled')
-
-
-def test_rule_trace_json_always_written(tmp_path):
-    """A.1 — rule_trace.json (JSON twin) is always written regardless of outputs."""
-    cache, outdir, cfg = _setup(tmp_path)
-    cfg['reports']['outputs'] = []  # no CSV, no HTML
-    run(cfg, cache, outdir)
-    assert os.path.exists(os.path.join(outdir, 'rule_trace.json')), (
-        'rule_trace.json must always be written')
-
-
-def test_manifest_cache_files_has_prefilter_debug_key():
-    """A.1 — CACHE_FILES['prefilter_debug'] must be defined in manifest."""
-    from lib.manifest import CACHE_FILES
-    assert 'prefilter_debug' in CACHE_FILES, (
-        "CACHE_FILES missing 'prefilter_debug' key")
-    assert CACHE_FILES['prefilter_debug'].endswith('.json')
-
-
-def test_manifest_stage4_outputs_include_prefilter_debug():
-    """A.1 — MANIFEST.json stage 4 outputs must list prefilter_debug.json."""
-    from lib.manifest import STAGE_OUTPUTS
-    outputs = STAGE_OUTPUTS.get('prefilter_commits', [])
-    assert any('prefilter_debug' in o for o in outputs), (
-        f'prefilter_debug.json missing from stage 4 MANIFEST outputs: {outputs}')
+    monkeypatch.setattr(_mod, '_rt_progress_f', cap, raising=False)

@@ -53,6 +53,12 @@ Changes:
                   HTTP server with no external file dependencies.
                   Generation failure is non-fatal (logged as a warning).
                   'serve_report.pyz' is added to generated_files on success.
+  v16.14.0      — Filtered commits are now embedded in the unified
+                  relevant_commits.html report via the filtered_commits kwarg
+                  of generate_html_report().  The separate
+                  filtered_commits.html file is no longer written.
+                  filtered_commits.table.json is still written as a sidecar
+                  for the JS layer.
 """
 import csv
 import json
@@ -665,10 +671,11 @@ def run(cfg, cache, outdir):
     except Exception as _e:
         logging.warning('pipeline_run_stats.json write failed: %s', _e)
 
-    # HTML
+    # HTML — v16.14.0: filtered commits are passed via filtered_commits= into
+    # the unified relevant_commits.html report.  No separate
+    # filtered_commits.html is written.
     _update_stage7_progress(6, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
-    _hp  = None  # set below; used later by serve_script_gen
-    _fhp = None
+    _hp = None  # set below; used later by serve_script_gen
     if 'html' in outputs:
         try:
             _save_ordered_json(os.path.join(outdir, 'report_metadata.json'), metadata)
@@ -678,6 +685,11 @@ def run(cfg, cache, outdir):
             _tp = os.path.join(outdir, 'relevant_commits.table.json')
             _write_table_json(_tp, scored, include_reason=False)
             _emit(_tp)
+            # Write filtered sidecar JSON so the JS tab can lazy-load it
+            if filtered:
+                _ftp = os.path.join(outdir, 'filtered_commits.table.json')
+                _write_table_json(_ftp, filtered, include_reason=True)
+                _emit(_ftp)
             generate_html_report(
                 scored, prof_summary, report_stats, _hp,
                 title=title,
@@ -689,34 +701,12 @@ def run(cfg, cache, outdir):
                 metadata_path='./report_metadata.json' if html_detail_mode == 'sidecar' else None,
                 cfg=cfg,
                 run_stats_data=run_stats_data,
+                filtered_commits=filtered if filtered else None,
             )
             _emit(_hp)
         except Exception as e:
             logging.warning('HTML report failed: %s', e)
             _hp = None
-        if filtered:
-            try:
-                _fhp = os.path.join(outdir, 'filtered_commits.html')
-                _ftp = os.path.join(outdir, 'filtered_commits.table.json')
-                _write_table_json(_ftp, filtered, include_reason=True)
-                _emit(_ftp)
-                generate_html_report(
-                    filtered, {}, {'total_scored_commits': len(filtered)},
-                    _fhp, title=title + ' \u2014 Filtered Commits',
-                    is_filtered=True,
-                    templates_dir=cfg['paths'].get('templates_dir'),
-                    detail_mode=html_detail_mode,
-                    commit_index_path='./filtered_commits.table.json' if html_detail_mode == 'sidecar' else None,
-                    commit_detail_root='./commits',
-                    embed_compression=html_embed_compression,
-                    metadata_path='./report_metadata.json' if html_detail_mode == 'sidecar' else None,
-                    cfg=cfg,
-                    run_stats_data=run_stats_data,
-                )
-                _emit(_fhp)
-            except Exception as e:
-                logging.warning('HTML filtered report failed: %s', e)
-                _fhp = None
 
         # v16.13.0 — generate self-contained serve_report.pyz zipapp
         _update_stage7_progress(8, _STAGE7_MILESTONES, 'Generating serve_report.pyz')

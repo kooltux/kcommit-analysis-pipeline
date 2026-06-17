@@ -2,6 +2,65 @@
 
 All notable changes to this project will be documented in this file.
 
+## v16.14.0 — unified HTML report: filtered commits embedded in relevant_commits.html (2026-06-17)
+
+### Changed
+
+- `lib/html_report.py` — `generate_html_report()` gains an optional
+  `filtered_commits=` kwarg (list of pre- + postfilter dropped commit dicts).
+
+  When supplied, `window.__KC_UI__` gains four new keys consumed by the
+  browser-side JS tab switcher:
+
+  | Key | Content |
+  |---|---|
+  | `tabs` | `[{id, label, count}, …]` — two-element tab descriptor |
+  | `filtered_columns` | slim column defs: rank, sha12, subject, author, date, filter_stage, reason |
+  | `filtered_rows` | one slim row dict per filtered commit |
+  | `filtered_store` (inline script) | sha12 → commit dict; scoring fields stripped |
+
+  `filter_stage` is derived from `prefilter_debug` presence on each commit
+  (`'prefilter'` when present, `'postfilter'` otherwise).
+
+  The obsolete `is_filtered` parameter and `_FILTERED_EXTRA` tuple have been
+  removed; JS tab logic in `summary.js` replaces them.
+
+  New private helpers:
+  - `_FILTERED_COLUMNS` — slim column-set constant for the filtered tab
+  - `_filtered_columns_def()` — returns JS column-definition list
+  - `_filtered_commit_row(i, c)` — serialises one filtered commit to a slim dict
+  - `_filtered_commit_store_entry(c)` — strips scoring fields for `filtered_store`
+  - `_SCORING_KEYS` — frozenset of field names stripped from filtered store entries
+
+- `lib/stages/st07_report.py` — HTML output block updated for v16.14.0:
+
+  - The separate `filtered_commits.html` file is **no longer written**.
+    Filtered commits are embedded in the unified `relevant_commits.html`
+    via `filtered_commits=filtered` passed to `generate_html_report()`.
+  - `filtered_commits.table.json` sidecar is still written (guarded by
+    `if filtered:`) so the JS tab can lazy-load filtered rows.
+  - The `is_filtered=True` call path and its surrounding block are removed.
+  - Module docstring `v16.14.0` entry added.
+
+### Tests
+
+- `tests/test_html_report.py`:
+  - `test_html_filtered_table_includes_reason_column` — rewritten to use
+    the new `filtered_commits=` kwarg instead of the removed `is_filtered=True`
+    parameter.  Asserts against `ui['filtered_columns']` / `ui['filtered_rows']`
+    (the keys populated by the new API).
+
+- `tests/test_st07_report.py`:
+  - `test_html_filtered_output_written` — assertion updated from
+    `filtered_commits.html` to `relevant_commits.html`; docstring updated to
+    explain the v16.14.0 unified-report behaviour.
+
+### Version
+
+- `MANIFEST.json` version bumped `v16.13.1` → `v16.14.0`.
+
+---
+
 ## v16.13.1 — prefilter: embed debug dict in every commit (2026-06-17)
 
 ### Changed (K — prefilter_debug embedded in commit)

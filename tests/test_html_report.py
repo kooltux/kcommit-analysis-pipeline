@@ -119,19 +119,23 @@ def test_html_detail_assets_include_js(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_html_filtered_table_includes_reason_column(tmp_path):
+    """v16.14.0: filtered commits passed via filtered_commits= are exposed in
+    __KC_UI__ as filtered_columns / filtered_rows.  The 'reason' key must
+    appear in filtered_columns and each filtered row must carry it."""
     tpl_dir = _tpl_dir(tmp_path)
     out = tmp_path / 'report.html'
-    commits = [{
+    filtered = [{
         'commit': 'abc123456789' + 'f' * 28, 'subject': 'subj', 'body': '',
         'author_name': 'A', 'author_time': 1700000000,
         'score': 0, 'matched_profiles': [], 'product_evidence': [],
         '_filter_reason': 'path_blacklist'
     }]
-    generate_html_report(commits, {}, {}, str(out), templates_dir=str(tpl_dir), is_filtered=True)
+    generate_html_report([], {}, {}, str(out), templates_dir=str(tpl_dir),
+                         filtered_commits=filtered)
     ui = _kc_ui(out.read_text())
-    col_keys = [c['key'] for c in ui['columns']]
+    col_keys = [c['key'] for c in ui['filtered_columns']]
     assert 'reason' in col_keys
-    assert ui['rows'][0]['reason'] == 'path_blacklist'
+    assert ui['filtered_rows'][0]['reason'] == 'path_blacklist'
 
 
 def test_html_report_includes_profile_scores_column(tmp_path):
