@@ -1,7 +1,13 @@
-/* kcommit-analysis-pipeline — v16.12.6 UI
+/* kcommit-analysis-pipeline — v16.12.7 UI
    Three-pane resizable layout, collapsible sidebars, light+dark themes.
    All colours driven by CSS custom-properties; no colour is hardcoded.
 
+   v16.12.7: Fix .kc-kv layout — commit detail "Commit" section content
+             was packed against the right edge and unreadable.
+             justify-content:space-between + max-width:180px on the value
+             caused values to be squeezed into a far-right strip.
+             New layout: label is a stable 96px left column; value fills
+             the remaining width with word-wrap, no max-width cap.
    v16.12.6: Fix 7 bugs from audit:
      BUG-01 Replace colored side-border on decision cards with tinted bg.
      BUG-02 Remove hardcoded --thead-sort-h (now set dynamically by JS).
@@ -383,24 +389,42 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   padding: 6px 10px;
   border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
+
+/* ── Key/value rows (left pane stats + right pane commit detail) ─── */
+/*
+ * v16.12.7: Switched from justify-content:space-between to a two-column
+ * flex layout.  The old approach used `flex: 1 1 auto` on the label (so
+ * it expanded to fill space) and pushed the value to the far right with
+ * max-width:180px + text-overflow:ellipsis.  That made the value column
+ * a tiny cramped strip on the right, especially in the right pane where
+ * the card is narrow.  The new layout:
+ *   label  — fixed 96px left column, never grows, never pushes
+ *   value  — gets all remaining space, wraps naturally
+ */
 .kc-kv {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: baseline;
-  gap: 10px;
+  gap: 12px;
   padding: 3px 0;
   font-size: 12px;
   line-height: 1.35;
+  min-width: 0;
 }
-.kc-kv .kc-kv-label { color: var(--muted); flex: 1 1 auto; }
+.kc-kv .kc-kv-label {
+  color: var(--muted);
+  flex: 0 0 96px;
+  max-width: 96px;
+}
 .kc-kv .kc-kv-value {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 180px;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* ── Tooltip ────────────────────────────────────────────────────── */
