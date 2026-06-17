@@ -44,6 +44,15 @@ Changes:
                 — cfg is passed to generate_html_report() so that the new
                   Context section can read kernel.rev_old/rev_new and
                   artifact presence flags.
+  v16.13.0      — serve_report.pyz generation: when html output is enabled,
+                  lib.serve_script_gen.generate_serve_script() is called
+                  after both HTML reports are written.  It packs the HTML
+                  file(s) and all commits/*.json detail files into a
+                  self-contained Python zipapp (ZIP archive with __main__.py
+                  entry point).  Running that script starts an in-memory
+                  HTTP server with no external file dependencies.
+                  Generation failure is non-fatal (logged as a warning).
+                  'serve_report.pyz' is added to generated_files on success.
 """
 import csv
 import json
@@ -65,7 +74,7 @@ _COMMIT_KEYS_FILTERED = _COMMIT_KEYS + ["filter_reason"]
 
 # Total number of progress milestones emitted by run().
 # Used both in _update_stage7_progress() and in the final finish call.
-_STAGE7_MILESTONES = 7
+_STAGE7_MILESTONES = 8
 
 
 def _fmt_date(ts):
@@ -658,6 +667,8 @@ def run(cfg, cache, outdir):
 
     # HTML
     _update_stage7_progress(6, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
+    _hp  = None  # set below; used later by serve_script_gen
+    _fhp = None
     if 'html' in outputs:
         try:
             _save_ordered_json(os.path.join(outdir, 'report_metadata.json'), metadata)
@@ -682,6 +693,7 @@ def run(cfg, cache, outdir):
             _emit(_hp)
         except Exception as e:
             logging.warning('HTML report failed: %s', e)
+            _hp = None
         if filtered:
             try:
                 _fhp = os.path.join(outdir, 'filtered_commits.html')
@@ -704,6 +716,26 @@ def run(cfg, cache, outdir):
                 _emit(_fhp)
             except Exception as e:
                 logging.warning('HTML filtered report failed: %s', e)
+                _fhp = None
+
+        # v16.13.0 — generate self-contained serve_report.pyz zipapp
+        _update_stage7_progress(8, _STAGE7_MILESTONES, 'Generating serve_report.pyz')
+        if _hp and os.path.exists(_hp):
+            try:
+                from lib.serve_script_gen import generate_serve_script
+                _srv_path = os.path.join(outdir, 'serve_report.pyz')
+                _srv_stats = generate_serve_script(
+                    html_path=_hp,
+                    commits_root=details_root,
+                    output_path=_srv_path,
+                )
+                _emit(_srv_path)
+                logging.info(
+                    'serve_report.pyz: %.1f KB raw -> %.1f KB compressed (%.0f%% reduction)',
+                    _srv_stats['raw_kb'], _srv_stats['compressed_kb'], _srv_stats['ratio_pct'],
+                )
+            except Exception as _srv_e:
+                logging.warning('serve_report.pyz generation failed: %s', _srv_e)
 
     # Emit final progress milestone and terminate the TTY bar line
     _update_stage7_progress(_STAGE7_MILESTONES, _STAGE7_MILESTONES, 'Done')
