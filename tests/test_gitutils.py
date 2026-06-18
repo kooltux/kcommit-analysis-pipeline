@@ -1,7 +1,8 @@
 """Tests for lib.gitutils — parse_pretty_block, parse_tail_block,
-run_git (mocked), iter_git_log_records (mocked)."""
+run_git (mocked), iter_git_log_records (mocked), batch_show_paths (F)."""
+import io
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 import pytest
 
 from lib.gitutils import (
@@ -12,6 +13,7 @@ from lib.gitutils import (
     show_commit_patch,
     list_rev_commits,
     show_path_history,
+    batch_show_paths,
     RS, FS,
 )
 
@@ -47,7 +49,7 @@ def _fail(stderr='error', rc=128):
     return r
 
 
-# ── parse_pretty_block ────────────────────────────────────────────────────────
+# ── parse_pretty_block ─────────────────────────────────────────────────────────
 def test_parse_pretty_block_basic():
     block = (
         'commit=abc123\n'
@@ -90,7 +92,7 @@ def test_parse_pretty_block_author_time_empty():
     assert r['author_time'] == 0
 
 
-# ── parse_tail_block ──────────────────────────────────────────────────────────
+# ── parse_tail_block ────────────────────────────────────────────────────────────
 def test_parse_tail_block_numstat():
     tail = '10\t2\tdrivers/net/core.c\n5\t0\tinclude/net/skbuff.h\n'
     files, numstat = parse_tail_block(tail)
@@ -158,7 +160,7 @@ def test_run_git_uses_source_dir():
     assert '/my/kernel' in called_cmd
 
 
-# ── list_rev_commits ──────────────────────────────────────────────────────────
+# ── list_rev_commits ────────────────────────────────────────────────────────────
 def test_list_rev_commits_basic():
     output = 'abc123\ndef456\n'
     with patch('subprocess.run', return_value=_ok(output)):
@@ -186,7 +188,7 @@ def test_list_rev_commits_first_parent_flag():
     assert '--first-parent' in args
 
 
-# ── iter_git_log_records ──────────────────────────────────────────────────────
+# ── iter_git_log_records ──────────────────────────────────────────────────────────
 def _make_log_output(sha='abc123', subject='net: fix', body='Details.',
                      files='10\t2\tdrivers/net/core.c'):
     head = (
@@ -235,7 +237,7 @@ def test_iter_git_log_no_numstat_flag():
     assert '--name-only' in args
 
 
-# ── show_commit_patch / show_path_history ─────────────────────────────────────
+# ── show_commit_patch / show_path_history ────────────────────────────────────────
 def test_show_commit_patch():
     with patch('subprocess.run', return_value=_ok('diff --git ...\n')):
         out = show_commit_patch(_cfg(), 'abc123')
@@ -252,3 +254,149 @@ def test_show_path_history_missing_path():
     with patch('subprocess.run', return_value=_fail('not found', 128)):
         out = show_path_history(_cfg(), 'v6.1', 'no/such/path')
     assert out == ''
+
+
+# ── F: batch_show_paths ─────────────────────────────────────────────────────────────
+
+def _make_catfile_proc(responses):
+    """Build a mock Popen process whose stdout returns *responses* bytes.
+
+    responses is the raw bytes git cat-file --batch would emit for a set of
+    queries, in order.
+    """
+    proc = MagicMock()
+    proc.stdin = MagicMock()
+    proc.stdout = io.BytesIO(responses)
+    proc.stderr = io.BytesIO(b'')
+    proc.wait = MagicMock(return_value=0)
+    proc.kill = MagicMock()
+    return proc
+
+
+def _catfile_blob(rev, path, content):
+    """Encode a single cat-file --batch blob response."""
+    content_bytes = content.encode('utf-8')
+    header = b'deadbeef1234 blob %d\n' % len(content_bytes)
+    return header + content_bytes + b'\n'
+
+
+def _catfile_missing(rev, path):
+    """Encode a cat-file --batch missing response."""
+    return ('%s:%s missing\n' % (rev, path)).encode('utf-8')
+
+
+def test_batch_show_paths_empty_tasks():
+    """F: empty task list returns empty dict without opening any process."""
+    with patch('subprocess.Popen') as mock_popen:
+        result = batch_show_paths(_cfg(), [])
+    assert result == {}
+    mock_popen.assert_not_called()
+
+
+def test_batch_show_paths_single_hit():
+    """F: single blob fetched correctly via cat-file pipe."""
+    content = 'obj-$(CONFIG_USB) += hub.o\n'
+    raw = _catfile_blob('v6.1', 'drivers/usb/Makefile', content)
+    proc = _make_catfile_proc(raw)
+    with patch('subprocess.Popen', return_value=proc):
+        result = batch_show_paths(
+            _cfg(), [('v6.1', 'drivers/usb/Makefile')])
+    assert result[('v6.1', 'drivers/usb/Makefile')] == content
+
+
+def test_batch_show_paths_missing_object():
+    """F: missing blob returns empty string."""
+    raw = _catfile_missing('v6.1', 'no/such/Makefile')
+    proc = _make_catfile_proc(raw)
+    with patch('subprocess.Popen', return_value=proc):
+        result = batch_show_paths(
+            _cfg(), [('v6.1', 'no/such/Makefile')])
+    assert result[('v6.1', 'no/such/Makefile')] == ''
+
+
+def test_batch_show_paths_multiple_objects():
+    """F: multiple blobs returned in order."""
+    tasks = [
+        ('v6.1', 'drivers/usb/Makefile'),
+        ('v6.6', 'net/Makefile'),
+        ('v6.1', 'missing/Makefile'),
+    ]
+    raw = (
+        _catfile_blob('v6.1', 'drivers/usb/Makefile', 'obj-$(CONFIG_USB) += hub.o\n') +
+        _catfile_blob('v6.6', 'net/Makefile', 'obj-$(CONFIG_NET) += core.o\n') +
+        _catfile_missing('v6.1', 'missing/Makefile')
+    )
+    proc = _make_catfile_proc(raw)
+    with patch('subprocess.Popen', return_value=proc):
+        result = batch_show_paths(_cfg(), tasks)
+    assert 'CONFIG_USB' in result[('v6.1', 'drivers/usb/Makefile')]
+    assert 'CONFIG_NET' in result[('v6.6', 'net/Makefile')]
+    assert result[('v6.1', 'missing/Makefile')] == ''
+
+
+def test_batch_show_paths_progress_callback():
+    """F: progress_callback is called at least once during batch."""
+    content = 'obj-$(CONFIG_X) += x.o\n'
+    tasks = [('v6.1', 'drivers/x/Makefile')]
+    raw = _catfile_blob('v6.1', 'drivers/x/Makefile', content)
+    proc = _make_catfile_proc(raw)
+    calls = []
+    with patch('subprocess.Popen', return_value=proc):
+        batch_show_paths(_cfg(), tasks, progress_callback=lambda d, t: calls.append((d, t)))
+    assert len(calls) >= 1
+    assert calls[-1] == (1, 1)
+
+
+def test_batch_show_paths_popen_failure_falls_back():
+    """F: if Popen raises, fallback_serial=True triggers serial fallback."""
+    with patch('subprocess.Popen', side_effect=OSError('no git')):
+        with patch('lib.gitutils.show_path_history', return_value='fallback') as mock_sph:
+            result = batch_show_paths(
+                _cfg(), [('v6.1', 'drivers/usb/Makefile')],
+                fallback_serial=True)
+    assert result[('v6.1', 'drivers/usb/Makefile')] == 'fallback'
+    mock_sph.assert_called_once()
+
+
+def test_batch_show_paths_popen_failure_raises_when_no_fallback():
+    """F: fallback_serial=False re-raises the Popen exception."""
+    with patch('subprocess.Popen', side_effect=OSError('no git')):
+        with pytest.raises(RuntimeError, match='failed to start'):
+            batch_show_paths(
+                _cfg(), [('v6.1', 'x')],
+                fallback_serial=False)
+
+
+def test_batch_show_paths_binary_content():
+    """F: binary-safe: content with arbitrary bytes decoded with replace."""
+    # Content with a non-UTF-8 byte
+    content_bytes = b'obj-$(CONFIG_X) += x.o\n\xff\xfe\n'
+    header = b'deadbeef1234 blob %d\n' % len(content_bytes)
+    raw = header + content_bytes + b'\n'
+    proc = _make_catfile_proc(raw)
+    with patch('subprocess.Popen', return_value=proc):
+        result = batch_show_paths(_cfg(), [('v6.1', 'drivers/x/Makefile')])
+    # Should not raise; result is a str
+    assert isinstance(result[('v6.1', 'drivers/x/Makefile')], str)
+    assert 'CONFIG_X' in result[('v6.1', 'drivers/x/Makefile')]
+
+
+def test_batch_show_paths_stdin_receives_all_queries():
+    """F: stdin receives one query line per task."""
+    tasks = [
+        ('v6.1', 'drivers/usb/Makefile'),
+        ('v6.6', 'net/Makefile'),
+    ]
+    raw = (
+        _catfile_blob('v6.1', 'drivers/usb/Makefile', 'a') +
+        _catfile_blob('v6.6', 'net/Makefile', 'b')
+    )
+    proc = _make_catfile_proc(raw)
+    written = []
+    proc.stdin.write = lambda b: written.append(b)
+    proc.stdin.close = MagicMock()
+    with patch('subprocess.Popen', return_value=proc):
+        batch_show_paths(_cfg(), tasks)
+    combined = b''.join(written)
+    assert b'v6.1:drivers/usb/Makefile\n' in combined
+    assert b'v6.6:net/Makefile\n' in combined
