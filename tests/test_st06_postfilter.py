@@ -5,6 +5,9 @@ v13.0.0 (E.7):
   - Added tests asserting run() writes postfilter_debug.json with the expected
     summary structure (keys: summary, score_distribution).
   - Added test asserting CACHE_FILES['postfilter_debug'] key exists.
+
+v18.0.1 (Fix 5): updated bucket-label assertions from '100+' to '>=100'.
+  The score cap was removed in v16.5.0; the old label was misleading.
 """
 import json
 import os
@@ -51,7 +54,7 @@ def test_get_threshold_bad_value_returns_zero():
 def test_score_buckets_empty():
     b = _score_buckets([])
     assert b['0'] == 0
-    assert b['100+'] == 0
+    assert b['>=100'] == 0  # Fix 5 (v18.0.1): was '100+'
 
 def test_score_buckets_zero_score():
     b = _score_buckets([_scored_commit('x', 0)])
@@ -60,7 +63,7 @@ def test_score_buckets_zero_score():
 
 def test_score_buckets_hundred_plus():
     b = _score_buckets([_scored_commit('a', 100), _scored_commit('b', 200)])
-    assert b['100+'] == 2
+    assert b['>=100'] == 2  # Fix 5 (v18.0.1): was '100+'
 
 def test_score_buckets_various():
     commits = [
@@ -81,7 +84,7 @@ def test_score_buckets_various():
     assert b['30-49'] == 1
     assert b['50-74'] == 1
     assert b['75-99'] == 1
-    assert b['100+'] == 1
+    assert b['>=100'] == 1  # Fix 5 (v18.0.1): was '100+'
 
 def test_score_buckets_boundary_values():
     """Verify bucket boundary conditions (inclusive lower, exclusive upper)."""
@@ -94,7 +97,7 @@ def test_score_buckets_boundary_values():
         _scored_commit('f', 50),   # 50-74
         _scored_commit('g', 75),   # 75-99
         _scored_commit('h', 99),   # 75-99
-        _scored_commit('i', 100),  # 100+
+        _scored_commit('i', 100),  # >=100
     ]
     b = _score_buckets(commits)
     assert b['1-9']   == 1
@@ -103,7 +106,7 @@ def test_score_buckets_boundary_values():
     assert b['30-49'] == 1
     assert b['50-74'] == 1
     assert b['75-99'] == 2
-    assert b['100+']  == 1
+    assert b['>=100'] == 1  # Fix 5 (v18.0.1): was '100+'
 
 
 # -- run(): rank assignment ----------------------------------------------------

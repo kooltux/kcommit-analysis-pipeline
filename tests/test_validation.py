@@ -14,17 +14,26 @@ def _base(tmp_path):
 
 # ── kernel section ────────────────────────────────────────────────────────────
 def test_missing_source_dir(tmp_path):
+    # Fix 11 (v18.0.1): source_dir missing is now a notice, not a problem.
+    # Keyword-only profiles can run without a source tree (st02/st03 skip).
     cfg = _base(tmp_path)
     del cfg['kernel']['source_dir']
-    problems, _ = validate_config_only(cfg)
-    assert any('source_dir' in p for p in problems)
+    problems, notices = validate_config_only(cfg)
+    assert not any('source_dir' in p for p in problems), (
+        'source_dir should not be a blocking problem (Fix 11)')
+    assert any('source_dir' in n for n in notices), (
+        'source_dir absence should appear in notices')
 
 
 def test_nonexistent_source_dir(tmp_path):
+    # Fix 11 (v18.0.1): non-existent source_dir is now a notice, not a problem.
     cfg = _base(tmp_path)
     cfg['kernel']['source_dir'] = '/does/not/exist'
-    problems, _ = validate_config_only(cfg)
-    assert any('source_dir' in p for p in problems)
+    problems, notices = validate_config_only(cfg)
+    assert not any('source_dir' in p for p in problems), (
+        'source_dir should not be a blocking problem (Fix 11)')
+    assert any('source_dir' in n for n in notices), (
+        'source_dir absence should appear in notices')
 
 
 def test_missing_rev_old(tmp_path):

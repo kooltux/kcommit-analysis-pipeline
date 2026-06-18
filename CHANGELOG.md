@@ -2,6 +2,68 @@
 
 All notable changes to this project are documented in this file.
 
+## v18.0.1 — stability fixes, validation downgrade, and report/runtime cleanups (2026-06-18)
+
+### Changed
+
+- `lib/stages/st01_collect.py` — when `collect.max_commits` is unset, the
+  progress bar now uses `n_total=None` instead of `0`, preventing a frozen
+  `0/0 (0%)` display during open-ended collection runs.
+
+- `lib/stages/st05_score.py` — worker-future exception handling now propagates
+  `fut.result()` failures correctly, while the per-commit fallback path is
+  narrowed to the intended scope.
+
+- `lib/stages/st06_postfilter.py` — score bucket label changed from `100+` to
+  `>=100`, matching the uncapped score semantics introduced in v16.5.0.
+
+- `lib/validation.py` — missing or non-existent `kernel.source_dir` is now a
+  notice rather than a blocking config problem, allowing keyword-only profile
+  runs that do not require a source tree.
+
+### Fixed
+
+- `configs/html/js/summary_10_table.js` — table rendering fix included in the
+  staged batch for v18.0.1.
+
+- `lib/commands/base.py` — unclosed file-handle path replaced with a
+  `with open(...)` context-manager pattern.
+
+- `lib/config.py` — `save_json()` now writes via a temporary file and atomic
+  replace, avoiding truncated or partially-written JSON on interruption.
+
+- `lib/pipeline_runtime.py` — stderr TTY detection is now cached per process
+  (`_stderr_is_tty`) instead of via a stale global state pattern.
+
+- `lib/stages/st06_postfilter.py` — score-distribution output and tests now use
+  the corrected `>=100` top bucket label consistently.
+
+- `lib/stages/st07_report.py` — module import ordering fixed so the module
+  docstring remains the true top-level docstring.
+
+- `lib/stages/st07_report.py` — duplicate-SHA debug logging restored in
+  `_write_commit_details()`.
+
+- `lib/stages/st07_report.py` — `_STAGE7_MILESTONES` corrected from 8 to 9 and
+  explicit milestone-8 handling added so progress reporting is accurate.
+
+- `lib/validation.py` — config validation messaging now distinguishes
+  non-blocking source-tree absence from real schema / revision problems.
+
+### Tests
+
+- `tests/test_st06_postfilter.py` — updated top-bucket assertions from
+  `100+` to `>=100`.
+
+- `tests/test_validation.py` — updated `source_dir` expectations from
+  `problems` to `notices` for the two non-blocking validation cases.
+
+### Version
+
+- `MANIFEST.json` version bumped `v18.0.0` → `v18.0.1`.
+
+---
+
 ## v18.0.0 — fix: --force has no effect on full pipeline run (2026-06-18)
 
 ### Fixed
