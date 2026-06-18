@@ -5,7 +5,7 @@ import sys
 
 from lib.config import CONFIG_SCHEMA
 
-# ── Schema-driven type validation ────────────────────────────────────────────
+# ── Schema-driven type validation ─────────────────────────────────────────────
 #
 # CONFIG_SCHEMA (lib/config) is the single source of truth for which keys
 # exist and what type they must carry.  _validate_schema() walks the top-level
@@ -100,7 +100,7 @@ def _emit_schema_errors(errors, problems):
     return None
 
 
-# ── filter section ────────────────────────────────────────────────────────────
+# ── filter section ──────────────────────────────────────────────────
 
 def _validate_filter(cfg, problems, notices):
     f = cfg.get('filter')
@@ -124,7 +124,7 @@ def _validate_filter(cfg, problems, notices):
             '(null = auto-detect), got {!r}'.format(rkc))
 
 
-# ── profiles / rules directory validation ─────────────────────────────────────
+# ── profiles / rules directory validation ─────────────────────────────────
 
 def _validate_dirs(cfg, problems, notices):
     paths = cfg.get('paths', {}) or {}
@@ -157,10 +157,15 @@ def _validate_dirs(cfg, problems, notices):
                     name, ', '.join(valid_pdirs)))
 
 
-# ── shared validation core ────────────────────────────────────────────────────
+# ── shared validation core ──────────────────────────────────────────────
 
 def _validate_common(cfg, problems, notices):
-    """Checks shared by both validate_inputs() and validate_config_only()."""
+    """Checks shared by both validate_inputs() and validate_config_only().
+
+    v18.0.1 (Fix 11): source_dir missing or non-existent is now a notice,
+    not a blocking problem.  Keyword-only profiles can run without a source
+    tree — stages st02 and st03 will simply be skipped.
+    """
     # Schema-driven type checks (replaces manual per-key isinstance checks)
     schema_errors = _schema_problems(cfg)
     _emit_schema_errors(schema_errors, problems)
@@ -207,7 +212,7 @@ def _validate_common(cfg, problems, notices):
     _validate_dirs(cfg, problems, notices)
 
 
-# ── public API ────────────────────────────────────────────────────────────────
+# ── public API ──────────────────────────────────────────────────────────────
 
 def validate_inputs(cfg):
     """Validate config, inputs, and git refs.
