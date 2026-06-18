@@ -1,11 +1,8 @@
 /* summary_08_tabs.js — kcommit-analysis-pipeline
  *
  * Report-level tab bar (two-tab mode only) and switchTab() dataset switcher.
- * In single-tab mode (no UI.tabs) this file is a no-op except for
- * declaring switchTab() which is referenced by bootstrap.
  */
 
-/* ---- Tab bar rendering (two-tab mode only) -------------------------- */
 (function () {
   if (!TABS_CFG) return;
   const toolbar = document.getElementById('kc-toolbar');
@@ -27,7 +24,6 @@
   toolbar.insertAdjacentElement('beforebegin', bar);
 })();
 
-/* ---- Dataset switcher ---------------------------------------------- */
 function switchTab(name) {
   if (name === activeTab) return;
   activeTab = name;
@@ -39,15 +35,26 @@ function switchTab(name) {
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
   });
   clearDetailPanel();
-  buildHead();
   sortedRows = ROWS.slice(); sortKey = null; sortDir = 1;
-  COL_DISTINCT = buildDistinct(COLS, ROWS);
+  haystackRows = null;   /* invalidate haystack cache for new dataset */
+
+  /* Show loader immediately, build head with empty COL_DISTINCT so the
+   * UI is responsive instantly, then build the real distinct map in the
+   * background (deferred) and rebuild filter dropdowns once ready. */
+  COL_DISTINCT = Object.create(null);
+  COLS.forEach(c => { COL_DISTINCT[c.key] = []; });
+  buildHead();
   showLoader(ROWS.length);
   renderRowsAsync(
     (done, total) => updateLoaderProgress(done, total),
-    /* onDone: give the browser one rAF to paint all appended rows before
-     * running applyFilters() — avoids the post-100% freeze caused by a
-     * synchronous full-table layout recalc in the same setTimeout tick. */
-    () => requestAnimationFrame(() => { applyFilters(); hideLoader(); })
+    () => {
+      hideLoader();
+      /* Defer the expensive distinct scan so hideLoader() paints first. */
+      setTimeout(() => {
+        COL_DISTINCT = buildDistinct(COLS, ROWS);
+        buildHead();         /* rebuild dropdowns now that distinct is ready */
+        applyFilters();      /* re-run filter in case dropdowns changed */
+      }, 0);
+    }
   );
 }

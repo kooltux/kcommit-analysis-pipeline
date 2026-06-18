@@ -2,6 +2,10 @@
  *
  * Top-level constants, dataset preparation and mutable active-state.
  * Consumed by every other part; must be the first file concatenated.
+ *
+ * NOTE: COL_DISTINCT is intentionally left empty here.
+ * bootstrap (summary_12) defers buildDistinct() to after first paint
+ * so it never blocks the initial render.
  */
 
 /* ========= Data globals ========= */
@@ -62,22 +66,27 @@ REL_ROWS.forEach(r => { rowBySha[r.sha12] = r; if (r.sha) rowBySha[r.sha] = r; }
 const filtRowBySha = Object.create(null);
 FILT_ROWS.forEach(r => { filtRowBySha[r.sha12] = r; if (r.sha) filtRowBySha[r.sha] = r; });
 
-/* ---- Per-column distinct value cache -------------------------------- */
+/* ---- Per-column distinct value cache --------------------------------
+ * buildDistinct() is O(rows × cols) and must NOT run at parse time.
+ * COL_DISTINCT starts empty; bootstrap fills it after first paint.
+ * ------------------------------------------------------------------- */
 function buildDistinct(cols, rows) {
   const dist = Object.create(null);
-  cols.forEach(col => {
+  for (const col of cols) {
     const vals = new Set();
-    rows.forEach(r => {
+    for (const r of rows) {
       const v = r[col.key];
-      if (Array.isArray(v)) v.forEach(x => vals.add(String(x)));
+      if (Array.isArray(v)) { for (const x of v) vals.add(String(x)); }
       else if (v != null && v !== '') vals.add(String(v));
-    });
+    }
     dist[col.key] = [...vals].sort((a, b) => {
       const na = parseFloat(a), nb = parseFloat(b);
       return (!isNaN(na) && !isNaN(nb)) ? na - nb : a.localeCompare(b);
     });
-  });
+  }
   return dist;
 }
 
-let COL_DISTINCT = buildDistinct(REL_COLS, REL_ROWS);
+/* Empty placeholder — populated by bootstrap after first paint. */
+let COL_DISTINCT = Object.create(null);
+COLS.forEach(c => { COL_DISTINCT[c.key] = []; });
