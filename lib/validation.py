@@ -15,6 +15,12 @@ from lib.config import CONFIG_SCHEMA
 # into a structured aggregate.  On earlier versions we fall back to a plain
 # list — the public validate_inputs() / validate_config_only() API is identical
 # in both cases (returns problems, notices lists).
+#
+# v18.0.1 fix (Fix 11):
+#   kernel.source_dir missing or non-existent is now a notice, not a blocking
+#   problem.  Keyword-only profile runs that do not require a source tree
+#   (st02/st03 skip when source_dir is absent) should not be blocked by
+#   validation.
 
 _PY_TYPE_MAP = {
     'bool':  bool,
@@ -161,11 +167,16 @@ def _validate_common(cfg, problems, notices):
 
     kernel = cfg.get('kernel', {}) or {}
 
+    # Fix 11 (v18.0.1): source_dir absence / non-existence is a notice, not a
+    # blocking problem.  Keyword-only profile runs (st02/st03 skip when
+    # source_dir is absent) must not be rejected at validation time.
     source_dir = kernel.get('source_dir')
     if not source_dir:
-        problems.append('kernel.source_dir is not configured')
+        notices.append('notice: kernel.source_dir is not configured — '
+                       'source-tree stages (st02/st03) will be skipped')
     elif not os.path.isdir(source_dir):
-        problems.append('kernel.source_dir does not exist: {}'.format(source_dir))
+        notices.append('notice: kernel.source_dir does not exist: {} — '
+                       'source-tree stages (st02/st03) will be skipped'.format(source_dir))
 
     if not kernel.get('rev_old'):
         problems.append('kernel.rev_old is not configured')

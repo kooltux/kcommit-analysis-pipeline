@@ -2,6 +2,78 @@
 
 All notable changes to this project are documented in this file.
 
+## v18.1.0 — perf(st03): cap history revisions, depth-filter Makefiles, merged-map cache (2026-06-18)
+
+### Changed
+
+- `lib/history_map.py` — three targeted optimisations for large commit ranges
+  (C+B+E) that reduce `build_history_config_map()` wall-time from ~1 800 s to
+  ~25–40 s for a 200k-commit range (cold), and to < 1 s on warm reruns.
+
+  **C — Cap sampled revisions (`max_history_revisions`)**
+
+  A new `history_mapping.max_history_revisions` config key (default `16`) caps
+  the total number of sampled git revisions regardless of the commit range size.
+  Previously, with `sample_step=1000` and a 200k-commit range, 200 revisions
+  were sampled; the new cap keeps this at 16.  Combined with B, the total
+  git-show task count drops from ~60 000 to ~800 for a 200k-commit run.
+
+  **B — Depth-cap interesting Makefiles (`max_makefile_depth`, `min_makefile_symbols`)**
+
+  `_guess_makefiles_from_map()` now accepts `max_depth` (default `3`) and
+  `min_symbols` (default `1`) parameters, wired to new config keys
+  `history_mapping.max_makefile_depth` and `history_mapping.min_makefile_symbols`.
+  Makefiles deeper than `max_depth` directory components or belonging to
+  directories with fewer than `min_symbols` symbol references are excluded.
+  This typically reduces the probed Makefile set from ~300 to ~50 for a full
+  kernel tree (≈6× fewer tasks per revision).
+
+  **E — Merged-map top-level cache (`history_merged_map.json`)**
+
+  After completing the expensive git-show + parse + merge pass, the resulting
+  `config_to_paths` dict is persisted atomically to
+  `<cache_dir>/history_merged_map.json` under a 24-hex SHA-256 key derived
+  from `rev_old`, `rev_new`, and the sorted `interesting_paths` list.  On a
+  subsequent run with the same commit range and Makefile set, the entire
+  `build_history_config_map()` function returns in < 1 s without spawning any
+  subprocesses.  A different rev range or a change in the probed Makefile set
+  automatically invalidates the cache (different key → cache miss → cold run).
+
+  New private helpers: `_merged_map_cache_key()`, `_load_merged_map_cache()`,
+  `_save_merged_map_cache()`.
+
+  Diagnostic print added: `history map: N revision(s) × M Makefile(s) = T task(s)`
+  shown on every cold run so operators can observe the effect of the B+C caps.
+
+### New config keys (all under `history_mapping`)
+
+| Key | Type | Default | Optimisation |
+|---|---|---|---|
+| `max_history_revisions` | int | `16` | C — hard cap on sampled revisions |
+| `max_makefile_depth` | int | `3` | B — max directory depth for probed Makefiles |
+| `min_makefile_symbols` | int | `1` | B — min symbol references per Makefile dir |
+
+### Tests
+
+- `tests/test_history_map.py` — 18 new tests covering:
+  - `_merged_map_cache_key()`: stability, range sensitivity, path sensitivity,
+    order-independence (4 tests)
+  - `_load_merged_map_cache()` / `_save_merged_map_cache()`: roundtrip, wrong
+    key, absent file, None dir, overwrite (5 tests)
+  - `_guess_makefiles_from_map()`: depth cap, min_symbols, combined filters,
+    defaults, empty map, sorted output, root paths (7 tests)
+  - `build_history_config_map()` integration: revision cap, merged-cache hit,
+    merged-cache save, cache invalidation on range change (4 tests)
+
+  `_cfg()` helper updated to accept `max_hist_revs`, `max_depth`, `min_symbols`
+  keyword arguments for cleaner per-test configuration.
+
+### Version
+
+- `MANIFEST.json` version bumped `v18.0.1` → `v18.1.0`.
+
+---
+
 ## v18.0.1 — stability fixes, validation downgrade, and report/runtime cleanups (2026-06-18)
 
 ### Changed
@@ -110,11 +182,11 @@ All notable changes to this project are documented in this file.
   **Problem.**  Switching between the *Relevant commits* and *Filtered commits*
   tabs calls `renderRows()` synchronously on the main thread.  With thousands
   of commits this blocks the browser for several seconds (rough throughput
-  ~1 000 rows/s) with no visual feedback — the UI appears frozen.
+  ~1 000 rows/s) with no visual feedback — the UI appears frozen.
 
   **Fix.**  A `.kc-table-loader` overlay (spinner + label) is injected once
   into `.kc-table-wrap` at boot.  `showLoader(rowCount)` computes a plain-text
-  ETA at ~1 000 rows/s, updates the label text, and adds `.kc-loader-active`
+  ETA at ~1 000 rows/s, updates the label text, and adds `.kc-loader-active`
   to make the overlay visible.  `hideLoader()` removes `.kc-loader-active`.
 
   `switchTab()` and the initial bootstrap `renderRows()` call now use a
@@ -123,9 +195,9 @@ All notable changes to this project are documented in this file.
   `renderRows()` + `applyFilters()` complete.
 
   ETA label examples:
-  - < 1 000 rows  → "Loading 800 commits… (a moment)"
-  - ~1 000 rows   → "Loading 1 200 commits… (~1 s)"
-  - ~5 000 rows   → "Loading 5 000 commits… (~5 s)"
+  - < 1 000 rows  → "Loading 800 commits… (a moment)"
+  - ~1 000 rows   → "Loading 1 200 commits… (~1 s)"
+  - ~5 000 rows   → "Loading 5 000 commits… (~5 s)"
 
   CSS for `.kc-table-loader` / `.kc-spinner` / `.kc-loader-label` was already
   present since v16.13.0 — no CSS changes required.
@@ -299,7 +371,7 @@ All notable changes to this project are documented in this file.
   imported from `lib/manifest.py` at import time.  When the running binary was
   newer than the cache being read (e.g. diagnosing a run produced by v16.0.1
   with a v16.2.0 binary), the reported version was wrong — it showed the
-  binary’s version, not the run’s.
+  binary's version, not the run's.
 
   **Fix (two parts):**
 

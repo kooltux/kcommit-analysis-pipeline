@@ -8,6 +8,10 @@ v13.0.0 changes (E.7):
     were dropped at this stage without having to inspect the full JSON list.
   - CACHE_FILES['postfilter_debug'] key added to lib/manifest.py.
   - Convert f-strings to %%-format for Python 3.6 compatibility.
+
+v18.0.1 fix (Fix 5):
+  - Top score bucket label renamed '100+' -> '>=100' to match uncapped score
+    semantics introduced in v16.5.0.
 """
 import os
 from lib.config import load_json, save_json
@@ -27,7 +31,7 @@ def _get_threshold(cfg):
 def _score_buckets(commits):
     """Return a dict mapping score-range labels to commit counts.
 
-    Buckets: 0, 1-9, 10-19, 20-29, 30-49, 50-74, 75-99, 100+
+    Buckets: 0, 1-9, 10-19, 20-29, 30-49, 50-74, 75-99, >=100
     """
     buckets = {
         '0':     0,
@@ -37,7 +41,7 @@ def _score_buckets(commits):
         '30-49': 0,
         '50-74': 0,
         '75-99': 0,
-        '100+':  0,
+        '>=100': 0,
     }
     for c in commits:
         s = int(c.get('score', 0) or 0)
@@ -56,7 +60,7 @@ def _score_buckets(commits):
         elif s < 100:
             buckets['75-99'] += 1
         else:
-            buckets['100+'] += 1
+            buckets['>=100'] += 1
     return buckets
 
 
