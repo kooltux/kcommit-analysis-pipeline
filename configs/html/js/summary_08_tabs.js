@@ -45,6 +45,9 @@ function switchTab(name) {
   showLoader(ROWS.length);
   renderRowsAsync(
     (done, total) => updateLoaderProgress(done, total),
-    () => { applyFilters(); hideLoader(); }
+    /* onDone: give the browser one rAF to paint all appended rows before
+     * running applyFilters() — avoids the post-100% freeze caused by a
+     * synchronous full-table layout recalc in the same setTimeout tick. */
+    () => requestAnimationFrame(() => { applyFilters(); hideLoader(); })
   );
 }

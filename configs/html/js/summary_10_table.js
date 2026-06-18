@@ -177,6 +177,21 @@ function applyFilters() {
   });
   const global  = (globalSrch?.value || '').trim().toLowerCase();
   const gTokens = global ? global.split(/\s+/).filter(Boolean) : [];
+
+  /* Fast path: no active filters — skip per-row querySelector scan entirely.
+   * On initial load (always) this avoids a full layout recalc that would
+   * freeze the browser after the last chunk is appended. */
+  const noFilters = !gTokens.length && COLS.every(col =>
+    !(selectVals[col.key] || '').trim() && !(textVals[col.key] || '').trim()
+  );
+  if (noFilters) {
+    tbody?.querySelectorAll('tr.kc-hidden').forEach(tr => tr.classList.remove('kc-hidden'));
+    visibleCount = ROWS.length;
+    if (liveCount) liveCount.textContent = `Showing ${ROWS.length.toLocaleString()} of ${ROWS.length.toLocaleString()} commits`;
+    if (noMatch)   noMatch.classList.remove('kc-visible');
+    return;
+  }
+
   let shown = 0;
   sortedRows.forEach(r => {
     const tr = tbody?.querySelector(`tr[data-sha12="${CSS.escape(r.sha12)}"]`);
