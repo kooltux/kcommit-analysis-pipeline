@@ -1,6 +1,43 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to this project are documented in this file.
+
+## v18.0.0 — fix: --force has no effect on full pipeline run (2026-06-18)
+
+### Fixed
+
+- `lib/commands/cmd_run.py` — `--force` flag was silently ignored when running
+  the full pipeline (no `--stage`, `--from`, or `--resume` options).
+
+  **Root cause.** The `else` branch in `cmd_run()` (full pipeline run list)
+  never called `wipe_downstream()`, so `pipeline_state.json` retained
+  `"status": "ok"` entries from a previous run and cached output files were
+  left on disk.  Only the `--stage N --force` and `--from N` paths called
+  `wipe_downstream()`.  The per-stage skip guard in `run_stage()` did
+  correctly honour `args.force`, but stages consuming cached output from
+  previous runs could still produce stale results.
+
+  **Fix.** When `args.force` is set in the `else` (full-run) branch,
+  `wipe_downstream()` is now called starting from the first stage
+  (`STAGE_ORDER[0]`), clearing all stage state entries and deleting all
+  cached output files before the run loop begins.
+
+### Tests
+
+- `tests/test_commands.py` — 3 new tests:
+  - `test_cmd_run_force_full_pipeline_wipes_state` — verifies
+    `wipe_downstream` is called from `STAGE_ORDER[0]` when `--force` is used
+    without `--stage`, `--from`, or `--resume`.
+  - `test_cmd_run_no_force_no_wipe` — verifies `wipe_downstream` is NOT
+    called on a plain (non-forced) full run.
+  - `test_cmd_run_force_with_stage_wipes_state` — regression guard ensuring
+    `--force --stage N` still calls `wipe_downstream`.
+
+### Version
+
+- `MANIFEST.json` version is `v18.0.0` (already set).
+
+---
 
 ## v17.0.0 — html: tab-switch loader overlay with ETA (2026-06-18)
 
@@ -11,11 +48,11 @@ All notable changes to this project will be documented in this file.
   **Problem.**  Switching between the *Relevant commits* and *Filtered commits*
   tabs calls `renderRows()` synchronously on the main thread.  With thousands
   of commits this blocks the browser for several seconds (rough throughput
-  ~1 000 rows/s) with no visual feedback — the UI appears frozen.
+  ~1 000 rows/s) with no visual feedback — the UI appears frozen.
 
   **Fix.**  A `.kc-table-loader` overlay (spinner + label) is injected once
   into `.kc-table-wrap` at boot.  `showLoader(rowCount)` computes a plain-text
-  ETA at ~1 000 rows/s, updates the label text, and adds `.kc-loader-active`
+  ETA at ~1 000 rows/s, updates the label text, and adds `.kc-loader-active`
   to make the overlay visible.  `hideLoader()` removes `.kc-loader-active`.
 
   `switchTab()` and the initial bootstrap `renderRows()` call now use a
@@ -24,9 +61,9 @@ All notable changes to this project will be documented in this file.
   `renderRows()` + `applyFilters()` complete.
 
   ETA label examples:
-  - < 1 000 rows  → "Loading 800 commits… (a moment)"
-  - ~1 000 rows   → "Loading 1 200 commits… (~1 s)"
-  - ~5 000 rows   → "Loading 5 000 commits… (~5 s)"
+  - < 1 000 rows  → "Loading 800 commits… (a moment)"
+  - ~1 000 rows   → "Loading 1 200 commits… (~1 s)"
+  - ~5 000 rows   → "Loading 5 000 commits… (~5 s)"
 
   CSS for `.kc-table-loader` / `.kc-spinner` / `.kc-loader-label` was already
   present since v16.13.0 — no CSS changes required.
@@ -200,7 +237,7 @@ All notable changes to this project will be documented in this file.
   imported from `lib/manifest.py` at import time.  When the running binary was
   newer than the cache being read (e.g. diagnosing a run produced by v16.0.1
   with a v16.2.0 binary), the reported version was wrong — it showed the
-  binary's version, not the run's.
+  binary’s version, not the run’s.
 
   **Fix (two parts):**
 

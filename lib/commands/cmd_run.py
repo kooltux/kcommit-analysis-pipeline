@@ -49,6 +49,9 @@ def cmd_run(args):
               + ', '.join(str(i) for i, _, _ in run_list))
     else:
         run_list = [(i, k, fn) for i, (k, fn) in enumerate(STAGES)]
+        if args.force:
+            wipe_downstream(state_path, STAGE_ORDER[0], work, STAGE_OUTPUTS,
+                            stage_order=STAGE_ORDER)
 
     for (idx, key, fn) in run_list:
         run_stage(idx, key, fn, cfg, cache, work, state_path, args)

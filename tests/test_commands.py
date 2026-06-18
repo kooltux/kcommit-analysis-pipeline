@@ -1,6 +1,7 @@
 """Tests for lib.commands — cmd_validate, cmd_status, cmd_dropped, cmd_report,
 and base helpers (load_state, stage_needs_run, resolve_stage, stage_extra)."""
 import json, os, sys
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -12,7 +13,7 @@ from lib.manifest import STAGE_OUTPUTS
 from lib.stages import STAGES
 
 
-# ── load_state ────────────────────────────────────────────────────────────────
+# ── load_state ────────────────────────────────────────────────────────────────────────────────
 def test_load_state_missing_file(tmp_path):
     result = load_state(str(tmp_path / 'no_state.json'))
     assert result == {}
@@ -35,7 +36,7 @@ def test_load_state_corrupt_file(tmp_path):
     assert result == {}
 
 
-# ── resolve_stage ─────────────────────────────────────────────────────────────
+# ── resolve_stage ─────────────────────────────────────────────────────────────────────────────
 def test_resolve_stage_by_name():
     idx, key = resolve_stage('collect_commits')
     assert key == 'collect_commits'
@@ -52,7 +53,7 @@ def test_resolve_stage_unknown():
         resolve_stage('no_such_stage')
 
 
-# ── stage_needs_run ───────────────────────────────────────────────────────────
+# ── stage_needs_run ────────────────────────────────────────────────────────────────────────────
 def test_stage_needs_run_no_state():
     assert stage_needs_run('collect_commits', '/tmp', {}) is True
 
@@ -74,7 +75,7 @@ def test_stage_needs_run_ok_all_files_exist(tmp_path):
     assert stage_needs_run('collect_commits', work, state) is False
 
 
-# ── stage_extra ───────────────────────────────────────────────────────────────
+# ── stage_extra ─────────────────────────────────────────────────────────────────────────────────
 def test_stage_extra_none_result():
     assert stage_extra('collect_commits', None, 1.0) == {}
 
@@ -116,7 +117,7 @@ def test_stage_extra_unknown_key():
     assert extra == {}
 
 
-# ── cmd_validate ──────────────────────────────────────────────────────────────
+# ── cmd_validate ───────────────────────────────────────────────────────────────────────────────
 def _minimal_cfg(tmp_path):
     return {
         'paths': {
@@ -161,7 +162,7 @@ def test_cmd_validate_fails_on_problems(tmp_path, capsys):
             cmd_validate(args)
 
 
-# ── cmd_status ────────────────────────────────────────────────────────────────
+# ── cmd_status ───────────────────────────────────────────────────────────────────────────────
 def test_cmd_status_empty_state(tmp_path, capsys):
     from lib.commands.cmd_status import cmd_status
     work = str(tmp_path / 'work')
@@ -174,7 +175,7 @@ def test_cmd_status_empty_state(tmp_path, capsys):
     assert 'pending' in out.lower() or 'Status' in out
 
 
-# ── cmd_dropped ───────────────────────────────────────────────────────────────
+# ── cmd_dropped ──────────────────────────────────────────────────────────────────────────────
 def _write(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w') as f:
@@ -253,7 +254,7 @@ def test_cmd_dropped_verbose(tmp_path, capsys):
     assert 'abc123' in out
 
 
-# ── cmd_report ────────────────────────────────────────────────────────────────
+# ── cmd_report ───────────────────────────────────────────────────────────────────────────────
 def test_cmd_report_runs(tmp_path, capsys):
     from lib.commands.cmd_report import cmd_report
     cfg = _minimal_cfg(tmp_path)
@@ -274,3 +275,59 @@ def test_cmd_report_runs(tmp_path, capsys):
         cmd_report(args)
     out = capsys.readouterr().out
     assert 'Reports written' in out
+
+
+# ── cmd_run --force ───────────────────────────────────────────────────────────────────────────
+def _run_args(**kw):
+    defaults = dict(config='test.yaml', override=None, stage=None, from_=None,
+                    resume=False, force=False, progress_json=False)
+    defaults.update(kw)
+    return SimpleNamespace(**defaults)
+
+
+def test_cmd_run_force_full_pipeline_wipes_state(tmp_path):
+    """--force with no --stage/--from must call wipe_downstream starting from stage 0."""
+    from lib.commands.cmd_run import cmd_run
+    cfg = _minimal_cfg(tmp_path)
+    os.makedirs(cfg['paths']['work_dir'])
+    os.makedirs(cfg['paths']['cache_dir'])
+    os.makedirs(cfg['paths']['output_dir'])
+    args = _run_args(force=True)
+    with patch('lib.commands.cmd_run.load_cfg', return_value=cfg), \
+         patch('lib.commands.cmd_run.run_stage'), \
+         patch('lib.commands.cmd_run.wipe_downstream') as mock_wipe:
+        cmd_run(args)
+    mock_wipe.assert_called_once()
+    from lib.commands.base import STAGE_ORDER
+    # second positional arg is from_key: must be the very first stage
+    assert mock_wipe.call_args[0][1] == STAGE_ORDER[0]
+
+
+def test_cmd_run_no_force_no_wipe(tmp_path):
+    """Plain full run (no --force, --from, --stage) must NOT call wipe_downstream."""
+    from lib.commands.cmd_run import cmd_run
+    cfg = _minimal_cfg(tmp_path)
+    os.makedirs(cfg['paths']['work_dir'])
+    os.makedirs(cfg['paths']['cache_dir'])
+    os.makedirs(cfg['paths']['output_dir'])
+    args = _run_args(force=False)
+    with patch('lib.commands.cmd_run.load_cfg', return_value=cfg), \
+         patch('lib.commands.cmd_run.run_stage'), \
+         patch('lib.commands.cmd_run.wipe_downstream') as mock_wipe:
+        cmd_run(args)
+    mock_wipe.assert_not_called()
+
+
+def test_cmd_run_force_with_stage_wipes_state(tmp_path):
+    """Regression: --force --stage N must still call wipe_downstream."""
+    from lib.commands.cmd_run import cmd_run
+    cfg = _minimal_cfg(tmp_path)
+    os.makedirs(cfg['paths']['work_dir'])
+    os.makedirs(cfg['paths']['cache_dir'])
+    os.makedirs(cfg['paths']['output_dir'])
+    args = _run_args(force=True, stage='0')
+    with patch('lib.commands.cmd_run.load_cfg', return_value=cfg), \
+         patch('lib.commands.cmd_run.run_stage'), \
+         patch('lib.commands.cmd_run.wipe_downstream') as mock_wipe:
+        cmd_run(args)
+    mock_wipe.assert_called_once()
