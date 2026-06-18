@@ -13,6 +13,7 @@
  *   — switchTab() and the bootstrap call both now use renderRowsAsync.
  *   — No external CSS changes required; bar styles are inline with CSS
  *     variable hooks (--kc-loader-bar-bg, --kc-loader-bar-fill).
+ *   — Loader panel is fixed-width (320 px) and centered for readability.
  *
  * v16.14.0: Unified two-tab HTML report.
  *   — Reads window.__KC_UI__.tabs to detect two-tab mode.
@@ -551,12 +552,16 @@
    * Table loader overlay — v17.0.0
    * Injected once into #kc-table-wrap at boot.
    * showLoader(n) resets bar to 0% and computes ETA.
-   * updateLoaderProgress(done, total) advances bar + label.
+   * updateLoaderProgress(done, total) advances bar + label + % badge.
    * hideLoader() flashes bar to 100% then fades overlay out.
+   *
+   * Layout: spinner  +  centered panel (label row + bar).
+   * Bar is fixed 320 px wide (capped to viewport) so it reads as a
+   * deliberate progress element rather than a full-width stripe.
    * =========================================================
    */
   const tableWrap=document.getElementById('kc-table-wrap');
-  let loaderEl=null, loaderLabelEl=null, loaderBarFillEl=null;
+  let loaderEl=null, loaderLabelEl=null, loaderBarFillEl=null, loaderPctEl=null;
 
   (function initLoader(){
     if(!tableWrap) return;
@@ -564,13 +569,19 @@
     loaderEl.className='kc-table-loader';
     loaderEl.innerHTML=
       '<div class="kc-spinner"></div>'+
-      '<span class="kc-loader-label" id="kc-loader-label">Loading\u2026</span>'+
-      '<div class="kc-loader-bar" style="width:100%;height:4px;background:var(--kc-loader-bar-bg,rgba(128,128,128,0.2));border-radius:2px;margin-top:8px;overflow:hidden">'+
-        '<div class="kc-loader-bar-fill" style="height:100%;width:0%;background:var(--kc-loader-bar-fill,var(--accent,#4a9eff));border-radius:2px;transition:width 0.4s ease"></div>'+
+      '<div class="kc-loader-panel" style="display:flex;flex-direction:column;align-items:center;gap:0;margin-top:10px">'+
+        '<div class="kc-loader-label-row" style="display:flex;align-items:baseline;gap:8px;margin-bottom:6px">'+
+          '<span class="kc-loader-label" id="kc-loader-label" style="font-size:13px;font-weight:500;letter-spacing:0.01em">Loading\u2026</span>'+
+          '<span class="kc-loader-pct" id="kc-loader-pct" style="font-size:11px;font-weight:600;opacity:0;min-width:34px;text-align:right;transition:opacity 0.2s"></span>'+
+        '</div>'+
+        '<div class="kc-loader-bar" style="width:320px;max-width:min(320px,calc(100vw - 120px));height:8px;background:var(--kc-loader-bar-bg,rgba(128,128,128,0.18));border-radius:999px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,0.07)">'+
+          '<div class="kc-loader-bar-fill" style="height:100%;width:0%;background:var(--kc-loader-bar-fill,var(--accent,#4a9eff));border-radius:999px;transition:width 0.35s ease"></div>'+
+        '</div>'+
       '</div>';
     tableWrap.appendChild(loaderEl);
     loaderLabelEl=loaderEl.querySelector('#kc-loader-label');
     loaderBarFillEl=loaderEl.querySelector('.kc-loader-bar-fill');
+    loaderPctEl=loaderEl.querySelector('#kc-loader-pct');
   })();
 
   function showLoader(rowCount){
@@ -579,20 +590,23 @@
     const etaText=eta<1?'a moment':eta===1?'~1 s':`~${eta} s`;
     if(loaderLabelEl) loaderLabelEl.textContent=`Loading ${rowCount.toLocaleString()} commits\u2026 (${etaText})`;
     if(loaderBarFillEl){ loaderBarFillEl.style.transition='none'; loaderBarFillEl.style.width='0%'; }
+    if(loaderPctEl){ loaderPctEl.textContent=''; loaderPctEl.style.opacity='0'; }
     loaderEl.classList.add('kc-loader-active');
   }
 
   function updateLoaderProgress(done,total){
     if(!loaderBarFillEl||!loaderLabelEl) return;
     const pct=total>0?Math.round((done/total)*100):0;
-    loaderBarFillEl.style.transition='width 0.4s ease';
+    loaderBarFillEl.style.transition='width 0.35s ease';
     loaderBarFillEl.style.width=pct+'%';
     loaderLabelEl.textContent=`Loading ${done.toLocaleString()} / ${total.toLocaleString()} commits\u2026`;
+    if(loaderPctEl){ loaderPctEl.textContent=pct+'%'; loaderPctEl.style.opacity='1'; }
   }
 
   function hideLoader(){
     if(!loaderEl) return;
     if(loaderBarFillEl){ loaderBarFillEl.style.transition='width 0.15s ease'; loaderBarFillEl.style.width='100%'; }
+    if(loaderPctEl){ loaderPctEl.textContent='100%'; }
     setTimeout(()=>loaderEl.classList.remove('kc-loader-active'),300);
   }
 
