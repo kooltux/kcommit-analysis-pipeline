@@ -37,7 +37,7 @@ def _setup(tmp_path, scored=None, filtered=None, cfg_extra=None):
     # Write a compiled_rules.json that load_profile_rules() accepts
     # without recompiling (requires a 'schema_hash' sentinel key added in v9.12).
     # Structure mirrors what compile_rules_for_config() produces:
-    #   top-level: { schema_hash, rules: {rulename: body}, profiles: {pname: {rules:{}}}}
+    #   top-level: { schema_hash, rules: {rulename: body}, profiles: {pname: {rules:{}}}
     _rule_body = {
         'keywords_whitelist': [], 'keywords_blacklist': [],
         'path_whitelist': [],    'path_blacklist': [],
@@ -246,3 +246,92 @@ def test_update_stage7_progress_calls_rt_progress_with_correct_signature(tmp_pat
 
     cap = _ProgressCapture()
     monkeypatch.setattr(_mod, '_rt_progress_f', cap, raising=False)
+
+    cache, outdir, cfg = _setup(tmp_path)
+    run(cfg, cache, outdir)
+
+    assert cap.calls, 'No progress calls recorded — _rt_progress_f was never invoked'
+
+    for call in cap.calls:
+        args   = call['args']
+        kwargs = call['kwargs']
+        # B.1 index == 7
+        assert args[0] == 7,                  f'B.1 stage index: expected 7, got {args[0]}'
+        # B.2 stage_total == 7
+        assert args[1] == 7,                  f'B.2 stage_total: expected 7, got {args[1]}'
+        # B.3 frac in [0.0, 1.0]
+        assert isinstance(args[2], float),    f'B.3 frac not a float: {type(args[2])}'
+        assert 0.0 <= args[2] <= 1.0,         f'B.3 frac out of range: {args[2]}'
+        # B.4 label is str
+        assert isinstance(args[3], str),      f'B.4 label not a str: {type(args[3])}'
+        # B.5 n_done is int
+        assert isinstance(kwargs['n_done'], int),  f'B.5 n_done not int: {type(kwargs["n_done"])}'
+        # B.6 n_total is int
+        assert isinstance(kwargs['n_total'], int), f'B.6 n_total not int: {type(kwargs["n_total"])}'
+
+
+# ── G.4: bucket sidecar layout ──────────────────────────────────────────────────────────────────────
+
+def test_commit_details_bucket_file_written(tmp_path):
+    """G.4 — _write_commit_details() must write bucket files at
+    commits/<sha[0]>/<sha[1:3]>.json instead of per-commit files.
+    The bucket file must be a dict keyed by full SHA."""
+    sha = 'abc123def4567890'
+    cache, outdir, cfg = _setup(tmp_path, scored=[_commit(sha=sha)])
+    run(cfg, cache, outdir)
+    bucket_path = os.path.join(outdir, 'commits', sha[0], sha[1:3] + '.json')
+    assert os.path.exists(bucket_path), (
+        f'Bucket file not found at {bucket_path}'
+    )
+    data = json.load(open(bucket_path))
+    assert sha in data, f'Full SHA {sha!r} not found as key in bucket'
+    assert data[sha]['commit'] == sha
+
+
+def test_commit_details_no_per_sha_file_written(tmp_path):
+    """G.4 — old per-commit layout (commits/<sha[0:2]>/<sha[2:4]>/<sha>.json)
+    must NOT be written."""
+    sha = 'abc123def4567890'
+    cache, outdir, cfg = _setup(tmp_path, scored=[_commit(sha=sha)])
+    run(cfg, cache, outdir)
+    old_path = os.path.join(outdir, 'commits', sha[0:2], sha[2:4], sha + '.json')
+    assert not os.path.exists(old_path), (
+        f'Old per-SHA file still written at {old_path} — bucket layout not applied'
+    )
+
+
+def test_commit_details_same_bucket_merged(tmp_path):
+    """G.4 — two commits sharing bucket prefix <sha[0]>/<sha[1:3]> must
+    both appear as keys in the same bucket JSON file."""
+    sha1 = 'abc123def4567890'
+    sha2 = 'abc999000111aaab'
+    cache, outdir, cfg = _setup(
+        tmp_path,
+        scored=[_commit(sha=sha1, rank=1), _commit(sha=sha2, rank=2)],
+    )
+    run(cfg, cache, outdir)
+    bucket_path = os.path.join(outdir, 'commits', 'a', 'bc.json')
+    assert os.path.exists(bucket_path), f'Shared bucket file not found: {bucket_path}'
+    data = json.load(open(bucket_path))
+    assert sha1 in data, f'{sha1!r} missing from bucket'
+    assert sha2 in data, f'{sha2!r} missing from bucket'
+
+
+def test_commit_details_different_buckets_written_separately(tmp_path):
+    """G.4 — commits with different bucket prefixes must produce separate
+    bucket files; each bucket contains only its own commits."""
+    sha_a = 'abc000000000aaaa'
+    sha_b = 'def111111111bbbb'
+    cache, outdir, cfg = _setup(
+        tmp_path,
+        scored=[_commit(sha=sha_a, rank=1), _commit(sha=sha_b, rank=2)],
+    )
+    run(cfg, cache, outdir)
+    bucket_a = os.path.join(outdir, 'commits', 'a', 'bc.json')
+    bucket_b = os.path.join(outdir, 'commits', 'd', 'ef.json')
+    assert os.path.exists(bucket_a), f'Bucket A not found: {bucket_a}'
+    assert os.path.exists(bucket_b), f'Bucket B not found: {bucket_b}'
+    data_a = json.load(open(bucket_a))
+    data_b = json.load(open(bucket_b))
+    assert sha_a in data_a and sha_b not in data_a
+    assert sha_b in data_b and sha_a not in data_b

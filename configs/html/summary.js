@@ -1,4 +1,17 @@
-/* kcommit-analysis-pipeline — v17.0.0 UI
+/* kcommit-analysis-pipeline — v18.1.0 UI
+ *
+ * v18.1.0: G.4 — bucket sidecar layout.
+ *   — sidecarPath(sha) now returns commits/<sha[0]>/<sha[1:3]>.json
+ *     (bucket file) instead of commits/<sha[0:2]>/<sha[2:4]>/<sha>.json
+ *     (per-commit file).  The bucket file is a {sha: commit_data} dict
+ *     containing all commits whose full SHA shares the same first 3 hex
+ *     characters prefix (up to 16 first-level dirs × 16 bucket files =
+ *     256 files maximum for any corpus size).
+ *   — fetchCommit(sha12, fullSha) fetches the bucket file and caches
+ *     ALL entries from it into STORE in one round-trip.  Subsequent
+ *     clicks on commits in the same bucket are served from cache with
+ *     no network request.
+ *   — sidecarPath minimum sha length reduced from 4 to 3 chars.
  *
  * v17.0.0: Tab-switch loader overlay with real chunked-render progress bar.
  *   — initLoader() injects a .kc-loader-bar / .kc-loader-bar-fill element
@@ -304,19 +317,41 @@
     }</div>`;
   }
 
+  /* =========================================================
+   * G.4 — Bucket sidecar layout
+   *
+   * Commit detail files are stored as bucket JSON files:
+   *   commits/<sha[0]>/<sha[1:3]>.json
+   * Each bucket file is a {fullSha: commitData} dict.
+   *
+   * sidecarPath(sha) returns the URL for sha's bucket file.
+   * fetchCommit(sha12, fullSha) fetches the bucket and caches
+   * ALL entries from it — free O(1) lookups for same-bucket
+   * commits after the first fetch.
+   * =========================================================
+   */
   function sidecarPath(sha) {
-    if (!sha || sha.length < 4) return null;
-    return `${DROOT}/${sha.slice(0,2)}/${sha.slice(2,4)}/${sha}.json`;
+    if (!sha || sha.length < 3) return null;
+    return `${DROOT}/${sha[0]}/${sha.slice(1, 3)}.json`;
   }
 
   function fetchCommit(sha12, fullSha) {
-    const cached = STORE[fullSha] || STORE[sha12];
+    const sha = fullSha || sha12;
+    const cached = STORE[sha] || STORE[sha12];
     if (cached) return Promise.resolve(cached);
-    const path = sidecarPath(fullSha || sha12);
+    const path = sidecarPath(sha);
     if (!path) return Promise.resolve(null);
     return fetch(path)
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data) { STORE[fullSha]=STORE[sha12]=data; } return data; })
+      .then(bucket => {
+        if (!bucket) return null;
+        // Cache all entries from the bucket — free lookups for same-prefix commits
+        Object.entries(bucket).forEach(([s, d]) => {
+          STORE[s] = d;
+          if (s.length >= 12) STORE[s.slice(0, 12)] = d;
+        });
+        return STORE[sha] || STORE[sha12] || null;
+      })
       .catch(() => null);
   }
 
@@ -706,233 +741,4 @@
       const cells=COLS.map(col=>{
         let v=r[col.key]; if(v==null) v='';
         if(col.key==='sha12') return `<td class="kc-td-sha"><a href="#" class="kc-sha-link" data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha||r.sha12)}">${esc(r.sha12)}</a></td>`;
-        if(col.key==='filter_stage') return `<td>${stageBadge(v)}</td>`;
-        if(col.key==='date') return `<td class="kc-td-num">${esc(fmtDate(v))}</td>`;
-        return `<td>${esc(Array.isArray(v)?v.join('; '):v)}</td>`;
-      }).join('');
-      return `<tr data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha||r.sha12)}">${cells}</tr>`;
-    }
-    const cells=COLS.map(col=>{
-      let v=r[col.key]; if(v==null) v='';
-      if(col.key==='sha12') return `<td class="kc-td-sha"><a href="#" class="kc-sha-link" data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha||r.sha12)}">${esc(r.sha12)}</a></td>`;
-      if(col.key==='score'||col._profile){ const num=parseFloat(v)||0; return `<td class="kc-td-num">${num>0?scorePill(num):'<span class="kc-muted">\u2014</span>'}</td>`; }
-      if(col.key==='profiles') return `<td>${chips(Array.isArray(v)?v:[v])}</td>`;
-      if(col.key==='date') return `<td class="kc-td-num">${esc(fmtDate(v))}</td>`;
-      return `<td>${esc(Array.isArray(v)?v.join('; '):v)}</td>`;
-    }).join('');
-    return `<tr data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha||r.sha12)}">${cells}</tr>`;
-  }
-
-  function applySort(){
-    if(!sortKey) return;
-    sortedRows.sort((a,b)=>{ const av=cellValue(a,sortKey),bv=cellValue(b,sortKey),an=parseFloat(av),bn=parseFloat(bv),cmp=(!isNaN(an)&&!isNaN(bn))?an-bn:av.localeCompare(bv,undefined,{numeric:true}); return cmp*sortDir; });
-  }
-
-  function renderRows(){
-    if(!tbody) return;
-    tbody.innerHTML=sortedRows.map(rowHtml).join('');
-  }
-
-  /* renderRowsAsync — chunked DOM build with per-chunk progress callbacks.
-   * Processes CHUNK_SIZE rows per setTimeout(0) tick so the browser can
-   * repaint the progress bar between chunks. */
-  const CHUNK_SIZE=500;
-  function renderRowsAsync(onProgress,onDone){
-    if(!tbody){ onDone&&onDone(); return; }
-    const rows=sortedRows,total=rows.length;
-    if(total===0){ tbody.innerHTML=''; onDone&&onDone(); return; }
-    tbody.innerHTML='';
-    let offset=0;
-    function nextChunk(){
-      if(offset>=total){ onDone&&onDone(); return; }
-      const end=Math.min(offset+CHUNK_SIZE,total),frag=document.createDocumentFragment();
-      for(let i=offset;i<end;i++){ const t=document.createElement('template'); t.innerHTML=rowHtml(rows[i]); frag.appendChild(t.content); }
-      tbody.appendChild(frag);
-      offset=end;
-      onProgress&&onProgress(offset,total);
-      setTimeout(nextChunk,0);
-    }
-    setTimeout(nextChunk,0);
-  }
-
-  let filterTimer=0;
-  function scheduleFilter(){ clearTimeout(filterTimer); filterTimer=setTimeout(applyFilters,60); }
-
-  function matchToken(text,token){
-    if(!token) return true;
-    const t=token.trim().toLowerCase(),s=text.toLowerCase();
-    if(t.startsWith('>'))  { const n=parseFloat(t.slice(1)); return !isNaN(n)&&parseFloat(s)>n; }
-    if(t.startsWith('<'))  { const n=parseFloat(t.slice(1)); return !isNaN(n)&&parseFloat(s)<n; }
-    if(t.startsWith('=')) return s===t.slice(1);
-    const pat=t.replace(/[.+?^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*');
-    try{ return new RegExp(pat).test(s); } catch{ return s.includes(t); }
-  }
-
-  function applyFilters(){
-    const selectVals=Object.create(null),textVals=Object.create(null);
-    document.querySelectorAll('[data-filter-key]').forEach(el=>{ const key=el.dataset.filterKey,role=el.dataset.filterRole||'text'; if(role==='select') selectVals[key]=el.value||''; else textVals[key]=el.value||''; colFilters[key]=el.value||''; });
-    const global=(globalSrch?.value||'').trim().toLowerCase(),gTokens=global?global.split(/\s+/).filter(Boolean):[];
-    let shown=0;
-    sortedRows.forEach(r=>{
-      const tr=tbody?.querySelector(`tr[data-sha12="${CSS.escape(r.sha12)}"]`);
-      if(!tr) return;
-      let ok=COLS.every(col=>{ const sv=(selectVals[col.key]||'').trim(),tv=(textVals[col.key]||'').trim(),cv=cellValue(r,col.key); if(sv&&!matchToken(cv,sv)) return false; if(tv&&!matchToken(cv,tv)) return false; return true; });
-      if(ok&&gTokens.length){ const hay=Object.values(r).map(v=>Array.isArray(v)?v.join(' '):String(v??'')).join(' ').toLowerCase(); ok=gTokens.every(t=>hay.includes(t)); }
-      tr.classList.toggle('kc-hidden',!ok);
-      if(ok) shown++;
-    });
-    visibleCount=shown;
-    if(liveCount) liveCount.textContent=`Showing ${shown} of ${ROWS.length} commits`;
-    if(noMatch) noMatch.classList.toggle('kc-visible',shown===0);
-  }
-
-  clearBtn?.addEventListener('click',()=>{ document.querySelectorAll('[data-filter-key]').forEach(el=>{ el.value=''; }); if(globalSrch) globalSrch.value=''; applyFilters(); });
-  globalSrch?.addEventListener('input',scheduleFilter);
-
-  exportBtn?.addEventListener('click',()=>{
-    const header=COLS.map(c=>`"${c.label.replace(/"/g,'""')}"`).join(','),lines=[header];
-    (tbody?.querySelectorAll('tr:not(.kc-hidden)')||[]).forEach(tr=>{ lines.push(Array.from(tr.querySelectorAll('td')).map(td=>`"${td.textContent.trim().replace(/"/g,'""')}"`).join(',')); });
-    const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download=activeTab==='filtered'?'kcommit-filtered.csv':'kcommit-report.csv';
-    a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000);
-  });
-
-  /* ========= Detail panel ========= */
-  const rightPane=document.getElementById('kc-pane-right');
-
-  function clearDetailPanel(){
-    tbody?.querySelectorAll('tr').forEach(tr=>tr.classList.remove('kc-row-active'));
-    document.querySelectorAll('.kc-tab-panel').forEach(p=>{ p.innerHTML=''; p.classList.remove('kc-active'); });
-  }
-
-  function activateTab(name){
-    document.querySelectorAll('.kc-tab').forEach(t=>{ const active=t.dataset.tab===name; t.classList.toggle('kc-active',active); t.setAttribute('aria-selected',active?'true':'false'); });
-    document.querySelectorAll('.kc-tab-panel').forEach(p=>p.classList.toggle('kc-active',p.id===`kc-tab-${name}`));
-  }
-
-  document.querySelectorAll('.kc-tab').forEach(t=>t.addEventListener('click',()=>activateTab(t.dataset.tab)));
-
-  function renderDecision(row,commit){
-    const score=parseFloat(row.score)||0,dropped=!!(row.reason)&&score===0,reason=row.reason||'';
-    const KEEP_MAP={commit_whitelist:'SHA is explicitly whitelisted in config.',build_artifact:'Touched files include kernel build artifacts for this product.',default:'Passed all prefilter checks and scored above threshold.',no_files_layer:'Zero-file commit kept as a structural commit.',filter_disabled:'Prefilter is disabled in config; all commits pass.'};
-    const DROP_MAP={commit_blacklist:'SHA is explicitly blacklisted in config.',path_blacklist_all:'Every touched file matched the path blacklist.',no_kconfig_coverage:'No Kconfig build evidence for any touched file.',score_below_threshold:`Score ${score} is below the minimum threshold (${SB.stage_06?.threshold??'?'}).`,no_files_layer:'Zero-file structural commit \u2014 included without scoring.'};
-    const cls=dropped?'kc-decision-dropped':'kc-decision-kept',label=dropped?'\u2718 Dropped':'\u2714 Kept';
-    let items=[];
-    if(reason&&!dropped) items.push(KEEP_MAP[reason]||`Keep reason: ${reason}`);
-    else if(reason&&dropped) items.push(DROP_MAP[reason]||`Drop reason: ${reason}`);
-    else items.push(score>0?'Passed pipeline and scored above threshold.':'No explicit reason recorded.');
-    if(!dropped&&score>0) items.push(`Final score: ${score}`);
-    if(!dropped&&(row.profiles||[]).length) items.push(`Matched profiles: ${(row.profiles||[]).join(', ')}`);
-    return `<div class="${cls}"><div class="kc-decision-title">${label}</div><ul class="kc-decision-items">${items.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
-  }
-
-  function matchExcerpt(value,start,end,ctx){
-    ctx=(ctx==null)?60:ctx;
-    if(start==null||end==null||start<0) return '';
-    const str=String(value||''),lo=Math.max(0,start-ctx),hi=Math.min(str.length,end+ctx);
-    const pre=str.slice(lo,start).replace(/[\r\n]/g,'\u21b5'),mid=str.slice(start,end).replace(/[\r\n]/g,'\u21b5'),post=str.slice(end,hi).replace(/[\r\n]/g,'\u21b5');
-    const ld=lo>0?'\u2026':'',rd=hi<str.length?'\u2026':'';
-    return `<span class="kc-match-excerpt">${esc(ld)}${esc(pre)}<mark class="kc-match-hl">${esc(mid)}</mark>${esc(post)}${esc(rd)}</span>`;
-  }
-
-  function pathStem(p){ const base=String(p||'').replace(/\\/g,'/').split('/').pop(),dot=base.lastIndexOf('.'); return dot>0?base.slice(0,dot):base; }
-  function ruleNameFromPath(p){ const parts=String(p||'').replace(/\\/g,'/').split('/'); return parts.length>=2?parts[parts.length-2]:''; }
-
-  function renderProfileTrace(pname,pt){
-    const score=pt.final_score||0,mult=pt.multiplier!=null?pt.multiplier:1,blocked=pt.blocked,rules=pt.rules||{},cls=scoreClass(score);
-    let html=`<div class="kc-detail-card"><div class="kc-detail-card-head"><span class="kc-chip">${esc(pname)}</span><span class="kc-score-pill ${cls}">${esc(score)}</span>${blocked?`<span style="color:var(--danger);font-weight:700">\u26d4 BLOCKED${pt.block_reason?` \u2014 ${esc(pt.block_reason)}`:''}</span>`:`<span class="kc-muted" style="font-size:11px">\u00d7${mult}</span>`}</div><div class="kc-detail-card-body">`;
-    if(Object.keys(rules).length){
-      html+=`<table class="kc-trace-table"><thead><tr><th>Rule</th><th>Wt</th><th>Match</th><th>Score</th><th>Patterns matched</th></tr></thead><tbody>`;
-      Object.keys(rules).sort().forEach(rname=>{
-        const rd=rules[rname]||{},matched=rd.matched,allHits=Object.values(rd.matches||{}).flat();
-        const rowCls=blocked?'kc-rule-blocked':(matched?'kc-rule-matched':''),icon=blocked?'\u25a0':(matched?'\u2714':'\u2715'),iconCol=blocked?'var(--muted)':(matched?'var(--success)':'var(--muted)');
-        let badgesHtml='<span class="kc-muted">\u2014</span>';
-        if(allHits.length){ badgesHtml=allHits.map(m=>{ const pat=m.pattern||'',srcFile=m.source_file||null,srcLine=m.source_line||null,start=m.match_start,end=m.match_end,value=m.value||''; let srcBadge=''; if(srcFile){ const label=`${ruleNameFromPath(srcFile)||rname}:${pathStem(srcFile)}:${srcLine}`; srcBadge=`<span class="kc-src-badge" title="${esc(srcFile)}">${esc(label)}</span>`; } const excerpt=(start!=null&&end!=null)?matchExcerpt(value,start,end,60):`<span class="kc-match-excerpt kc-muted">${esc(value.slice(0,120))}${value.length>120?'\u2026':''}</span>`; return `<span class="kc-match-hit"><span class="kc-match-badge" title="${esc(pat)}">${esc(pat)}</span>${srcBadge}<span class="kc-match-excerpt-wrap">${excerpt}</span></span>`; }).join(''); }
-        html+=`<tr class="${rowCls}"><td class="kc-mono">${esc(rname)}</td><td>${esc(rd.weight||0)}</td><td style="color:${iconCol};font-weight:700;text-align:center">${icon}</td><td class="kc-td-num">${matched?esc(rd.score||0):'\u2014'}</td><td>${badgesHtml}</td></tr>`;
-      });
-      html+=`</tbody></table>`;
-    } else { html+=`<span class="kc-muted">No rule detail available.</span>`; }
-    html+=`</div></div>`;
-    return html;
-  }
-
-  function renderFiles(commit){
-    const files=(commit||{}).files||[],covSet=new Set((commit||{}).coverage||[]);
-    if(!files.length) return `<p class="kc-muted">No files recorded for this commit.</p>`;
-    return `<table class="kc-files-table"><thead><tr><th>File</th><th>Build coverage</th></tr></thead><tbody>${files.map(f=>`<tr><td>${esc(f)}</td><td class="${covSet.has(f)?'kc-coverage-y':'kc-coverage-n'}">${covSet.has(f)?'\u2714 covered':'\u2014'}</td></tr>`).join('')}</tbody></table>`;
-  }
-
-  function populateDetail(row,commit){
-    const c=commit||{},sc=c.scoring||{},profiles=sc.profiles||{};
-    let overview='';
-    overview+=detailCard('Commit',[kv('SHA',`<code class="kc-mono">${esc(c.commit||row.sha||row.sha12)}</code>`),kv('Subject',esc(c.subject||row.subject||'')),kv('Author',esc((c.author_name||row.author||'')+(c.author_email?` <${c.author_email}>`:''))) ,kv('Date',esc(fmtDate(c.author_time||row.date))),kv('Score',scorePill(c.score??row.score)),kv('Profiles',chips(c.matched_profiles||row.profiles||[]))].join(''),'\ud83d\udcc4');
-    overview+=detailCard('Decision',renderDecision(row,c),'\u2696\ufe0f');
-    if((c.product_evidence||[]).length){ overview+=detailCard('Product Evidence',`<ul style="padding-left:1.2rem;margin:0">${(c.product_evidence||[]).map(e=>`<li><code class="kc-mono">${esc(e)}</code></li>`).join('')}</ul>`,'\ud83d\udce6'); }
-    if(c.body){ const bodyPreview=c.body.length>4000?c.body.slice(0,4000)+'\n\u2026':c.body; overview+=detailCard('Full Commit Message',`<div class="kc-commit-body">${escNl(bodyPreview)}</div>`,'\ud83d\udcdd'); }
-    document.getElementById('kc-tab-overview').innerHTML=overview;
-    const traceProfiles=((sc.trace||{}).profiles)||{};
-    let scoring='';
-    if(Object.keys(traceProfiles).length){ scoring+=`<p class="kc-muted" style="font-size:11.5px;margin:0 0 8px">Formula per profile: <code>raw_rule_total &times; profile_weight/100</code>. Combined score = &sum; of all profile final scores. Pattern badges show the <strong>matched pattern</strong>, source <em>rule:file:line</em>, and a highlighted excerpt.</p>`; Object.keys(traceProfiles).sort().forEach(p=>scoring+=renderProfileTrace(p,traceProfiles[p]||{})); }
-    else if(Object.keys(profiles).length){ scoring+=detailCard('Profile Scores',Object.keys(profiles).sort().map(p=>kv(p,scorePill(profiles[p]))).join(''),'\u2605'); }
-    else{ scoring=`<p class="kc-muted">No scoring data available for this commit.</p>`; }
-    document.getElementById('kc-tab-scoring').innerHTML=scoring;
-    document.getElementById('kc-tab-files').innerHTML=renderFiles(c);
-    document.getElementById('kc-tab-raw').innerHTML=`<pre class="kc-raw-pre">${esc(JSON.stringify(c,null,2))}</pre>`;
-    activateTab('overview');
-  }
-
-  function populateFilteredDetail(row,commit){
-    const c=commit||{},dbg=c.prefilter_debug||{};
-    let overview='';
-    overview+=detailCard('Commit',[kv('SHA',`<code class="kc-mono">${esc(c.commit||row.sha||row.sha12)}</code>`),kv('Subject',esc(c.subject||row.subject||'')),kv('Author',esc((c.author_name||row.author||'')+(c.author_email?` <${c.author_email}>`:''))) ,kv('Date',esc(fmtDate(c.author_time||row.date))),kv('Filter stage',stageBadge(row.filter_stage||'')),kv('Drop reason',esc(row.reason||dbg.drop_reason||'\u2014'))].join(''),'\ud83d\udcc4');
-    const decItems=[];
-    if(dbg.drop_reason) decItems.push(kv('Reason code',esc(dbg.drop_reason)));
-    if(dbg.matched_subsystems?.length) decItems.push(kv('Matched subsystems',esc(dbg.matched_subsystems.join(', '))));
-    if(dbg.unmatched_paths?.length) decItems.push(kv('Unmatched paths',esc(dbg.unmatched_paths.join(', '))));
-    if(dbg.all_files_blacklisted!=null) decItems.push(kv('All files blacklisted',esc(String(dbg.all_files_blacklisted))));
-    if(decItems.length){ overview+=detailCard('Drop Decision',decItems.join(''),'\u2696\ufe0f'); }
-    if(c.body){ const bodyPreview=c.body.length>4000?c.body.slice(0,4000)+'\n\u2026':c.body; overview+=detailCard('Full Commit Message',`<div class="kc-commit-body">${escNl(bodyPreview)}</div>`,'\ud83d\udcdd'); }
-    document.getElementById('kc-tab-overview').innerHTML=overview;
-    document.getElementById('kc-tab-scoring').innerHTML=`<p class="kc-muted" style="padding:var(--space-4)">Not applicable \u2014 this commit was dropped before or after scoring and is not in the final report.</p>`;
-    document.getElementById('kc-tab-files').innerHTML=`<p class="kc-muted" style="padding:var(--space-4)">Not applicable \u2014 file coverage data is only available for relevant commits.</p>`;
-    document.getElementById('kc-tab-raw').innerHTML=`<pre class="kc-raw-pre">${esc(JSON.stringify(c,null,2))}</pre>`;
-    activateTab('overview');
-  }
-
-  function openDetail(sha12,fullSha){
-    const lookup=activeTab==='filtered'?filtRowBySha:rowBySha;
-    const row=lookup[sha12]||lookup[fullSha]||{};
-    tbody?.querySelectorAll('tr').forEach(tr=>tr.classList.toggle('kc-row-active',tr.dataset.sha12===sha12));
-    document.querySelectorAll('.kc-tab-panel').forEach(p=>{ p.innerHTML=''; p.classList.remove('kc-active'); });
-    const ov=document.getElementById('kc-tab-overview');
-    if(ov){ ov.innerHTML=`<p class="kc-muted">Loading\u2026</p>`; ov.classList.add('kc-active'); }
-    if(rightPane?.classList.contains('kc-collapsed')){ rightPane.classList.remove('kc-collapsed'); localStorage.setItem('kc-right-collapsed','0'); updateCollapseIcons(); }
-    if(activeTab==='filtered'){ fetchFilteredCommit(sha12,fullSha||sha12).then(commit=>populateFilteredDetail(row,commit)); }
-    else { fetchCommit(sha12,fullSha||sha12).then(commit=>populateDetail(row,commit)); }
-  }
-
-  document.addEventListener('click',e=>{ const a=e.target.closest('.kc-sha-link'); if(!a) return; e.preventDefault(); e.stopImmediatePropagation(); openDetail(a.dataset.sha12||a.dataset.sha,a.dataset.sha||a.dataset.sha12); },true);
-
-  document.addEventListener('keydown',e=>{
-    if(e.key==='Escape') tbody?.querySelectorAll('tr').forEach(tr=>tr.classList.remove('kc-row-active'));
-    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
-      const visible=Array.from(tbody?.querySelectorAll('tr:not(.kc-hidden)')||[]);
-      if(!visible.length) return;
-      const active=tbody?.querySelector('tr.kc-row-active'),idx=visible.indexOf(active);
-      const next=e.key==='ArrowDown'?visible[idx+1]||visible[0]:visible[idx-1]||visible[visible.length-1];
-      if(next){ openDetail(next.dataset.sha12,next.dataset.sha); next.scrollIntoView({block:'nearest'}); }
-    }
-  });
-
-  window.addEventListener('resize',updateFilterOffset);
-
-  /* ========= Bootstrap ========= */
-  buildHead();
-  showLoader(ROWS.length);
-  renderRowsAsync(
-    (done,total)=>updateLoaderProgress(done,total),
-    ()=>{ applyFilters(); hideLoader(); }
-  );
-
-})();
+        if(col.key==='filter_stage')

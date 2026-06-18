@@ -11,7 +11,8 @@ The archive contains:
 
   __main__.py             — HTTP server entry point (pure Python, no payload)
   index.html              — fully inlined HTML report
-  commits/<2>/<2>/<sha>.json — per-commit detail JSON files
+  commits/<1>/<2>.json    — bucketed commit detail JSON files keyed by full SHA
+                            (G.4: at most 256 bucket files across 16 first-level dirs)
 
 At runtime ``__main__.py`` opens the archive via
 ``zipfile.ZipFile(sys.argv[0])`` and serves files directly from the ZIP
@@ -57,8 +58,8 @@ _MAIN_SOURCE = '''\
 """kcommit-analysis-pipeline — self-contained report server.
 
 This file is the entry point of a zipapp (serve_report.pyz).
-All report assets (index.html, commits/**/*.json) are stored as members
-of the same ZIP archive alongside this __main__.py.
+All report assets (index.html, commits/**/*.json bucket files) are stored as
+members of the same ZIP archive alongside this __main__.py.
 No files are extracted to disk at runtime.
 """
 import argparse

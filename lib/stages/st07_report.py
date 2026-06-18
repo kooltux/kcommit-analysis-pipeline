@@ -59,6 +59,19 @@ Changes:
                   filtered_commits.html file is no longer written.
                   filtered_commits.table.json is still written as a sidecar
                   for the JS layer.
+  v18.1.0       — G.1: bulk JSON outputs use compact separators (',',':')
+                  instead of indent=2 to reduce file sizes significantly.
+                  Only per-commit shard files keep indent=2 for readability
+                  in the HTML raw-tab.
+                — G.2: _write_commit_details() now deduplicates makedirs
+                  calls using a seen_dirs set; at most 16 mkdir calls for
+                  the first-level bucket dirs (one per hex digit).
+                — G.4: commit detail files are now stored as bucket JSON
+                  files: commits/<sha[0]>/<sha[1:3]>.json  Each bucket file
+                  is a dict keyed by full SHA.  This reduces the total number
+                  of files from N (one per commit) to at most 256 (16x16
+                  buckets), cutting inode pressure and serve_report.pyz
+                  build time for large corpora.
 """
 import csv
 import json
@@ -178,20 +191,41 @@ def _canonical_commit(commit):
 
 
 def _write_commit_details(root, commits):
-    written = 0
+    """Write commit detail JSON files into bucket layout.
+
+    G.4: Each commit is stored in commits/<sha[0]>/<sha[1:3]>.json
+    where the file is a {sha: commit_data} dict.  At most 256 bucket
+    files are ever created (16 first-level dirs × 16 second-level files).
+
+    G.2: makedirs is deduplicated — at most 16 mkdir calls.
+    G.1: Bucket files are written with indent=2 for readability in the
+         HTML raw-tab (these are the sidecar detail files, not bulk JSON).
+    """
     if not commits:
-        return written
+        return 0
     os.makedirs(root, exist_ok=True)
+    # Accumulate commits per bucket {bucket_file: (bucket_dir, {sha: data})}
+    buckets = {}
     seen = set()
     for c in commits:
         full = c.get('commit') or ''
-        if not full or full in seen:
+        if not full or full in seen or len(full) < 3:
             continue
         seen.add(full)
-        shard = os.path.join(root, full[:2], full[2:4])
-        os.makedirs(shard, exist_ok=True)
-        _save_ordered_json(os.path.join(shard, full + '.json'), _canonical_commit(c))
-        written += 1
+        bdir  = os.path.join(root, full[0])
+        bfile = os.path.join(bdir, full[1:3] + '.json')
+        if bfile not in buckets:
+            buckets[bfile] = (bdir, {})
+        buckets[bfile][1][full] = _canonical_commit(c)
+    # Write each bucket file; deduplicate mkdir calls
+    written = 0
+    seen_dirs = set()
+    for bfile, (bdir, data) in buckets.items():
+        if bdir not in seen_dirs:
+            os.makedirs(bdir, exist_ok=True)
+            seen_dirs.add(bdir)
+        _save_ordered_json(bfile, data)
+        written += len(data)
     return written
 
 
@@ -209,7 +243,7 @@ def _write_table_json(path, commits, include_reason=False):
         if include_reason and c.get('_filter_reason', ''):
             row['_filter_reason'] = c.get('_filter_reason', '')
         rows.append(order_commit_details(row))
-    _save_ordered_json(path, rows)
+    _save_compact_json(path, rows)
 
 # ── Per-profile statistics ───────────────────────────────────────────────────────────
 
@@ -295,9 +329,23 @@ def _build_evaluation_block(cfg, outputs, html_detail_mode, top_n, threshold):
 
 
 def _save_ordered_json(path, data):
+    """Write data as indented JSON (indent=2).  Used for shard detail files."""
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2)
+        f.write('\n')
+
+
+def _save_compact_json(path, data):
+    """G.1: Write data as compact JSON (no indentation, minimal separators).
+
+    Used for bulk output files (relevant_commits.json, filtered_commits.json,
+    rule_trace.json, profile_summary.json, profile_matrix.json, table sidecars)
+    to reduce file sizes significantly for large corpora.
+    """
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, default=str, separators=(',', ':'))
         f.write('\n')
 
 # ── Output helpers ─────────────────────────────────────────────────────────
@@ -493,20 +541,20 @@ def run(cfg, cache, outdir):
     details_root = os.path.join(outdir, 'commits')
     _write_commit_details(details_root, list(scored) + list(filtered))
 
-    # JSON outputs (always written)
+    # JSON outputs (always written) — G.1: compact format for bulk files
     _update_stage7_progress(1, _STAGE7_MILESTONES, 'Writing relevant_commits.json')
     _p = os.path.join(outdir, 'relevant_commits.json')
-    _save_ordered_json(_p, [_canonical_commit(c) for c in scored]);  _emit(_p)
+    _save_compact_json(_p, [_canonical_commit(c) for c in scored]);  _emit(_p)
     _p = os.path.join(outdir, 'profile_summary.json')
-    save_json(_p, prof_summary);  _emit(_p)
+    _save_compact_json(_p, prof_summary);  _emit(_p)
     _p = os.path.join(outdir, 'profile_matrix.json')
-    save_json(_p, {'header': mat_hdr, 'rows': mat_rows});  _emit(_p)
+    _save_compact_json(_p, {'header': mat_hdr, 'rows': mat_rows});  _emit(_p)
     trace_hdr, trace_rows = _trace_rows(scored)
     _p = os.path.join(outdir, 'rule_trace.json')
-    save_json(_p, {'header': trace_hdr, 'rows': trace_rows});  _emit(_p)
+    _save_compact_json(_p, {'header': trace_hdr, 'rows': trace_rows});  _emit(_p)
     if filtered:
         _p = os.path.join(outdir, 'filtered_commits.json')
-        _save_ordered_json(_p, [_canonical_commit(c) for c in filtered]);  _emit(_p)
+        _save_compact_json(_p, [_canonical_commit(c) for c in filtered]);  _emit(_p)
 
     # Copy prefilter_debug.json from cache to outdir when it exists (v13.0.0)
     _pf_debug_src = os.path.join(cache, CACHE_FILES.get('prefilter_debug', 'prefilter_debug.json'))
