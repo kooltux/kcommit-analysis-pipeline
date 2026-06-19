@@ -76,7 +76,12 @@ def test_stage07_writes_sidecar_tables_and_sharded_commit_details(tmp_path, monk
     assert os.path.exists(out / 'relevant_commits.table.json')
     assert os.path.exists(out / 'filtered_commits.table.json')
     assert os.path.exists(out / 'report_metadata.json')
-    assert os.path.exists(out / 'commits' / 'ab' / 'cd' / 'abcdef1234567890.json')
+    # G.4: bucket layout — commits/<sha[0]>/<sha[1:3]>.json keyed by full SHA
+    sha = 'abcdef1234567890'
+    bucket_path = out / 'commits' / sha[0] / (sha[1:3] + '.json')
+    assert os.path.exists(bucket_path), f'Bucket file not found at {bucket_path}'
+    bucket = json.load(open(bucket_path))
+    assert sha in bucket, f'Full SHA {sha!r} not a key in bucket'
     data = json.load(open(out / 'relevant_commits.json'))
     assert list(data[0])[:6] == ['commit', 'subject', 'author_name', 'author_email', 'author_time', 'files']
 
