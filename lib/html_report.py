@@ -8,7 +8,17 @@ layout:
 
 All UI content is data-driven: the generator serialises window.__KC_UI__
 (meta, columns, rows, sidebar) into the __COMMITS_DATA__ placeholder; the
-browser-side JS in summary.js reads that object and renders everything.
+browser-side JS reads that object and renders everything.
+
+JS assembly (v18.1.0):
+  The browser-side JavaScript is no longer shipped as a pre-built
+  configs/html/summary.js artifact.  Instead, _assemble_js() concatenates
+  all configs/html/js/summary_*.js modules at report-generation time (sorted
+  by filename, which encodes the correct load order via numeric prefixes).
+  The concatenated body is wrapped in an IIFE:
+    (function(){'use strict'; <modules> })();
+  This means summary.js must NOT be committed to the repository; the js/
+  modules are the single source of truth.
 
 Changes:
   v15.0.0 — Full data-driven rewrite.  Python no longer builds body HTML;
@@ -44,8 +54,8 @@ Changes:
                filtered_rows    — one slim row dict per filtered commit
                filtered_store   — sha12 → slim commit dict (metadata +
                                   prefilter_debug only; scoring stripped)
-             The JS tab switcher in summary.js reads these keys and
-             renders the filtered tab with a purpose-built detail panel.
+             The JS tab switcher reads these keys and renders the filtered
+             tab with a purpose-built detail panel.
            — is_filtered parameter and _FILTERED_EXTRA tuple removed;
              tab logic in the JS replaces them.
            — _FILTERED_COLUMNS constant defines the filtered tab columns.
@@ -53,6 +63,12 @@ Changes:
              is derived from presence of prefilter_debug on the commit.
            — _filtered_commit_store_entry() strips scoring fields from
              the commit dict stored in filtered_store.
+  v18.1.0 — JS assembly at runtime.
+           — configs/html/summary.js removed from the repository.
+           — _assemble_js(templates_dir) reads configs/html/js/summary_*.js
+             modules in sorted order and wraps them in an IIFE.
+           — generate_html_report() calls _assemble_js() instead of
+             _get_template('summary.js', ...).
 """
 import json
 import os
@@ -82,6 +98,38 @@ def _get_template(name, templates_dir, default=''):
             return f.read()
     except Exception:
         return default
+
+
+def _assemble_js(templates_dir):
+    """Concatenate js/summary_*.js modules (sorted) into one IIFE bundle.
+
+    Modules in configs/html/js/ are named with numeric prefixes
+    (summary_01_globals.js … summary_12_bootstrap.js) that encode the
+    correct concatenation order.  The resulting bundle is wrapped in a
+    strict-mode IIFE so all top-level declarations remain local to the
+    report's script tag.
+
+    Returns an empty string if the js/ directory does not exist or
+    contains no .js files (graceful degradation for tests that supply
+    a minimal template directory without the full js/ tree).
+    """
+    js_dir = os.path.join(templates_dir, 'js')
+    try:
+        files = sorted(f for f in os.listdir(js_dir) if f.endswith('.js'))
+    except OSError:
+        return ''
+    parts = []
+    for fname in files:
+        path = os.path.join(js_dir, fname)
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                parts.append(f.read())
+        except OSError:
+            pass
+    if not parts:
+        return ''
+    body = '\n'.join(parts)
+    return "(function(){'use strict';\n" + body + "\n})();"
 
 
 def _fmt_date(ts):
@@ -459,6 +507,9 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
       filtered_commits -- list of pre- + postfilter dropped commit dicts.
                           When provided, adds tabs/filtered_columns/
                           filtered_rows/filtered_store to window.__KC_UI__.
+
+    v18.1.0 — JS is assembled at runtime from configs/html/js/summary_*.js
+    modules via _assemble_js(); configs/html/summary.js is no longer used.
     """
     if templates_dir is None:
         templates_dir = os.path.join(
@@ -471,7 +522,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
             'HTML template missing: ' +
             os.path.join(templates_dir, 'report.html'))
     css = _get_template('summary.css', templates_dir)
-    js  = _get_template('summary.js',  templates_dir)
+    js  = _assemble_js(templates_dir)
 
     generated = time.strftime('%Y-%m-%d %H:%M')
     commits   = commits or []

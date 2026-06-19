@@ -7,7 +7,13 @@ from lib.html_report import generate_html_report
 
 
 def _tpl_dir(tmp_path):
-    """Minimal template dir for isolated tests (no __BODY__ marker)."""
+    """Minimal template dir for isolated tests.
+
+    Creates a js/ subdirectory with a single stub module so that
+    _assemble_js() produces non-empty output without requiring the full
+    configs/html/js/ tree.  The stub content ('/* test js */') is
+    intentionally preserved so tests that assert on it still pass.
+    """
     tpl_dir = tmp_path / 'tpl'
     tpl_dir.mkdir()
     (tpl_dir / 'report.html').write_text(
@@ -17,7 +23,9 @@ def _tpl_dir(tmp_path):
         '<script>__JS__</script></body></html>'
     )
     (tpl_dir / 'summary.css').write_text('.seed{}')
-    (tpl_dir / 'summary.js').write_text('/* test js */')
+    js_dir = tpl_dir / 'js'
+    js_dir.mkdir()
+    (js_dir / 'summary_01_stub.js').write_text('/* test js */')
     return tpl_dir
 
 
@@ -36,6 +44,23 @@ def _strip_comments(js):
     return js
 
 
+def _read_assembled_js():
+    """Return the concatenated source of all configs/html/js/summary_*.js modules.
+
+    Mirrors the runtime behaviour of _assemble_js() so that JS asset tests
+    can verify the assembled output without depending on the removed
+    configs/html/summary.js artifact.
+    """
+    js_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                          'configs', 'html', 'js')
+    parts = []
+    for fname in sorted(os.listdir(js_dir)):
+        if fname.endswith('.js'):
+            with open(os.path.join(js_dir, fname), encoding='utf-8') as f:
+                parts.append(f.read())
+    return '\n'.join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Basic generation
 # ---------------------------------------------------------------------------
@@ -52,7 +77,8 @@ def test_generate_html_report_raises_on_missing_template(tmp_path):
     tpl_dir = tmp_path / 'empty_tpl'
     tpl_dir.mkdir()
     (tpl_dir / 'summary.css').write_text('')
-    (tpl_dir / 'summary.js').write_text('')
+    # js/ dir present but empty — _assemble_js() returns '' gracefully
+    (tpl_dir / 'js').mkdir()
     out = tmp_path / 'report.html'
     import pytest
     with pytest.raises(RuntimeError):
@@ -516,110 +542,82 @@ def test_summary_css_detail_pane_is_scrollable():
 
 
 # ---------------------------------------------------------------------------
-# JS asset checks (real summary.js)
+# JS asset checks (real configs/html/js/ modules)
+#
+# These tests verify the assembled JS source from the js/ module tree.
+# _read_assembled_js() concatenates all summary_*.js files in sorted order,
+# mirroring _assemble_js() at runtime.  configs/html/summary.js is no longer
+# present in the repository (removed in v18.1.0).
 # ---------------------------------------------------------------------------
 
 def test_summary_js_reads_kc_ui_global():
     """JS must read window.__KC_UI__ as its data source."""
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'window.__KC_UI__' in js
 
 
 def test_summary_js_has_theme_toggle_logic():
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'kc-theme-btn'         in js
     assert "setAttribute('data-theme'" in js or 'applyTheme'  in js
     assert 'prefers-color-scheme'  in js
 
 
 def test_summary_js_has_filter_and_sort_logic():
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'applyFilters'   in js
     assert 'applySort'      in js
     assert 'scheduleFilter' in js
 
 
 def test_summary_js_has_detail_panel_logic():
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'openDetail'    in js
     assert 'fetchCommit'   in js
     assert 'populateDetail' in js
 
 
 def test_summary_js_has_csv_export():
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'kc-export-csv' in js or 'exportBtn' in js
     assert 'text/csv'       in js
 
 
 def test_summary_js_has_collapse_and_resize():
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'kc-collapsed'  in js
     assert 'mousedown'     in js
     assert 'mousemove'     in js
 
 
 def test_summary_js_has_keyboard_navigation():
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'ArrowDown' in js
     assert 'ArrowUp'   in js
     assert 'Escape'    in js
 
 
 def test_summary_js_live_count_update():
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'liveCount' in js
     assert 'Showing'   in js
 
 
 def test_summary_js_sidebar_renderer_present():
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'kc-left-body'   in js
     assert 'kc-funnel-bar'  in js or 'funnel' in js
 
 
 def test_summary_js_has_scoring_trace_renderer():
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'renderProfileTrace' in js
     assert 'kc-trace-table'     in js
 
 
 def test_summary_js_has_per_profile_score_columns():
     """JS must expand per-profile score_<profile> keys into table columns."""
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'score_' in js          # key prefix used for per-profile columns
     assert 'PROFILE_NAMES' in js   # profile name universe computed at startup
     assert '_profile' in js        # column marker used in rowHtml()
@@ -627,10 +625,7 @@ def test_summary_js_has_per_profile_score_columns():
 
 def test_summary_js_has_context_section():
     """v16.9.0: JS must render the Analysis Context section from UI.context."""
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     assert 'UI.context' in js or 'CTX' in js
     assert 'Analysis Context' in js
 
@@ -643,10 +638,46 @@ def test_summary_js_no_evaluation_config_section():
     'SB.evaluation' guard and its surrounding renderEvaluationConfig() call
     must be gone entirely.
     """
-    js_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                           'configs', 'html', 'summary.js')
-    with open(js_path, encoding='utf-8') as f:
-        js = f.read()
+    js = _read_assembled_js()
     code = _strip_comments(js)
     assert 'Evaluation Config' not in code
     assert 'SB.evaluation'     not in code
+
+
+# ---------------------------------------------------------------------------
+# JS assembly checks
+# ---------------------------------------------------------------------------
+
+def test_assemble_js_wraps_in_iife(tmp_path):
+    """_assemble_js() must wrap the concatenated modules in a strict IIFE."""
+    from lib.html_report import _assemble_js
+    js_dir = tmp_path / 'js'
+    js_dir.mkdir()
+    (js_dir / 'summary_01_a.js').write_text('var x = 1;')
+    (js_dir / 'summary_02_b.js').write_text('var y = 2;')
+    result = _assemble_js(str(tmp_path))
+    assert result.startswith("(function(){'use strict';")
+    assert result.endswith('})();')
+    assert 'var x = 1;' in result
+    assert 'var y = 2;' in result
+
+
+def test_assemble_js_sorted_order(tmp_path):
+    """Modules must be concatenated in sorted filename order."""
+    from lib.html_report import _assemble_js
+    js_dir = tmp_path / 'js'
+    js_dir.mkdir()
+    (js_dir / 'summary_02_b.js').write_text('/* B */')
+    (js_dir / 'summary_01_a.js').write_text('/* A */')
+    result = _assemble_js(str(tmp_path))
+    assert result.index('/* A */') < result.index('/* B */')
+
+
+def test_assemble_js_empty_dir_returns_empty(tmp_path):
+    """_assemble_js() returns '' when the js/ dir is empty or missing."""
+    from lib.html_report import _assemble_js
+    # Missing js/ dir
+    assert _assemble_js(str(tmp_path)) == ''
+    # Empty js/ dir
+    (tmp_path / 'js').mkdir()
+    assert _assemble_js(str(tmp_path)) == ''

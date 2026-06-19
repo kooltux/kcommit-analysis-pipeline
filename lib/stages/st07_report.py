@@ -72,6 +72,10 @@ Changes:
                   of files from N (one per commit) to at most 256 (16x16
                   buckets), cutting inode pressure and serve_report.pyz
                   build time for large corpora.
+  v18.2.0       — _rt_progress_f and _rt_finish_line_f are now module-level
+                  variables so that tests can monkeypatch them reliably.
+                  Previously they were local variables inside run(), making
+                  monkeypatching impossible.
 """
 import csv
 import json
@@ -94,6 +98,17 @@ _COMMIT_KEYS_FILTERED = _COMMIT_KEYS + ["filter_reason"]
 # Total number of progress milestones emitted by run().
 # Used both in _update_stage7_progress() and in the final finish call.
 _STAGE7_MILESTONES = 8
+
+# v18.2.0: Module-level progress hooks so tests can monkeypatch them.
+# Previously imported as local variables inside run(), which made
+# monkeypatching via monkeypatch.setattr(_mod, '_rt_progress_f', ...) silently
+# ineffective.
+try:
+    from lib.pipeline_runtime import update_stage_progress as _rt_progress_f
+    from lib.pipeline_runtime import finish_progress_line  as _rt_finish_line_f
+except Exception:
+    _rt_progress_f    = None
+    _rt_finish_line_f = None
 
 
 def _fmt_date(ts):
@@ -195,9 +210,9 @@ def _write_commit_details(root, commits):
 
     G.4: Each commit is stored in commits/<sha[0]>/<sha[1:3]>.json
     where the file is a {sha: commit_data} dict.  At most 256 bucket
-    files are ever created (16 first-level dirs × 16 second-level files).
+    files are ever created (16 first-level dirs x 16 second-level files).
 
-    G.2: makedirs is deduplicated — at most 16 mkdir calls.
+    G.2: makedirs is deduplicated -- at most 16 mkdir calls.
     G.1: Bucket files are written with indent=2 for readability in the
          HTML raw-tab (these are the sidecar detail files, not bulk JSON).
     """
@@ -245,7 +260,7 @@ def _write_table_json(path, commits, include_reason=False):
         rows.append(order_commit_details(row))
     _save_compact_json(path, rows)
 
-# ── Per-profile statistics ───────────────────────────────────────────────────────────
+# -- Per-profile statistics --------------------------------------------------
 
 def _profile_summary(scored, profile_rules):
     """Per-profile commit count, total score, and average score."""
@@ -280,7 +295,7 @@ def _profile_matrix(scored):
     return header, rows
 
 
-# ── Coverage metrics (promoted to report_stats) ──────────────────────────────────────────────
+# -- Coverage metrics (promoted to report_stats) -----------------------------
 
 def _coverage_metrics(scored):
     """Return diagnostic coverage counters included in report_stats.json.
@@ -348,7 +363,7 @@ def _save_compact_json(path, data):
         json.dump(data, f, default=str, separators=(',', ':'))
         f.write('\n')
 
-# ── Output helpers ─────────────────────────────────────────────────────────
+# -- Output helpers ----------------------------------------------------------
 
 def _resolve_outputs(cfg):
     """Return the set of output format names to produce.
@@ -362,7 +377,7 @@ def _resolve_outputs(cfg):
     if outputs_l is not None:
         return {str(o).lower() for o in (outputs_l or [])}
 
-    # No outputs configured — use default
+    # No outputs configured -- use default
     return {'csv', 'html'}
 
 
@@ -373,7 +388,7 @@ def _top_n(cfg):
     if val is None:
         return 5000  # default
     n = int(val)
-    return None if n == 0 else n  # 0 → no limit
+    return None if n == 0 else n  # 0 -> no limit
 
 
 def _report_title(cfg):
@@ -423,19 +438,9 @@ def _load_profile_rules_safe(cfg, cache):
             return {}
 
 
-# ── Stage entry point ────────────────────────────────────────────────────────
+# -- Stage entry point -------------------------------------------------------
 
 def run(cfg, cache, outdir):
-    # A.3: import real TTY progress bar with the correct call signature:
-    #   update_stage_progress(stage_index, stage_total, frac, label,
-    #                         n_done=current, n_total=total)
-    # Falls back gracefully if pipeline_runtime is not importable (unit tests).
-    try:
-        from lib.pipeline_runtime import update_stage_progress as _rt_progress
-        from lib.pipeline_runtime import finish_progress_line  as _rt_finish_line
-    except Exception:
-        _rt_progress   = None
-        _rt_finish_line = None
     try:
         from lib.spreadsheet import (
             write_xlsx, write_ods,
@@ -472,10 +477,12 @@ def run(cfg, cache, outdir):
         where:
           index       = this stage's 1-based position (7)
           stage_total = total number of stages (7)
-          frac        = float 0.0–1.0 completion fraction
+          frac        = float 0.0-1.0 completion fraction
           label       = human-readable milestone string
           n_done      = current milestone number (optional)
           n_total     = total milestones (optional)
+
+        v18.2.0: Uses module-level _rt_progress_f so tests can monkeypatch it.
         """
         payload = {
             'current': int(current),
@@ -488,10 +495,10 @@ def run(cfg, cache, outdir):
             'stage_total': 7,
             'progress': payload,
         })
-        if _rt_progress is not None:
+        if _rt_progress_f is not None:
             try:
                 frac = float(current) / max(1, float(total))
-                _rt_progress(
+                _rt_progress_f(
                     7, 7, frac, message,
                     n_done=int(current), n_total=int(total),
                 )
@@ -514,24 +521,24 @@ def run(cfg, cache, outdir):
     _scores_all  = [float(c.get('score', 0) or 0) for c in scored]
 
     report_stats = {
-        # Stage 01 — collection
+        # Stage 01 -- collection
         'st01_collected':           len(_collected),
-        # Stage 04 — prefilter
+        # Stage 04 -- prefilter
         'st04_prefilter_kept':      len(_pf_kept),
         'st04_prefilter_dropped':   len(_collected) - len(_pf_kept),
-        # Stage 05 — scoring
+        # Stage 05 -- scoring
         'st05_total_scored':        len(_all_scored),
-        # Stage 06 — postfilter
+        # Stage 06 -- postfilter
         'st06_threshold':           _threshold,
         'st06_postfilter_dropped':  len(postfiltered),
-        # Stage 07 — report
+        # Stage 07 -- report
         'total_scored_commits':     len(scored),
         'top_n':                    top_n,
         'score_highest':            max(_scores_all) if _scores_all else 0,
         'score_lowest':             min(_scores_all) if _scores_all else 0,
         'score_avg':                round(sum(_scores_all) / len(_scores_all), 1) if _scores_all else 0,
         **_coverage_metrics(scored),
-        # A.4 / D.14: Evaluation block — stored in report_stats.json and
+        # A.4 / D.14: Evaluation block -- stored in report_stats.json and
         # report_metadata.json but no longer rendered as a sidebar section.
         'evaluation': _build_evaluation_block(
             cfg, outputs, html_detail_mode, top_n, _threshold),
@@ -541,7 +548,7 @@ def run(cfg, cache, outdir):
     details_root = os.path.join(outdir, 'commits')
     _write_commit_details(details_root, list(scored) + list(filtered))
 
-    # JSON outputs (always written) — G.1: compact format for bulk files
+    # JSON outputs (always written) -- G.1: compact format for bulk files
     _update_stage7_progress(1, _STAGE7_MILESTONES, 'Writing relevant_commits.json')
     _p = os.path.join(outdir, 'relevant_commits.json')
     _save_compact_json(_p, [_canonical_commit(c) for c in scored]);  _emit(_p)
@@ -563,7 +570,7 @@ def run(cfg, cache, outdir):
         shutil.copy2(_pf_debug_src, _pf_debug_dst)
         _emit(_pf_debug_dst)
 
-    # rule_trace.csv — only written when CSV output is enabled (v13.0.0)
+    # rule_trace.csv -- only written when CSV output is enabled (v13.0.0)
     _update_stage7_progress(2, _STAGE7_MILESTONES, 'Writing rule_trace.csv')
     if 'csv' in outputs:
         _rtcsv = os.path.join(outdir, 'rule_trace.csv')
@@ -719,7 +726,7 @@ def run(cfg, cache, outdir):
     except Exception as _e:
         logging.warning('pipeline_run_stats.json write failed: %s', _e)
 
-    # HTML — v16.14.0: filtered commits are passed via filtered_commits= into
+    # HTML -- v16.14.0: filtered commits are passed via filtered_commits= into
     # the unified relevant_commits.html report.  No separate
     # filtered_commits.html is written.
     _update_stage7_progress(6, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
@@ -756,7 +763,7 @@ def run(cfg, cache, outdir):
             logging.warning('HTML report failed: %s', e)
             _hp = None
 
-        # v16.13.0 — generate self-contained serve_report.pyz zipapp
+        # v16.13.0 -- generate self-contained serve_report.pyz zipapp
         _update_stage7_progress(8, _STAGE7_MILESTONES, 'Generating serve_report.pyz')
         if _hp and os.path.exists(_hp):
             try:
@@ -777,9 +784,9 @@ def run(cfg, cache, outdir):
 
     # Emit final progress milestone and terminate the TTY bar line
     _update_stage7_progress(_STAGE7_MILESTONES, _STAGE7_MILESTONES, 'Done')
-    if _rt_finish_line is not None:
+    if _rt_finish_line_f is not None:
         try:
-            _rt_finish_line()
+            _rt_finish_line_f()
         except Exception as _e:
             logging.debug('finish_progress_line (st07) failed: %s', _e)
 
