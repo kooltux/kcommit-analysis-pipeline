@@ -39,8 +39,8 @@ function switchTab(name) {
   haystackRows = null;   /* invalidate haystack cache for new dataset */
 
   /* Show loader immediately, build head with empty COL_DISTINCT so the
-   * UI is responsive instantly, then build the real distinct map in the
-   * background (deferred) and rebuild filter dropdowns once ready. */
+   * UI is responsive instantly, then build the real distinct map async
+   * (one column per idle tick, perf B.1) and rebuild dropdowns once ready. */
   COL_DISTINCT = Object.create(null);
   COLS.forEach(c => { COL_DISTINCT[c.key] = []; });
   buildHead();
@@ -49,12 +49,13 @@ function switchTab(name) {
     (done, total) => updateLoaderProgress(done, total),
     () => {
       hideLoader();
-      /* Defer the expensive distinct scan so hideLoader() paints first. */
-      setTimeout(() => {
-        COL_DISTINCT = buildDistinct(COLS, ROWS);
-        buildHead();         /* rebuild dropdowns now that distinct is ready */
-        applyFilters();      /* re-run filter in case dropdowns changed */
-      }, 0);
+      /* Defer the expensive distinct scan so hideLoader() paints first.
+       * buildDistinctAsync processes one column per idle/timeout tick (B.1). */
+      buildDistinctAsync(COLS, ROWS, dist => {
+        COL_DISTINCT = dist;
+        rebuildFilterDropdowns();  /* lightweight: only replaces filter <th> contents */
+        applyFilters();            /* re-run in case any dropdown default changed */
+      });
     }
   );
 }

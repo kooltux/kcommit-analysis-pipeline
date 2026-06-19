@@ -1,4 +1,12 @@
-/* kcommit-analysis-pipeline — v18.1.0 UI
+/* kcommit-analysis-pipeline — v18.1.1 UI
+ *
+ * v18.1.1: Fix two failing unit tests
+ *   — 'Analysis Context' section label (was 'Scope') to satisfy
+ *     test_summary_js_has_context_section.
+ *   — scheduleFilter() debounced wrapper introduced so text input
+ *     filtering fires ~180 ms after the last keystroke; satisfies
+ *     test_summary_js_has_filter_and_sort_logic. Select dropdowns
+ *     and Enter/blur paths still call applyFilters() directly.
  *
  * v18.1.0: G.4 — bucket sidecar layout.
  *   — sidecarPath(sha) now returns commits/<sha[0]>/<sha[1:3]>.json
@@ -13,47 +21,11 @@
  *     no network request.
  *   — sidecarPath minimum sha length reduced from 4 to 3 chars.
  *
+ * v18.1.0: Performance fixes B.1 / B.2 / B.3
  * v17.0.0: Tab-switch loader overlay with real chunked-render progress bar.
- *   — initLoader() injects a .kc-loader-bar / .kc-loader-bar-fill element
- *     into the overlay alongside the spinner and label.
- *   — showLoader(n) resets the bar to 0% before revealing the overlay.
- *   — updateLoaderProgress(done, total) advances the bar and rewrites the
- *     label ("Loading 1,800 / 5,000 commits…") after every chunk.
- *   — renderRowsAsync(onProgress, onDone) replaces the old single-shot
- *     renderRows()+setTimeout(0) pattern with a 500-row-per-tick loop so
- *     the browser can repaint the bar between chunks.
- *   — hideLoader() flashes the bar to 100% then fades the overlay out.
- *   — switchTab() and the bootstrap call both now use renderRowsAsync.
- *   — No external CSS changes required; bar styles are inline with CSS
- *     variable hooks (--kc-loader-bar-bg, --kc-loader-bar-fill).
- *   — Loader panel is fixed-width (320 px) and centered for readability.
- *
  * v16.14.0: Unified two-tab HTML report.
- *   — Reads window.__KC_UI__.tabs to detect two-tab mode.
- *   — Tab bar rendered above the table toolbar when tabs are present.
- *   — switchTab(name) swaps the active dataset (columns + rows + store),
- *     rebuilds the table head, re-renders rows, resets filters, and
- *     clears the right detail panel.
- *   — Filtered tab uses filtered_columns / filtered_rows from KC_UI
- *     and window.__KC_FILTERED_COMMITS__ as its detail store.
- *   — rowHtml() dispatches on activeTab: filtered rows render a
- *     filter_stage badge + drop reason; no score pill, no profile chips.
- *   — openDetail() dispatches on activeTab: filtered tab calls
- *     populateFilteredDetail() which shows metadata + drop decision
- *     (prefilter_debug) + commit message; hides scoring tabs.
- *   — liveCount and export CSV filename update per active tab.
- *   — Legacy single-tab mode (no UI.tabs) is fully unchanged.
- *
- * v16.12.6: Bug fixes from audit:
- *   BUG-02 updateFilterOffset() measures sortRow.offsetHeight after
- *          buildHead() and on window resize; writes the value as a
- *          CSS custom property on .kc-table-wrap so the filter row's
- *          `top` is always exact, even when column labels wrap.
- *   BUG-04 Right-pane drag: sign is correct for a left-edge handle
- *          (drag left = grow, drag right = shrink). Added comment to
- *          document the intentional direction; no behaviour change.
- * v16.12.3: Remove "Stage 05 — " and "Stage 06 — " prefixes from section
- *           labels; keep only "SCORING" and "POSTFILTER".
+ * v16.12.6: BUG-02 updateFilterOffset, BUG-04 right-pane drag direction.
+ * v16.12.3: Remove "Stage 05/06" prefixes from section labels.
  */
 (function () {
   'use strict';
@@ -116,7 +88,11 @@
   const filtRowBySha = Object.create(null);
   FILT_ROWS.forEach(r => { filtRowBySha[r.sha12] = r; if (r.sha) filtRowBySha[r.sha] = r; });
 
-  /* ---- Per-column distinct value cache -------------------------------- */
+  /* ---- Per-column distinct value cache --------------------------------
+   * B.1: COL_DISTINCT starts empty — dropdowns show "All" only at first
+   * paint. buildDistinct() is called deferred (setTimeout 0) after the
+   * loader hides, so it never blocks the initial render.
+   * ------------------------------------------------------------------- */
   function buildDistinct(cols, rows) {
     const dist = Object.create(null);
     cols.forEach(col => {
@@ -134,7 +110,20 @@
     return dist;
   }
 
-  let COL_DISTINCT = buildDistinct(REL_COLS, REL_ROWS);
+  /* B.1: start with empty distinct — populated after first render */
+  let COL_DISTINCT = Object.create(null);
+  COLS.forEach(c => { COL_DISTINCT[c.key] = []; });
+
+  /* ---- SHA → <tr> index (B.3: O(1) filter lookups) ------------------ */
+  let shaIndex = Object.create(null);
+
+  function buildShaIndex() {
+    shaIndex = Object.create(null);
+    if (!tbody) return;
+    tbody.querySelectorAll('tr[data-sha12]').forEach(tr => {
+      shaIndex[tr.dataset.sha12] = tr;
+    });
+  }
 
   /* ========= Helpers ========= */
 
@@ -457,15 +446,15 @@
       'Collected':'Total commits fetched from git in the configured SHA range.',
       'Prefilter dropped':'Commits removed by stage 04 before scoring (e.g. no Kconfig coverage, path blacklist).',
       'Scored':'Commits that reached the scoring engine (stage 05).',
-      'Postfilter dropped':'Scored commits below the minimum score threshold — excluded from the report.',
+      'Postfilter dropped':'Scored commits below the minimum score threshold \u2014 excluded from the report.',
       'Final report':'Commits that passed all pipeline stages and appear in this report.',
       'Pass rate':'Percentage of collected commits that made it into the final report.',
       'Total scored':'Number of commits processed by the scoring engine in stage 05.',
-      'Zero-score':'Commits where every scoring rule evaluated to 0 — no profile matched or all weights were zero.',
+      'Zero-score':'Commits where every scoring rule evaluated to 0 \u2014 no profile matched or all weights were zero.',
       'Multi-profile':'Commits matched by more than one profile simultaneously; their scores are summed.',
       'Threshold':'Minimum score a commit must achieve to be included in the final report (stage 06 postfilter).',
-      'Kept':'Commits at or above the threshold — included in the report.',
-      'Dropped':'Commits below the threshold — excluded from the report.',
+      'Kept':'Commits at or above the threshold \u2014 included in the report.',
+      'Dropped':'Commits below the threshold \u2014 excluded from the report.',
       'Top score':'Highest score seen among all scored commits.',
       'Bottom kept':'Lowest score among commits that passed the postfilter threshold.',
       'is_fix':'Commits whose message contains a Fixes: tag referencing a prior commit.',
@@ -474,15 +463,11 @@
       'stable_cc':'Commits with a Cc: stable@vger.kernel.org line requesting stable backport.',
     };
 
-    /* =========================================================
-     * Analysis Context section (v16.9.0)
-     * Reads UI.context (CTX) to render the scope block.
-     * =========================================================
-     */
     (function renderContext(){
       const hasAny=CTX.rev_range||CTX.git_range||CTX.kernel_version||(CTX.profiles&&CTX.profiles.length)||(CTX.artifacts&&Object.keys(CTX.artifacts).length);
       if(!hasAny) return;
-      html+=`<div class="kc-section-head">Scope</div>`;
+      /* v16.9.0: Analysis Context section */
+      html+=`<div class="kc-section-head">Analysis Context</div>`;
       html+=`<div class="kc-stat-block"><div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udd00</span>Revision range</div><div class="kc-stat-block-body">`;
       const range=CTX.rev_range||CTX.git_range;
       if(range){ const parts=String(range).split('..'); if(parts.length===2){ html+=kv('From',`<code class="kc-mono">${esc(parts[0].trim())}</code>`); html+=kv('To',`<code class="kc-mono">${esc(parts[1].trim())}</code>`); } else html+=kv('Range',`<code class="kc-mono">${esc(range)}</code>`); }
@@ -585,14 +570,6 @@
 
   /* =========================================================
    * Table loader overlay — v17.0.0
-   * Injected once into #kc-table-wrap at boot.
-   * showLoader(n) resets bar to 0% and computes ETA.
-   * updateLoaderProgress(done, total) advances bar + label + % badge.
-   * hideLoader() flashes bar to 100% then fades overlay out.
-   *
-   * Layout: spinner  +  centered panel (label row + bar).
-   * Bar is fixed 320 px wide (capped to viewport) so it reads as a
-   * deliberate progress element rather than a full-width stripe.
    * =========================================================
    */
   const tableWrap=document.getElementById('kc-table-wrap');
@@ -657,13 +634,25 @@
       btn.setAttribute('aria-selected',active?'true':'false');
     });
     clearDetailPanel();
+    /* B.1: start with empty dropdowns, populate after render */
+    COL_DISTINCT=Object.create(null);
+    COLS.forEach(c=>{ COL_DISTINCT[c.key]=[]; });
     buildHead();
     sortedRows=ROWS.slice(); sortKey=null; sortDir=1;
-    COL_DISTINCT=buildDistinct(COLS,ROWS);
     showLoader(ROWS.length);
     renderRowsAsync(
       (done,total)=>updateLoaderProgress(done,total),
-      ()=>{ applyFilters(); hideLoader(); }
+      ()=>{
+        buildShaIndex();
+        applyFilters();
+        hideLoader();
+        /* B.1: populate filter dropdowns after table is visible */
+        setTimeout(()=>{
+          COL_DISTINCT=buildDistinct(COLS,ROWS);
+          buildHead();
+          applyFilters();
+        },0);
+      }
     );
   }
 
@@ -687,6 +676,29 @@
     tableWrap.style.setProperty('--thead-sort-h',`${sortRow.offsetHeight}px`);
   }
 
+  /* scheduleFilter — debounced applyFilters for text input keystrokes.
+   * Fires applyFilters ~180 ms after the last keystroke so the UI stays
+   * responsive while the user types. Enter and blur still call applyFilters
+   * directly for immediate feedback. */
+  let _filterTimer=null;
+  function scheduleFilter(){
+    clearTimeout(_filterTimer);
+    _filterTimer=setTimeout(applyFilters,180);
+  }
+
+  /* B.3: attach filter listeners — selects fire immediately, text inputs
+   * use scheduleFilter (debounced) on input plus direct applyFilters on
+   * Enter / blur. */
+  function attachFilterListeners(el){
+    if(el.tagName==='SELECT'){
+      el.addEventListener('change', applyFilters);
+    } else {
+      el.addEventListener('input', scheduleFilter);
+      el.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(_filterTimer); applyFilters(); } });
+      el.addEventListener('blur', ()=>{ clearTimeout(_filterTimer); applyFilters(); });
+    }
+  }
+
   function buildFilterCtrl(col,fth){
     const distinct=COL_DISTINCT[col.key]||[];
     const useList=(col.type==='select'&&(col.options||[]).length)||(distinct.length>0&&distinct.length<20);
@@ -695,20 +707,20 @@
       const sel=document.createElement('select');
       sel.dataset.filterKey=col.key; sel.dataset.filterRole='select';
       sel.innerHTML=`<option value="">All</option>`+options.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
-      sel.addEventListener('change',scheduleFilter);
+      attachFilterListeners(sel);
       fth.appendChild(sel);
       if(col.type==='number'){
         const inp=document.createElement('input');
         inp.type='text'; inp.placeholder='> < ='; inp.style.width='48px'; inp.style.marginTop='2px';
         inp.dataset.filterKey=col.key; inp.dataset.filterRole='text';
-        inp.addEventListener('input',scheduleFilter);
+        attachFilterListeners(inp);
         fth.appendChild(inp);
       }
     } else {
       const inp=document.createElement('input');
       inp.type='text'; inp.placeholder='Filter\u2026';
       inp.dataset.filterKey=col.key; inp.dataset.filterRole='text';
-      inp.addEventListener('input',scheduleFilter);
+      attachFilterListeners(inp);
       fth.appendChild(inp);
     }
   }
@@ -720,7 +732,18 @@
     COLS.forEach(col=>{
       const th=document.createElement('th');
       th.innerHTML=`${esc(col.label)} <em class="kc-sort-icon" data-key="${esc(col.key)}"></em>`;
-      th.addEventListener('click',()=>{ if(sortKey===col.key) sortDir=-sortDir; else{ sortKey=col.key; sortDir=1; } updateSortIcons(); applySort(); renderRows(); applyFilters(); });
+      /* B.2: sort click — update icon immediately (rAF), then sort+render async */
+      th.addEventListener('click',()=>{
+        if(sortKey===col.key) sortDir=-sortDir; else{ sortKey=col.key; sortDir=1; }
+        updateSortIcons();
+        requestAnimationFrame(()=>{
+          applySort();
+          renderRowsAsync(null, ()=>{
+            buildShaIndex();
+            applyFilters();
+          });
+        });
+      });
       sortRow.appendChild(th);
       const fth=document.createElement('th');
       buildFilterCtrl(col,fth);
@@ -741,4 +764,237 @@
       const cells=COLS.map(col=>{
         let v=r[col.key]; if(v==null) v='';
         if(col.key==='sha12') return `<td class="kc-td-sha"><a href="#" class="kc-sha-link" data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha||r.sha12)}">${esc(r.sha12)}</a></td>`;
-        if(col.key==='filter_stage')
+        if(col.key==='filter_stage') return `<td>${stageBadge(v)}</td>`;
+        if(col.key==='date') return `<td class="kc-td-num">${esc(fmtDate(v))}</td>`;
+        return `<td>${esc(Array.isArray(v)?v.join('; '):v)}</td>`;
+      }).join('');
+      return `<tr data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha||r.sha12)}">${cells}</tr>`;
+    }
+    const cells=COLS.map(col=>{
+      let v=r[col.key]; if(v==null) v='';
+      if(col.key==='sha12') return `<td class="kc-td-sha"><a href="#" class="kc-sha-link" data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha||r.sha12)}">${esc(r.sha12)}</a></td>`;
+      if(col.key==='score'||col._profile){ const num=parseFloat(v)||0; return `<td class="kc-td-num">${num>0?scorePill(num):'<span class="kc-muted">\u2014</span>'}</td>`; }
+      if(col.key==='profiles') return `<td>${chips(Array.isArray(v)?v:[v])}</td>`;
+      if(col.key==='date') return `<td class="kc-td-num">${esc(fmtDate(v))}</td>`;
+      return `<td>${esc(Array.isArray(v)?v.join('; '):v)}</td>`;
+    }).join('');
+    return `<tr data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha||r.sha12)}">${cells}</tr>`;
+  }
+
+  function applySort(){
+    if(!sortKey) return;
+    sortedRows.sort((a,b)=>{ const av=cellValue(a,sortKey),bv=cellValue(b,sortKey),an=parseFloat(av),bn=parseFloat(bv),cmp=(!isNaN(an)&&!isNaN(bn))?an-bn:av.localeCompare(bv,undefined,{numeric:true}); return cmp*sortDir; });
+  }
+
+  /* renderRowsAsync — chunked DOM build with per-chunk progress callbacks. */
+  const CHUNK_SIZE=500;
+  function renderRowsAsync(onProgress,onDone){
+    if(!tbody){ onDone&&onDone(); return; }
+    const rows=sortedRows,total=rows.length;
+    if(total===0){ tbody.innerHTML=''; onDone&&onDone(); return; }
+    tbody.innerHTML='';
+    let offset=0;
+    function nextChunk(){
+      if(offset>=total){ onDone&&onDone(); return; }
+      const end=Math.min(offset+CHUNK_SIZE,total),frag=document.createDocumentFragment();
+      for(let i=offset;i<end;i++){ const t=document.createElement('template'); t.innerHTML=rowHtml(rows[i]); frag.appendChild(t.content); }
+      tbody.appendChild(frag);
+      offset=end;
+      onProgress&&onProgress(offset,total);
+      setTimeout(nextChunk,0);
+    }
+    setTimeout(nextChunk,0);
+  }
+
+  function matchToken(text,token){
+    if(!token) return true;
+    const t=token.trim().toLowerCase(),s=text.toLowerCase();
+    if(t.startsWith('>'))  { const n=parseFloat(t.slice(1)); return !isNaN(n)&&parseFloat(s)>n; }
+    if(t.startsWith('<'))  { const n=parseFloat(t.slice(1)); return !isNaN(n)&&parseFloat(s)<n; }
+    if(t.startsWith('=')) return s===t.slice(1);
+    const pat=t.replace(/[.+?^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*');
+    try{ return new RegExp(pat).test(s); } catch{ return s.includes(t); }
+  }
+
+  /* B.3: applyFilters uses shaIndex for O(1) row lookup */
+  function applyFilters(){
+    const selectVals=Object.create(null),textVals=Object.create(null);
+    document.querySelectorAll('[data-filter-key]').forEach(el=>{ const key=el.dataset.filterKey,role=el.dataset.filterRole||'text'; if(role==='select') selectVals[key]=el.value||''; else textVals[key]=el.value||''; colFilters[key]=el.value||''; });
+    const global=(globalSrch?.value||'').trim().toLowerCase(),gTokens=global?global.split(/\s+/).filter(Boolean):[];
+    let shown=0;
+    sortedRows.forEach(r=>{
+      const tr=shaIndex[r.sha12];  /* O(1) — no DOM query */
+      if(!tr) return;
+      let ok=COLS.every(col=>{ const sv=(selectVals[col.key]||'').trim(),tv=(textVals[col.key]||'').trim(),cv=cellValue(r,col.key); if(sv&&!matchToken(cv,sv)) return false; if(tv&&!matchToken(cv,tv)) return false; return true; });
+      if(ok&&gTokens.length){ const hay=Object.values(r).map(v=>Array.isArray(v)?v.join(' '):String(v??'')).join(' ').toLowerCase(); ok=gTokens.every(t=>hay.includes(t)); }
+      tr.classList.toggle('kc-hidden',!ok);
+      if(ok) shown++;
+    });
+    visibleCount=shown;
+    if(liveCount) liveCount.textContent=`Showing ${shown} of ${ROWS.length} commits`;
+    if(noMatch) noMatch.classList.toggle('kc-visible',shown===0);
+  }
+
+  clearBtn?.addEventListener('click',()=>{ document.querySelectorAll('[data-filter-key]').forEach(el=>{ el.value=''; }); if(globalSrch) globalSrch.value=''; applyFilters(); });
+
+  /* Global search also uses scheduleFilter on input for consistency */
+  globalSrch?.addEventListener('input', scheduleFilter);
+  globalSrch?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(_filterTimer); applyFilters(); } });
+  globalSrch?.addEventListener('blur', ()=>{ clearTimeout(_filterTimer); applyFilters(); });
+
+  exportBtn?.addEventListener('click',()=>{
+    const header=COLS.map(c=>`"${c.label.replace(/"/g,'""')}"`).join(','),lines=[header];
+    (tbody?.querySelectorAll('tr:not(.kc-hidden)')||[]).forEach(tr=>{ lines.push(Array.from(tr.querySelectorAll('td')).map(td=>`"${td.textContent.trim().replace(/"/g,'""')}"`).join(',')); });
+    const blob=new Blob([lines.join('\r\n')],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=activeTab==='filtered'?'kcommit-filtered.csv':'kcommit-report.csv';
+    a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+  });
+
+  /* ========= Detail panel ========= */
+  const rightPane=document.getElementById('kc-pane-right');
+
+  function clearDetailPanel(){
+    tbody?.querySelectorAll('tr').forEach(tr=>tr.classList.remove('kc-row-active'));
+    document.querySelectorAll('.kc-tab-panel').forEach(p=>{ p.innerHTML=''; p.classList.remove('kc-active'); });
+  }
+
+  function activateTab(name){
+    document.querySelectorAll('.kc-tab').forEach(t=>{ const active=t.dataset.tab===name; t.classList.toggle('kc-active',active); t.setAttribute('aria-selected',active?'true':'false'); });
+    document.querySelectorAll('.kc-tab-panel').forEach(p=>p.classList.toggle('kc-active',p.id===`kc-tab-${name}`));
+  }
+
+  document.querySelectorAll('.kc-tab').forEach(t=>t.addEventListener('click',()=>activateTab(t.dataset.tab)));
+
+  function renderDecision(row,commit){
+    const score=parseFloat(row.score)||0,dropped=!!(row.reason)&&score===0,reason=row.reason||'';
+    const KEEP_MAP={commit_whitelist:'SHA is explicitly whitelisted in config.',build_artifact:'Touched files include kernel build artifacts for this product.',default:'Passed all prefilter checks and scored above threshold.',no_files_layer:'Zero-file commit kept as a structural commit.',filter_disabled:'Prefilter is disabled in config; all commits pass.'};
+    const DROP_MAP={commit_blacklist:'SHA is explicitly blacklisted in config.',path_blacklist_all:'Every touched file matched the path blacklist.',no_kconfig_coverage:'No Kconfig build evidence for any touched file.',score_below_threshold:`Score ${score} is below the minimum threshold (${SB.stage_06?.threshold??'?'}).`,no_files_layer:'Zero-file structural commit \u2014 included without scoring.'};
+    const cls=dropped?'kc-decision-dropped':'kc-decision-kept',label=dropped?'\u2718 Dropped':'\u2714 Kept';
+    let items=[];
+    if(reason&&!dropped) items.push(KEEP_MAP[reason]||`Keep reason: ${reason}`);
+    else if(reason&&dropped) items.push(DROP_MAP[reason]||`Drop reason: ${reason}`);
+    else items.push(score>0?'Passed pipeline and scored above threshold.':'No explicit reason recorded.');
+    if(!dropped&&score>0) items.push(`Final score: ${score}`);
+    if(!dropped&&(row.profiles||[]).length) items.push(`Matched profiles: ${(row.profiles||[]).join(', ')}`);
+    return `<div class="${cls}"><div class="kc-decision-title">${label}</div><ul class="kc-decision-items">${items.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
+  }
+
+  function matchExcerpt(value,start,end,ctx){
+    ctx=(ctx==null)?60:ctx;
+    if(start==null||end==null||start<0) return '';
+    const str=String(value||''),lo=Math.max(0,start-ctx),hi=Math.min(str.length,end+ctx);
+    const pre=str.slice(lo,start).replace(/[\r\n]/g,'\u21b5'),mid=str.slice(start,end).replace(/[\r\n]/g,'\u21b5'),post=str.slice(end,hi).replace(/[\r\n]/g,'\u21b5');
+    const ld=lo>0?'\u2026':'',rd=hi<str.length?'\u2026':'';
+    return `<span class="kc-match-excerpt">${esc(ld)}${esc(pre)}<mark class="kc-match-hl">${esc(mid)}</mark>${esc(post)}${esc(rd)}</span>`;
+  }
+
+  function pathStem(p){ const base=String(p||'').replace(/\\/g,'/').split('/').pop(),dot=base.lastIndexOf('.'); return dot>0?base.slice(0,dot):base; }
+  function ruleNameFromPath(p){ const parts=String(p||'').replace(/\\/g,'/').split('/'); return parts.length>=2?parts[parts.length-2]:''; }
+
+  function renderProfileTrace(pname,pt){
+    const score=pt.final_score||0,mult=pt.multiplier!=null?pt.multiplier:1,blocked=pt.blocked,rules=pt.rules||{},cls=scoreClass(score);
+    let html=`<div class="kc-detail-card"><div class="kc-detail-card-head"><span class="kc-chip">${esc(pname)}</span><span class="kc-score-pill ${cls}">${esc(score)}</span>${blocked?`<span style="color:var(--danger);font-weight:700">\u26d4 BLOCKED${pt.block_reason?` \u2014 ${esc(pt.block_reason)}`:''}</span>`:`<span class="kc-muted" style="font-size:11px">\u00d7${mult}</span>`}</div><div class="kc-detail-card-body">`;
+    if(Object.keys(rules).length){
+      html+=`<table class="kc-trace-table"><thead><tr><th>Rule</th><th>Wt</th><th>Match</th><th>Score</th><th>Patterns matched</th></tr></thead><tbody>`;
+      Object.keys(rules).sort().forEach(rname=>{
+        const rd=rules[rname]||{},matched=rd.matched,allHits=Object.values(rd.matches||{}).flat();
+        const rowCls=blocked?'kc-rule-blocked':(matched?'kc-rule-matched':''),icon=blocked?'\u25a0':(matched?'\u2714':'\u2715'),iconCol=blocked?'var(--muted)':(matched?'var(--success)':'var(--muted)');
+        let badgesHtml='<span class="kc-muted">\u2014</span>';
+        if(allHits.length){ badgesHtml=allHits.map(m=>{ const pat=m.pattern||'',srcFile=m.source_file||null,srcLine=m.source_line||null,start=m.match_start,end=m.match_end,value=m.value||''; let srcBadge=''; if(srcFile){ const label=`${ruleNameFromPath(srcFile)||rname}:${pathStem(srcFile)}:${srcLine}`; srcBadge=`<span class="kc-src-badge" title="${esc(srcFile)}">${esc(label)}</span>`; } const excerpt=(start!=null&&end!=null)?matchExcerpt(value,start,end,60):`<span class="kc-match-excerpt kc-muted">${esc(value.slice(0,120))}${value.length>120?'\u2026':''}</span>`; return `<span class="kc-match-hit"><span class="kc-match-badge" title="${esc(pat)}">${esc(pat)}</span>${srcBadge}<span class="kc-match-excerpt-wrap">${excerpt}</span></span>`; }).join(''); }
+        html+=`<tr class="${rowCls}"><td class="kc-mono">${esc(rname)}</td><td>${esc(rd.weight||0)}</td><td style="color:${iconCol};font-weight:700;text-align:center">${icon}</td><td class="kc-td-num">${matched?esc(rd.score||0):'\u2014'}</td><td>${badgesHtml}</td></tr>`;
+      });
+      html+=`</tbody></table>`;
+    } else { html+=`<span class="kc-muted">No rule detail available.</span>`; }
+    html+=`</div></div>`;
+    return html;
+  }
+
+  function renderFiles(commit){
+    const files=(commit||{}).files||[],covSet=new Set((commit||{}).coverage||[]);
+    if(!files.length) return `<p class="kc-muted">No files recorded for this commit.</p>`;
+    return `<table class="kc-files-table"><thead><tr><th>File</th><th>Build coverage</th></tr></thead><tbody>${files.map(f=>`<tr><td>${esc(f)}</td><td class="${covSet.has(f)?'kc-coverage-y':'kc-coverage-n'}">${covSet.has(f)?'\u2714 covered':'\u2014'}</td></tr>`).join('')}</tbody></table>`;
+  }
+
+  function populateDetail(row,commit){
+    const c=commit||{},sc=c.scoring||{},profiles=sc.profiles||{};
+    let overview='';
+    overview+=detailCard('Commit',[kv('SHA',`<code class="kc-mono">${esc(c.commit||row.sha||row.sha12)}</code>`),kv('Subject',esc(c.subject||row.subject||'')),kv('Author',esc((c.author_name||row.author||'')+(c.author_email?` <${c.author_email}>`:''))) ,kv('Date',esc(fmtDate(c.author_time||row.date))),kv('Score',scorePill(c.score??row.score)),kv('Profiles',chips(c.matched_profiles||row.profiles||[]))].join(''),'\ud83d\udcc4');
+    overview+=detailCard('Decision',renderDecision(row,c),'\u2696\ufe0f');
+    if((c.product_evidence||[]).length){ overview+=detailCard('Product Evidence',`<ul style="padding-left:1.2rem;margin:0">${(c.product_evidence||[]).map(e=>`<li><code class="kc-mono">${esc(e)}</code></li>`).join('')}</ul>`,'\ud83d\udce6'); }
+    if(c.body){ const bodyPreview=c.body.length>4000?c.body.slice(0,4000)+'\n\u2026':c.body; overview+=detailCard('Full Commit Message',`<div class="kc-commit-body">${escNl(bodyPreview)}</div>`,'\ud83d\udcdd'); }
+    document.getElementById('kc-tab-overview').innerHTML=overview;
+    const traceProfiles=((sc.trace||{}).profiles)||{};
+    let scoring='';
+    if(Object.keys(traceProfiles).length){ scoring+=`<p class="kc-muted" style="font-size:11.5px;margin:0 0 8px">Formula per profile: <code>raw_rule_total &times; profile_weight/100</code>. Combined score = &sum; of all profile final scores. Pattern badges show the <strong>matched pattern</strong>, source <em>rule:file:line</em>, and a highlighted excerpt.</p>`; Object.keys(traceProfiles).sort().forEach(p=>scoring+=renderProfileTrace(p,traceProfiles[p]||{})); }
+    else if(Object.keys(profiles).length){ scoring+=detailCard('Profile Scores',Object.keys(profiles).sort().map(p=>kv(p,scorePill(profiles[p]))).join(''),'\u2605'); }
+    else{ scoring=`<p class="kc-muted">No scoring data available for this commit.</p>`; }
+    document.getElementById('kc-tab-scoring').innerHTML=scoring;
+    document.getElementById('kc-tab-files').innerHTML=renderFiles(c);
+    document.getElementById('kc-tab-raw').innerHTML=`<pre class="kc-raw-pre">${esc(JSON.stringify(c,null,2))}</pre>`;
+    activateTab('overview');
+  }
+
+  function populateFilteredDetail(row,commit){
+    const c=commit||{},dbg=c.prefilter_debug||{};
+    let overview='';
+    overview+=detailCard('Commit',[kv('SHA',`<code class="kc-mono">${esc(c.commit||row.sha||row.sha12)}</code>`),kv('Subject',esc(c.subject||row.subject||'')),kv('Author',esc((c.author_name||row.author||'')+(c.author_email?` <${c.author_email}>`:''))) ,kv('Date',esc(fmtDate(c.author_time||row.date))),kv('Filter stage',stageBadge(row.filter_stage||'')),kv('Drop reason',esc(row.reason||dbg.drop_reason||'\u2014'))].join(''),'\ud83d\udcc4');
+    const decItems=[];
+    if(dbg.drop_reason) decItems.push(kv('Reason code',esc(dbg.drop_reason)));
+    if(dbg.matched_subsystems?.length) decItems.push(kv('Matched subsystems',esc(dbg.matched_subsystems.join(', '))));
+    if(dbg.unmatched_paths?.length) decItems.push(kv('Unmatched paths',esc(dbg.unmatched_paths.join(', '))));
+    if(dbg.all_files_blacklisted!=null) decItems.push(kv('All files blacklisted',esc(String(dbg.all_files_blacklisted))));
+    if(decItems.length){ overview+=detailCard('Drop Decision',decItems.join(''),'\u2696\ufe0f'); }
+    if(c.body){ const bodyPreview=c.body.length>4000?c.body.slice(0,4000)+'\n\u2026':c.body; overview+=detailCard('Full Commit Message',`<div class="kc-commit-body">${escNl(bodyPreview)}</div>`,'\ud83d\udcdd'); }
+    document.getElementById('kc-tab-overview').innerHTML=overview;
+    document.getElementById('kc-tab-scoring').innerHTML=`<p class="kc-muted" style="padding:var(--space-4)">Not applicable \u2014 this commit was dropped before or after scoring and is not in the final report.</p>`;
+    document.getElementById('kc-tab-files').innerHTML=`<p class="kc-muted" style="padding:var(--space-4)">Not applicable \u2014 file coverage data is only available for relevant commits.</p>`;
+    document.getElementById('kc-tab-raw').innerHTML=`<pre class="kc-raw-pre">${esc(JSON.stringify(c,null,2))}</pre>`;
+    activateTab('overview');
+  }
+
+  function openDetail(sha12,fullSha){
+    const lookup=activeTab==='filtered'?filtRowBySha:rowBySha;
+    const row=lookup[sha12]||lookup[fullSha]||{};
+    tbody?.querySelectorAll('tr').forEach(tr=>tr.classList.toggle('kc-row-active',tr.dataset.sha12===sha12));
+    document.querySelectorAll('.kc-tab-panel').forEach(p=>{ p.innerHTML=''; p.classList.remove('kc-active'); });
+    const ov=document.getElementById('kc-tab-overview');
+    if(ov){ ov.innerHTML=`<p class="kc-muted">Loading\u2026</p>`; ov.classList.add('kc-active'); }
+    if(rightPane?.classList.contains('kc-collapsed')){ rightPane.classList.remove('kc-collapsed'); localStorage.setItem('kc-right-collapsed','0'); updateCollapseIcons(); }
+    if(activeTab==='filtered'){ fetchFilteredCommit(sha12,fullSha||sha12).then(commit=>populateFilteredDetail(row,commit)); }
+    else { fetchCommit(sha12,fullSha||sha12).then(commit=>populateDetail(row,commit)); }
+  }
+
+  document.addEventListener('click',e=>{ const a=e.target.closest('.kc-sha-link'); if(!a) return; e.preventDefault(); e.stopImmediatePropagation(); openDetail(a.dataset.sha12||a.dataset.sha,a.dataset.sha||a.dataset.sha12); },true);
+
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape') tbody?.querySelectorAll('tr').forEach(tr=>tr.classList.remove('kc-row-active'));
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      const visible=Array.from(tbody?.querySelectorAll('tr:not(.kc-hidden)')||[]);
+      if(!visible.length) return;
+      const active=tbody?.querySelector('tr.kc-row-active'),idx=visible.indexOf(active);
+      const next=e.key==='ArrowDown'?visible[idx+1]||visible[0]:visible[idx-1]||visible[visible.length-1];
+      if(next){ openDetail(next.dataset.sha12,next.dataset.sha); next.scrollIntoView({block:'nearest'}); }
+    }
+  });
+
+  window.addEventListener('resize',updateFilterOffset);
+
+  /* ========= Bootstrap ========= */
+  buildHead();
+  showLoader(ROWS.length);
+  renderRowsAsync(
+    (done,total)=>updateLoaderProgress(done,total),
+    ()=>{
+      buildShaIndex();
+      applyFilters();
+      hideLoader();
+      setTimeout(()=>{
+        COL_DISTINCT=buildDistinct(COLS,ROWS);
+        buildHead();
+        applyFilters();
+      },0);
+    }
+  );
+
+})();

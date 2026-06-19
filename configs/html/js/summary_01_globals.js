@@ -69,8 +69,12 @@ FILT_ROWS.forEach(r => { filtRowBySha[r.sha12] = r; if (r.sha) filtRowBySha[r.sh
 /* ---- Per-column distinct value cache --------------------------------
  * buildDistinct() is O(rows × cols) and must NOT run at parse time.
  * COL_DISTINCT starts empty; bootstrap fills it after first paint.
+ *
+ * buildDistinctAsync() processes one column per idle/timeout tick so
+ * it never blocks the main thread for large datasets (perf B.1).
  * ------------------------------------------------------------------- */
 function buildDistinct(cols, rows) {
+  /* Synchronous version — kept for callers that need an immediate return value. */
   const dist = Object.create(null);
   for (const col of cols) {
     const vals = new Set();
@@ -85,6 +89,35 @@ function buildDistinct(cols, rows) {
     });
   }
   return dist;
+}
+
+/* Async variant: processes one column per idle/timeout tick.
+ * Calls onDone(dist) when all columns are finished — no main-thread
+ * jank on large datasets (perf B.1).
+ * Uses requestIdleCallback when available (Chrome/Firefox),
+ * falls back to setTimeout(0) for Safari. */
+function buildDistinctAsync(cols, rows, onDone) {
+  const dist = Object.create(null);
+  let i = 0;
+  const schedule = (typeof requestIdleCallback === 'function')
+    ? cb => requestIdleCallback(cb, { timeout: 200 })
+    : cb => setTimeout(cb, 0);
+  function processNext() {
+    if (i >= cols.length) { onDone(dist); return; }
+    const col  = cols[i++];
+    const vals = new Set();
+    for (const r of rows) {
+      const v = r[col.key];
+      if (Array.isArray(v)) { for (const x of v) vals.add(String(x)); }
+      else if (v != null && v !== '') vals.add(String(v));
+    }
+    dist[col.key] = [...vals].sort((a, b) => {
+      const na = parseFloat(a), nb = parseFloat(b);
+      return (!isNaN(na) && !isNaN(nb)) ? na - nb : a.localeCompare(b);
+    });
+    schedule(processNext);
+  }
+  schedule(processNext);
 }
 
 /* Empty placeholder — populated by bootstrap after first paint. */

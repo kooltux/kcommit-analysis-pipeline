@@ -1,26 +1,32 @@
 /* summary_10_table.js — kcommit-analysis-pipeline
  *
- * Middle pane: table head, filter controls, sort, virtual-scroll
- * renderer, live filter, clear-filters and CSV-export wiring.
+ * Middle pane: table head, filter controls, sort, row HTML, live filter,
+ * clear-filters and CSV-export wiring.
  *
- * VIRTUAL SCROLL
- * ==============
- * padding-top / padding-bottom on <table> simulate full dataset height;
- * only VIRT_OVERSCAN rows live in <tbody> at any time.
+ * Virtual scroll is handled entirely by summary_11_vtable.js.
+ * This module calls virtRender(0) / resetVirt() / onTableScroll() from
+ * that module — it never writes rows to <tbody> directly.
  *
  * PERFORMANCE CONTRACT
  * ====================
- * ① buildDistinct   — never called at parse time; deferred by bootstrap.
+ * ① buildDistinct   — never called at parse time; deferred by bootstrap
+ *                    via buildDistinctAsync() (one column per idle tick,
+ *                    perf B.1).
  * ② applySort       — Schwartzian transform (key extracted once per row);
  *                    plain < / > compare, no localeCompare, no String().
+ *                    Dispatched via requestAnimationFrame so the sort-icon
+ *                    update is painted before the blocking work begins
+ *                    (perf B.2). haystackRows is invalidated after sort
+ *                    because it is index-synced to sortedRows.
  * ③ applyFilters    — for-loop (not .filter()) over sortedRows; skips
  *                    columns with no active filter; matchToken compiles
  *                    RegExp once per token outside the row loop.
+ *                    Text inputs debounced at 300 ms; select inputs fire
+ *                    immediately (perf B.3).
  * ④ getHaystack     — built lazily; only when global search is active;
- *                    NOT invalidated by sort (order doesn’t matter for
- *                    substring search).
- * ⑤ virtRender      — paints at most VIRT_OVERSCAN rows; skips repaint
- *                    when window hasn’t moved.
+ *                    invalidated after sort (index sync required).
+ * ⑤ virtRender      — paints at most VIRT_OVERSCAN rows (summary_11_vtable);
+ *                    skips repaint when window hasn’t moved.
  */
 
 const tbody      = document.getElementById('kc-tbody');
@@ -37,56 +43,18 @@ let sortKey = null, sortDir = 1;
 const colFilters = Object.create(null);
 COLS.forEach(c => { colFilters[c.key] = ''; });
 
-/* ── Virtual scroll state ───────────────────────────────────────── */
-const VIRT_OVERSCAN = 60;
+/* filteredRows — result of the last applyFilters() call.
+ * Owned here; read by summary_11_vtable.js for rendering. */
 let filteredRows = ROWS.slice();
-let virtOffset   = 0;
-let rowHeightPx  = 33;
 
-function setTablePadding(topRows, bottomRows) {
-  if (!tableEl) return;
-  tableEl.style.paddingTop    = topRows    > 0 ? `${topRows    * rowHeightPx}px` : '';
-  tableEl.style.paddingBottom = bottomRows > 0 ? `${bottomRows * rowHeightPx}px` : '';
-}
-
-function measureRowHeight() {
-  const first = tbody?.querySelector('tr');
-  if (first) { const h = first.getBoundingClientRect().height; if (h > 0) rowHeightPx = h; }
-}
-
-function virtRender(scrollTop) {
-  if (!tbody || !tableWrap || !tableEl) return;
-  const total    = filteredRows.length;
-  const viewH    = tableWrap.clientHeight || 600;
-  const top      = (scrollTop != null ? scrollTop : tableWrap.scrollTop) || 0;
-  const visStart = Math.floor(top / rowHeightPx);
-  const visEnd   = Math.ceil((top + viewH) / rowHeightPx);
-  const winStart = Math.max(0,     visStart - Math.floor(VIRT_OVERSCAN / 2));
-  const winEnd   = Math.min(total, visEnd   + Math.ceil(VIRT_OVERSCAN  / 2));
-  if (winStart === virtOffset && tbody.childElementCount === winEnd - winStart) return;
-  virtOffset = winStart;
-  const parts = [];
-  for (let i = winStart; i < winEnd; i++) parts.push(rowHtml(filteredRows[i]));
-  tbody.innerHTML = parts.join('');
-  measureRowHeight();
-  setTablePadding(winStart, Math.max(0, total - winEnd));
-}
-
-let scrollRafPending = false;
-function onTableScroll() {
-  if (scrollRafPending) return;
-  scrollRafPending = true;
-  requestAnimationFrame(() => { scrollRafPending = false; virtRender(); });
-}
-
-/* ── Filter offset (sticky filter row top) ──────────────────────── */
+/* ── Filter offset (sticky filter row top) ───────────────────────────────────── */
 function updateFilterOffset() {
   if (!thead || !tableWrap) return;
   const sortRow = thead.querySelector('tr.kc-sort-row');
   if (sortRow) tableWrap.style.setProperty('--thead-sort-h', `${sortRow.offsetHeight}px`);
 }
 
-/* ── Column filter controls ─────────────────────────────────────── */
+/* ── Column filter controls ──────────────────────────────────────────────── */
 function buildFilterCtrl(col, fth) {
   const distinct = COL_DISTINCT[col.key] || [];
   const useList  = (col.type === 'select' && (col.options || []).length)
@@ -97,8 +65,10 @@ function buildFilterCtrl(col, fth) {
     sel.dataset.filterKey  = col.key;
     sel.dataset.filterRole = 'select';
     sel.innerHTML = `<option value="">All</option>`
-      + options.map(v => `<option value="${esc(v)}"${colFilters[col.key] === String(v) ? ' selected' : ''}>${esc(v)}</option>`).join('');
-    sel.addEventListener('change', scheduleFilter);
+      + options.map(v => `<option value="${esc(v)}"${
+          colFilters[col.key] === String(v) ? ' selected' : ''
+        }>${esc(v)}</option>`).join('');
+    sel.addEventListener('change', scheduleFilter);          /* immediate (perf B.3) */
     fth.appendChild(sel);
     if (col.type === 'number') {
       const inp = document.createElement('input');
@@ -106,7 +76,7 @@ function buildFilterCtrl(col, fth) {
       inp.dataset.filterKey  = col.key;
       inp.dataset.filterRole = 'text';
       inp.value = colFilters[col.key] || '';
-      inp.addEventListener('input', scheduleFilter);
+      inp.addEventListener('input', scheduleFilterDebounced);  /* debounced 300 ms (perf B.3) */
       fth.appendChild(inp);
     }
   } else {
@@ -115,13 +85,13 @@ function buildFilterCtrl(col, fth) {
     inp.dataset.filterKey  = col.key;
     inp.dataset.filterRole = 'text';
     inp.value = colFilters[col.key] || '';
-    inp.addEventListener('input', scheduleFilter);
+    inp.addEventListener('input', scheduleFilterDebounced);    /* debounced 300 ms (perf B.3) */
     fth.appendChild(inp);
   }
 }
 
-/* Lightweight rebuild: replace only filter-row <th> contents.
- * Called after deferred buildDistinct() populates COL_DISTINCT. */
+/* rebuildFilterDropdowns — lightweight rebuild after buildDistinctAsync()
+ * populates COL_DISTINCT.  Only replaces filter-row <th> contents. */
 function rebuildFilterDropdowns() {
   if (!thead) return;
   const filterRow = thead.querySelector('tr.kc-filter-row');
@@ -136,8 +106,6 @@ function rebuildFilterDropdowns() {
 
 function buildHead() {
   if (!thead) return;
-  virtOffset = 0;
-  setTablePadding(0, 0);
   /* Persist current filter values before wiping DOM. */
   document.querySelectorAll('[data-filter-key]').forEach(el => {
     colFilters[el.dataset.filterKey] = el.value || '';
@@ -151,8 +119,8 @@ function buildHead() {
       if (sortKey === col.key) sortDir = -sortDir;
       else { sortKey = col.key; sortDir = 1; }
       updateSortIcons();
-      applySort();
-      applyFilters();
+      /* Defer sort+filter via rAF so the sort-icon paint lands first (perf B.2). */
+      requestAnimationFrame(() => { applySort(); applyFilters(); });
     });
     sortRow.appendChild(th);
     const fth = document.createElement('th');
@@ -161,6 +129,7 @@ function buildHead() {
   });
   thead.innerHTML = ''; thead.appendChild(sortRow); thead.appendChild(filterRow);
   requestAnimationFrame(updateFilterOffset);
+  /* Re-attach scroll listener on every head rebuild (tab switch). */
   tableWrap?.removeEventListener('scroll', onTableScroll);
   tableWrap?.addEventListener('scroll', onTableScroll, { passive: true });
 }
@@ -204,7 +173,7 @@ function rowHtml(r) {
   return out;
 }
 
-/* ── Sort — Schwartzian transform, no localeCompare ───────────────── */
+/* ── Sort — Schwartzian transform, no localeCompare ────────────────────────── */
 function applySort() {
   if (!sortKey) return;
   const col   = COLS.find(c => c.key === sortKey);
@@ -225,19 +194,17 @@ function applySort() {
     keyed.sort((a, b) => (a.k < b.k ? -sortDir : a.k > b.k ? sortDir : 0));
   }
   for (let i = 0; i < n; i++) sortedRows[i] = keyed[i].r;
-  /* Do NOT invalidate haystackRows here — content hasn’t changed,
-   * only order, and substring search doesn’t care about order.
-   * The next applyFilters() call will use the existing cache. */
+  /* Invalidate haystack: index-synced to sortedRows (perf B.2). */
+  haystackRows = null;
 }
 
-function renderRows() { applyFilters(); }
-
-/* renderRowsAsync: synthetic progress bar (~150 ms) then applyFilters.
- * Virtual scroll makes the DOM work trivial regardless of dataset size. */
+/* renderRowsAsync — thin wrapper: synthetic progress ticks then applyFilters.
+ * Virtual scroll (summary_11_vtable) makes the actual DOM work trivial. */
 function renderRowsAsync(onProgress, onDone) {
   const total = sortedRows.length;
   if (total === 0) {
-    filteredRows = []; if (tbody) tbody.innerHTML = '';
+    filteredRows = [];
+    if (tbody) tbody.innerHTML = '';
     setTablePadding(0, 0);
     onDone && onDone(); return;
   }
@@ -253,10 +220,10 @@ function renderRowsAsync(onProgress, onDone) {
   setTimeout(tick, 30);
 }
 
-/* ── Filter ──────────────────────────────────────────────────────── */
+/* ── Filter ──────────────────────────────────────────────────────────────── */
 let filterTimer  = 0;
 /* haystackRows: index-synced to sortedRows, built lazily.
- * NOT invalidated on sort — content is identical, order irrelevant. */
+ * Invalidated on sort and on dataset switch. */
 let haystackRows = null;
 
 function getHaystack() {
@@ -275,13 +242,19 @@ function getHaystack() {
   return haystackRows;
 }
 
+/* scheduleFilter — for select inputs: fires at next task boundary. */
 function scheduleFilter() {
   clearTimeout(filterTimer);
-  filterTimer = setTimeout(() => applyFilters(), 120);
+  filterTimer = setTimeout(() => applyFilters(), 0);
 }
 
-/* Compile matchers once per active token, outside the row loop.
- * Returns an array of matcher functions, one per (col, token) pair. */
+/* scheduleFilterDebounced — for text inputs: waits for typing pause (perf B.3). */
+function scheduleFilterDebounced() {
+  clearTimeout(filterTimer);
+  filterTimer = setTimeout(() => applyFilters(), 300);
+}
+
+/* Compile matchers once per active token, outside the row loop. */
 function buildMatchers(activeCols, selectVals, textVals) {
   const matchers = [];
   for (const col of activeCols) {
@@ -303,10 +276,11 @@ function compileMatcher(token) {
     try { const re = new RegExp(pat); return s => re.test(s.toLowerCase()); }
     catch { return s => s.toLowerCase().includes(t); }
   }
-  /* Plain substring — no RegExp overhead. */
   return s => s.toLowerCase().includes(t);
 }
 
+/* applyFilters — rebuilds filteredRows[], then delegates rendering to
+ * virtRender(0) from summary_11_vtable.js.  No DOM row manipulation here. */
 function applyFilters() {
   const selectVals = Object.create(null);
   const textVals   = Object.create(null);
@@ -327,7 +301,6 @@ function applyFilters() {
   if (noFilters) {
     filteredRows = sortedRows;
   } else {
-    /* Compile matchers once before the row loop. */
     const matchers = buildMatchers(activeCols, selectVals, textVals);
     const hay      = gTokens.length ? getHaystack() : null;
     filteredRows   = [];
@@ -335,9 +308,7 @@ function applyFilters() {
     outer: for (let idx = 0; idx < n; idx++) {
       const r = sortedRows[idx];
       for (let mi = 0; mi < matchers.length; mi++) {
-        const m  = matchers[mi];
-        const cv = cellValue(r, m.key);
-        if (!m.fn(cv)) continue outer;
+        if (!matchers[mi].fn(cellValue(r, matchers[mi].key))) continue outer;
       }
       if (hay) {
         const h = hay[idx];
@@ -352,8 +323,8 @@ function applyFilters() {
   const shown = filteredRows.length;
   if (liveCount) liveCount.textContent = `Showing ${shown.toLocaleString()} of ${ROWS.length.toLocaleString()} commits`;
   if (noMatch)   noMatch.classList.toggle('kc-visible', shown === 0);
-  virtOffset = 0;
-  if (tableWrap) tableWrap.scrollTop = 0;
+  /* Hand off to virtual scroll — resets scroll position and paints window. */
+  resetVirt();
   virtRender(0);
 }
 
@@ -362,9 +333,9 @@ clearBtn?.addEventListener('click', () => {
   if (globalSrch) globalSrch.value = '';
   applyFilters();
 });
-globalSrch?.addEventListener('input', scheduleFilter);
+globalSrch?.addEventListener('input', scheduleFilterDebounced);  /* debounced (perf B.3) */
 
-/* CSV export — JS array only, no DOM scan. */
+/* CSV export — array-based, no DOM scan. */
 exportBtn?.addEventListener('click', () => {
   const header = COLS.map(c => `"${c.label.replace(/"/g, '""')}"`).join(',');
   const lines  = [header];
