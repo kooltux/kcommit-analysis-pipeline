@@ -1,6 +1,13 @@
 /* summary_08_tabs.js — kcommit-analysis-pipeline
  *
  * Report-level tab bar (two-tab mode only) and switchTab() dataset switcher.
+ *
+ * v18.4.0 — switchTab() now resets colFilters to the new column set and
+ *           clears the global search input before rebuilding the head.
+ *           Previously, stale filter values from the departing tab bled
+ *           into the incoming tab's buildHead() input restoration, causing
+ *           filters and sorting to appear broken after the first tab switch
+ *           (and permanently after switching back).
  */
 
 (function () {
@@ -37,6 +44,13 @@ function switchTab(name) {
   clearDetailPanel();
   sortedRows = ROWS.slice(); sortKey = null; sortDir = 1;
   haystackRows = null;   /* invalidate haystack cache for new dataset */
+
+  /* Reset column filters to the new column set so stale keys from the
+   * previous tab do not bleed into buildHead() input restoration.
+   * Also clear the global search so the new dataset starts unfiltered. */
+  Object.keys(colFilters).forEach(k => { delete colFilters[k]; });
+  COLS.forEach(c => { colFilters[c.key] = ''; });
+  if (globalSrch) globalSrch.value = '';
 
   /* Show loader immediately, build head with empty COL_DISTINCT so the
    * UI is responsive instantly, then build the real distinct map async

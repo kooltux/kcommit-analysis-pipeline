@@ -290,14 +290,7 @@ def test_html_report_sidebar_handles_missing_stage_counts(tmp_path):
 
 
 def test_html_report_sidebar_no_evaluation_key(tmp_path):
-    """v16.9.0: 'evaluation' must no longer appear in the sidebar payload.
-
-    The Parameters/Evaluation Config section was removed in v16.9.0.
-    Relevant fields (git_range, kernel_revision) are now exposed via
-    UI.context (built by _build_context()) instead of the sidebar.
-    Passing an 'evaluation' dict in report_stats must have no effect on
-    the sidebar — the key must be absent.
-    """
+    """v16.9.0: 'evaluation' must no longer appear in the sidebar payload."""
     out = tmp_path / 'report.html'
     rs = {
         'evaluation': {
@@ -314,12 +307,7 @@ def test_html_report_sidebar_no_evaluation_key(tmp_path):
 
 
 def test_html_report_context_block_present(tmp_path):
-    """v16.9.0: UI.context must be present and contain expected fields.
-
-    When cfg is passed with kernel.rev_old/rev_new, the context block
-    must expose rev_range, rev_old, rev_new.  When cfg is omitted the
-    block is still present (all fields None/empty) and must not crash.
-    """
+    """v16.9.0: UI.context must be present and contain expected fields."""
     out = tmp_path / 'report.html'
     cfg = {
         'kernel': {
@@ -348,7 +336,6 @@ def test_html_report_context_block_present_without_cfg(tmp_path):
     ui  = _kc_ui(out.read_text())
     assert 'context' in ui
     ctx = ui['context']
-    # All fields are None or empty when no cfg is provided
     assert ctx['rev_old']   is None
     assert ctx['rev_new']   is None
     assert ctx['rev_range'] is None
@@ -375,7 +362,6 @@ def test_html_report_uses_metadata_sidecar(tmp_path):
         metadata_path='./report_metadata.json')
     txt = out.read_text()
     assert 'KCOMMIT_REPORT_METADATA_URL' in txt
-    # In sidecar mode, commit store is NOT embedded
     assert '"a" * 40' not in txt
 
 
@@ -392,8 +378,6 @@ def test_html_report_detail_root_in_kc_ui(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_html_report_embeds_fallback_commit_map_when_compressed(tmp_path):
-    """embed_compression is accepted without error; __KC_UI__ and commit data
-    are always present regardless of the compression setting."""
     out = tmp_path / 'report.html'
     commits = [{
         'commit': 'abc123456789deadbeef' + 'f' * 20, 'subject': 'subj',
@@ -423,7 +407,6 @@ def test_html_report_includes_theme_toggle_button(tmp_path):
 
 
 def test_html_report_has_three_pane_layout(tmp_path):
-    """The rendered report must contain the three pane landmark IDs."""
     out = tmp_path / 'report.html'
     generate_html_report([], {}, {}, str(out))
     txt = out.read_text(encoding='utf-8')
@@ -433,7 +416,6 @@ def test_html_report_has_three_pane_layout(tmp_path):
 
 
 def test_html_detail_pane_has_tabs(tmp_path):
-    """Detail pane must have Overview, Scoring, Files, Raw JSON tabs."""
     out = tmp_path / 'report.html'
     generate_html_report([], {}, {}, str(out))
     txt = out.read_text(encoding='utf-8')
@@ -474,14 +456,12 @@ def test_html_report_kc_ui_rows_have_sha_and_subject(tmp_path):
     assert row['sha12']   == 'abc123456789'
     assert row['subject'] == 'usb fix'
     assert row['score']   == 87
-    # Full commit detail available in __KC_COMMITS__ for JS panel
     txt = out.read_text()
     assert 'window.__KC_COMMITS__' in txt
     assert 'use-after-free' in txt
 
 
 def test_html_report_kc_ui_contains_profile_in_columns(tmp_path):
-    """Profiles column must carry select options when profiles exist."""
     out = tmp_path / 'report.html'
     commits = [{
         'commit': 'a' * 40, 'subject': 'fix', 'author_name': 'x',
@@ -543,15 +523,9 @@ def test_summary_css_detail_pane_is_scrollable():
 
 # ---------------------------------------------------------------------------
 # JS asset checks (real configs/html/js/ modules)
-#
-# These tests verify the assembled JS source from the js/ module tree.
-# _read_assembled_js() concatenates all summary_*.js files in sorted order,
-# mirroring _assemble_js() at runtime.  configs/html/summary.js is no longer
-# present in the repository (removed in v18.1.0).
 # ---------------------------------------------------------------------------
 
 def test_summary_js_reads_kc_ui_global():
-    """JS must read window.__KC_UI__ as its data source."""
     js = _read_assembled_js()
     assert 'window.__KC_UI__' in js
 
@@ -616,32 +590,101 @@ def test_summary_js_has_scoring_trace_renderer():
 
 
 def test_summary_js_has_per_profile_score_columns():
-    """JS must expand per-profile score_<profile> keys into table columns."""
     js = _read_assembled_js()
-    assert 'score_' in js          # key prefix used for per-profile columns
-    assert 'PROFILE_NAMES' in js   # profile name universe computed at startup
-    assert '_profile' in js        # column marker used in rowHtml()
+    assert 'score_' in js
+    assert 'PROFILE_NAMES' in js
+    assert '_profile' in js
 
 
 def test_summary_js_has_context_section():
-    """v16.9.0: JS must render the Analysis Context section from UI.context."""
     js = _read_assembled_js()
     assert 'UI.context' in js or 'CTX' in js
     assert 'Analysis Context' in js
 
 
 def test_summary_js_no_evaluation_config_section():
-    """v16.9.0: JS executable code must NOT render an Evaluation Config section.
-
-    The string 'Evaluation Config' may appear in comments (e.g. change-log),
-    but must not appear in any executable code path — specifically, the old
-    'SB.evaluation' guard and its surrounding renderEvaluationConfig() call
-    must be gone entirely.
-    """
     js = _read_assembled_js()
     code = _strip_comments(js)
     assert 'Evaluation Config' not in code
     assert 'SB.evaluation'     not in code
+
+
+def test_summary_js_buildhead_does_not_read_dom_into_colfilters():
+    """v18.5.0: buildHead() must NOT contain a persist block that reads
+    [data-filter-key] DOM elements back into colFilters.
+
+    The old v18.4.1 persist block was identified by the local variable name
+    'validKeys' (used only inside that block).  Its removal is verified by
+    asserting 'validKeys' is absent from the assembled source.
+    Note: 'colKeySet' (used in applyFilters) is intentionally present and
+    is tested separately.
+    """
+    js = _read_assembled_js()
+    code = _strip_comments(js)
+    assert 'validKeys' not in code
+
+
+def test_summary_js_applyfilters_guards_colfilters_write():
+    """v18.5.0: applyFilters() must guard its colFilters write to the current
+    COLS keyset only, preventing stale DOM elements from the departing tab
+    from re-polluting colFilters after switchTab() has cleared it.
+    """
+    js = _read_assembled_js()
+    code = _strip_comments(js)
+    assert 'colKeySet' in code
+    assert 'colKeySet.has(' in code
+
+
+def test_summary_js_switchtab_resets_col_filters():
+    """v18.4.0: switchTab() must reset colFilters and clear global search."""
+    js = _read_assembled_js()
+    code = _strip_comments(js)
+    assert 'delete colFilters[k]' in code
+    assert "globalSrch.value = ''" in code or 'globalSrch.value=""' in code
+
+
+def test_summary_js_resetvirt_uses_sentinel():
+    """v18.5.1: resetVirt() must set virtOffset = -1 (sentinel), not 0.
+
+    The skip guard in virtRender() is:
+      if (winStart === virtOffset && tbody.childElementCount === winEnd - winStart) return;
+
+    After applyFilters() calls resetVirt() then virtRender(0), winStart is
+    always 0 (scroll is at top).  If resetVirt() set virtOffset = 0, both
+    guard conditions could be simultaneously satisfied when the viewport
+    holds the same number of rows before and after the filter/sort —
+    silently skipping the repaint and leaving stale rows on screen.
+
+    Setting virtOffset = -1 guarantees winStart (>= 0) != virtOffset (-1),
+    so the guard always fails on the first call after a reset.
+    """
+    js   = _read_assembled_js()
+    code = _strip_comments(js)
+    # resetVirt() must assign -1, not 0
+    assert 'virtOffset = -1' in code
+    # The initial declaration must also use -1 so the very first
+    # virtRender() call after page load always paints.
+    assert 'virtOffset    = -1' in code or 'virtOffset = -1' in code
+
+
+def test_summary_js_resetvirt_does_not_assign_zero():
+    """v18.5.1: virtOffset must never be reset to 0 — only to -1 (sentinel).
+
+    Any assignment of virtOffset = 0 inside resetVirt() would re-introduce
+    the silent skip-guard false-positive that this fix eliminates.
+    """
+    js   = _read_assembled_js()
+    code = _strip_comments(js)
+    # Confirm no 'virtOffset = 0' assignment exists anywhere in the source.
+    # The only assignments should be: initial declaration (-1), sentinel
+    # reset in resetVirt() (-1), and the live assignment in virtRender()
+    # (virtOffset = winStart, which is always >= 0 and only set after a
+    # successful paint — not on a skip path).
+    import re as _re
+    zero_assignments = _re.findall(r'virtOffset\s*=\s*0\b', code)
+    assert zero_assignments == [], (
+        f'Found unexpected virtOffset = 0 assignment(s): {zero_assignments}'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -649,7 +692,6 @@ def test_summary_js_no_evaluation_config_section():
 # ---------------------------------------------------------------------------
 
 def test_assemble_js_wraps_in_iife(tmp_path):
-    """_assemble_js() must wrap the concatenated modules in a strict IIFE."""
     from lib.html_report import _assemble_js
     js_dir = tmp_path / 'js'
     js_dir.mkdir()
@@ -663,7 +705,6 @@ def test_assemble_js_wraps_in_iife(tmp_path):
 
 
 def test_assemble_js_sorted_order(tmp_path):
-    """Modules must be concatenated in sorted filename order."""
     from lib.html_report import _assemble_js
     js_dir = tmp_path / 'js'
     js_dir.mkdir()
@@ -674,10 +715,7 @@ def test_assemble_js_sorted_order(tmp_path):
 
 
 def test_assemble_js_empty_dir_returns_empty(tmp_path):
-    """_assemble_js() returns '' when the js/ dir is empty or missing."""
     from lib.html_report import _assemble_js
-    # Missing js/ dir
     assert _assemble_js(str(tmp_path)) == ''
-    # Empty js/ dir
     (tmp_path / 'js').mkdir()
     assert _assemble_js(str(tmp_path)) == ''

@@ -26,7 +26,27 @@
  * ④ getHaystack     — built lazily; only when global search is active;
  *                    invalidated after sort (index sync required).
  * ⑤ virtRender      — paints at most VIRT_OVERSCAN rows (summary_11_vtable);
- *                    skips repaint when window hasn’t moved.
+ *                    skips repaint when window hasn't moved.
+ *
+ * v18.5.0 — Root-cause fix for all three filter/sort regression bugs:
+ *
+ *   BUG 1 & 2 (filter values not reset on tab switch; sort broken after
+ *   tab switch): buildHead() was reading ALL [data-filter-key] elements
+ *   from the live DOM before thead.innerHTML='' ran, then writing those
+ *   values back into colFilters — clobbering the clean reset that
+ *   switchTab() had just performed.  colFilters is already the
+ *   authoritative source of truth; buildHead() must only READ it (to
+ *   pre-fill new inputs), never write back into it from the DOM.
+ *   Fix: remove the persist block from buildHead() entirely.
+ *
+ *   BUG 3 (sort broken as soon as any filter is active, even on initial
+ *   tab): applyFilters() was also writing back to colFilters from the
+ *   DOM unconditionally — including elements from the *previous* tab's
+ *   head still alive at call time.  This re-introduced stale values
+ *   immediately after switchTab() cleared them, causing filteredRows to
+ *   be silently trimmed on the incoming tab before any user interaction.
+ *   Fix: guard the colFilters write in applyFilters() to only keys that
+ *   exist in the current COLS set.
  */
 
 const tbody      = document.getElementById('kc-tbody');
@@ -68,7 +88,7 @@ function buildFilterCtrl(col, fth) {
       + options.map(v => `<option value="${esc(v)}"${
           colFilters[col.key] === String(v) ? ' selected' : ''
         }>${esc(v)}</option>`).join('');
-    sel.addEventListener('change', scheduleFilter);          /* immediate (perf B.3) */
+    sel.addEventListener('change', scheduleFilter);
     fth.appendChild(sel);
     if (col.type === 'number') {
       const inp = document.createElement('input');
@@ -76,16 +96,16 @@ function buildFilterCtrl(col, fth) {
       inp.dataset.filterKey  = col.key;
       inp.dataset.filterRole = 'text';
       inp.value = colFilters[col.key] || '';
-      inp.addEventListener('input', scheduleFilterDebounced);  /* debounced 300 ms (perf B.3) */
+      inp.addEventListener('input', scheduleFilterDebounced);
       fth.appendChild(inp);
     }
   } else {
     const inp = document.createElement('input');
-    inp.type = 'text'; inp.placeholder = 'Filter…';
+    inp.type = 'text'; inp.placeholder = 'Filter\u2026';
     inp.dataset.filterKey  = col.key;
     inp.dataset.filterRole = 'text';
     inp.value = colFilters[col.key] || '';
-    inp.addEventListener('input', scheduleFilterDebounced);    /* debounced 300 ms (perf B.3) */
+    inp.addEventListener('input', scheduleFilterDebounced);
     fth.appendChild(inp);
   }
 }
@@ -104,12 +124,18 @@ function rebuildFilterDropdowns() {
   });
 }
 
+/* buildHead — rebuilds thead from scratch using colFilters as the
+ * authoritative value source.
+ *
+ * IMPORTANT: this function must NOT read [data-filter-key] elements
+ * back into colFilters.  colFilters is always up-to-date (maintained
+ * by switchTab(), clearBtn, and applyFilters()).  Reading the DOM here
+ * would re-introduce stale values from elements that have not yet been
+ * removed (thead.innerHTML='' has not run yet at the start of this
+ * function), defeating the reset that switchTab() just performed.
+ */
 function buildHead() {
   if (!thead) return;
-  /* Persist current filter values before wiping DOM. */
-  document.querySelectorAll('[data-filter-key]').forEach(el => {
-    colFilters[el.dataset.filterKey] = el.value || '';
-  });
   const sortRow   = document.createElement('tr'); sortRow.className   = 'kc-sort-row';
   const filterRow = document.createElement('tr'); filterRow.className = 'kc-filter-row';
   COLS.forEach(col => {
@@ -119,7 +145,6 @@ function buildHead() {
       if (sortKey === col.key) sortDir = -sortDir;
       else { sortKey = col.key; sortDir = 1; }
       updateSortIcons();
-      /* Defer sort+filter via rAF so the sort-icon paint lands first (perf B.2). */
       requestAnimationFrame(() => { applySort(); applyFilters(); });
     });
     sortRow.appendChild(th);
@@ -129,7 +154,6 @@ function buildHead() {
   });
   thead.innerHTML = ''; thead.appendChild(sortRow); thead.appendChild(filterRow);
   requestAnimationFrame(updateFilterOffset);
-  /* Re-attach scroll listener on every head rebuild (tab switch). */
   tableWrap?.removeEventListener('scroll', onTableScroll);
   tableWrap?.addEventListener('scroll', onTableScroll, { passive: true });
 }
@@ -158,7 +182,7 @@ function rowHtml(r) {
       out += `<td class="kc-td-sha"><a href="#" class="kc-sha-link" data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${esc(r.sha12)}</a></td>`;
     } else if (!isFiltered && (col.key === 'score' || col._profile)) {
       const num = parseFloat(v) || 0;
-      out += `<td class="kc-td-num">${num > 0 ? scorePill(num) : '<span class="kc-muted">—</span>'}</td>`;
+      out += `<td class="kc-td-num">${num > 0 ? scorePill(num) : '<span class="kc-muted">\u2014</span>'}</td>`;
     } else if (!isFiltered && col.key === 'profiles') {
       out += `<td>${chips(Array.isArray(v) ? v : [v])}</td>`;
     } else if (col.key === 'date') {
@@ -194,12 +218,10 @@ function applySort() {
     keyed.sort((a, b) => (a.k < b.k ? -sortDir : a.k > b.k ? sortDir : 0));
   }
   for (let i = 0; i < n; i++) sortedRows[i] = keyed[i].r;
-  /* Invalidate haystack: index-synced to sortedRows (perf B.2). */
   haystackRows = null;
 }
 
-/* renderRowsAsync — thin wrapper: synthetic progress ticks then applyFilters.
- * Virtual scroll (summary_11_vtable) makes the actual DOM work trivial. */
+/* renderRowsAsync — thin wrapper: synthetic progress ticks then applyFilters. */
 function renderRowsAsync(onProgress, onDone) {
   const total = sortedRows.length;
   if (total === 0) {
@@ -222,8 +244,6 @@ function renderRowsAsync(onProgress, onDone) {
 
 /* ── Filter ──────────────────────────────────────────────────────────────── */
 let filterTimer  = 0;
-/* haystackRows: index-synced to sortedRows, built lazily.
- * Invalidated on sort and on dataset switch. */
 let haystackRows = null;
 
 function getHaystack() {
@@ -242,19 +262,16 @@ function getHaystack() {
   return haystackRows;
 }
 
-/* scheduleFilter — for select inputs: fires at next task boundary. */
 function scheduleFilter() {
   clearTimeout(filterTimer);
   filterTimer = setTimeout(() => applyFilters(), 0);
 }
 
-/* scheduleFilterDebounced — for text inputs: waits for typing pause (perf B.3). */
 function scheduleFilterDebounced() {
   clearTimeout(filterTimer);
   filterTimer = setTimeout(() => applyFilters(), 300);
 }
 
-/* Compile matchers once per active token, outside the row loop. */
 function buildMatchers(activeCols, selectVals, textVals) {
   const matchers = [];
   for (const col of activeCols) {
@@ -279,16 +296,25 @@ function compileMatcher(token) {
   return s => s.toLowerCase().includes(t);
 }
 
-/* applyFilters — rebuilds filteredRows[], then delegates rendering to
- * virtRender(0) from summary_11_vtable.js.  No DOM row manipulation here. */
+/* applyFilters — rebuilds filteredRows[], then delegates to virtRender(0).
+ *
+ * colFilters is the authoritative state store.  DOM inputs are read here
+ * only to pick up values the user has typed since the last event fired,
+ * but writes back to colFilters are guarded to the current COLS keyset.
+ * This prevents stale [data-filter-key] elements from a departing tab
+ * (still alive in the DOM while the incoming tab's buildHead() is running)
+ * from re-polluting colFilters after switchTab() has cleared it.
+ */
 function applyFilters() {
+  const colKeySet  = new Set(COLS.map(c => c.key));
   const selectVals = Object.create(null);
   const textVals   = Object.create(null);
   document.querySelectorAll('[data-filter-key]').forEach(el => {
     const key = el.dataset.filterKey;
+    if (!colKeySet.has(key)) return;          /* ignore elements not in current COLS */
     if (el.dataset.filterRole === 'select') selectVals[key] = el.value || '';
     else                                    textVals[key]   = el.value || '';
-    colFilters[key] = el.value || '';
+    colFilters[key] = el.value || '';         /* safe: key is in current COLS */
   });
   const global  = (globalSrch?.value || '').trim().toLowerCase();
   const gTokens = global ? global.split(/\s+/).filter(Boolean) : [];
@@ -323,7 +349,6 @@ function applyFilters() {
   const shown = filteredRows.length;
   if (liveCount) liveCount.textContent = `Showing ${shown.toLocaleString()} of ${ROWS.length.toLocaleString()} commits`;
   if (noMatch)   noMatch.classList.toggle('kc-visible', shown === 0);
-  /* Hand off to virtual scroll — resets scroll position and paints window. */
   resetVirt();
   virtRender(0);
 }
@@ -333,9 +358,9 @@ clearBtn?.addEventListener('click', () => {
   if (globalSrch) globalSrch.value = '';
   applyFilters();
 });
-globalSrch?.addEventListener('input', scheduleFilterDebounced);  /* debounced (perf B.3) */
+globalSrch?.addEventListener('input', scheduleFilterDebounced);
 
-/* CSV export — array-based, no DOM scan. */
+/* CSV export */
 exportBtn?.addEventListener('click', () => {
   const header = COLS.map(c => `"${c.label.replace(/"/g, '""')}"`).join(',');
   const lines  = [header];
