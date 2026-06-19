@@ -4,13 +4,19 @@
  * showLoader(n)               — reset bar to 0% and reveal overlay.
  * updateLoaderProgress(d, t)  — advance bar fill, update label and % badge.
  * hideLoader()                — flash to 100%, then fade overlay out.
+ *
+ * v18.3.0 — Renamed module-level `tableWrap` to `_loaderTableWrap` to
+ *           avoid a `const` redeclaration collision with summary_10_table.js
+ *           when both modules are concatenated inside the same IIFE.
+ *           The collision caused a SyntaxError that silently killed the
+ *           entire script, leaving the page blank with no tabs.
  */
 
-const tableWrap = document.getElementById('kc-table-wrap');
+const _loaderTableWrap = document.getElementById('kc-table-wrap');
 let loaderEl = null, loaderLabelEl = null, loaderBarFillEl = null, loaderPctEl = null;
 
 (function initLoader() {
-  if (!tableWrap) return;
+  if (!_loaderTableWrap) return;
   loaderEl = document.createElement('div');
   loaderEl.className = 'kc-table-loader';
   loaderEl.innerHTML =
@@ -24,7 +30,7 @@ let loaderEl = null, loaderLabelEl = null, loaderBarFillEl = null, loaderPctEl =
         '<div class="kc-loader-bar-fill" style="height:100%;width:0%;background:var(--kc-loader-bar-fill,var(--accent,#4a9eff));border-radius:999px;transition:width 0.35s ease"></div>' +
       '</div>' +
     '</div>';
-  tableWrap.appendChild(loaderEl);
+  _loaderTableWrap.appendChild(loaderEl);
   loaderLabelEl   = loaderEl.querySelector('#kc-loader-label');
   loaderBarFillEl = loaderEl.querySelector('.kc-loader-bar-fill');
   loaderPctEl     = loaderEl.querySelector('#kc-loader-pct');
