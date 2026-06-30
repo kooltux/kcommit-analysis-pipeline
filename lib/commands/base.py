@@ -38,12 +38,30 @@ def load_state(state_path):
         return {}
 
 
-def stage_needs_run(key, work, state):
+def stage_needs_run(key, work, state, base_dirs=None):
+    """Return True if *key* has not completed successfully or its outputs are missing.
+
+    base_dirs -- optional dict mapping path prefixes ('cache', 'output') to
+                 their real absolute directories, exactly as passed to
+                 wipe_downstream().  When provided, output entries such as
+                 'cache/commits.json' are resolved against base_dirs['cache']
+                 rather than work.  Falls back to os.path.join(work, rel)
+                 for entries whose prefix is not found in base_dirs or when
+                 base_dirs is None.
+    """
     s = state.get(key, {})
     if s.get('status') != 'ok':
         return True
     for rel in (STAGE_OUTPUTS.get(key) or []):
-        if not os.path.exists(os.path.join(work, rel)):
+        if base_dirs:
+            parts  = rel.split('/', 1)
+            prefix = parts[0] if len(parts) == 2 else None
+            rest   = parts[1] if len(parts) == 2 else rel
+            base   = base_dirs.get(prefix, work)
+            full   = os.path.join(base, rest)
+        else:
+            full = os.path.join(work, rel)
+        if not os.path.exists(full):
             return True
     return False
 

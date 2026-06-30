@@ -9,7 +9,7 @@ from lib.pipeline_runtime import (
 )
 
 
-# ── StageResult ────────────────────────────────────────────────────────────
+# ── StageResult ───────────────────────────────────────────────────
 def test_stage_result_defaults():
     sr = StageResult()
     assert sr.count   == 0
@@ -41,7 +41,7 @@ def test_stage_result_to_extra_dict_extra_not_overwritten():
     assert d['count'] == 99  # setdefault: original wins
 
 
-# ── init / get state ──────────────────────────────────────────────────────
+# ── init / get state ─────────────────────────────────────────────────
 def test_init_pipeline_state(tmp_path):
     path = str(tmp_path / 'state.json')
     init_pipeline_state(path)
@@ -59,7 +59,7 @@ def test_init_pipeline_state_overwrites(tmp_path):
     assert state['stages'] == {}
 
 
-# ── is_stage_done ──────────────────────────────────────────────────────────
+# ── is_stage_done ──────────────────────────────────────────────────
 def test_is_stage_done_false_before_finish(tmp_path):
     path = str(tmp_path / 'state.json')
     init_pipeline_state(path)
@@ -98,7 +98,7 @@ def test_finish_stage_records_elapsed(tmp_path):
     assert state['stages']['score_commits']['duration_sec'] >= 0
 
 
-# ── fail_stage ─────────────────────────────────────────────────────────────
+# ── fail_stage ─────────────────────────────────────────────────────────
 def test_fail_stage_records_error(tmp_path):
     path = str(tmp_path / 'state.json')
     init_pipeline_state(path)
@@ -118,7 +118,7 @@ def test_fail_stage_is_not_done(tmp_path):
     assert is_stage_done(path, 'report_commits') is False
 
 
-# ── wipe_downstream ────────────────────────────────────────────────────────
+# ── wipe_downstream ──────────────────────────────────────────────────
 def test_wipe_downstream_clears_later_stages(tmp_path):
     path      = str(tmp_path / 'state.json')
     work_dir  = str(tmp_path)
@@ -143,3 +143,62 @@ def test_wipe_downstream_clears_later_stages(tmp_path):
     assert is_stage_done(path, 'collect_build_context') is True
     assert is_stage_done(path, 'build_product_map')   is False  # wiped
     assert is_stage_done(path, 'prefilter_commits')   is False  # wiped
+
+
+def test_wipe_downstream_removes_directory(tmp_path):
+    """wipe_downstream removes directory entries (e.g. output/commits) via rmtree."""
+    path = str(tmp_path / 'state.json')
+    init_pipeline_state(path)
+    # Create a commits bucket tree
+    commits_dir = tmp_path / 'output' / 'commits'
+    (commits_dir / 'a' / 'bc').mkdir(parents=True)
+    (commits_dir / 'a' / 'bc.json').write_text('{}')
+    outputs = {'report_commits': ['output/commits']}
+    wipe_downstream(path, 'report_commits', str(tmp_path), outputs,
+                    stage_order=['report_commits'])
+    assert not commits_dir.exists()
+
+
+def test_wipe_downstream_removes_files_and_dirs_together(tmp_path):
+    """wipe_downstream handles a mix of file and directory output entries."""
+    path = str(tmp_path / 'state.json')
+    init_pipeline_state(path)
+    out = tmp_path / 'output'
+    out.mkdir()
+    html = out / 'relevant_commits.html'
+    html.write_text('<html/>')
+    commits_dir = out / 'commits'
+    (commits_dir / 'a').mkdir(parents=True)
+    (commits_dir / 'a' / 'bc.json').write_text('{}')
+    outputs = {'report_commits': ['output/relevant_commits.html', 'output/commits']}
+    wipe_downstream(path, 'report_commits', str(tmp_path), outputs,
+                    stage_order=['report_commits'])
+    assert not html.exists()
+    assert not commits_dir.exists()
+
+
+def test_wipe_downstream_clears_target_stage_state(tmp_path):
+    """wipe_downstream sets the target stage status to None even when no files exist."""
+    path = str(tmp_path / 'state.json')
+    init_pipeline_state(path)
+    t0 = start_stage(path, 'report_commits', 7, 8)
+    finish_stage(path, 'report_commits', t0)
+    assert is_stage_done(path, 'report_commits') is True
+    wipe_downstream(path, 'report_commits', str(tmp_path), {},
+                    stage_order=['report_commits'])
+    assert is_stage_done(path, 'report_commits') is False
+    state = get_pipeline_state(path)
+    assert state['stages']['report_commits']['status'] is None
+
+
+def test_wipe_downstream_missing_paths_ignored(tmp_path):
+    """wipe_downstream does not raise when listed output files do not exist."""
+    path = str(tmp_path / 'state.json')
+    init_pipeline_state(path)
+    outputs = {'report_commits': [
+        'output/nonexistent.html',
+        'output/also_missing',
+    ]}
+    # Must not raise
+    wipe_downstream(path, 'report_commits', str(tmp_path), outputs,
+                    stage_order=['report_commits'])

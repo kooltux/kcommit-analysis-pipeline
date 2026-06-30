@@ -11,6 +11,21 @@ E.4: StageResult dataclass added — structured return value for stage
      run() functions (count, dropped, reasons, extra). Stages may return
      a StageResult or a legacy tuple/dict; _stage_extra() in
      lib/commands/base.py handles both.
+
+v18.1.0: wipe_downstream() now handles directory entries in stage_outputs.
+         When a listed output path is a directory, shutil.rmtree() is used
+         instead of os.remove(), enabling clean wipe of output/commits/
+         bucket trees on --force re-runs of stage 7.
+
+v18.2.0: wipe_downstream() accepts an optional base_dirs dict that maps
+         path prefixes (e.g. 'cache', 'output') to their absolute
+         directories.  This fixes artifact deletion when cache_dir and
+         output_dir are not subdirectories of work_dir.
+
+v18.2.1: MANIFEST.json 'outputs' for report_commits now enumerates all
+         conditional output files (csv, xlsx, ods variants, etc.) so
+         wipe_downstream() deletes them correctly without any directory
+         glob logic.
 """
 import json
 import os
@@ -171,7 +186,26 @@ def fail_stage(path, key, started, error_msg=''):
     _eprint('FAILED %s  %.1fs  %s' % (key.ljust(30), el, error_msg or ''))
 
 
-def wipe_downstream(path, from_key, work_dir, stage_outputs, stage_order=None):
+def wipe_downstream(path, from_key, work_dir, stage_outputs, stage_order=None,
+                    base_dirs=None):
+    """Clear state and output files for *from_key* and all downstream stages.
+
+    Output entries that are directories are removed recursively via
+    shutil.rmtree() (e.g. output/commits bucket trees). Plain files are
+    removed with os.remove(). Missing paths are silently ignored.
+
+    base_dirs -- optional dict mapping the first path component of each
+                 output entry to its absolute base directory.  Example::
+
+                     base_dirs={'cache': '/run/cache', 'output': '/run/out'}
+
+                 An output entry ``"cache/commits.json"`` is then resolved as
+                 ``/run/cache/commits.json``.  Entries whose prefix is not
+                 found in *base_dirs* fall back to being joined against
+                 *work_dir*.  When *base_dirs* is ``None`` (default) every
+                 entry is joined against *work_dir* for backward compat.
+    """
+    import shutil
     state = _read(path)
     ss    = state.get('stages', {})
     if stage_order:
@@ -185,8 +219,17 @@ def wipe_downstream(path, from_key, work_dir, stage_outputs, stage_order=None):
         return
     for key in ordered[start:]:
         for rel in stage_outputs.get(key, []):
-            full = os.path.join(work_dir, rel)
-            if os.path.exists(full):
+            if base_dirs:
+                parts  = rel.split('/', 1)
+                prefix = parts[0] if len(parts) == 2 else None
+                rest   = parts[1] if len(parts) == 2 else rel
+                base   = base_dirs.get(prefix, work_dir)
+                full   = os.path.join(base, rest)
+            else:
+                full = os.path.join(work_dir, rel)
+            if os.path.isdir(full):
+                shutil.rmtree(full, ignore_errors=True)
+            elif os.path.exists(full):
                 os.remove(full)
         if key in ss:
             ss[key]['status'] = None

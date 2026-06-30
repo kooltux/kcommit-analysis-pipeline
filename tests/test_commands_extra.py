@@ -98,6 +98,7 @@ def test_cmd_run_resume_no_pending(tmp_path, capsys):
 
 
 def test_cmd_run_stage_force_wipes_downstream(tmp_path):
+    """--stage N --force must wipe N+downstream then run only stage N."""
     from lib.commands.cmd_run import cmd_run
     cfg = _cfg(tmp_path)
     args = MagicMock(config='x', override=None, stage='0', from_=None, resume=False, force=True, progress_json=False)
@@ -107,7 +108,9 @@ def test_cmd_run_stage_force_wipes_downstream(tmp_path):
          patch('lib.commands.cmd_run.run_stage') as run_stage_mock:
         cmd_run(args)
     wipe.assert_called_once()
+    # Only the target stage must run — not downstream stages
     run_stage_mock.assert_called_once()
+    assert run_stage_mock.call_args[0][1] == 'prepare_pipeline'
 
 
 def test_cmd_status_prints_generated_report_files(tmp_path, capsys):

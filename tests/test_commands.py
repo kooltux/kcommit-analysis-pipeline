@@ -13,7 +13,7 @@ from lib.manifest import STAGE_OUTPUTS
 from lib.stages import STAGES
 
 
-# ── load_state ────────────────────────────────────────────────────────────────────────────────
+# ── load_state ────────────────────────────────────────────────────────────────
 def test_load_state_missing_file(tmp_path):
     result = load_state(str(tmp_path / 'no_state.json'))
     assert result == {}
@@ -36,7 +36,7 @@ def test_load_state_corrupt_file(tmp_path):
     assert result == {}
 
 
-# ── resolve_stage ─────────────────────────────────────────────────────────────────────────────
+# ── resolve_stage ─────────────────────────────────────────────────────────────
 def test_resolve_stage_by_name():
     idx, key = resolve_stage('collect_commits')
     assert key == 'collect_commits'
@@ -53,20 +53,19 @@ def test_resolve_stage_unknown():
         resolve_stage('no_such_stage')
 
 
-# ── stage_needs_run ────────────────────────────────────────────────────────────────────────────
+# ── stage_needs_run ───────────────────────────────────────────────────────────
 def test_stage_needs_run_no_state():
     assert stage_needs_run('collect_commits', '/tmp', {}) is True
 
 
 def test_stage_needs_run_ok_but_missing_file(tmp_path):
     state = {'collect_commits': {'status': 'ok'}}
-    # STAGE_OUTPUTS['collect_commits'] references files that don't exist
     assert stage_needs_run('collect_commits', str(tmp_path), state) is True
 
 
-def test_stage_needs_run_ok_all_files_exist(tmp_path):
+def test_stage_needs_run_ok_all_files_exist_legacy(tmp_path):
+    """Without base_dirs, files are looked up under work (legacy flat layout)."""
     work = str(tmp_path)
-    # Write all expected output files for 'collect_commits'
     for rel in (STAGE_OUTPUTS.get('collect_commits') or []):
         full = os.path.join(work, rel)
         os.makedirs(os.path.dirname(full), exist_ok=True)
@@ -75,7 +74,39 @@ def test_stage_needs_run_ok_all_files_exist(tmp_path):
     assert stage_needs_run('collect_commits', work, state) is False
 
 
-# ── stage_extra ─────────────────────────────────────────────────────────────────────────────────
+def test_stage_needs_run_ok_all_files_exist_with_base_dirs(tmp_path):
+    """With base_dirs, 'cache/commits.json' is resolved under cache_dir."""
+    cache_dir  = str(tmp_path / 'cache')
+    output_dir = str(tmp_path / 'output')
+    work       = str(tmp_path / 'work')
+    os.makedirs(cache_dir);  os.makedirs(output_dir);  os.makedirs(work)
+    base_dirs = {'cache': cache_dir, 'output': output_dir}
+
+    for rel in (STAGE_OUTPUTS.get('collect_commits') or []):
+        parts  = rel.split('/', 1)
+        prefix = parts[0] if len(parts) == 2 else None
+        rest   = parts[1] if len(parts) == 2 else rel
+        base   = base_dirs.get(prefix, work)
+        full   = os.path.join(base, rest)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        open(full, 'w').write('{}')
+
+    state = {'collect_commits': {'status': 'ok'}}
+    assert stage_needs_run('collect_commits', work, state, base_dirs=base_dirs) is False
+
+
+def test_stage_needs_run_missing_cache_file_with_base_dirs(tmp_path):
+    """Returns True when cache file is absent even though state says ok."""
+    cache_dir  = str(tmp_path / 'cache')
+    output_dir = str(tmp_path / 'output')
+    work       = str(tmp_path / 'work')
+    os.makedirs(cache_dir);  os.makedirs(output_dir);  os.makedirs(work)
+    base_dirs = {'cache': cache_dir, 'output': output_dir}
+    state = {'collect_commits': {'status': 'ok'}}
+    assert stage_needs_run('collect_commits', work, state, base_dirs=base_dirs) is True
+
+
+# ── stage_extra ───────────────────────────────────────────────────────────────
 def test_stage_extra_none_result():
     assert stage_extra('collect_commits', None, 1.0) == {}
 
@@ -117,7 +148,7 @@ def test_stage_extra_unknown_key():
     assert extra == {}
 
 
-# ── cmd_validate ───────────────────────────────────────────────────────────────────────────────
+# ── cmd_validate ──────────────────────────────────────────────────────────────
 def _minimal_cfg(tmp_path):
     return {
         'paths': {
@@ -141,7 +172,6 @@ def test_cmd_validate_ok(tmp_path, capsys):
     args = MagicMock()
     args.config = 'test.yaml'
     args.override = None
-    # Mock validate_inputs so we don't need a real git repo or valid rev refs
     with patch('lib.commands.cmd_validate.load_cfg', return_value=cfg), \
          patch('lib.commands.cmd_validate.validate_inputs', return_value=([], [])):
         cmd_validate(args)
@@ -162,7 +192,7 @@ def test_cmd_validate_fails_on_problems(tmp_path, capsys):
             cmd_validate(args)
 
 
-# ── cmd_status ───────────────────────────────────────────────────────────────────────────────
+# ── cmd_status ────────────────────────────────────────────────────────────────
 def test_cmd_status_empty_state(tmp_path, capsys):
     from lib.commands.cmd_status import cmd_status
     work = str(tmp_path / 'work')
@@ -175,7 +205,7 @@ def test_cmd_status_empty_state(tmp_path, capsys):
     assert 'pending' in out.lower() or 'Status' in out
 
 
-# ── cmd_dropped ──────────────────────────────────────────────────────────────────────────────
+# ── cmd_dropped ───────────────────────────────────────────────────────────────
 def _write(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w') as f:
@@ -254,14 +284,13 @@ def test_cmd_dropped_verbose(tmp_path, capsys):
     assert 'abc123' in out
 
 
-# ── cmd_report ───────────────────────────────────────────────────────────────────────────────
+# ── cmd_report ────────────────────────────────────────────────────────────────
 def test_cmd_report_runs(tmp_path, capsys):
     from lib.commands.cmd_report import cmd_report
     cfg = _minimal_cfg(tmp_path)
     os.makedirs(cfg['paths']['cache_dir'])
     os.makedirs(cfg['paths']['output_dir'])
     os.makedirs(cfg['paths']['work_dir'])
-    # Write minimal cache files that st07_report.run() needs
     _write(os.path.join(cfg['paths']['cache_dir'], 'relevant_commits.json'), [])
     _write(os.path.join(cfg['paths']['cache_dir'], 'filtered_commits.json'), [])
     _write(os.path.join(cfg['paths']['cache_dir'], 'compiled_rules.json'), {
@@ -277,7 +306,7 @@ def test_cmd_report_runs(tmp_path, capsys):
     assert 'Reports written' in out
 
 
-# ── cmd_run --force ───────────────────────────────────────────────────────────────────────────
+# ── cmd_run ───────────────────────────────────────────────────────────────────
 def _run_args(**kw):
     defaults = dict(config='test.yaml', override=None, stage=None, from_=None,
                     resume=False, force=False, progress_json=False)
@@ -299,7 +328,6 @@ def test_cmd_run_force_full_pipeline_wipes_state(tmp_path):
         cmd_run(args)
     mock_wipe.assert_called_once()
     from lib.commands.base import STAGE_ORDER
-    # second positional arg is from_key: must be the very first stage
     assert mock_wipe.call_args[0][1] == STAGE_ORDER[0]
 
 
@@ -318,8 +346,43 @@ def test_cmd_run_no_force_no_wipe(tmp_path):
     mock_wipe.assert_not_called()
 
 
-def test_cmd_run_force_with_stage_wipes_state(tmp_path):
-    """Regression: --force --stage N must still call wipe_downstream."""
+def test_cmd_run_force_with_stage_wipes_and_runs_only_target(tmp_path):
+    """--force --stage N must wipe N+downstream and run only stage N."""
+    from lib.commands.cmd_run import cmd_run
+    cfg = _minimal_cfg(tmp_path)
+    os.makedirs(cfg['paths']['work_dir'])
+    os.makedirs(cfg['paths']['cache_dir'])
+    os.makedirs(cfg['paths']['output_dir'])
+    args = _run_args(force=True, stage='0')
+    with patch('lib.commands.cmd_run.load_cfg', return_value=cfg), \
+         patch('lib.commands.cmd_run.run_stage') as mock_run, \
+         patch('lib.commands.cmd_run.wipe_downstream') as mock_wipe:
+        cmd_run(args)
+    mock_wipe.assert_called_once()
+    mock_run.assert_called_once()
+
+
+def test_cmd_run_stage_without_force_runs_only_one_stage(tmp_path):
+    """--stage N without --force must run only that single stage (no wipe)."""
+    from lib.commands.cmd_run import cmd_run
+    cfg = _minimal_cfg(tmp_path)
+    os.makedirs(cfg['paths']['work_dir'])
+    os.makedirs(cfg['paths']['cache_dir'])
+    os.makedirs(cfg['paths']['output_dir'])
+    args = _run_args(force=False, stage='6')
+    ran_keys = []
+    def fake_run_stage(idx, key, fn, cfg, cache, work, state_path, args):
+        ran_keys.append(key)
+    with patch('lib.commands.cmd_run.load_cfg', return_value=cfg), \
+         patch('lib.commands.cmd_run.run_stage', side_effect=fake_run_stage), \
+         patch('lib.commands.cmd_run.wipe_downstream') as mock_wipe:
+        cmd_run(args)
+    assert ran_keys == ['postfilter_commits']
+    mock_wipe.assert_not_called()
+
+
+def test_cmd_run_wipe_downstream_receives_base_dirs(tmp_path):
+    """wipe_downstream must receive base_dirs with realpath-normalised cache and output."""
     from lib.commands.cmd_run import cmd_run
     cfg = _minimal_cfg(tmp_path)
     os.makedirs(cfg['paths']['work_dir'])
@@ -330,4 +393,115 @@ def test_cmd_run_force_with_stage_wipes_state(tmp_path):
          patch('lib.commands.cmd_run.run_stage'), \
          patch('lib.commands.cmd_run.wipe_downstream') as mock_wipe:
         cmd_run(args)
-    mock_wipe.assert_called_once()
+    call_kwargs = mock_wipe.call_args[1]
+    assert 'base_dirs' in call_kwargs
+    assert call_kwargs['base_dirs']['cache']  == os.path.realpath(cfg['paths']['cache_dir'])
+    assert call_kwargs['base_dirs']['output'] == os.path.realpath(cfg['paths']['output_dir'])
+
+
+def test_cmd_run_paths_are_normalised(tmp_path):
+    """cmd_run must normalise all paths with realpath before passing to stage fns."""
+    from lib.commands.cmd_run import cmd_run
+    cache_dir = str(tmp_path / 'cache')
+    os.makedirs(cache_dir)
+    cfg = _minimal_cfg(tmp_path)
+    cfg['paths']['cache_dir'] = os.path.join(str(tmp_path), '.', 'cache')
+    os.makedirs(cfg['paths']['work_dir'],   exist_ok=True)
+    os.makedirs(cfg['paths']['output_dir'], exist_ok=True)
+    args = _run_args(force=True, stage='0')
+    captured_cfg = {}
+    def fake_run_stage(idx, key, fn, c, cache, work, state_path, args):
+        captured_cfg.update(c['paths'])
+    with patch('lib.commands.cmd_run.load_cfg', return_value=cfg), \
+         patch('lib.commands.cmd_run.wipe_downstream'), \
+         patch('lib.commands.cmd_run.run_stage', side_effect=fake_run_stage):
+        cmd_run(args)
+    assert captured_cfg['cache_dir'] == os.path.realpath(cache_dir)
+
+
+def test_wipe_downstream_deletes_cache_file(tmp_path):
+    """wipe_downstream with base_dirs must delete a cache/ prefixed artifact."""
+    from lib.pipeline_runtime import wipe_downstream, init_pipeline_state
+    from lib.commands.base import STAGE_ORDER
+
+    state_path = str(tmp_path / 'state.json')
+    cache_dir  = str(tmp_path / 'cache')
+    output_dir = str(tmp_path / 'output')
+    os.makedirs(cache_dir)
+    os.makedirs(output_dir)
+    init_pipeline_state(state_path)
+
+    artifact = os.path.join(cache_dir, 'commits.json')
+    open(artifact, 'w').write('[]')
+    assert os.path.exists(artifact)
+
+    outputs = {'collect_commits': ['cache/commits.json']}
+    base_dirs = {'cache': cache_dir, 'output': output_dir}
+    wipe_downstream(state_path, 'collect_commits', str(tmp_path), outputs,
+                    stage_order=STAGE_ORDER, base_dirs=base_dirs)
+
+    assert not os.path.exists(artifact)
+
+
+def test_wipe_downstream_deletes_output_file(tmp_path):
+    """wipe_downstream with base_dirs must delete an output/ prefixed artifact."""
+    from lib.pipeline_runtime import wipe_downstream, init_pipeline_state
+    from lib.commands.base import STAGE_ORDER
+
+    state_path = str(tmp_path / 'state.json')
+    cache_dir  = str(tmp_path / 'cache')
+    output_dir = str(tmp_path / 'output')
+    os.makedirs(cache_dir)
+    os.makedirs(output_dir)
+    init_pipeline_state(state_path)
+
+    artifact = os.path.join(output_dir, 'relevant_commits.html')
+    open(artifact, 'w').write('<html/>')
+    assert os.path.exists(artifact)
+
+    outputs = {'report_commits': ['output/relevant_commits.html']}
+    base_dirs = {'cache': cache_dir, 'output': output_dir}
+    wipe_downstream(state_path, 'report_commits', str(tmp_path), outputs,
+                    stage_order=STAGE_ORDER, base_dirs=base_dirs)
+
+    assert not os.path.exists(artifact)
+
+
+def test_wipe_downstream_without_base_dirs_legacy(tmp_path):
+    """wipe_downstream without base_dirs falls back to work_dir (backward compat)."""
+    from lib.pipeline_runtime import wipe_downstream, init_pipeline_state
+    from lib.commands.base import STAGE_ORDER
+
+    state_path = str(tmp_path / 'state.json')
+    work_dir   = str(tmp_path)
+    init_pipeline_state(state_path)
+
+    artifact = os.path.join(work_dir, 'commits.json')
+    open(artifact, 'w').write('[]')
+
+    outputs = {'collect_commits': ['commits.json']}
+    wipe_downstream(state_path, 'collect_commits', work_dir, outputs,
+                    stage_order=STAGE_ORDER)
+
+    assert not os.path.exists(artifact)
+
+
+def test_cmd_run_resume_uses_base_dirs_for_stage_needs_run(tmp_path):
+    """--resume must pass base_dirs to stage_needs_run so cache/ paths resolve correctly."""
+    from lib.commands.cmd_run import cmd_run
+    cfg = _minimal_cfg(tmp_path)
+    os.makedirs(cfg['paths']['work_dir'])
+    os.makedirs(cfg['paths']['cache_dir'])
+    os.makedirs(cfg['paths']['output_dir'])
+    args = _run_args(resume=True)
+    captured_base_dirs = {}
+    def fake_needs_run(key, work, state, base_dirs=None):
+        if base_dirs:
+            captured_base_dirs.update(base_dirs)
+        return False
+    with patch('lib.commands.cmd_run.load_cfg', return_value=cfg), \
+         patch('lib.commands.cmd_run.load_state', return_value={}), \
+         patch('lib.commands.cmd_run.stage_needs_run', side_effect=fake_needs_run):
+        cmd_run(args)
+    assert 'cache'  in captured_base_dirs
+    assert 'output' in captured_base_dirs

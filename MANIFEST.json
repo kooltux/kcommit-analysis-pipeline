@@ -1,5 +1,5 @@
 {
-  "version": "v18.1.0",
+  "version": "v18.2.1",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
   "library_dir": "lib",
   "example_configs": [
@@ -13,7 +13,37 @@
     {"index": 4, "key": "prefilter_commits",      "outputs": ["cache/filtered_commits.json", "cache/prefilter_kept_commits.json", "cache/prefilter_debug.json"]},
     {"index": 5, "key": "score_commits",          "outputs": ["cache/scored_commits.json"]},
     {"index": 6, "key": "postfilter_commits",     "outputs": ["cache/relevant_commits.json", "cache/postfilter_dropped_commits.json", "cache/postfilter_debug.json"]},
-    {"index": 7, "key": "report_commits",         "outputs": []}
+    {"index": 7, "key": "report_commits",         "outputs": [
+      "output/relevant_commits.html",
+      "output/relevant_commits.json",
+      "output/relevant_commits.table.json",
+      "output/relevant_commits.csv",
+      "output/relevant_commits.xlsx",
+      "output/relevant_commits.ods",
+      "output/filtered_commits.json",
+      "output/filtered_commits.table.json",
+      "output/filtered_commits.csv",
+      "output/filtered_commits.xlsx",
+      "output/filtered_commits.ods",
+      "output/profile_summary.json",
+      "output/profile_summary.csv",
+      "output/profile_summary.xlsx",
+      "output/profile_summary.ods",
+      "output/profile_matrix.json",
+      "output/profile_matrix.csv",
+      "output/profile_matrix.xlsx",
+      "output/profile_matrix.ods",
+      "output/rule_trace.json",
+      "output/rule_trace.csv",
+      "output/summary.xlsx",
+      "output/summary.ods",
+      "output/report_metadata.json",
+      "output/report_stats.json",
+      "output/prefilter_debug.json",
+      "output/pipeline_run_stats.json",
+      "output/serve_report.pyz",
+      "output/commits"
+    ]}
   ],
   "tools": [
     "tools/generate_message_whitelist.py"
