@@ -1,2 +1,2 @@
-tail latency
-jitter
+re:(?i)\btail\s+latency\b
+re:(?i)\bjitter\b

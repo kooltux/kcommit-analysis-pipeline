@@ -6,10 +6,10 @@
 # --- Original entries ---
 spelling
 typo
-*documentation*
+re:(?i)\bdocumentation\b.*\b(?:only|update|fix)\b
 comment only
-whitespace
-*cleanup*
+re:(?i)\bwhitespace\b
+re:(?i)\bcleanup\b(?:\s+only)?
 
 # --- MAINTAINERS / credits churn (never compilable content) ---
 re:(?i)^MAINTAINERS\b

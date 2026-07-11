@@ -2,5 +2,5 @@
 #Cc: stable@
 #*regression*
 syzbot
-re:(?i)use-after-free|uaf|overflow|oob|out-of-bounds|refcount|infoleak|race|double free
+re:(?i)\b(?:use-after-free|uaf|overflow|oob|out-of-bounds|refcount|infoleak|race|double\s+free)\b
 copy_*_user

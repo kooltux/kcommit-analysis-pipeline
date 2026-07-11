@@ -1,4 +1,4 @@
-throughput
-bandwidth
-QPS
-IOPS
+re:(?i)\bthroughput\b
+re:(?i)\bbandwidth\b
+re:(?i)\bQPS\b
+re:(?i)\bIOPS\b

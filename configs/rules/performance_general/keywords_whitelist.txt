@@ -1,13 +1,11 @@
-performance
-throughput
-latency
-reduce latency
-speed up
-speedup
-optimize
-optimization
-micro-optim
-fast path
-slow path
-scalability
-scale better
+re:(?i)\bperformance\b
+re:(?i)\bthroughput\b
+re:(?i)\blatency\b
+re:(?i)\breduce\s+latency\b
+re:(?i)\bspeed\s*up\b
+re:(?i)\boptimi[sz](?:e|ation|ed|ing)\b
+re:(?i)\bmicro-optim\w*\b
+re:(?i)\bfast\s+path\b
+re:(?i)\bslow\s+path\b
+re:(?i)\bscalability\b
+re:(?i)\bscale\s+better\b

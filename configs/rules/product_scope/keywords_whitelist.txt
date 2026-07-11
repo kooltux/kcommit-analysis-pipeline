@@ -6,14 +6,15 @@
 # in the commit subject/body using SDX55-specific vocabulary.
 #
 # Qualcomm platform identifiers
-re:(?i)qualcomm|qcom
-re:(?i)sdx55|sdxprairie
-re:(?i)snapdragon
-re:(?i)msm|mdm|apq
-re:(?i)qrtr|qmi
-re:(?i)smd|glink|apr
-re:(?i)rmnet|ipa
-re:(?i)pil|modem|wcnss
-re:(?i)llcc|bwmon
-re:(?i)qpnp|spmi
-re:(?i)rpm|rpmh|cprf
+re:(?i)\b(?:qualcomm|qcom)\b
+re:(?i)\b(?:sdx55|sdxprairie)\b
+re:(?i)\bsnapdragon\b
+re:(?i)\b(?:msm|mdm|apq)\b
+re:(?i)\b(?:qrtr|qmi)\b
+re:(?i)\b(?:smd|glink|apr)\b
+re:(?i)\b(?:rmnet|ipa)\b
+re:(?i)\b(?:pil|modem|wcnss)\b
+re:(?i)\b(?:llcc|bwmon)\b
+re:(?i)\b(?:qpnp|spmi)\b
+re:(?i)\b(?:rpmh|cprf)\b
+re:(?i)\brpm\b

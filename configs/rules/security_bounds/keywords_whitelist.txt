@@ -1,7 +1,7 @@
-re:(?i)(?:len|length|size|count|nbytes|lenp|countp).*?(?:check|validate|validity)
-re:(?i)check.{,10}len\w*
-re:(?i)bounds?|limits?|clamp(ed)?
-re:(?i)(?:index|array index|range).*check
-re:(?i)min|max|boundary|boundary\s+check
-re:(?i)off[\s-]by[\s-]one
-re:(?i)OOB(?:\s+(?:read|write))
+re:(?i)\b(?:len|length|size|count|nbytes|lenp|countp)\b.*?\b(?:check|validate|validity)\b
+re:(?i)\bcheck\b.{0,10}\blen\w*\b
+re:(?i)\b(?:bounds?|limits?|clamp(?:ed|ing)?)\b
+re:(?i)\b(?:index|array\s+index|range)\b.*\bcheck\b
+re:(?i)\b(?:min(?:imum)?|max(?:imum)?|boundary|boundary\s+check)\b
+re:(?i)\boff[\s-]by[\s-]one\b
+re:(?i)\bOOB(?:\s+(?:read|write))?\b

@@ -1,12 +1,12 @@
-acl
-access control
-re:(?i)cap(?:ability|s)?
-re:(?i)cred(?:ential)?s?
-re:(?i)priv(?:ilege)?(:?\s+esc(?:alation)?)?
-re:(?i)pass(?:wd|word)
-re:(?i)(?:u|eu|su|g|eg|sg|fsu|fsg)id
-re:(?i)permissions?|perm|mode|umask|fs\s+mode
-re:(?i)auth(?:entication)?|authz|authorization
-re:(?i)rbac|dac|mac|selinux|smack|apparmor|lsm
-re:(?i)security\s+module|lsm|security\s+hook
-re:(?i)sysctl|capable|capable_of
+re:(?i)\bacl\b
+re:(?i)\baccess\s+control\b
+re:(?i)\bcap(?:ability|abilities|s)?\b
+re:(?i)\bcred(?:ential)?s?\b
+re:(?i)\bpriv(?:ilege)?(?:\s+esc(?:alation)?)?\b
+re:(?i)\bpass(?:wd|word)\b
+re:(?i)\b(?:u|eu|su|g|eg|sg|fsu|fsg)id\b
+re:(?i)\b(?:permissions?|perm|mode|umask|fs\s+mode)\b
+re:(?i)\b(?:auth(?:entication)?|authz|authorization)\b
+re:(?i)\b(?:rbac|dac|mac|selinux|smack|apparmor|lsm)\b
+re:(?i)\b(?:security\s+module|security\s+hook)\b
+re:(?i)\b(?:sysctl|capable|capable_of)\b

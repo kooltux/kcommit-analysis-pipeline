@@ -1,11 +1,11 @@
-dangling pointer
-re:(?i)buffer\s+overflow|buffer\s+overrun|bof
-re:(?i)stack\s+overflow|stack\s+corruption
-re:(?i)heap\s+overflow|heap\s+corruption
-re:(?i)overflow|overrun|overwrite
-re:(?i)use\s+after\s+free|uaf|use\s+after\s+free
-re:(?i)double\s+free|double\s+free
-re:(?i)null\s+pointer|deref(?:null|NULL)|dereference\s+of\s+null
-re:(?i)oom|out\s+of\s+memory|allocation\s+failure
-re:(?i)addr\s+calculat|address\s+calculation
-re:(?i)out\s+of\s+bounds?|oob
+re:(?i)\bdangling\s+pointer\b
+re:(?i)\bbuffer\s+(?:overflow|overrun)\b|\bbof\b
+re:(?i)\bstack\s+(?:overflow|corruption)\b
+re:(?i)\bheap\s+(?:overflow|corruption)\b
+re:(?i)\b(?:overflow|overrun|overwrite)\b
+re:(?i)\buse\s+after\s+free\b|\buaf\b
+re:(?i)\bdouble\s+free\b
+re:(?i)\bnull\s+pointer\b|\bderef(?:null|NULL)\b|\bdereference\s+of\s+null\b
+re:(?i)\boom\b|\bout\s+of\s+memory\b|\ballocation\s+failure\b
+re:(?i)\b(?:addr\s+calculat\w*|address\s+calculation)\b
+re:(?i)\bout\s+of\s+bounds?\b|\boob\b
