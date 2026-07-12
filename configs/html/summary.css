@@ -614,6 +614,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   flex: 1;
   overflow-y: auto;
   scrollbar-gutter: stable;
+  overflow-anchor: none;
   position: relative;
 }
 
