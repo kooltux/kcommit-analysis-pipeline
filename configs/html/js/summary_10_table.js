@@ -160,7 +160,7 @@ function rowHtml(r) {
       out += `<td class="kc-td-sha"><a href="#" class="kc-sha-link" data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${esc(r.sha12)}</a></td>`;
     } else if (!isFiltered && (col.key === 'score' || col._profile)) {
       const num = parseFloat(v) || 0;
-      out += `<td class="kc-td-num">${num > 0 ? scorePill(num) : '<span class="kc-muted">\u2014</span>'}</td>`;
+      out += `<td class="kc-td-num kc-td-score">${num > 0 ? scorePill(num) : '<span class="kc-muted">\u2014</span>'}</td>`;
     } else if (!isFiltered && col.key === 'profiles') {
       out += `<td>${chips(Array.isArray(v) ? v : [v])}</td>`;
     } else if (col.key === 'date') {

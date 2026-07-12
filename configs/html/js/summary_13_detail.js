@@ -160,7 +160,7 @@ function populateDetail(commit) {
     if (Object.keys(traceData).length) {
       tabScoring.innerHTML = Object.entries(traceData).map(([pName, tData]) =>
         detailCard(
-          `Profile: ${pName}  ${scorePill(profScores[pName] || 0)}`,
+          `Profile: ${pName}`,
           renderProfileTrace(pName, tData)
         )
       ).join('');
@@ -192,7 +192,7 @@ function populateDetail(commit) {
 }
 
 /* ── openDetail ──────────────────────────────────────────────────────── */
-function openDetail(sha12, sha) {
+function openDetail(sha12, sha, tabName) {
   /* Mark active row */
   document.querySelectorAll('tr.kc-row-active').forEach(r => r.classList.remove('kc-row-active'));
   const rows = document.querySelectorAll(`tr[data-sha12="${CSS.escape(sha12)}"]`);
@@ -212,8 +212,7 @@ function openDetail(sha12, sha) {
         `<p class="kc-detail-placeholder kc-error">Failed to load commit: ${esc(String(err))}</p>`;
     });
 
-  /* Switch to overview on each new selection */
-  switchDetailTab('overview');
+  switchDetailTab(tabName || activeDetailTab);
 
   /* Ensure right pane is visible */
   const rPane = document.getElementById('kc-pane-right');
@@ -224,12 +223,32 @@ function openDetail(sha12, sha) {
   }
 }
 
-/* ── SHA link delegation ─────────────────────────────────────────────── */
+/* ── Row click delegation ────────────────────────────────────────────── */
 document.addEventListener('click', e => {
+  /* Score cell → detail + scoring tab */
+  const scoreTd = e.target.closest('.kc-td-score');
+  if (scoreTd) {
+    const row = scoreTd.closest('tr[data-sha12]');
+    if (row) {
+      e.preventDefault();
+      openDetail(row.dataset.sha12, row.dataset.sha || row.dataset.sha12, 'scoring');
+      return;
+    }
+  }
+
+  /* SHA link → detail + overview */
   const link = e.target.closest('.kc-sha-link');
-  if (!link) return;
-  e.preventDefault();
-  openDetail(link.dataset.sha12, link.dataset.sha);
+  if (link) {
+    e.preventDefault();
+    openDetail(link.dataset.sha12, link.dataset.sha);
+    return;
+  }
+
+  /* Any other click on a data row → detail + overview */
+  const row = e.target.closest('tr[data-sha12]');
+  if (row) {
+    openDetail(row.dataset.sha12, row.dataset.sha || row.dataset.sha12);
+  }
 });
 
 /* ── Keyboard navigation ─────────────────────────────────────────────── */
