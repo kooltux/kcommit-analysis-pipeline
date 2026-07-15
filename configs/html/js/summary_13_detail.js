@@ -60,7 +60,10 @@ function clearDetailPanel() {
 /* ── fetchCommit ─────────────────────────────────────────────────────── */
 function fetchCommit(sha) {
   /* 1. Inline embedded store (embedded or sidecar-index mode) */
-  if (STORE && STORE[sha]) return Promise.resolve(STORE[sha]);
+  if (STORE) {
+    const entry = STORE[sha] || STORE[sha.slice(0, 12)];
+    if (entry) return Promise.resolve(entry);
+  }
 
   /* 2. Bucket shard layout: commits/<sha[0]>/<sha[1:3]>.json
    *    Each shard is a {fullSha: commitData} dict (G.4, v18.1.0).

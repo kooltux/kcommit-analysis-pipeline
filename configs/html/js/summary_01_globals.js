@@ -23,9 +23,8 @@ const TABS_CFG = UI.tabs || null;
 /* ---- Relevant tab dataset ------------------------------------------ */
 const BASE_COLS   = UI.columns || [];
 const PROFILE_NAMES = (() => {
-  const names = new Set();
-  (UI.rows || []).forEach(r => (r.profiles || []).forEach(p => names.add(p)));
-  return [...names].sort();
+  const profilesCol = (UI.columns || []).find(c => c.key === 'profiles');
+  return (profilesCol?.options || []).slice();
 })();
 
 const REL_COLS = (() => {
@@ -40,14 +39,7 @@ const REL_COLS = (() => {
   return out.filter(c => c.key !== 'profile_scores');
 })();
 
-const REL_ROWS = (UI.rows || []).map(r => {
-  const out = Object.assign({}, r);
-  for (const p of PROFILE_NAMES) {
-    const k = `score_${p}`;
-    if (out[k] == null) out[k] = 0;
-  }
-  return out;
-});
+const REL_ROWS = UI.rows || [];
 
 /* ---- Filtered tab dataset ------------------------------------------ */
 const FILT_COLS = UI.filtered_columns || [];
@@ -57,11 +49,11 @@ const FILT_ROWS = UI.filtered_rows    || [];
 let activeTab  = 'relevant';
 let COLS       = REL_COLS;
 let ROWS       = REL_ROWS;
-let sortedRows = REL_ROWS.slice();
+let sortedRows = (UI.rows || []).slice();
 
 /* ---- SHA → row lookup (both datasets) ------------------------------ */
 const rowBySha = Object.create(null);
-REL_ROWS.forEach(r => { rowBySha[r.sha12] = r; if (r.sha) rowBySha[r.sha] = r; });
+(UI.rows || []).forEach(r => { rowBySha[r.sha12] = r; if (r.sha) rowBySha[r.sha] = r; });
 
 const filtRowBySha = Object.create(null);
 FILT_ROWS.forEach(r => { filtRowBySha[r.sha12] = r; if (r.sha) filtRowBySha[r.sha] = r; });

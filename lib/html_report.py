@@ -78,6 +78,13 @@ from lib.manifest    import VERSION
 from lib.scoring     import order_commit_details
 from lib.spreadsheet import COMMIT_COLS
 
+# When there are more commits than this threshold, the full commit detail
+# store is NOT inlined (window.__KC_COMMITS__ stays empty).  The JS falls
+# back to lazy-loading from sidecar shard files via DROOT.  Row metadata
+# (compact per-commit summary for the virtual-scroll table) is always
+# inlined inside window.__KC_UI__.rows regardless.
+MAX_EMBEDDED_COMMITS = 2000
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -546,13 +553,12 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
 
     # ── Embed full commit detail — relevant tab (embedded mode) ───────────
     commit_store = {}
-    if detail_mode == 'embedded':
+    if detail_mode == 'embedded' and len(commits) <= MAX_EMBEDDED_COMMITS:
         for c in commits:
             sha   = (c.get('commit') or '')
             sha12 = sha[:12]
             detail = order_commit_details(c)
             if sha12: commit_store[sha12] = detail
-            if sha:   commit_store[sha]   = detail
 
     # ── Filtered tab data (v16.14.0) ──────────────────────────────────────
     tabs             = None
@@ -572,12 +578,12 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         ]
         # Slim store: sha12 → metadata + prefilter_debug, no scoring keys
         filtered_store = {}
-        for c in filtered:
-            sha   = (c.get('commit') or '')
-            sha12 = sha[:12]
-            entry = _filtered_commit_store_entry(c)
-            if sha12: filtered_store[sha12] = entry
-            if sha:   filtered_store[sha]   = entry
+        if len(filtered) <= MAX_EMBEDDED_COMMITS:
+            for c in filtered:
+                sha   = (c.get('commit') or '')
+                sha12 = sha[:12]
+                entry = _filtered_commit_store_entry(c)
+                if sha12: filtered_store[sha12] = entry
 
     # ── Meta ──────────────────────────────────────────────────────────────
     rs        = report_stats or {}
