@@ -1,6 +1,0 @@
-Fixes:
-BUG:
-re:(?i)\bcve-[0-9]{4}-[0-9]+\b
-re:(?i)\bbz#?[0-9]+\b
-re:(?i)\bbts#[0-9]+\b
-re:(?i)\b(?:GH-|GHSA|PR|issue|pull)[\s\-#](?:[0-9]+|CVE[0-9]+)\b
