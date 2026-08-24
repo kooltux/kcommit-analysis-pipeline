@@ -11,8 +11,9 @@ v18.0.1 (Fix 5): updated bucket-label assertions from '100+' to '>=100'.
 """
 import json
 import os
+from unittest.mock import patch
 
-from lib.stages.st06_postfilter import run, _get_threshold, _score_buckets
+from lib.stages.st06_postfilter import run, _get_threshold, _score_buckets, _enrich_backport
 from lib.manifest import CACHE_FILES
 
 
@@ -290,6 +291,74 @@ def test_postfilter_debug_json_empty_scored(tmp_path):
     assert data['summary']['kept']         == 0
     assert data['summary']['dropped']      == 0
     assert data['summary']['top_score']    == 0
+
+
+# == backport enrichment (v18.4.0) ============================================
+
+def _cfg_kernel(count_hunks=False):
+    cfg = {'kernel': {'source_dir': '/repo', 'rev_old': 'v1', 'rev_new': 'v2'}}
+    if count_hunks:
+        cfg['collect'] = {'count_hunks': True}
+    return cfg
+
+
+def test_run_attaches_backport_indicators(tmp_path):
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    c = _scored_commit('abc', 40)
+    c['stats'] = {'files_changed': 2, 'lines_changed': 30, 'hunks': 0}
+    c['files'] = ['drivers/usb/core.c', 'drivers/usb/hub.c']
+    c['meta'] = {}
+    _write_json(os.path.join(cache, CACHE_FILES['scored']), [c])
+    _write_json(os.path.join(cache, CACHE_FILES['filtered']), [])
+    relevant, _, _ = run(_cfg_kernel(), cache)
+    r = relevant[0]
+    assert 'backport_complexity' in r
+    assert r['backport_tier'] in ('easy', 'moderate', 'hard')
+    assert 'pick_priority' in r
+    # single relevant commit → it is the run max → relevance normalized to 100
+    assert 0 <= r['pick_priority'] <= 100
+
+
+def test_enrich_backport_counts_hunks_when_enabled():
+    relevant = [
+        {'commit': 'a' * 40, 'score': 50, 'files': ['x.c'], 'meta': {},
+         'stats': {'files_changed': 1, 'lines_changed': 10}},
+    ]
+    fake_counts = {'a' * 40: 5}
+    with patch('lib.stages.st06_postfilter.batch_count_hunks',
+               return_value=fake_counts) as m:
+        _enrich_backport(_cfg_kernel(count_hunks=True), relevant)
+    m.assert_called_once()
+    assert relevant[0]['stats']['hunks'] == 5
+
+
+def test_enrich_backport_skips_hunks_when_disabled():
+    relevant = [
+        {'commit': 'a' * 40, 'score': 50, 'files': ['x.c'], 'meta': {},
+         'stats': {'files_changed': 1, 'lines_changed': 10}},
+    ]
+    with patch('lib.stages.st06_postfilter.batch_count_hunks') as m:
+        _enrich_backport(_cfg_kernel(count_hunks=False), relevant)
+    m.assert_not_called()
+    assert relevant[0]['stats'].get('hunks', 0) == 0
+
+
+def test_enrich_backport_hunk_failure_is_tolerated():
+    relevant = [
+        {'commit': 'a' * 40, 'score': 50, 'files': ['x.c'], 'meta': {},
+         'stats': {'files_changed': 1, 'lines_changed': 10}},
+    ]
+    with patch('lib.stages.st06_postfilter.batch_count_hunks',
+               side_effect=RuntimeError('git boom')):
+        _enrich_backport(_cfg_kernel(count_hunks=True), relevant)
+    # hunks defaults to 0, enrichment still ran
+    assert relevant[0]['stats']['hunks'] == 0
+    assert 'backport_complexity' in relevant[0]
+
+
+def test_enrich_backport_empty_list():
+    assert _enrich_backport(_cfg_kernel(), []) == []
 
 
 # == CACHE_FILES manifest key ==================================================

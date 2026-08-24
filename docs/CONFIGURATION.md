@@ -137,7 +137,8 @@ using `git show` on Makefiles across the revision range.
 ### `collect`
 ```json
 "collect": {
-  "use_numstat":         false,  // git log --numstat (adds changed-lines data)
+  "use_numstat":         false,  // git log --numstat (adds per-line change data; enables full lines_changed/insertions/deletions size indicators)
+  "count_hunks":         false,  // inspect patches of relevant (post-filter) commits to count diff hunks (stats.hunks); feeds backport_complexity. opt-in (reads patch text via git; kept set only)
   "no_merges":           true,   // git log --no-merges
   "first_parent":        false,  // git log --first-parent
   "max_commits":         0,      // cap on commits collected (0 = no limit)

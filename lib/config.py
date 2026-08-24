@@ -67,6 +67,7 @@ CONFIG_SCHEMA = {
     'collect': {
         '__type__': 'dict',
         'use_numstat':         {'type': 'bool'},
+        'count_hunks':         {'type': 'bool'},
         'no_merges':           {'type': 'bool'},
         'first_parent':        {'type': 'bool'},
         'score_workers':       {'type': 'int'},

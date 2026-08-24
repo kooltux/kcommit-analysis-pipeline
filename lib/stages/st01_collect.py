@@ -6,7 +6,7 @@ rendering it a dead string literal).
 import json
 import os
 from lib.config import save_json
-from lib.gitutils import iter_git_log_records
+from lib.gitutils import iter_git_log_records, compute_numstat_totals
 from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.manifest import CACHE_FILES, NSTAGES
 
@@ -24,12 +24,20 @@ def run(cfg, cache):
         if max_commits and len(commits) >= max_commits:
             print('\n  WARNING: stopping at %d commits (collect.max_commits)' % max_commits)
             break
+        files   = rec.get('files', []) or []
+        numstat = rec.get('numstat', []) or []
+        stats   = compute_numstat_totals(numstat)
+        # In --name-only mode numstat is empty, so derive files_changed from
+        # the files list; line totals stay 0 because git supplied no deltas.
+        if not numstat and files:
+            stats['files_changed'] = len(files)
         entry = {
             'commit':       rec.get('commit'),
             'subject':      rec.get('subject', ''),
             'body':         rec.get('body', ''),
-            'files':        rec.get('files', []),
-            'numstat':      rec.get('numstat', []),
+            'files':        files,
+            'numstat':      numstat,
+            'stats':        stats,
             'author_time':  rec.get('author_time'),
             'commit_time':  rec.get('commit_time'),
             'author_name':  rec.get('author_name'),

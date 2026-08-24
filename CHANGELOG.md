@@ -2,6 +2,108 @@
 
 All notable changes to this project are documented in this file.
 
+## v18.4.0 — feat: hunks indicator + backport complexity / pick_priority (2026-08-24)
+
+### Added
+
+- **Hunks indicator** (`stats.hunks`) — total number of unified-diff hunks
+  (`@@` blocks) across a commit, a fragmentation/dispersion signal. Opt-in via
+  `collect.count_hunks` (default `false`); computed over the *relevant*
+  (post-filter) commits only, via a single batched `git show --unified=0`, so
+  the patch-inspection cost never touches the full commit range.
+  - `lib/gitutils.py::count_hunks_in_patch()` and `batch_count_hunks()`.
+
+- **Backport indicators** (computed in stage 06 over the relevant set,
+  informational — never affect the score):
+  - `backport_complexity` (0–100, higher = harder to cherry-pick): bounded,
+    log-saturated weighted blend of files (cap 25), lines (cap 30), hunks
+    (cap 25) and cross-subsystem spread (cap 20), reduced by a
+    backport-friendliness bonus (`Cc: stable` 15 / `Fixes:` 10 / CVE 5, capped
+    25), with a hard override of 100 for merge commits.
+  - `backport_tier` (`easy` < 25 / `moderate` 25–59 / `hard` ≥ 60).
+  - `pick_priority` (0–100, higher = look first): `0.70·relevance +
+    0.30·ease`, where relevance is the score normalized against the run's max
+    score and ease is `100 − complexity`. Within-run ranking aid; hard-coded
+    weights.
+  - New module `lib/backport.py` (`compute_backport_complexity`,
+    `compute_pick_priority`, `tier_for_complexity`, `enrich_commit_backport`).
+
+- New report columns after the size columns: **Hunks**, **Backport Cx**,
+  **Backport Tier**, **Pick Priority** (CSV / XLSX / ODS / HTML). The HTML
+  report defaults to sorting by **Pick Priority** descending (server-provided
+  `default_sort` honoured by the table JS; the filtered tab keeps rank order).
+  The sidecar `relevant_commits.table.json` gains `hunks`,
+  `backport_complexity`, `backport_tier`, `pick_priority`.
+
+### Changed
+
+- `lib/stages/st06_postfilter.py` — new `_enrich_backport()` pass: optional
+  hunk counting + backport/priority computation over the relevant set before
+  writing `relevant_commits.json`. Git access is best-effort; hunk-count
+  failures degrade to `hunks = 0` without failing the stage.
+- `lib/manifest.py::COMMIT_COLS` extended (single source of truth).
+- `lib/config.py` — `collect.count_hunks` (bool) added to the schema.
+- `lib/scoring.py::order_commit_details()` and
+  `lib/commands/cmd_diagnose.py::_commit_section()` surface the new fields.
+
+### Tests
+
+- New `tests/test_backport.py` (tier boundaries, complexity edge cases,
+  friendliness reduction, merge override, pick_priority blend, enrichment).
+- Hunk-counting tests in `tests/test_gitutils.py`
+  (`count_hunks_in_patch`, batched marker parsing).
+- Stage-06 enrichment tests in `tests/test_st06_postfilter.py` (hunks on/off,
+  git-failure tolerance, indicator attachment).
+- HTML column + default-sort tests in `tests/test_html_report.py`; updated
+  column-index / column-set assertions in `tests/test_spreadsheet.py` and
+  `tests/test_st07_report_extra.py`.
+
+## v18.3.0 — feat: commit size indicators (files/lines changed) (2026-08-24)
+
+### Added
+
+- **Commit size indicators** — two descriptive metrics that measure how "big"
+  a commit is, surfaced beside (but independent of) the profile/rule score:
+  - `files_changed` — number of files touched (breadth; binary files counted).
+  - `lines_changed` — total churn `insertions + deletions` (depth).
+  Both `insertions` and `deletions` are also stored for reference.
+
+- `lib/gitutils.py::compute_numstat_totals(numstat)` — aggregates the per-file
+  `--numstat` list into a `{files_changed, insertions, deletions, lines_changed}`
+  dict. Binary files (`-`/`-`) count toward `files_changed` but contribute
+  `0` lines.
+
+### Changed
+
+- `lib/stages/st01_collect.py` — every collected commit now carries a populated
+  `stats` dict (previously the `stats` key was referenced by
+  `order_commit_details()` / `cmd_diagnose` but never populated). In
+  `--name-only` mode (no per-line deltas) `files_changed` falls back to the
+  touched-file count and line totals are `0`.
+
+- Reports now expose two new columns, **Files Changed** and **Lines Changed**,
+  inserted after **Score**:
+  - `lib/manifest.py` — `COMMIT_COLS` extended (single source of truth;
+    `COMMIT_COLS_FILTERED` inherits the new columns).
+  - `lib/stages/st07_report.py::_commit_rows` and `lib/spreadsheet.py::_commit_row`
+    (CSV / XLSX / ODS row builders) emit the two size cells.
+  - `lib/html_report.py` — `files` / `lines` columns added to the relevant-tab
+    table; the sidecar `relevant_commits.table.json` gains `files_changed` /
+    `lines_changed` fields.
+
+- These indicators are **purely informational** and do **not** affect the
+  score, which remains exclusively rule/profile driven.
+
+### Tests
+
+- Added `compute_numstat_totals` unit tests (basic, empty, `None`, binary,
+  malformed entries) in `tests/test_gitutils.py`.
+- Added stage-01 `stats` population tests (numstat aggregation and name-only
+  fallback) in `tests/test_st01_collect_run.py`.
+- Added size-column tests in `tests/test_st07_report_extra.py`; updated the
+  column-index assertion in `tests/test_spreadsheet.py` for the shifted
+  Profile Scores column.
+
 ## v18.1.0 — perf(st03): cap history revisions, depth-filter Makefiles, merged-map cache (2026-06-18)
 
 ### Changed

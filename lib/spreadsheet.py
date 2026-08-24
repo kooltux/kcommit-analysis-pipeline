@@ -105,6 +105,12 @@ def _commit_row(c, include_reason=False, native_types=False):
     """
     date_val = (_parse_date(c.get("author_time")) if native_types
                 else _fmt_date_str(c.get("author_time")))
+    stats = c.get("stats") or {}
+    files_changed = int(stats.get("files_changed", 0) or 0)
+    lines_changed = int(stats.get("lines_changed", 0) or 0)
+    hunks         = int(stats.get("hunks", 0) or 0)
+    complexity    = int(c.get("backport_complexity", 0) or 0)
+    priority      = int(c.get("pick_priority", 0) or 0)
     row = [
         c.get("_rank", ""),
         (c.get("commit") or "")[:12],
@@ -112,6 +118,12 @@ def _commit_row(c, include_reason=False, native_types=False):
         c.get("author_name", ""),
         date_val,
         float(c.get("score", 0) or 0),
+        float(files_changed) if native_types else files_changed,
+        float(lines_changed) if native_types else lines_changed,
+        float(hunks) if native_types else hunks,
+        float(complexity) if native_types else complexity,
+        c.get("backport_tier", ""),
+        float(priority) if native_types else priority,
         fmt_profiles(c),
         _profile_scores_text(c),
         fmt_evidence(c),

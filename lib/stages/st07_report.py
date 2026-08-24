@@ -142,6 +142,7 @@ def _commit_rows(commits, include_reason=False):
             '%s:%g' % (p, profiles.get(p, 0))
             for p in sorted(profiles)
         )
+        stats = c.get('stats') or {}
         row = [
             c.get('_rank', ''),
             (c.get('commit') or '')[:12],
@@ -149,6 +150,12 @@ def _commit_rows(commits, include_reason=False):
             c.get('author_name', ''),
             _fmt_date(c.get('author_time', '')),
             c.get('score', 0) or 0,
+            stats.get('files_changed', 0) or 0,
+            stats.get('lines_changed', 0) or 0,
+            stats.get('hunks', 0) or 0,
+            c.get('backport_complexity', 0) or 0,
+            c.get('backport_tier', ''),
+            c.get('pick_priority', 0) or 0,
             fmt_profiles(c),
             prof_scores,
             fmt_evidence(c),
@@ -247,12 +254,19 @@ def _write_commit_details(root, commits):
 def _write_table_json(path, commits, include_reason=False):
     rows = []
     for c in commits:
+        stats = c.get('stats') or {}
         row = {
             'commit': c.get('commit', ''),
             'subject': c.get('subject', ''),
             'author_name': c.get('author_name', ''),
             'author_time': c.get('author_time', ''),
             'score': c.get('score', 0) or 0,
+            'files_changed': stats.get('files_changed', 0) or 0,
+            'lines_changed': stats.get('lines_changed', 0) or 0,
+            'hunks': stats.get('hunks', 0) or 0,
+            'backport_complexity': c.get('backport_complexity', 0) or 0,
+            'backport_tier': c.get('backport_tier', '') or '',
+            'pick_priority': c.get('pick_priority', 0) or 0,
             'matched_profiles': list(c.get('matched_profiles') or []),
         }
         if include_reason and c.get('_filter_reason', ''):

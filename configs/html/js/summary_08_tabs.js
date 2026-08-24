@@ -33,6 +33,13 @@ function switchTab(name) {
   });
   clearDetailPanel();
   sortedRows = ROWS.slice(); sortKey = null; sortDir = 1;
+  /* Restore the server default sort on the relevant tab; filtered tab keeps
+   * natural rank order. */
+  if (name !== 'filtered' && DEFAULT_SORT && DEFAULT_SORT.key &&
+      COLS.some(c => c.key === DEFAULT_SORT.key)) {
+    sortKey = DEFAULT_SORT.key;
+    sortDir = DEFAULT_SORT.dir === -1 ? -1 : 1;
+  }
   haystackRows = null;
 
   Object.keys(colFilters).forEach(k => { delete colFilters[k]; });

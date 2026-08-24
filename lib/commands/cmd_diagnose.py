@@ -145,6 +145,8 @@ def _commit_section(c):
         'author_time':  c.get('author_time', ''),
         'files':        list(c.get('files', []) or []),
         'stats':        c.get('stats'),
+        'backport':     c.get('backport'),
+        'pick_priority': c.get('pick_priority'),
         'body':         c.get('body', ''),
     }
 

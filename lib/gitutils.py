@@ -148,9 +148,135 @@ def parse_tail_block(text):
     return sorted(set(files)), numstat
 
 
+def compute_numstat_totals(numstat):
+    """Aggregate a per-file numstat list into commit-size totals.
+
+    *numstat* is the list produced by parse_tail_block(): each entry is a
+    ``{'added': <str>, 'deleted': <str>, 'path': <str>}`` dict where 'added'
+    and 'deleted' are the raw git strings (decimal digits, or '-' for binary
+    files that have no textual line delta).
+
+    Returns a dict with four commit-size indicators:
+
+        files_changed : number of files touched (breadth; binary files count)
+        insertions    : total lines added   (binary files contribute 0)
+        deletions     : total lines removed  (binary files contribute 0)
+        lines_changed : insertions + deletions (churn / depth)
+
+    These are descriptive size metrics only — they are NOT part of the
+    profile/rule score (scoring stays exclusively rule-driven).
+    """
+    files_changed = 0
+    insertions    = 0
+    deletions     = 0
+    for entry in numstat or []:
+        files_changed += 1
+        # Accept both dict form {'added','deleted','path'} and the
+        # positional list/tuple form [added, deleted, path].
+        if isinstance(entry, dict):
+            added   = str(entry.get('added', '') or '')
+            deleted = str(entry.get('deleted', '') or '')
+        elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+            added   = str(entry[0] or '')
+            deleted = str(entry[1] or '')
+        else:
+            added = deleted = ''
+        if added.isdigit():
+            insertions += int(added)
+        if deleted.isdigit():
+            deletions += int(deleted)
+    return {
+        'files_changed': files_changed,
+        'insertions':    insertions,
+        'deletions':     deletions,
+        'lines_changed': insertions + deletions,
+    }
+
+
 def show_commit_patch(cfg, sha, unified=0):
     args = ['show', '--no-renames', '--format=medium', '--unified=%d' % unified, sha]
     return run_git(cfg, args)
+
+
+# ── Hunk counting (backport-complexity input) ────────────────────────────────
+#
+# A "hunk" is a contiguous block of changed lines in a unified diff, marked by
+# a ``@@ -a,b +c,d @@`` header.  The total hunk count across all files in a
+# commit is a dispersion / fragmentation signal: a change scattered over many
+# hunks is generally harder to cherry-pick cleanly than one compact hunk of the
+# same line count.  Counting requires the actual patch text, so it is computed
+# lazily (opt-in via collect.count_hunks) over the small post-filter relevant
+# set — never over the full commit range.
+
+# Marker written by git --format so we can split a batched multi-commit patch
+# stream back into per-commit sections.  Uses the ASCII RS/US separators that
+# never appear in diff text.
+_HUNK_MARK = RS + 'kchunk=%H' + FS
+
+
+def count_hunks_in_patch(patch_text):
+    """Return the number of unified-diff hunks (``@@`` headers) in *patch_text*.
+
+    Counts lines that start with ``@@`` — the unified-diff hunk header marker.
+    A ``git show --unified=0`` patch emits exactly one such header per hunk.
+    Non-diff commit-message lines never start with ``@@`` so they are ignored.
+    """
+    if not patch_text:
+        return 0
+    n = 0
+    for line in patch_text.splitlines():
+        if line.startswith('@@'):
+            n += 1
+    return n
+
+
+def batch_count_hunks(cfg, shas, progress_callback=None):
+    """Return {sha: hunk_count} for *shas* using a single batched ``git show``.
+
+    All commits are diffed in one ``git show --unified=0`` invocation with a
+    per-commit format marker so we can split the combined output back into
+    per-commit patch sections and count ``@@`` headers in each.  This avoids
+    one subprocess per commit.
+
+    Renames are disabled (``--no-renames``) and context is zero
+    (``--unified=0``) so the hunk count reflects the number of distinct change
+    blocks, not surrounding context.  Merge commits are shown with
+    ``--first-parent`` so they yield a normal single-parent diff rather than a
+    combined diff (which prints no ``@@`` headers).
+
+    Returns an empty dict when *shas* is empty.  SHAs with no textual diff
+    (e.g. pure binary or empty commits) map to 0.
+    """
+    shas = [s for s in (shas or []) if s]
+    if not shas:
+        return {}
+
+    args = ['show', '--no-renames', '--first-parent', '--unified=0',
+            '--format=' + _HUNK_MARK]
+    args.extend(shas)
+    output = run_git(cfg, args, check=False)
+
+    counts = {s: 0 for s in shas}
+    # Split the combined stream on the RS-prefixed marker; each chunk begins
+    # with '<sha>' + FS + <patch...> for one commit.
+    sections = output.split(RS)
+    done = 0
+    total = len(shas)
+    for sec in sections:
+        if FS not in sec:
+            continue
+        head, _, body = sec.partition(FS)
+        if not head.startswith('kchunk='):
+            continue
+        sha = head[len('kchunk='):].strip()
+        if sha in counts:
+            counts[sha] = count_hunks_in_patch(body)
+            done += 1
+            if progress_callback and (done % 500 == 0 or done == total):
+                progress_callback(done, total)
+    if progress_callback and done != total:
+        progress_callback(total, total)
+    return counts
 
 
 def list_rev_commits(cfg):

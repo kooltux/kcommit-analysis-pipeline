@@ -80,6 +80,83 @@ total_score = Σ score[P]
 The only way to influence scoring is through **profile weights**
 (`profiles.active`) and **rule weights** in each rule-set directory.
 
+## Commit size indicators
+
+Independently of scoring, every commit carries two descriptive **size
+indicators** that measure how "big" a change is. They are computed in stage 01
+from the git `--numstat` data and stored on each commit under the `stats` key:
+
+| Field | Meaning |
+|-------|---------|
+| `files_changed` | Number of files the commit touches (breadth). Binary files are counted. |
+| `insertions`    | Total lines added. |
+| `deletions`     | Total lines removed. |
+| `lines_changed` | `insertions + deletions` — total churn (depth). |
+| `hunks`         | Total number of unified-diff hunks (`@@` blocks) — fragmentation/dispersion. Only populated when `collect.count_hunks` is enabled (see below). |
+
+Three indicators are surfaced as report columns — **Files Changed**
+(`files_changed`), **Lines Changed** (`lines_changed`) and **Hunks**
+(`hunks`) — because breadth, depth and dispersion are orthogonal: a one-line
+fix spread over 50 files, a 2 000-line rewrite of a single file, and a change
+scattered across 40 tiny hunks are all "big" in different ways.
+
+These indicators are **purely informational**: they do **not** contribute to
+the score, which remains exclusively rule/profile driven. When commits are
+collected with `collect.use_name_only` (no per-line deltas), `files_changed`
+falls back to the touched-file count and the line totals are `0`.
+
+**Hunks** require patch inspection, which is expensive over a full commit
+range. It is therefore **opt-in** via `collect.count_hunks` and computed only
+over the *relevant* (post-filter) commits in stage 06. When disabled, `hunks`
+is `0`.
+
+## Backport indicators
+
+Beside the relevance score, each **relevant** commit carries three derived
+indicators (computed in stage 06) to help triage cherry-pick effort. They are
+informational and never affect the score.
+
+| Field | Meaning |
+|-------|---------|
+| `backport_complexity` | `0–100`, higher = harder to cherry-pick. |
+| `backport_tier` | `easy` (< 25), `moderate` (25–59), `hard` (≥ 60). |
+| `pick_priority` | `0–100`, higher = look at this first (relevant **and** easy). |
+
+`backport_complexity` is a bounded, weighted blend of commit-shape signals that
+correlate with cherry-pick difficulty, with a reduction for commits authored to
+be backported (`Cc: stable`, `Fixes:`, CVE), and a hard override for merges:
+
+```
+files_pts  = min(25, 25·log2(1+files)  / log2(1+50))     # breadth
+lines_pts  = min(30, 30·log2(1+lines)  / log2(1+2000))   # volume/churn
+hunks_pts  = min(25, 25·log2(1+hunks)  / log2(1+60))     # fragmentation (0 if disabled)
+spread_pts = min(20, 5·(distinct_top_dirs − 1))          # cross-subsystem reach
+risk_raw   = files_pts + lines_pts + hunks_pts + spread_pts        # 0..100
+
+friendly   = min(25, 15·has_stable_cc + 10·is_fix + 5·has_cve)
+complexity = clamp(0, 100, round(risk_raw − friendly))
+if merge commit: complexity = 100
+```
+
+`pick_priority` blends **relevance** (the score, normalized against the run's
+maximum) with **ease** (`100 − complexity`):
+
+```
+rel  = 100 · score / max_score_in_run
+ease = 100 − complexity
+pick_priority = round(0.70·rel + 0.30·ease)
+```
+
+Relevance dominates (0.70) so a critical-but-hard fix is never buried; ease
+(0.30) floats the low-hanging fruit to the top of equally-relevant commits.
+Because relevance is normalized against the current run's maximum score,
+`pick_priority` is a **within-run ranking aid** and is not comparable across
+different runs. The HTML report sorts by `pick_priority` (descending) by
+default. Weights are hard-coded.
+
+> These are heuristic estimates from observable commit shape, **not** a real
+> cherry-pick trial. A clean estimate does not guarantee a conflict-free pick.
+
 ## Pre-scoring filter (stage 04)
 
 Before scoring, stage 04 drops structurally irrelevant commits in priority order:

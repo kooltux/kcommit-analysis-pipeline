@@ -103,6 +103,36 @@ def test_commit_rows_empty():
     assert _commit_rows([]) == []
 
 
+def test_commit_rows_size_indicators():
+    """Files/Lines/Hunks + backport columns are populated from the commit."""
+    c = _commit('abc', score=80, rank=1)
+    c['stats'] = {'files_changed': 4, 'insertions': 30,
+                  'deletions': 12, 'lines_changed': 42, 'hunks': 7}
+    c['backport_complexity'] = 55
+    c['backport_tier'] = 'moderate'
+    c['pick_priority'] = 88
+    rows = _commit_rows([c])
+    row = rows[0]
+    assert row[5] == 80          # score
+    assert row[6] == 4           # files_changed
+    assert row[7] == 42          # lines_changed
+    assert row[8] == 7           # hunks
+    assert row[9] == 55          # backport_complexity
+    assert row[10] == 'moderate' # backport_tier
+    assert row[11] == 88         # pick_priority
+
+
+def test_commit_rows_size_indicators_default_zero_without_stats():
+    rows = _commit_rows([_commit('abc', score=10, rank=1)])
+    row = rows[0]
+    assert row[6] == 0   # files_changed
+    assert row[7] == 0   # lines_changed
+    assert row[8] == 0   # hunks
+    assert row[9] == 0   # backport_complexity
+    assert row[10] == '' # backport_tier
+    assert row[11] == 0  # pick_priority
+
+
 # ── XLSX output ───────────────────────────────────────────────────────────────
 def test_xlsx_output_written(tmp_path):
     pytest.importorskip('openpyxl')

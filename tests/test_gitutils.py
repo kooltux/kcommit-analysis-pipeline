@@ -14,8 +14,117 @@ from lib.gitutils import (
     list_rev_commits,
     show_path_history,
     batch_show_paths,
+    compute_numstat_totals,
+    count_hunks_in_patch,
+    batch_count_hunks,
     RS, FS,
 )
+
+
+# ── count_hunks_in_patch ─────────────────────────────────────────────────────
+def test_count_hunks_in_patch_multiple():
+    patch = (
+        'diff --git a/x.c b/x.c\n'
+        '--- a/x.c\n+++ b/x.c\n'
+        '@@ -1 +1 @@\n-old\n+new\n'
+        '@@ -10 +10 @@\n-old2\n+new2\n'
+        'diff --git a/y.c b/y.c\n'
+        '--- a/y.c\n+++ b/y.c\n'
+        '@@ -5 +5 @@\n-a\n+b\n'
+    )
+    assert count_hunks_in_patch(patch) == 3
+
+
+def test_count_hunks_in_patch_none_and_empty():
+    assert count_hunks_in_patch('') == 0
+    assert count_hunks_in_patch(None) == 0
+
+
+def test_count_hunks_in_patch_ignores_message_lines():
+    # A commit-message line that merely mentions @@ mid-line is not a header.
+    patch = 'commit message with @@ inside\n@@ -1 +1 @@\n-x\n+y\n'
+    assert count_hunks_in_patch(patch) == 1
+
+
+def test_batch_count_hunks_empty():
+    assert batch_count_hunks(_cfg(), []) == {}
+
+
+def test_batch_count_hunks_parses_marked_stream():
+    sha1 = 'a' * 40
+    sha2 = 'b' * 40
+    # Simulate git show --format marker output: RS + 'kchunk=<sha>' + FS + patch
+    stream = (
+        RS + 'kchunk=' + sha1 + FS + '\n'
+        'diff --git a/x b/x\n@@ -1 +1 @@\n-x\n+y\n@@ -3 +3 @@\n-a\n+b\n'
+        + RS + 'kchunk=' + sha2 + FS + '\n'
+        'diff --git a/z b/z\n@@ -1 +1 @@\n-p\n+q\n'
+    )
+    with patch('lib.gitutils.run_git', return_value=stream):
+        counts = batch_count_hunks(_cfg(), [sha1, sha2])
+    assert counts[sha1] == 2
+    assert counts[sha2] == 1
+
+
+# ── compute_numstat_totals (commit-size indicators) ─────────────────────────
+def test_compute_numstat_totals_basic():
+    numstat = [
+        {'added': '10', 'deleted': '2', 'path': 'a.c'},
+        {'added': '5',  'deleted': '0', 'path': 'b.h'},
+    ]
+    t = compute_numstat_totals(numstat)
+    assert t['files_changed'] == 2
+    assert t['insertions'] == 15
+    assert t['deletions'] == 2
+    assert t['lines_changed'] == 17
+
+
+def test_compute_numstat_totals_empty():
+    t = compute_numstat_totals([])
+    assert t == {'files_changed': 0, 'insertions': 0,
+                 'deletions': 0, 'lines_changed': 0}
+
+
+def test_compute_numstat_totals_list_form():
+    # Positional [added, deleted, path] entries are also accepted.
+    numstat = [['1', '0', 'a.c'], ['4', '2', 'b.c']]
+    t = compute_numstat_totals(numstat)
+    assert t['files_changed'] == 2
+    assert t['insertions'] == 5
+    assert t['deletions'] == 2
+    assert t['lines_changed'] == 7
+
+
+def test_compute_numstat_totals_none():
+    t = compute_numstat_totals(None)
+    assert t['files_changed'] == 0
+    assert t['lines_changed'] == 0
+
+
+def test_compute_numstat_totals_binary_counts_file_not_lines():
+    # Binary files report '-' for added/deleted: count the file, add 0 lines.
+    numstat = [
+        {'added': '-', 'deleted': '-', 'path': 'blob.bin'},
+        {'added': '3', 'deleted': '1', 'path': 'x.c'},
+    ]
+    t = compute_numstat_totals(numstat)
+    assert t['files_changed'] == 2
+    assert t['insertions'] == 3
+    assert t['deletions'] == 1
+    assert t['lines_changed'] == 4
+
+
+def test_compute_numstat_totals_malformed_entries_are_ignored():
+    numstat = [
+        {'added': '', 'deleted': None, 'path': 'a'},
+        {'path': 'b'},                       # missing added/deleted
+        {'added': '7', 'deleted': '8', 'path': 'c'},
+    ]
+    t = compute_numstat_totals(numstat)
+    assert t['files_changed'] == 3
+    assert t['insertions'] == 7
+    assert t['deletions'] == 8
+    assert t['lines_changed'] == 15
 
 
 def _cfg(src='/fake/repo', git_bin='git', no_merges=True, numstat=True,

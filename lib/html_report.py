@@ -158,14 +158,26 @@ def _fmt_date(ts):
 # Base columns — profile_scores is removed; JS inserts per-profile columns
 # dynamically after the "score" column using score_<profile> row keys.
 _COMMIT_COLUMNS = [
-    ('rank',     'Rank',     'number'),
-    ('sha12',    'SHA',      'string'),
-    ('subject',  'Subject',  'string'),
-    ('author',   'Author',   'string'),
-    ('date',     'Date',     'date'),
-    ('score',    'Score',    'number'),
-    ('profiles', 'Profiles', 'select'),
+    ('rank',          'Rank',           'number'),
+    ('sha12',         'SHA',            'string'),
+    ('subject',       'Subject',        'string'),
+    ('author',        'Author',         'string'),
+    ('date',          'Date',           'date'),
+    ('score',         'Score',          'number'),
+    ('files',         'Files Changed',  'number'),
+    ('lines',         'Lines Changed',  'number'),
+    ('hunks',         'Hunks',          'number'),
+    ('backport_cx',   'Backport Cx',    'number'),
+    ('backport_tier', 'Backport Tier',  'select'),
+    ('pick_priority', 'Pick Priority',  'number'),
+    ('profiles',      'Profiles',       'select'),
 ]
+
+# Default table sort: highest pick_priority first (look at the best
+# relevant + easy-to-backport commits first).
+_DEFAULT_SORT = {'key': 'pick_priority', 'dir': -1}
+
+_BACKPORT_TIER_OPTIONS = ['easy', 'moderate', 'hard']
 
 
 def _columns_def(profile_names):
@@ -174,6 +186,8 @@ def _columns_def(profile_names):
     for col in cols:
         if col['key'] == 'profiles' and profile_names:
             col['options'] = sorted(profile_names)
+        elif col['key'] == 'backport_tier':
+            col['options'] = list(_BACKPORT_TIER_OPTIONS)
     return cols
 
 
@@ -187,6 +201,7 @@ def _commit_row(i, c, all_profiles=None):
     sha   = (c.get('commit') or '')
     sha12 = sha[:12]
     profs = c.get('matched_profiles') or []
+    stats = c.get('stats') or {}
 
     row = {
         'rank':     i,
@@ -196,6 +211,12 @@ def _commit_row(i, c, all_profiles=None):
         'author':   c.get('author_name') or '',
         'date':     _fmt_date(c.get('author_time')),
         'score':    c.get('score', 0) or 0,
+        'files':    stats.get('files_changed', 0) or 0,
+        'lines':    stats.get('lines_changed', 0) or 0,
+        'hunks':    stats.get('hunks', 0) or 0,
+        'backport_cx':   c.get('backport_complexity', 0) or 0,
+        'backport_tier': c.get('backport_tier', '') or '',
+        'pick_priority': c.get('pick_priority', 0) or 0,
         'profiles': profs,
     }
 
@@ -606,6 +627,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         'meta':        meta,
         'context':     context,
         'columns':     cols,
+        'default_sort': dict(_DEFAULT_SORT),
         'rows':        rows,
         'sidebar':     _sidebar_payload(report_stats, profile_summary,
                                         run_stats_data=run_stats_data),

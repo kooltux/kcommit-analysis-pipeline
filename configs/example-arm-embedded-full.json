@@ -111,6 +111,11 @@
   "collect": {
     // use_numstat: attach per-file change stats (insertions/deletions).
     "use_numstat":       true,
+    // count_hunks: inspect patches of the *relevant* (post-filter) commits to
+    // count unified-diff hunks per commit (stats.hunks).  Feeds the
+    // backport_complexity indicator.  Opt-in because it reads patch text via
+    // git; only the small kept set is inspected, never the full range.
+    "count_hunks":       false,
     // use_no_merges: pass --no-merges to git log (recommended).
     "no_merges":     true,
     // use_first_parent: pass --first-parent to git log.

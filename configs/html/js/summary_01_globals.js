@@ -41,6 +41,11 @@ const REL_COLS = (() => {
 
 const REL_ROWS = UI.rows || [];
 
+/* Default table sort for the relevant tab (e.g. pick_priority desc).
+ * Shape: { key: <colKey>, dir: 1|-1 }.  Null when the server did not
+ * request one (falls back to natural rank order). */
+const DEFAULT_SORT = UI.default_sort || null;
+
 /* ---- Filtered tab dataset ------------------------------------------ */
 const FILT_COLS = UI.filtered_columns || [];
 const FILT_ROWS = UI.filtered_rows    || [];

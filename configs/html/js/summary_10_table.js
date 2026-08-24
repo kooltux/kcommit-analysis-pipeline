@@ -43,7 +43,14 @@ const noMatch    = document.getElementById('kc-no-match');
 const clearBtn   = document.getElementById('kc-clear-filters');
 const exportBtn  = document.getElementById('kc-export-csv');
 
+/* Initial sort seeded from the server-provided DEFAULT_SORT (relevant tab).
+ * Only honoured when the referenced column actually exists in COLS. */
 let sortKey = null, sortDir = 1;
+if (DEFAULT_SORT && DEFAULT_SORT.key &&
+    COLS.some(c => c.key === DEFAULT_SORT.key)) {
+  sortKey = DEFAULT_SORT.key;
+  sortDir = DEFAULT_SORT.dir === -1 ? -1 : 1;
+}
 const colFilters = Object.create(null);
 COLS.forEach(c => { colFilters[c.key] = ''; });
 

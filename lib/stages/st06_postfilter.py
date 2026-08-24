@@ -16,6 +16,8 @@ v18.0.1 fix (Fix 5):
 import os
 from lib.config import load_json, save_json
 from lib.manifest import CACHE_FILES
+from lib.gitutils import batch_count_hunks
+from lib.backport import enrich_commit_backport
 
 
 def _get_threshold(cfg):
@@ -64,6 +66,44 @@ def _score_buckets(commits):
     return buckets
 
 
+def _enrich_backport(cfg, relevant):
+    """Attach backport indicators (and optional hunk counts) to relevant commits.
+
+    Runs *after* filtering, over the small relevant set only, so the optional
+    patch-inspection pass for hunk counting never touches the full commit
+    range (perf).  Hunk counting is opt-in via collect.count_hunks; when off,
+    stats['hunks'] stays 0 and the hunks term contributes nothing to
+    backport_complexity.
+
+    Order of operations:
+      1. (optional) count hunks per commit via a single batched git show.
+      2. compute backport_complexity / backport_tier / pick_priority, using the
+         run-relative max score for pick_priority normalization.
+    """
+    if not relevant:
+        return relevant
+
+    collect = cfg.get('collect', {}) or {}
+    if collect.get('count_hunks'):
+        shas = [c.get('commit') for c in relevant if c.get('commit')]
+        try:
+            counts = batch_count_hunks(cfg, shas)
+        except Exception as exc:   # git access is best-effort; never crash stage 06
+            print('  warning: hunk counting failed (%s); hunks set to 0' % exc)
+            counts = {}
+        for c in relevant:
+            stats = c.get('stats')
+            if not isinstance(stats, dict):
+                stats = {}
+                c['stats'] = stats
+            stats['hunks'] = int(counts.get(c.get('commit'), 0) or 0)
+
+    max_score = max((int(c.get('score', 0) or 0) for c in relevant), default=0)
+    for c in relevant:
+        enrich_commit_backport(c, max_score)
+    return relevant
+
+
 def run(cfg, cache):
     """Sort, threshold-filter, rank commits and write output caches.
 
@@ -90,6 +130,8 @@ def run(cfg, cache):
 
     for rank, c in enumerate(relevant, 1):
         c['_rank'] = rank
+
+    _enrich_backport(cfg, relevant)
 
     save_json(os.path.join(cache, CACHE_FILES['relevant']), relevant)
 

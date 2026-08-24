@@ -119,6 +119,82 @@ def test_html_report_embeds_kc_ui_payload(tmp_path):
     assert ui['rows'][0]['score'] == 10
 
 
+def test_html_report_exposes_size_indicator_columns(tmp_path):
+    """Relevant-tab columns and rows carry files/lines size indicators."""
+    tpl_dir = _tpl_dir(tmp_path)
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'abc123456789' + 'f' * 28, 'subject': 'subj', 'body': 'body',
+        'author_name': 'A', 'author_time': 1700000000,
+        'score': 10, 'matched_profiles': ['p'], 'product_evidence': [],
+        'stats': {'files_changed': 3, 'insertions': 20,
+                  'deletions': 5, 'lines_changed': 25},
+    }]
+    generate_html_report(commits, {}, {}, str(out), templates_dir=str(tpl_dir))
+    ui = _kc_ui(out.read_text())
+    col_keys = [c['key'] for c in ui['columns']]
+    assert 'files' in col_keys
+    assert 'lines' in col_keys
+    assert ui['rows'][0]['files'] == 3
+    assert ui['rows'][0]['lines'] == 25
+
+
+def test_html_report_size_indicators_default_zero_without_stats(tmp_path):
+    tpl_dir = _tpl_dir(tmp_path)
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'abc123456789' + 'f' * 28, 'subject': 'subj', 'body': 'body',
+        'author_name': 'A', 'author_time': 1700000000,
+        'score': 10, 'matched_profiles': ['p'], 'product_evidence': [],
+    }]
+    generate_html_report(commits, {}, {}, str(out), templates_dir=str(tpl_dir))
+    ui = _kc_ui(out.read_text())
+    assert ui['rows'][0]['files'] == 0
+    assert ui['rows'][0]['lines'] == 0
+
+
+def test_html_report_exposes_hunks_and_backport_columns(tmp_path):
+    """Hunks, Backport Cx/Tier and Pick Priority columns + row values."""
+    tpl_dir = _tpl_dir(tmp_path)
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'abc123456789' + 'f' * 28, 'subject': 'subj', 'body': 'body',
+        'author_name': 'A', 'author_time': 1700000000,
+        'score': 10, 'matched_profiles': ['p'], 'product_evidence': [],
+        'stats': {'files_changed': 3, 'lines_changed': 25, 'hunks': 6},
+        'backport_complexity': 42, 'backport_tier': 'moderate',
+        'pick_priority': 77,
+    }]
+    generate_html_report(commits, {}, {}, str(out), templates_dir=str(tpl_dir))
+    ui = _kc_ui(out.read_text())
+    col_keys = [c['key'] for c in ui['columns']]
+    assert 'hunks' in col_keys
+    assert 'backport_cx' in col_keys
+    assert 'backport_tier' in col_keys
+    assert 'pick_priority' in col_keys
+    row = ui['rows'][0]
+    assert row['hunks'] == 6
+    assert row['backport_cx'] == 42
+    assert row['backport_tier'] == 'moderate'
+    assert row['pick_priority'] == 77
+    # backport_tier is a select column with the three tier options
+    tier_col = next(c for c in ui['columns'] if c['key'] == 'backport_tier')
+    assert tier_col.get('options') == ['easy', 'moderate', 'hard']
+
+
+def test_html_report_default_sort_is_pick_priority_desc(tmp_path):
+    tpl_dir = _tpl_dir(tmp_path)
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'abc123456789' + 'f' * 28, 'subject': 'subj', 'body': 'body',
+        'author_name': 'A', 'author_time': 1700000000,
+        'score': 10, 'matched_profiles': ['p'], 'product_evidence': [],
+    }]
+    generate_html_report(commits, {}, {}, str(out), templates_dir=str(tpl_dir))
+    ui = _kc_ui(out.read_text())
+    assert ui['default_sort'] == {'key': 'pick_priority', 'dir': -1}
+
+
 def test_html_detail_assets_include_js(tmp_path):
     tpl_dir = _tpl_dir(tmp_path)
     out = tmp_path / 'report.html'
