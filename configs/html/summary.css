@@ -40,6 +40,13 @@
   --mid-bg:  #fff8c5; --mid-fg:  #7d4e00;
   --low-bg:  #ffebe9; --low-fg:  #82071e;
 
+  /* 4-level heat map tokens (higher-better: 1=green/best, 4=purple/worst) */
+  /* Combo 9: High Contrast - Green -> Yellow -> Red -> Purple */
+  --heat-1-bg: #80ff80; --heat-1-fg: #004000;
+  --heat-2-bg: #fff59d; --heat-2-fg: #800000;
+  --heat-3-bg: #ffcccc; --heat-3-fg: #800000;
+  --heat-4-bg: #e8b9f7; --heat-4-fg: #7b1fa2;
+
   /* SVG chart tokens */
   --kc-chart-curve-fill:   #0969da;
   --kc-chart-curve-stroke: #0550ae;
@@ -86,6 +93,13 @@ html[data-theme="dark"] {
   --hi-bg:   #1a3a26; --hi-fg:   #56d364;
   --mid-bg:  #2d2208; --mid-fg:  #e3b341;
   --low-bg:  #2d1117; --low-fg:  #ff7b72;
+
+  /* 4-level heat map tokens (higher-better: 1=green/best, 4=purple/worst) */
+  /* Combo 9: High Contrast - Green -> Yellow -> Red -> Purple */
+  --heat-1-bg: #004000; --heat-1-fg: #80ff80;
+  --heat-2-bg: #4a3d08; --heat-2-fg: #ffeb3b;
+  --heat-3-bg: #800000; --heat-3-fg: #ffcccc;
+  --heat-4-bg: #3d0c3d; --heat-4-fg: #e8b9f7;
   --kc-chart-curve-fill:   #58a6ff;
   --kc-chart-curve-stroke: #79c0ff;
   --kc-chart-bar-zero:    #6e7681;
@@ -787,11 +801,15 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 .kc-low { background: var(--low-bg); color: var(--low-fg); }
 
 /* ── 4-level heat coloring ────────────────────────────────────────── */
-/* 1=green (best/highest for higher-better), 2=lime, 3=orange, 4=red (worst/lowest) — theme-aware.
- * See heatPill() polarity in summary_02_utils.js: 'higher-better' inverts the
- * level→class mapping so that high values get kc-heat-1 (green) and low values
- * get kc-heat-4 (red); 'higher-worse' maps directly so low values get kc-heat-1
- * (green) and high values get kc-heat-4 (red). */
+/* Combo 9: High Contrast scale - Green -> Yellow -> Red -> Purple.
+ * 1=green (best), 2=yellow, 3=red, 4=purple (worst) — theme-aware tokens
+ * ensure proper contrast in both light and dark modes. See heatPill() polarity
+ * in summary_02_utils.js:
+ *   'higher-better' (score%, pick_priority): inverts level→class so high
+ *     values (75-100%) get kc-heat-1 (green) and low values (0-25%) get
+ *     kc-heat-4 (purple).
+ *   'higher-worse' (backport_cx): direct mapping so low values (0-25%, easy)
+ *     get kc-heat-1 (green) and high values (75-100%, hard) get kc-heat-4 (purple). */
 .kc-heat-pill {
   display: inline-block;
   padding: 2px 8px;
@@ -800,10 +818,10 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.kc-heat-1 { background: var(--hi-bg);  color: var(--hi-fg);  }
-.kc-heat-2 { background: #e8f5e9; color: #2e7d32; }
-.kc-heat-3 { background: var(--mid-bg); color: var(--mid-fg); }
-.kc-heat-4 { background: var(--low-bg); color: var(--low-fg); }
+.kc-heat-1 { background: var(--heat-1-bg); color: var(--heat-1-fg); }
+.kc-heat-2 { background: var(--heat-2-bg); color: var(--heat-2-fg); }
+.kc-heat-3 { background: var(--heat-3-bg); color: var(--heat-3-fg); }
+.kc-heat-4 { background: var(--heat-4-bg); color: var(--heat-4-fg); }
 
 /* ── Profile colour bullets + legend ────────────────────────────── */
 /* Deterministic per-profile colours (JS profileColor()) shown as bullets in

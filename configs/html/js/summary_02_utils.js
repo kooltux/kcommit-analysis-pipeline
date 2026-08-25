@@ -72,8 +72,18 @@ function profileBullets(arr) {
  *
  * heatLevel(value, scale) → 1..4 (even quartiles of value/scale, clamped)
  * heatPill(value, {scale, polarity}) → pill with .kc-heat-1..4; polarity:
- *   'higher-better' → level 1=green(top)…4=red(bottom)
- *   'higher-worse' → level 1=red(top)…4=green(bottom)
+ *   'higher-better' (score%, pick_priority) → inverts level→class so
+ *     high values (level 4, 75-100%) get kc-heat-1 (green) and
+ *     low values (level 1, 0-25%) get kc-heat-4 (purple).
+ *   'higher-worse' (backport_cx) → direct mapping so
+ *     low values (level 1, 0-25%, easy) get kc-heat-1 (green) and
+ *     high values (level 4, 75-100%, hard) get kc-heat-4 (purple).
+ *
+ * Color scale (Combo 9 - High Contrast, inverted red/purple):
+ *   Heat 1 = Green (#80ff80 / #004000 light, #004000 / #80ff80 dark)
+ *   Heat 2 = Yellow (#fff59d / #800000 light, #4a3d08 / #ffeb3b dark)
+ *   Heat 3 = Red (#ffcccc / #800000 light, #800000 / #ffcccc dark)
+ *   Heat 4 = Purple (#e8b9f7 / #7b1fa2 light, #3d0c3d / #e8b9f7 dark)
  */
 function heatLevel(value, scale) {
   const v = parseFloat(value) || 0;
@@ -86,9 +96,12 @@ function heatPill(value, {scale, polarity}) {
   const level = heatLevel(value, scale);
   const v = parseFloat(value);
   if (!Number.isFinite(v)) return '<span class="kc-muted">—</span>';
-  /* heat classes: 1=green (best), 2=lime, 3=orange, 4=red (worst)
-   * higher-better (score%, pick_priority): invert so low level → red, high level → green
-   * higher-worse (backport_cx): keep direct so low level → green, high level → red */
+  /* heat classes: 1=green, 2=yellow, 3=orange, 4=red
+   * Theme-aware CSS tokens ensure proper contrast in light/dark modes.
+   * higher-better (score%, pick_priority): invert level→class so
+   *   level 4 (75-100%) → kc-heat-1 (green), level 1 (0-25%) → kc-heat-4 (red)
+   * higher-worse (backport_cx): direct mapping so
+   *   level 1 (0-25%, easy) → kc-heat-1 (green), level 4 (75-100%, hard) → kc-heat-4 (red) */
   const cls = polarity === 'higher-better' ? [4, 3, 2, 1][level - 1] : level;
   return `<span class="kc-heat-pill kc-heat-${cls}">${esc(v)}</span>`;
 }
