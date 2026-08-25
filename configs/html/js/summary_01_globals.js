@@ -22,22 +22,19 @@ const TABS_CFG = UI.tabs || null;
 
 /* ---- Relevant tab dataset ------------------------------------------ */
 const BASE_COLS   = UI.columns || [];
-const PROFILE_NAMES = (() => {
-  const profilesCol = (UI.columns || []).find(c => c.key === 'profiles');
-  return (profilesCol?.options || []).slice();
-})();
 
-const REL_COLS = (() => {
-  const out = [];
-  for (const col of BASE_COLS) {
-    out.push(col);
-    if (col.key === 'score' && PROFILE_NAMES.length) {
-      for (const p of PROFILE_NAMES)
-        out.push({ key: `score_${p}`, label: p, type: 'number', _profile: p });
-    }
-  }
-  return out.filter(c => c.key !== 'profile_scores');
-})();
+/* Visible relevant-tab columns.
+ *
+ * Per-profile score columns (score_<profile>) are intentionally NOT shown in
+ * the table — the per-commit profile breakdown is low-signal there and widens
+ * the table with one column per profile.  Those scores are still emitted as
+ * score_<profile> keys on every ROW (so they remain searchable) and the full
+ * breakdown is available in the commit-detail "Scoring" tab.
+ *
+ * Server-flagged hidden columns (files/lines/hunks/backport_tier) and the
+ * legacy synthetic 'profile_scores' column are likewise dropped from the
+ * visible set while keeping their row values. */
+const REL_COLS = BASE_COLS.filter(c => c.key !== 'profile_scores' && !c.hidden);
 
 const REL_ROWS = UI.rows || [];
 

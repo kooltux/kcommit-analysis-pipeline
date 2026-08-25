@@ -138,13 +138,35 @@ function populateDetail(commit) {
   const profiles = (commit.matched_profiles || []);
   const evidence = (commit.product_evidence || []);
 
+  /* Size + backport indicators — the same values shown (some hidden) in the
+   * table, gathered here so the Overview is a self-contained triage summary.
+   * Rows are only emitted when the underlying value is present. */
+  const ovStats    = commit.stats || {};
+  const ovScoreN   = commit.score_norm;
+  const ovFiles    = ovStats.files_changed;
+  const ovLines    = ovStats.lines_changed;
+  const ovHunks    = ovStats.hunks;
+  const ovCx       = commit.backport_complexity;
+  const ovPriority = commit.pick_priority;
+  const has = v => v != null && v !== '';
+
+  const indicatorRows = [
+    has(ovScoreN)   ? kv('Score %',       heatPill(ovScoreN,   {scale: 100, polarity: 'higher-better'})) : '',
+    has(ovFiles)    ? kv('Files changed', esc(ovFiles))                                              : '',
+    has(ovLines)    ? kv('Lines changed', esc(ovLines))                                              : '',
+    has(ovHunks)    ? kv('Hunks',         esc(ovHunks))                                              : '',
+    has(ovCx)       ? kv('Backport complexity', heatPill(ovCx,   {scale: 100, polarity: 'higher-worse'}))  : '',
+    has(ovPriority) ? kv('Pick priority', heatPill(ovPriority, {scale: 100, polarity: 'higher-better'})) : '',
+  ].join('');
+
   const overviewHtml = detailCard('Commit', `
     <div class="kc-kv-grid">
       ${kv('SHA',     `<code>${esc(sha)}</code>`)}
       ${kv('Author',  esc(author))}
       ${kv('Date',    esc(date))}
-      ${kv('Score',   scorePill(score))}
-      ${profiles.length ? kv('Profiles', chips(profiles)) : ''}
+      ${kv('Score',   esc(score))}
+      ${indicatorRows}
+      ${profiles.length ? kv('Profiles', profileBullets(profiles) + ' ' + chips(profiles)) : ''}
     </div>
     <div class="kc-commit-subject">${esc(subject)}</div>
     ${body ? `<pre class="kc-commit-body">${esc(body)}</pre>` : ''}

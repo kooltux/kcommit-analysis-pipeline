@@ -7,9 +7,13 @@ which are painful, and which to look at first.
 
 Three derived values are produced, all stored on the commit dict:
 
+  score_norm          : int 0..100  (raw score normalized run-relative)
   backport_complexity : int 0..100  (higher = harder to cherry-pick)
-  backport_tier       : str         ('easy' | 'moderate' | 'hard')
   pick_priority       : int 0..100  (higher = look at this first)
+
+The categorical backport *tier* was removed: the HTML report colours the
+numeric backport_complexity directly via a shared 4-level heat scale computed
+from the value, so a separate string bucket is redundant.
 
 backport_complexity is a bounded, weighted blend of commit-shape signals that
 correlate with cherry-pick difficulty:
@@ -32,17 +36,18 @@ Merge commits are not simple cherry-picks → forced to 100.
 The line/hunk/file terms use log2 saturation so a 10 000-line commit is not
 100× a 100-line commit — past a point, "big is big".
 
-pick_priority combines *relevance* (the score, normalized run-relative) with
-*ease* (100 - complexity):
+pick_priority combines *relevance* (score_norm, the run-relative normalized
+score) with *ease* (100 - complexity):
 
-    rel  = 100 * score / max_score_in_run
-    ease = 100 - complexity
-    pick_priority = round(0.70*rel + 0.30*ease)
+    score_norm    = round(100 * score / max_score_in_run)
+    ease          = 100 - complexity
+    pick_priority = round(0.70*score_norm + 0.30*ease)
 
 Relevance dominates (0.70) so a critical-but-hard fix is never buried; ease
 (0.30) floats the low-hanging fruit to the top of equally-relevant commits.
-Because rel is normalized against the current run's maximum score,
-pick_priority is a *within-run* ranking aid and is not comparable across runs.
+Because score_norm is normalized against the current run's maximum score, both
+score_norm and pick_priority are *within-run* ranking aids and are not
+comparable across runs.
 
 Hard-coded weights are intentional (kept simple); they can be promoted to
 config later if needed.
@@ -65,10 +70,6 @@ _BONUS_STABLE = 15
 _BONUS_FIX    = 10
 _BONUS_CVE    = 5
 _BONUS_CAP    = 25
-
-# Tier thresholds on the 0..100 complexity scale.
-_TIER_EASY_MAX     = 25   # < 25          → easy
-_TIER_MODERATE_MAX = 60   # 25..59        → moderate ; >= 60 → hard
 
 # pick_priority blend weights (must sum to 1.0).
 _W_RELEVANCE = 0.70
@@ -98,15 +99,6 @@ def _distinct_top_dirs(files):
     return len(tops)
 
 
-def tier_for_complexity(complexity):
-    """Map a 0..100 complexity value to its categorical tier."""
-    if complexity < _TIER_EASY_MAX:
-        return 'easy'
-    if complexity < _TIER_MODERATE_MAX:
-        return 'moderate'
-    return 'hard'
-
-
 def compute_backport_complexity(commit):
     """Compute backport complexity for a single commit dict.
 
@@ -115,7 +107,7 @@ def compute_backport_complexity(commit):
     spread) and commit['parents'] (merge detection, when available).
 
     Returns a dict:
-        {'complexity': int, 'tier': str, 'factors': {...}}
+        {'complexity': int, 'factors': {...}}
     where factors exposes the per-term breakdown for transparency.
     """
     commit = commit or {}
@@ -162,27 +154,41 @@ def compute_backport_complexity(commit):
     }
     return {
         'complexity': complexity,
-        'tier':       tier_for_complexity(complexity),
         'factors':    factors,
     }
 
 
-def compute_pick_priority(score, complexity, max_score):
-    """Combine relevance (score) and ease (100 - complexity) into 0..100.
+def normalize_score(score, max_score):
+    """Return the run-relative normalized score as an int 0..100.
 
-    *max_score* is the maximum score across the current run's relevant set,
-    used to normalize relevance run-relative.  Returns an int 0..100.
+    score_norm = round(100 * score / max_score), with max_score clamped to >= 1
+    so an all-zero run (or a single commit) never divides by zero.  This is the
+    single source of truth for score normalization; both the 'Score %' report
+    column and pick_priority's relevance term consume it.
+
+    It is a *within-run* value (relative to this run's maximum score) and is
+    not comparable across different runs.
     """
     max_score = max(float(max_score or 0), 1.0)
-    rel  = 100.0 * float(score or 0) / max_score
-    rel  = max(0.0, min(100.0, rel))
+    norm = 100.0 * float(score or 0) / max_score
+    return int(round(max(0.0, min(100.0, norm))))
+
+
+def compute_pick_priority(score_norm, complexity):
+    """Combine relevance (score_norm) and ease (100 - complexity) into 0..100.
+
+    *score_norm* is the already-normalized 0..100 relevance value produced by
+    normalize_score() — reused here so normalization happens exactly once.
+    Returns an int 0..100.
+    """
+    rel  = max(0.0, min(100.0, float(score_norm or 0)))
     ease = max(0.0, min(100.0, 100.0 - float(complexity or 0)))
     priority = _W_RELEVANCE * rel + _W_EASE * ease
     return int(round(max(0.0, min(100.0, priority))))
 
 
 def enrich_commit_backport(commit, max_score):
-    """Attach backport_complexity, backport_tier and pick_priority to *commit*.
+    """Attach score_norm, backport_complexity and pick_priority to *commit*.
 
     Mutates and returns the commit dict.  Also stores a 'backport' sub-dict
     with the factor breakdown for diagnostics / detail views.
@@ -190,12 +196,11 @@ def enrich_commit_backport(commit, max_score):
     result = compute_backport_complexity(commit)
     complexity = result['complexity']
     commit['backport_complexity'] = complexity
-    commit['backport_tier']       = result['tier']
     commit['backport']            = {
         'complexity': complexity,
-        'tier':       result['tier'],
         'factors':    result['factors'],
     }
+    commit['score_norm'] = normalize_score(commit.get('score', 0), max_score)
     commit['pick_priority'] = compute_pick_priority(
-        commit.get('score', 0), complexity, max_score)
+        commit['score_norm'], complexity)
     return commit

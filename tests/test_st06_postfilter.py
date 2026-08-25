@@ -314,7 +314,6 @@ def test_run_attaches_backport_indicators(tmp_path):
     relevant, _, _ = run(_cfg_kernel(), cache)
     r = relevant[0]
     assert 'backport_complexity' in r
-    assert r['backport_tier'] in ('easy', 'moderate', 'hard')
     assert 'pick_priority' in r
     # single relevant commit → it is the run max → relevance normalized to 100
     assert 0 <= r['pick_priority'] <= 100
@@ -359,6 +358,27 @@ def test_enrich_backport_hunk_failure_is_tolerated():
 
 def test_enrich_backport_empty_list():
     assert _enrich_backport(_cfg_kernel(), []) == []
+
+
+def test_run_attaches_score_norm(tmp_path):
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    # two commits: top score 100 → norm 100; other 25 → norm 25
+    a = _scored_commit('a', 100); a['files'] = ['x.c']; a['meta'] = {}
+    b = _scored_commit('b', 25);  b['files'] = ['y.c']; b['meta'] = {}
+    _write_json(os.path.join(cache, CACHE_FILES['scored']), [a, b])
+    _write_json(os.path.join(cache, CACHE_FILES['filtered']), [])
+    relevant, _, _ = run(_cfg_kernel(), cache)
+    by_sha = {c['commit']: c for c in relevant}
+    assert by_sha['a']['score_norm'] == 100
+    assert by_sha['b']['score_norm'] == 25
+
+
+def test_enrich_backport_score_norm_zero_max_safe():
+    relevant = [{'commit': 'a' * 40, 'score': 0, 'files': ['x.c'], 'meta': {},
+                 'stats': {'files_changed': 1, 'lines_changed': 1}}]
+    _enrich_backport(_cfg_kernel(), relevant)
+    assert relevant[0]['score_norm'] == 0
 
 
 # == CACHE_FILES manifest key ==================================================

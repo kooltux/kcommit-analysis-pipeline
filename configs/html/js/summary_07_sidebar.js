@@ -73,8 +73,11 @@
     }
 
     if (CTX.profiles && CTX.profiles.length) {
-      html += `<div class="kc-stat-block"><div class="kc-stat-block-head"><span class="kc-icon">\ud83c\udfaf</span>Scoring profiles</div><div class="kc-stat-block-body"><div style="display:flex;flex-wrap:wrap;gap:4px;padding:2px 0">`;
-      CTX.profiles.forEach(p => { html += `<span class="kc-chip">${esc(p)}</span>`; });
+      /* Colour legend: each profile gets a deterministic coloured bullet
+       * (profileColor()) reused by the table "Profiles" column, so a reader
+       * can map a row's bullets back to profile names here. */
+      html += `<div class="kc-stat-block"><div class="kc-stat-block-head"><span class="kc-icon">\ud83c\udfaf</span>Scoring profiles</div><div class="kc-stat-block-body"><div class="kc-prof-legend">`;
+      CTX.profiles.forEach(p => { html += profileBullet(p, true); });
       html += `</div></div></div>`;
     }
   })();

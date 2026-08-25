@@ -1,21 +1,31 @@
-"""Tests for lib.backport — backport_complexity, backport_tier, pick_priority."""
+"""Tests for lib.backport — backport_complexity, pick_priority."""
 from lib.backport import (
     compute_backport_complexity,
     compute_pick_priority,
-    tier_for_complexity,
+    normalize_score,
     enrich_commit_backport,
     _distinct_top_dirs,
 )
 
 
-# ── tier_for_complexity ──────────────────────────────────────────────────────
-def test_tier_boundaries():
-    assert tier_for_complexity(0) == 'easy'
-    assert tier_for_complexity(24) == 'easy'
-    assert tier_for_complexity(25) == 'moderate'
-    assert tier_for_complexity(59) == 'moderate'
-    assert tier_for_complexity(60) == 'hard'
-    assert tier_for_complexity(100) == 'hard'
+# ── normalize_score ──────────────────────────────────────────────────────────
+def test_normalize_score_basic():
+    assert normalize_score(50, 100) == 50
+    assert normalize_score(100, 100) == 100
+    assert normalize_score(30, 200) == 15   # 100*30/200 = 15.0
+
+
+def test_normalize_score_top_is_100():
+    assert normalize_score(187, 187) == 100
+
+
+def test_normalize_score_zero_max_is_safe():
+    # max_score 0 clamps to 1 → no ZeroDivision; a 0 score stays 0
+    assert normalize_score(0, 0) == 0
+
+
+def test_normalize_score_clamps_to_100():
+    assert normalize_score(300, 100) == 100
 
 
 # ── _distinct_top_dirs ───────────────────────────────────────────────────────
@@ -39,7 +49,6 @@ def test_complexity_trivial_commit_is_low():
          'files': ['drivers/usb/core.c'], 'meta': {}}
     r = compute_backport_complexity(c)
     assert r['complexity'] < 25
-    assert r['tier'] == 'easy'
 
 
 def test_complexity_large_scattered_commit_is_high():
@@ -48,7 +57,6 @@ def test_complexity_large_scattered_commit_is_high():
          'meta': {}}
     r = compute_backport_complexity(c)
     assert r['complexity'] >= 60
-    assert r['tier'] == 'hard'
 
 
 def test_complexity_stable_fix_gets_friendliness_reduction():
@@ -68,7 +76,6 @@ def test_complexity_merge_forced_to_100():
          'files': ['x.c'], 'meta': {}, 'parents': ['a' * 40, 'b' * 40]}
     r = compute_backport_complexity(c)
     assert r['complexity'] == 100
-    assert r['tier'] == 'hard'
     assert r['factors']['is_merge'] is True
 
 
@@ -95,27 +102,26 @@ def test_complexity_no_hunks_term_when_hunks_absent():
 
 # ── compute_pick_priority ────────────────────────────────────────────────────
 def test_pick_priority_high_score_low_complexity_is_high():
-    # top score in run, trivial to backport
-    p = compute_pick_priority(score=100, complexity=0, max_score=100)
+    # top score in run (score_norm=100), trivial to backport
+    p = compute_pick_priority(score_norm=100, complexity=0)
     assert p == 100
 
 
 def test_pick_priority_high_score_hard_backport_mid():
     # 0.70*100 + 0.30*(100-100) = 70
-    p = compute_pick_priority(score=100, complexity=100, max_score=100)
+    p = compute_pick_priority(score_norm=100, complexity=100)
     assert p == 70
 
 
 def test_pick_priority_low_score_easy_stays_low():
     # 0.70*0 + 0.30*100 = 30
-    p = compute_pick_priority(score=0, complexity=0, max_score=100)
+    p = compute_pick_priority(score_norm=0, complexity=0)
     assert p == 30
 
 
-def test_pick_priority_zero_max_score_safe():
-    # max_score 0 must not divide-by-zero; relevance treated as 0..100 vs 1
-    p = compute_pick_priority(score=0, complexity=0, max_score=0)
-    assert 0 <= p <= 100
+def test_pick_priority_clamps_inputs():
+    # out-of-range inputs are clamped into 0..100
+    assert 0 <= compute_pick_priority(score_norm=999, complexity=-50) <= 100
 
 
 # ── enrich_commit_backport ───────────────────────────────────────────────────
@@ -124,10 +130,19 @@ def test_enrich_attaches_all_fields():
          'files': ['drivers/a.c'], 'meta': {}}
     enrich_commit_backport(c, max_score=100)
     assert isinstance(c['backport_complexity'], int)
-    assert c['backport_tier'] in ('easy', 'moderate', 'hard')
     assert isinstance(c['pick_priority'], int)
+    assert c['score_norm'] == 50   # 100*50/100
     assert c['backport']['complexity'] == c['backport_complexity']
     assert 'factors' in c['backport']
+
+
+def test_enrich_pick_priority_uses_score_norm():
+    # pick_priority must equal 0.70*score_norm + 0.30*(100-complexity)
+    c = {'score': 100, 'stats': {'files_changed': 1, 'lines_changed': 1, 'hunks': 1},
+         'files': ['a.c'], 'meta': {}}
+    enrich_commit_backport(c, max_score=100)
+    expected = round(0.70 * c['score_norm'] + 0.30 * (100 - c['backport_complexity']))
+    assert c['pick_priority'] == expected
 
 
 def test_enrich_does_not_touch_score():

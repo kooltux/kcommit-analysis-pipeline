@@ -77,8 +77,8 @@ def _enrich_backport(cfg, relevant):
 
     Order of operations:
       1. (optional) count hunks per commit via a single batched git show.
-      2. compute backport_complexity / backport_tier / pick_priority, using the
-         run-relative max score for pick_priority normalization.
+      2. compute score_norm / backport_complexity / pick_priority, using the
+         run-relative max score for score normalization.
     """
     if not relevant:
         return relevant

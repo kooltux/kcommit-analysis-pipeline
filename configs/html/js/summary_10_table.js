@@ -165,11 +165,24 @@ function rowHtml(r) {
     let v = r[col.key]; if (v == null) v = '';
     if (col.key === 'sha12') {
       out += `<td class="kc-td-sha"><a href="#" class="kc-sha-link" data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${esc(r.sha12)}</a></td>`;
-    } else if (!isFiltered && (col.key === 'score' || col._profile)) {
+    } else if (!isFiltered && col.key === 'score') {
+      /* score (raw) is hidden in the table but still present in row data.
+       * If somehow visible, render as legacy scorePill. */
       const num = parseFloat(v) || 0;
       out += `<td class="kc-td-num kc-td-score">${num > 0 ? scorePill(num) : '<span class="kc-muted">\u2014</span>'}</td>`;
+    } else if (!isFiltered && col.key === 'score_norm') {
+      /* Score % pill with higher-better heat (higher score = greener). */
+      out += `<td class="kc-td-num">${heatPill(v, {scale: 100, polarity: 'higher-better'})}</td>`;
+    } else if (!isFiltered && col.key === 'pick_priority') {
+      /* Pick priority pill with higher-better heat (higher = greener). */
+      out += `<td class="kc-td-num">${heatPill(v, {scale: 100, polarity: 'higher-better'})}</td>`;
+    } else if (!isFiltered && col.key === 'backport_cx') {
+      /* Colour the complexity cell by heat level (higher-worse polarity).
+       * The numeric value is the authoritative signal; the level is just a
+       * 4-step bucket for the pill color. */
+      out += `<td class="kc-td-num">${heatPill(v, {scale: 100, polarity: 'higher-worse'})}</td>`;
     } else if (!isFiltered && col.key === 'profiles') {
-      out += `<td>${chips(Array.isArray(v) ? v : [v])}</td>`;
+      out += `<td>${profileBullets(Array.isArray(v) ? v : [v])}</td>`;
     } else if (col.key === 'date') {
       out += `<td class="kc-td-num">${esc(fmtDate(v))}</td>`;
     } else if (isFiltered && col.key === 'filter_stage') {
@@ -186,7 +199,7 @@ function rowHtml(r) {
 function applySort() {
   if (!sortKey) return;
   const col   = COLS.find(c => c.key === sortKey);
-  const isNum = col && (col.type === 'number' || col._profile);
+  const isNum = col && col.type === 'number';
   const n     = sortedRows.length;
   const keyed = new Array(n);
   for (let i = 0; i < n; i++) {

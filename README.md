@@ -80,6 +80,23 @@ total_score = Σ score[P]
 The only way to influence scoring is through **profile weights**
 (`profiles.active`) and **rule weights** in each rule-set directory.
 
+### Raw score vs. normalized score
+
+The raw `score` above is **unbounded** and **run-relative**: its magnitude
+depends on how many rules fire and their weights, so it is only meaningful when
+comparing commits *within the same run*. For readability, each relevant commit
+also carries a **normalized score** (column **"Score %"**, field `score_norm`):
+
+```
+score_norm = round(100 × score / max_score_in_run)     # 0–100
+```
+
+`score_norm` is computed in stage 06 against the current run's maximum score.
+The raw `score` is kept as the authoritative value (it preserves absolute
+signal strength and ordering fidelity that normalization discards); `score_norm`
+is a derived, informational convenience. Like `pick_priority`, it is a
+**within-run** value and is not comparable across different runs.
+
 ## Commit size indicators
 
 Independently of scoring, every commit carries two descriptive **size
@@ -94,11 +111,18 @@ from the git `--numstat` data and stored on each commit under the `stats` key:
 | `lines_changed` | `insertions + deletions` — total churn (depth). |
 | `hunks`         | Total number of unified-diff hunks (`@@` blocks) — fragmentation/dispersion. Only populated when `collect.count_hunks` is enabled (see below). |
 
-Three indicators are surfaced as report columns — **Files Changed**
-(`files_changed`), **Lines Changed** (`lines_changed`) and **Hunks**
-(`hunks`) — because breadth, depth and dispersion are orthogonal: a one-line
-fix spread over 50 files, a 2 000-line rewrite of a single file, and a change
-scattered across 40 tiny hunks are all "big" in different ways.
+Three indicators are tracked — **Files Changed** (`files_changed`),
+**Lines Changed** (`lines_changed`) and **Hunks** (`hunks`) — because breadth,
+depth and dispersion are orthogonal: a one-line fix spread over 50 files, a
+2 000-line rewrite of a single file, and a change scattered across 40 tiny
+hunks are all "big" in different ways.
+
+They appear as columns in the **spreadsheet exports** (CSV / XLSX / ODS) and in
+the **commit-detail Overview** of the HTML report. In the HTML *table* they are
+kept as **hidden columns**: their values are still attached to every row (and
+remain searchable) but are not shown by default, to keep the table readable now
+that the backport indicators share the same row. The tier-coloured
+**Backport Cx** cell is the at-a-glance size/effort cue in the table.
 
 These indicators are **purely informational**: they do **not** contribute to
 the score, which remains exclusively rule/profile driven. When commits are
@@ -119,7 +143,7 @@ informational and never affect the score.
 | Field | Meaning |
 |-------|---------|
 | `backport_complexity` | `0–100`, higher = harder to cherry-pick. |
-| `backport_tier` | `easy` (< 25), `moderate` (25–59), `hard` (≥ 60). |
+| backport_tier | Removed (replaced by heat-coloured Backport Cx cell).
 | `pick_priority` | `0–100`, higher = look at this first (relevant **and** easy). |
 
 `backport_complexity` is a bounded, weighted blend of commit-shape signals that
@@ -138,13 +162,13 @@ complexity = clamp(0, 100, round(risk_raw − friendly))
 if merge commit: complexity = 100
 ```
 
-`pick_priority` blends **relevance** (the score, normalized against the run's
-maximum) with **ease** (`100 − complexity`):
+`pick_priority` blends **relevance** (`score_norm`, the run-relative normalized
+score) with **ease** (`100 − complexity`):
 
 ```
-rel  = 100 · score / max_score_in_run
-ease = 100 − complexity
-pick_priority = round(0.70·rel + 0.30·ease)
+score_norm    = round(100 · score / max_score_in_run)
+ease          = 100 − complexity
+pick_priority = round(0.70·score_norm + 0.30·ease)
 ```
 
 Relevance dominates (0.70) so a critical-but-hard fix is never buried; ease
@@ -156,6 +180,23 @@ default. Weights are hard-coded.
 
 > These are heuristic estimates from observable commit shape, **not** a real
 > cherry-pick trial. A clean estimate does not guarantee a conflict-free pick.
+
+In the HTML report the **Backport Cx** cell uses a unified 4-level heat scheme
+(higher = worse / red; lower = easier / green) for at-a-glance triage.
+The full set of indicators (Score %, files/lines/hunks, complexity, and
+pick_priority) is also listed in the commit-detail **Overview** tab, where
+Score % and Backport complexity are heat-coloured, Pick priority is heat-coloured,
+and raw Score is shown uncolored.
+
+
+### Profile colour legend
+
+Each scoring profile is assigned a deterministic colour (hashed from its name,
+kept clear of the red/orange/green/lime heat-pill palette). The left pane's **Scoring
+profiles** section shows a legend of labelled coloured bullets, and the table's
+**Profiles** column shows the matching bullets for each commit (hover for the
+profile name) so multi-profile matches read at a glance without widening the
+column.
 
 ## Pre-scoring filter (stage 04)
 

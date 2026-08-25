@@ -137,6 +137,12 @@ def test_html_report_exposes_size_indicator_columns(tmp_path):
     assert 'lines' in col_keys
     assert ui['rows'][0]['files'] == 3
     assert ui['rows'][0]['lines'] == 25
+    # files/lines/hunks are emitted as hidden columns: their row values remain
+    # available (above) but the browser-side JS drops them from the visible
+    # table.  The server marks them hidden so the JS can filter them out.
+    cols_by_key = {c['key']: c for c in ui['columns']}
+    assert cols_by_key['files'].get('hidden') is True
+    assert cols_by_key['lines'].get('hidden') is True
 
 
 def test_html_report_size_indicators_default_zero_without_stats(tmp_path):
@@ -154,7 +160,11 @@ def test_html_report_size_indicators_default_zero_without_stats(tmp_path):
 
 
 def test_html_report_exposes_hunks_and_backport_columns(tmp_path):
-    """Hunks, Backport Cx/Tier and Pick Priority columns + row values."""
+    """Hunks, Backport Cx and Pick Priority columns + row values.
+    
+    backport_tier was removed; complexity is now heat-coloured directly in the
+    Backport Cx cell via a 4-level (higher-worse) heat scheme.
+    """
     tpl_dir = _tpl_dir(tmp_path)
     out = tmp_path / 'report.html'
     commits = [{
@@ -162,7 +172,7 @@ def test_html_report_exposes_hunks_and_backport_columns(tmp_path):
         'author_name': 'A', 'author_time': 1700000000,
         'score': 10, 'matched_profiles': ['p'], 'product_evidence': [],
         'stats': {'files_changed': 3, 'lines_changed': 25, 'hunks': 6},
-        'backport_complexity': 42, 'backport_tier': 'moderate',
+        'backport_complexity': 42,
         'pick_priority': 77,
     }]
     generate_html_report(commits, {}, {}, str(out), templates_dir=str(tpl_dir))
@@ -170,16 +180,35 @@ def test_html_report_exposes_hunks_and_backport_columns(tmp_path):
     col_keys = [c['key'] for c in ui['columns']]
     assert 'hunks' in col_keys
     assert 'backport_cx' in col_keys
-    assert 'backport_tier' in col_keys
     assert 'pick_priority' in col_keys
     row = ui['rows'][0]
     assert row['hunks'] == 6
     assert row['backport_cx'] == 42
-    assert row['backport_tier'] == 'moderate'
     assert row['pick_priority'] == 77
-    # backport_tier is a select column with the three tier options
-    tier_col = next(c for c in ui['columns'] if c['key'] == 'backport_tier')
-    assert tier_col.get('options') == ['easy', 'moderate', 'hard']
+    # hunks is a hidden column: its row value is kept (searchable / exported)
+    # but it is dropped from the visible table.  backport_cx and pick_priority
+    # stay visible (and are heat-coloured).
+    cols_by_key = {c['key']: c for c in ui['columns']}
+    assert cols_by_key['hunks'].get('hidden') is True
+    assert 'hidden' not in cols_by_key['backport_cx']
+    assert 'hidden' not in cols_by_key['pick_priority']
+
+
+def test_html_report_exposes_score_norm_column(tmp_path):
+    """Score % (score_norm) column and row value are present."""
+    tpl_dir = _tpl_dir(tmp_path)
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'abc123456789' + 'f' * 28, 'subject': 'subj', 'body': 'body',
+        'author_name': 'A', 'author_time': 1700000000,
+        'score': 40, 'score_norm': 66, 'matched_profiles': ['p'],
+        'product_evidence': [],
+    }]
+    generate_html_report(commits, {}, {}, str(out), templates_dir=str(tpl_dir))
+    ui = _kc_ui(out.read_text())
+    col_keys = [c['key'] for c in ui['columns']]
+    assert 'score_norm' in col_keys
+    assert ui['rows'][0]['score_norm'] == 66
 
 
 def test_html_report_default_sort_is_pick_priority_desc(tmp_path):
@@ -597,6 +626,34 @@ def test_summary_css_detail_pane_is_scrollable():
     assert 'overflow-y: auto' in css
 
 
+def test_summary_css_has_heat_pills():
+    """v18.5.0: Numeric columns use a unified 4-level heat-pill scheme.
+    
+    Backport Cx, Score % and Pick Priority are rendered as heat-coloured pills
+    (higher-better or higher-worse polarity) via .kc-heat-1..4 classes.
+    """
+    css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                            'configs', 'html', 'summary.css')
+    with open(css_path, encoding='utf-8') as f:
+        css = f.read()
+    assert '.kc-heat-pill' in css
+    assert '.kc-heat-1'    in css
+    assert '.kc-heat-2'    in css
+    assert '.kc-heat-3'    in css
+    assert '.kc-heat-4'    in css
+
+
+def test_summary_css_has_profile_bullets():
+    """v18.5.0: profile colour legend + table bullets."""
+    css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                            'configs', 'html', 'summary.css')
+    with open(css_path, encoding='utf-8') as f:
+        css = f.read()
+    assert '.kc-prof-bullet'      in css
+    assert '.kc-prof-bullets'     in css
+    assert '.kc-prof-legend'      in css
+
+
 # ---------------------------------------------------------------------------
 # JS asset checks (real configs/html/js/ modules)
 # ---------------------------------------------------------------------------
@@ -665,17 +722,128 @@ def test_summary_js_has_scoring_trace_renderer():
     assert 'kc-trace-table'     in js
 
 
-def test_summary_js_has_per_profile_score_columns():
-    js = _read_assembled_js()
-    assert 'score_' in js
-    assert 'PROFILE_NAMES' in js
-    assert '_profile' in js
+def test_summary_js_does_not_inject_per_profile_columns():
+    """v18.5.0: the per-profile score_<profile> columns are no longer injected
+    into the visible table.
+
+    The breakdown is low-signal in the table (one column per profile) and is
+    still available as score_<profile> row keys (searchable) and in the
+    commit-detail "Scoring" tab.  The visible relevant-tab column set is just
+    the server columns minus synthetic/hidden ones.
+    """
+    js   = _read_assembled_js()
+    code = _strip_comments(js)
+    # No dynamic score_<profile> column objects are built any more.
+    assert 'score_${p}' not in code
+    assert '_profile:' not in code
+    assert 'PROFILE_NAMES' not in code
+    # REL_COLS is a straight filter of BASE_COLS (no per-profile expansion).
+    assert 'BASE_COLS.filter(' in code
+
+
+def test_summary_js_has_heat_pill_helpers():
+    """v18.5.0: heatLevel() and heatPill() replace cxPill() / tierPill() / cxTierClass().
+
+    heatLevel(value, scale) → 1..4 (even quartiles of value/scale, clamped).
+    heatPill(value, {scale, polarity}) → pill with .kc-heat-1..4; polarity:
+    'higher-better' → level 1=green(top)…4=red(bottom);
+    'higher-worse' → level 1=red(top)…4=green(bottom).
+    """
+    js   = _read_assembled_js()
+    code = _strip_comments(js)
+    assert 'function heatLevel' in code
+    assert 'function heatPill' in code
+    # Backport Cx uses heatPill with higher-worse polarity
+    assert 'heatPill(v, {scale: 100, polarity: \'higher-worse\'})' in code
 
 
 def test_summary_js_has_context_section():
     js = _read_assembled_js()
     assert 'UI.context' in js or 'CTX' in js
     assert 'Analysis Context' in js
+
+
+def test_summary_js_has_profile_bullet_helpers():
+    """v18.5.0: deterministic per-profile colour bullets, used both in the
+    sidebar legend and the table 'Profiles' column."""
+    js   = _read_assembled_js()
+    code = _strip_comments(js)
+    assert 'function profileHue'   in code
+    assert 'function profileColor' in code
+    assert 'function profileBullet' in code
+    assert 'function profileBullets' in code
+    # Table 'Profiles' column renders bullets, not text chips.
+    assert 'profileBullets(' in code
+    # Sidebar 'Scoring profiles' legend uses labelled bullets.
+    assert 'profileBullet(p, true)' in code
+
+
+def test_summary_js_overview_shows_backport_indicators():
+    """v18.5.0: the detail Overview tab surfaces the size + backport
+    indicators (files/lines/hunks/complexity/pick_priority).
+    backport_tier was removed; complexity is now heat-coloured directly."""
+    js   = _read_assembled_js()
+    code = _strip_comments(js)
+    assert 'Files changed' in code
+    assert 'Lines changed' in code
+    assert 'Backport complexity' in code
+    assert 'Pick priority' in code
+
+
+def test_summary_js_hidden_columns_dropped_from_visible_set():
+    """v18.5.0: REL_COLS filters out server-flagged hidden columns so
+    files/lines/hunks stay in ROW data but leave the visible table."""
+    js   = _read_assembled_js()
+    code = _strip_comments(js)
+    assert '!c.hidden' in code
+
+
+def test_assembled_js_parses_in_one_scope():
+    """Regression: the real configs/html/js/ bundle must parse cleanly when
+    concatenated into a single IIFE scope (the runtime layout).
+
+    Per-file `node --check` is not enough — the modules share one function
+    scope, so a duplicate top-level/function-scope `const`/`let` across (or
+    within) modules is a runtime SyntaxError ("Identifier 'x' has already been
+    declared") that only appears once assembled.  This guards that class of bug
+    (e.g. the Overview-tab `files` collision fixed in v18.5.0).
+
+    Skips gracefully when Node.js is not installed so CI without node still
+    passes; developers with node get the check.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    node = shutil.which('node')
+    if not node:
+        import pytest
+        pytest.skip('node not available — cannot syntax-check assembled JS')
+
+    from lib.html_report import _assemble_js
+    tpl_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           'configs', 'html')
+    assembled = _assemble_js(tpl_dir)
+    assert assembled.strip(), 'assembled JS is unexpectedly empty'
+
+    with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False,
+                                     encoding='utf-8') as fh:
+        fh.write(assembled)
+        path = fh.name
+    try:
+        proc = subprocess.run([node, '--check', path],
+                              capture_output=True, text=True)
+    finally:
+        os.unlink(path)
+    # Skip if node itself has environment/library issues (e.g. GLIBCXX mismatch)
+    stderr = proc.stderr or ''
+    if proc.returncode != 0 and ('GLIBCXX' in stderr or 'libstdc++' in stderr):
+        import pytest
+        pytest.skip(f'Node.js library environment issue: {stderr.strip()}')
+    assert proc.returncode == 0, (
+        'assembled JS failed node --check (duplicate identifier or syntax '
+        f'error):\n{stderr}'
+    )
 
 
 def test_summary_js_no_evaluation_config_section():

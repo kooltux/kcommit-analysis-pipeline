@@ -635,13 +635,21 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   background: var(--bg3);
   padding: 7px 10px;
   text-align: left;
+  vertical-align: bottom;         /* wrapped multi-line labels bottom-align
+                                     with single-line ones across columns */
   border-bottom: none;
   box-shadow: inset 0 -2px 0 var(--border);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .05em;
-  white-space: nowrap;
+  /* Labels wrap onto multiple lines instead of overflowing into the next
+   * column (fixed-layout columns are narrow for multi-word headings like
+   * "Files Changed" / "Backport Tier" / "Score %"). break-word prevents a
+   * single long token from overflowing. */
+  white-space: normal;
+  overflow-wrap: break-word;
+  line-height: 1.2;
   cursor: pointer;
   user-select: none;
 }
@@ -777,6 +785,49 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 .kc-hi  { background: var(--hi-bg);  color: var(--hi-fg);  }
 .kc-mid { background: var(--mid-bg); color: var(--mid-fg); }
 .kc-low { background: var(--low-bg); color: var(--low-fg); }
+
+/* ── 4-level heat coloring ────────────────────────────────────────── */
+/* 1=green(top), 2=lime, 3=orange, 4=red(bottom) — theme-aware. */
+.kc-heat-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.kc-heat-1 { background: var(--hi-bg);  color: var(--hi-fg);  }
+.kc-heat-2 { background: #e8f5e9; color: #2e7d32; }
+.kc-heat-3 { background: var(--mid-bg); color: var(--mid-fg); }
+.kc-heat-4 { background: var(--low-bg); color: var(--low-fg); }
+
+/* ── Profile colour bullets + legend ────────────────────────────── */
+/* Deterministic per-profile colours (JS profileColor()) shown as bullets in
+ * the table "Profiles" column and, with labels, in the sidebar legend. */
+.kc-prof-bullet {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  vertical-align: middle;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.15) inset;
+}
+.kc-prof-bullets { display: inline-flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+.kc-prof-dot-wrap { display: inline-flex; }
+.kc-prof-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 2px 0;
+}
+.kc-prof-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
 
 /* ── Profile chips ──────────────────────────────────────────────── */
 .kc-chip {

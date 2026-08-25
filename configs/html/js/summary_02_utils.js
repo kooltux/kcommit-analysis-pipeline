@@ -37,9 +37,62 @@ function chips(arr) {
   return (arr || []).map(p => `<span class="kc-chip">${esc(p)}</span>`).join(' ');
 }
 
+/* ========= Profile colour legend =========
+ * Deterministic per-profile colour derived from a hash of the profile name,
+ * so the same profile always gets the same hue across the sidebar legend and
+ * the table "Profiles" column.  Hues are constrained to 180..330° (cyan →
+ * blue → purple → magenta) to deliberately avoid the red/orange/green band
+ * (0..150°) used by the numeric heat-pill scheme on Score %, Backport Cx and Pick Priority. */
+function profileHue(name) {
+  const s = String(name == null ? '' : name);
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return 180 + (h % 151);   /* 180..330 inclusive */
+}
+
+function profileColor(name) {
+  return `hsl(${profileHue(name)}, 65%, 55%)`;
+}
+
+function profileBullet(name, withLabel) {
+  const color = profileColor(name);
+  const dot = `<span class="kc-prof-bullet" style="background:${color}" aria-hidden="true"></span>`;
+  return withLabel
+    ? `<span class="kc-prof-legend-item"><span title="${esc(name)}">${dot}</span>${esc(name)}</span>`
+    : `<span class="kc-prof-dot-wrap" title="${esc(name)}">${dot}</span>`;
+}
+
+function profileBullets(arr) {
+  return `<span class="kc-prof-bullets">${
+    (arr || []).filter(p => p != null && p !== '').map(p => profileBullet(p, false)).join('')
+  }</span>`;
+}
+
+/* ========= 4-level heat coloring =========
+ *
+ * heatLevel(value, scale) → 1..4 (even quartiles of value/scale, clamped)
+ * heatPill(value, {scale, polarity}) → pill with .kc-heat-1..4; polarity:
+ *   'higher-better' → level 1=green(top)…4=red(bottom)
+ *   'higher-worse' → level 1=red(top)…4=green(bottom)
+ */
+function heatLevel(value, scale) {
+  const v = parseFloat(value) || 0;
+  const s = parseFloat(scale) || 1;
+  const q = Math.min(100, Math.max(0, Math.round(100 * v / s)));
+  return q >= 75 ? 4 : q >= 50 ? 3 : q >= 25 ? 2 : 1;
+}
+
+function heatPill(value, {scale, polarity}) {
+  const level = heatLevel(value, scale);
+  const v = parseFloat(value);
+  if (!Number.isFinite(v)) return '<span class="kc-muted">—</span>';
+  const cls = polarity === 'higher-worse' ? [4, 3, 2, 1][level - 1] : level;
+  return `<span class="kc-heat-pill kc-heat-${cls}">${esc(v)}</span>`;
+}
+
 function stageBadge(stage) {
   const cls = stage === 'prefilter' ? 'kc-chip-prefilter' : 'kc-chip-postfilter';
-  return `<span class="kc-chip ${cls}">${esc(stage || '\u2014')}</span>`;
+  return `<span class="kc-chip ${cls}">${esc(stage || '—')}</span>`;
 }
 
 function kv(label, val, tip) {

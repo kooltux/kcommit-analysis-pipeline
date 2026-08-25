@@ -135,16 +135,19 @@
 - Writes `postfilter_debug.json` with threshold-drop summary and score
   distribution data.
 - Assigns `_rank` (1-based) to kept commits.
-- **Backport enrichment** (over the relevant set only, so cost scales with the
-  small kept set, not the full range):
+- **Relevant-commit enrichment** (over the relevant set only, so cost scales
+  with the small kept set, not the full range):
   - If `collect.count_hunks` is set, inspects each relevant commit's patch via
     a single batched `git show --unified=0` and stores the total hunk count in
     `stats.hunks`.
-  - Computes `backport_complexity` (0–100, higher = harder to cherry-pick),
-    `backport_tier` (`easy`/`moderate`/`hard`) and `pick_priority` (0–100,
-    higher = look first) for every relevant commit. These are informational
-    and never affect the score. See the README "Backport indicators" section
-    for the formula.
+  - Computes `score_norm` (0–100, the raw score normalized against the run's
+    maximum score), `backport_complexity` (0–100, higher = harder to
+    cherry-pick) and
+    `pick_priority` (0–100, higher = look first) for every relevant commit.
+    These are informational and never affect the raw score. `score_norm` is
+    the single normalization used by both the "Score %" column and
+    `pick_priority`. See the README "Scoring model" and "Backport indicators"
+    sections for the formulas.
 - Outputs `relevant_commits.json`.
 
 ### Stage 07 — report_commits
