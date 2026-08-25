@@ -787,7 +787,11 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 .kc-low { background: var(--low-bg); color: var(--low-fg); }
 
 /* ── 4-level heat coloring ────────────────────────────────────────── */
-/* 1=green(top), 2=lime, 3=orange, 4=red(bottom) — theme-aware. */
+/* 1=green (best/highest for higher-better), 2=lime, 3=orange, 4=red (worst/lowest) — theme-aware.
+ * See heatPill() polarity in summary_02_utils.js: 'higher-better' inverts the
+ * level→class mapping so that high values get kc-heat-1 (green) and low values
+ * get kc-heat-4 (red); 'higher-worse' maps directly so low values get kc-heat-1
+ * (green) and high values get kc-heat-4 (red). */
 .kc-heat-pill {
   display: inline-block;
   padding: 2px 8px;

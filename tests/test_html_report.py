@@ -746,8 +746,8 @@ def test_summary_js_has_heat_pill_helpers():
 
     heatLevel(value, scale) → 1..4 (even quartiles of value/scale, clamped).
     heatPill(value, {scale, polarity}) → pill with .kc-heat-1..4; polarity:
-    'higher-better' → level 1=green(top)…4=red(bottom);
-    'higher-worse' → level 1=red(top)…4=green(bottom).
+    'higher-better' → level 1 (0-25%) → kc-heat-4 (red), level 4 (75-100%) → kc-heat-1 (green);
+    'higher-worse' → level 1 (0-25%) → kc-heat-1 (green), level 4 (75-100%) → kc-heat-4 (red).
     """
     js   = _read_assembled_js()
     code = _strip_comments(js)

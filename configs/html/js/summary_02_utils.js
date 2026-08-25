@@ -86,7 +86,10 @@ function heatPill(value, {scale, polarity}) {
   const level = heatLevel(value, scale);
   const v = parseFloat(value);
   if (!Number.isFinite(v)) return '<span class="kc-muted">—</span>';
-  const cls = polarity === 'higher-worse' ? [4, 3, 2, 1][level - 1] : level;
+  /* heat classes: 1=green (best), 2=lime, 3=orange, 4=red (worst)
+   * higher-better (score%, pick_priority): invert so low level → red, high level → green
+   * higher-worse (backport_cx): keep direct so low level → green, high level → red */
+  const cls = polarity === 'higher-better' ? [4, 3, 2, 1][level - 1] : level;
   return `<span class="kc-heat-pill kc-heat-${cls}">${esc(v)}</span>`;
 }
 
