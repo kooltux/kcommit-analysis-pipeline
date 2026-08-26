@@ -614,13 +614,21 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 /* ── Thead wrap (v2) — separate fixed container above scroll host ── */
 .kc-thead-wrap {
   flex-shrink: 0;
-  overflow: hidden;
+  overflow: visible;
   /* Reserve the same scrollbar gutter as the scroll host below so the
    * header columns stay aligned with the data columns when a vertical
    * scrollbar is present (v2 split-header architecture). */
   scrollbar-gutter: stable;
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.kc-thead-wrap .kc-header-table {
+  /* Allow the header table to extend beyond its container for horizontal scrolling */
+  /* The transform in JS will shift it left/right to match body scroll */
+  transform: translateX(0);
+  will-change: transform;
 }
 
 /* ── Scroll host (v2) — the scrollable container with spacers ───── */

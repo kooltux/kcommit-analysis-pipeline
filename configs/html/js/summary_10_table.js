@@ -44,7 +44,7 @@ const noMatch    = document.getElementById('kc-no-match');
 const clearBtn   = document.getElementById('kc-clear-filters');
 const exportBtn  = document.getElementById('kc-export-csv');
 
-/* Resize state - stores current column widths in px (null = use CSS min-width) */
+/* Resize state - stores current column widths in px (null = auto-sized) */
 let colWidths = null;
 let resizeColIndex = null;
 let resizeStartX = null;
@@ -54,6 +54,26 @@ let resizeStartWidth = null;
 function initColWidths() {
   if (!colWidths) {
     colWidths = new Array(COLS.length).fill(null);
+  }
+}
+
+/* Debounced window resize handler */
+let resizeTimer = null;
+function scheduleAutoResize() {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => autoSizeColumns(), 150);
+}
+
+/* ── Horizontal scroll sync between header and body ──────────────────── */
+function syncHorizontalScroll() {
+  if (!tableWrap) return;
+  /* Get the scroll position from the body scroll host */
+  const scrollX = tableWrap.scrollLeft;
+  
+  /* Apply it as a transform to the header table to keep columns aligned */
+  const headerTable = theadWrap?.querySelector('.kc-header-table');
+  if (headerTable) {
+    headerTable.style.transform = `translateX(${-scrollX}px)`;
   }
 }
 
@@ -141,15 +161,94 @@ function syncColgroup() {
   const bodyCg = document.getElementById('kc-tbody-colgroup');
   if (!headCg && !bodyCg) return;
   
-  /* Build col elements with width attributes if colWidths are set */
-  const colHtml = COLS.map((_, i) => {
+  /* Build col elements with width attributes */
+  /* If colWidths has a value, use it. Otherwise use CSS min-width fallback. */
+  const colHtml = COLS.map((col, i) => {
     const w = colWidths?.[i];
     if (w != null) return `<col style="width:${w}px">`;
+    const minW = AUTO_MIN_WIDTHS[col.key];
+    if (minW) return `<col style="width:${minW}px">`;
     return '<col>';
   }).join('');
   
   if (headCg) headCg.innerHTML = colHtml;
   if (bodyCg) bodyCg.innerHTML = colHtml;
+}
+
+/* ── Horizontal scroll sync between header and body ──────────────────── */
+/* Note: syncHorizontalScroll is called directly from scroll event listener */
+
+/* ── Auto-size columns based on content ──────────────────────────────── */
+/* Minimum widths per column key (in px) - used as fallback when content is narrow */
+const AUTO_MIN_WIDTHS = {
+  'rank': 40,
+  'sha12': 60,
+  'subject': 200,
+  'author': 100,
+  'date': 80,
+  'profiles': 80,
+  'score': 60,
+  'score_norm': 60,
+  'pick_priority': 60,
+  'backport_cx': 60
+};
+
+function autoSizeColumns() {
+  if (!thead || !tbody) return;
+  initColWidths();
+  
+  const visibleRows = tbody.querySelectorAll('tr');
+  if (visibleRows.length === 0) return;
+  
+  /* Measure each column's required width */
+  const newWidths = new Array(COLS.length).fill(0);
+  
+  COLS.forEach((col, colIndex) => {
+    /* Skip columns with manual width set (user has resized this column) */
+    if (colWidths[colIndex] != null) return;
+    
+    const cssClass = colCssClass(col.key);
+    
+    /* Measure header width */
+    const headerCells = thead.querySelectorAll(`th.${cssClass}`);
+    headerCells.forEach(th => {
+      newWidths[colIndex] = Math.max(newWidths[colIndex], th.scrollWidth);
+    });
+    
+    /* Measure body cells width (visible rows only) */
+    visibleRows.forEach(row => {
+      const cell = row.querySelector(`td.${cssClass}`);
+      if (cell) {
+        newWidths[colIndex] = Math.max(newWidths[colIndex], cell.scrollWidth);
+      }
+    });
+    
+    /* Apply minimum width for the column type */
+    const minWidth = AUTO_MIN_WIDTHS[col.key] || 60;
+    newWidths[colIndex] = Math.max(newWidths[colIndex], minWidth);
+    
+    /* Add padding for cell padding (7px left + 10px right from CSS) */
+    newWidths[colIndex] += 20;
+    
+    /* Clamp to a reasonable max */
+    newWidths[colIndex] = Math.min(newWidths[colIndex], 800);
+  });
+  
+  /* Apply new widths only if they changed */
+  let changed = false;
+  newWidths.forEach((w, i) => {
+    if (w > 0 && colWidths[i] === null) {
+      colWidths[i] = w;
+      changed = true;
+    }
+  });
+  
+  if (changed) {
+    syncColgroup();
+    if (typeof virtRender === 'function') {
+      virtRender();
+    }
+  }
 }
 
 /* ── Column resize logic ──────────────────────────────────────────── */
@@ -501,3 +600,27 @@ exportBtn?.addEventListener('click', () => {
  * This ensures the initial table render respects DEFAULT_SORT and serves
  * as a safety net for the Python-provided row order. */
 if (sortKey) applySort();
+
+/* Auto-size columns on initial load (after render completes) and on window resize */
+let autoSizeDone = false;
+function maybeAutoSize() {
+  if (autoSizeDone) return;
+  autoSizeDone = true;
+  /* Give time for initial render to complete */
+  setTimeout(() => autoSizeColumns(), 500);
+}
+
+/* Hook into first filter apply (which happens after initial render) */
+const originalApplyFilters = applyFilters;
+applyFilters = function() {
+  originalApplyFilters();
+  maybeAutoSize();
+};
+
+window.addEventListener('resize', scheduleAutoResize);
+
+/* Sync horizontal scrolling: body scroll host drives the header transform */
+tableWrap?.addEventListener('scroll', syncHorizontalScroll, { passive: true });
+
+/* Fallback: also try after a longer delay */
+setTimeout(maybeAutoSize, 1000);
