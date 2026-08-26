@@ -37,11 +37,25 @@ const tbody      = document.getElementById('kc-tbody');
 const thead      = document.getElementById('kc-thead');
 const tableEl    = document.getElementById('kc-table');
 const tableWrap  = document.getElementById('kc-scroll-host');
+const theadWrap  = document.getElementById('kc-thead-wrap');
 const globalSrch = document.getElementById('kc-global-search');
 const liveCount  = document.getElementById('kc-live-count');
 const noMatch    = document.getElementById('kc-no-match');
 const clearBtn   = document.getElementById('kc-clear-filters');
 const exportBtn  = document.getElementById('kc-export-csv');
+
+/* Resize state - stores current column widths in px (null = use CSS min-width) */
+let colWidths = null;
+let resizeColIndex = null;
+let resizeStartX = null;
+let resizeStartWidth = null;
+
+/* Initialize column widths */
+function initColWidths() {
+  if (!colWidths) {
+    colWidths = new Array(COLS.length).fill(null);
+  }
+}
 
 /* Initial sort seeded from the server-provided DEFAULT_SORT (relevant tab).
  * Only honoured when the referenced column actually exists in COLS. */
@@ -94,6 +108,19 @@ function buildFilterCtrl(col, fth) {
   }
 }
 
+/* Helper: get CSS class for a column key */
+function colCssClass(colKey) {
+  switch (colKey) {
+    case 'rank':     return 'kc-col-rank';
+    case 'sha12':    return 'kc-col-sha12';
+    case 'subject':  return 'kc-col-subject';
+    case 'author':   return 'kc-col-author';
+    case 'date':     return 'kc-col-date';
+    case 'profiles': return 'kc-col-profiles';
+    default:        return 'kc-col-pill';
+  }
+}
+
 /* rebuildFilterDropdowns — lightweight rebuild after buildDistinctAsync()
  * populates COL_DISTINCT.  Only replaces filter-row <th> contents. */
 function rebuildFilterDropdowns() {
@@ -110,21 +137,103 @@ function rebuildFilterDropdowns() {
 
 /* ── Colgroup sync (v2) — keep header and data table columns aligned ──── */
 function syncColgroup() {
-  const cols = COLS.map(() => '<col>').join('');
   const headCg = document.getElementById('kc-thead-colgroup');
   const bodyCg = document.getElementById('kc-tbody-colgroup');
-  if (headCg) headCg.innerHTML = cols;
-  if (bodyCg) bodyCg.innerHTML = cols;
+  if (!headCg && !bodyCg) return;
+  
+  /* Build col elements with width attributes if colWidths are set */
+  const colHtml = COLS.map((_, i) => {
+    const w = colWidths?.[i];
+    if (w != null) return `<col style="width:${w}px">`;
+    return '<col>';
+  }).join('');
+  
+  if (headCg) headCg.innerHTML = colHtml;
+  if (bodyCg) bodyCg.innerHTML = colHtml;
+}
+
+/* ── Column resize logic ──────────────────────────────────────────── */
+function startResize(e) {
+  if (e.target.classList.contains('kc-col-resize-handle') ||
+      e.target.parentElement.classList.contains('kc-col-resize-handle')) {
+    const handle = e.target.classList.contains('kc-col-resize-handle')
+      ? e.target : e.target.parentElement;
+    resizeColIndex = parseInt(handle.dataset.colIndex, 10);
+    if (isNaN(resizeColIndex)) return;
+    
+    resizeStartX = e.clientX;
+    const th = handle.parentElement;
+    resizeStartWidth = th.offsetWidth;
+    
+    handle.classList.add('active');
+    th.classList.add('kc-th-resizing');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    
+    document.addEventListener('mousemove', doResize, { passive: false });
+    document.addEventListener('mouseup', endResize, { passive: true });
+    e.preventDefault();
+  }
+}
+
+function doResize(e) {
+  if (resizeColIndex === null) return;
+  e.preventDefault();
+  
+  const dx = e.clientX - resizeStartX;
+  const newWidth = Math.max(20, resizeStartWidth + dx); /* min 20px */
+  
+  /* Store in colWidths array */
+  initColWidths();
+  colWidths[resizeColIndex] = newWidth;
+  
+  /* Update the colgroup widths for both header and body tables.
+   * With table-layout:fixed, this will propagate to all cells automatically. */
+  syncColgroup();
+  
+  /* Also update header cells inline width for immediate visual feedback */
+  const colKey = COLS[resizeColIndex].key;
+  const cssClass = colCssClass(colKey);
+  const headerCells = thead?.querySelectorAll(`th.${cssClass}`);
+  headerCells?.forEach(cell => { cell.style.width = `${newWidth}px`; });
+  
+  /* Force re-render of visible body rows to pick up the new width */
+  if (typeof virtRender === 'function') {
+    virtRender();
+  }
+}
+
+function endResize(e) {
+  if (resizeColIndex === null) return;
+  
+  const handle = document.querySelector(`.kc-col-resize-handle[data-col-index="${resizeColIndex}"]`);
+  if (handle) handle.classList.remove('active');
+  const th = handle?.parentElement;
+  if (th) th.classList.remove('kc-th-resizing');
+  
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  
+  resizeColIndex = null;
+  resizeStartX = null;
+  resizeStartWidth = null;
+  
+  document.removeEventListener('mousemove', doResize);
+  document.removeEventListener('mouseup', endResize);
+  e?.preventDefault();
 }
 
 /* buildHead — rebuilds thead from scratch using colFilters as the
  * authoritative value source (same contract as v1). */
 function buildHead() {
   if (!thead) return;
+  initColWidths();
   const sortRow   = document.createElement('tr'); sortRow.className   = 'kc-sort-row';
   const filterRow = document.createElement('tr'); filterRow.className = 'kc-filter-row';
-  COLS.forEach(col => {
+  COLS.forEach((col, colIndex) => {
+    /* Sort row header */
     const th = document.createElement('th');
+    th.className = colCssClass(col.key);
     th.innerHTML = `${esc(col.label)} <em class="kc-sort-icon" data-key="${esc(col.key)}"></em>`;
     th.addEventListener('click', () => {
       if (sortKey === col.key) sortDir = -sortDir;
@@ -132,8 +241,26 @@ function buildHead() {
       updateSortIcons();
       requestAnimationFrame(() => { applySort(); applyFilters(); });
     });
+    /* Apply custom width if set */
+    if (colWidths[colIndex] != null) {
+      th.style.width = `${colWidths[colIndex]}px`;
+    }
+    /* Add resize handle to all but last column */
+    if (colIndex < COLS.length - 1) {
+      const handle = document.createElement('div');
+      handle.className = 'kc-col-resize-handle';
+      handle.dataset.colIndex = colIndex;
+      handle.addEventListener('mousedown', startResize);
+      th.appendChild(handle);
+    }
     sortRow.appendChild(th);
+    
+    /* Filter row header */
     const fth = document.createElement('th');
+    fth.className = colCssClass(col.key);
+    if (colWidths[colIndex] != null) {
+      fth.style.width = `${colWidths[colIndex]}px`;
+    }
     buildFilterCtrl(col, fth);
     filterRow.appendChild(fth);
   });
@@ -161,36 +288,38 @@ function rowHtml(r) {
   const isFiltered = activeTab === 'filtered';
   let out = `<tr data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}"`
     + (r._active ? ' class="kc-row-active"' : '') + '>';
-  for (const col of COLS) {
+  COLS.forEach((col, colIndex) => {
     let v = r[col.key]; if (v == null) v = '';
+    const cssClass = colCssClass(col.key);
+    const widthStyle = colWidths?.[colIndex] != null ? ` style="width:${colWidths[colIndex]}px"` : '';
     if (col.key === 'sha12') {
-      out += `<td class="kc-td-sha"><a href="#" class="kc-sha-link" data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${esc(r.sha12)}</a></td>`;
+      out += `<td class="kc-td-sha ${cssClass}"${widthStyle}><a href="#" class="kc-sha-link" data-sha12="${esc(r.sha12)}" data-sha="${esc(r.sha || r.sha12)}">${esc(r.sha12)}</a></td>`;
     } else if (!isFiltered && col.key === 'score') {
       /* score (raw) is hidden in the table but still present in row data.
        * If somehow visible, render as legacy scorePill. */
       const num = parseFloat(v) || 0;
-      out += `<td class="kc-td-num kc-td-score">${num > 0 ? scorePill(num) : '<span class="kc-muted">\u2014</span>'}</td>`;
+      out += `<td class="kc-td-num kc-td-score ${cssClass}"${widthStyle}>${num > 0 ? scorePill(num) : '<span class="kc-muted">\u2014</span>'}</td>`;
     } else if (!isFiltered && col.key === 'score_norm') {
       /* Score % pill with higher-better heat (higher score = greener). */
-      out += `<td class="kc-td-num">${heatPill(v, {scale: 100, polarity: 'higher-better'})}</td>`;
+      out += `<td class="kc-td-num ${cssClass}"${widthStyle}>${heatPill(v, {scale: 100, polarity: 'higher-better'})}</td>`;
     } else if (!isFiltered && col.key === 'pick_priority') {
       /* Pick priority pill with higher-better heat (higher = greener). */
-      out += `<td class="kc-td-num">${heatPill(v, {scale: 100, polarity: 'higher-better'})}</td>`;
+      out += `<td class="kc-td-num ${cssClass}"${widthStyle}>${heatPill(v, {scale: 100, polarity: 'higher-better'})}</td>`;
     } else if (!isFiltered && col.key === 'backport_cx') {
       /* Colour the complexity cell by heat level (higher-worse polarity).
        * The numeric value is the authoritative signal; the level is just a
        * 4-step bucket for the pill color. */
-      out += `<td class="kc-td-num">${heatPill(v, {scale: 100, polarity: 'higher-worse'})}</td>`;
+      out += `<td class="kc-td-num ${cssClass}"${widthStyle}>${heatPill(v, {scale: 100, polarity: 'higher-worse'})}</td>`;
     } else if (!isFiltered && col.key === 'profiles') {
-      out += `<td>${profileBullets(Array.isArray(v) ? v : [v])}</td>`;
+      out += `<td class="${cssClass}"${widthStyle}>${profileBullets(Array.isArray(v) ? v : [v])}</td>`;
     } else if (col.key === 'date') {
-      out += `<td class="kc-td-num">${esc(fmtDate(v))}</td>`;
+      out += `<td class="kc-td-num ${cssClass}"${widthStyle}>${esc(fmtDate(v))}</td>`;
     } else if (isFiltered && col.key === 'filter_stage') {
-      out += `<td>${stageBadge(v)}</td>`;
+      out += `<td class="${cssClass}"${widthStyle}>${stageBadge(v)}</td>`;
     } else {
-      out += `<td>${esc(Array.isArray(v) ? v.join('; ') : v)}</td>`;
+      out += `<td class="${cssClass}"${widthStyle}>${esc(Array.isArray(v) ? v.join('; ') : v)}</td>`;
     }
-  }
+  });
   out += '</tr>';
   return out;
 }

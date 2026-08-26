@@ -627,6 +627,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 .kc-scroll-host {
   flex: 1;
   overflow-y: auto;
+  overflow-x: auto;
   scrollbar-gutter: stable;
   overflow-anchor: none;
   position: relative;
@@ -666,12 +667,50 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   line-height: 1.2;
   cursor: pointer;
   user-select: none;
+  position: relative;
 }
 .kc-table tr.kc-sort-row th:hover { background: var(--accent-bg); }
 .kc-sort-icon { opacity: .45; font-size: 10px; margin-left: 3px; }
 .kc-sort-icon.asc::after  { content: '\25b2'; opacity: 1; }
 .kc-sort-icon.desc::after { content: '\25bc'; opacity: 1; }
 .kc-sort-icon:not(.asc):not(.desc)::after { content: '\21c5'; }
+
+/* Column-specific min-width classes for content-based sizing.
+ * Applied to both header <th> and body <td> to ensure alignment.
+ * These prevent column collapse while allowing expansion to fit content.
+ * With table-layout:fixed, these min-widths ensure consistent column widths
+ * between the header table (in kc-thead-wrap) and data table (in kc-scroll-host). */
+.kc-col-rank     { min-width: 2em; max-width: 4em; }
+.kc-col-sha12    { min-width: 4em; max-width: 8em; }
+.kc-col-subject  { min-width: 25em; }
+.kc-col-author   { min-width: 8em; max-width: 15em; }
+.kc-col-date     { min-width: 5em; max-width: 8em; }
+.kc-col-pill     { min-width: 3.5em; max-width: 6em; } /* score, score_norm, pick_priority, backport_cx */
+.kc-col-profiles { min-width: 6em; }
+
+/* Column resize handle */
+.kc-col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0.5em;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.kc-col-resize-handle:hover { opacity: 1; }
+.kc-col-resize-handle.active {
+  opacity: 1;
+  background: var(--accent);
+}
+.kc-th-resizing {
+  background: var(--bg3) !important;
+  box-shadow: inset 0 -0.125em 0 var(--accent) !important;
+}
+.kc-table tr.kc-sort-row th:hover > .kc-col-resize-handle { opacity: 1; }
+
 .kc-table tr.kc-filter-row th {
   background: var(--bg2);
   padding: 4px 6px;
