@@ -367,3 +367,8 @@ exportBtn?.addEventListener('click', () => {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 });
+
+/* Apply the server-provided default sort once on module load.
+ * This ensures the initial table render respects DEFAULT_SORT and serves
+ * as a safety net for the Python-provided row order. */
+if (sortKey) applySort();

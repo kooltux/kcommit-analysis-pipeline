@@ -115,7 +115,6 @@ def run(cfg, cache):
       CACHE_FILES['postfilter_debug']   -- aggregated summary (E.7)
     """
     scored = load_json(os.path.join(cache, CACHE_FILES['scored']), default=[]) or []
-    scored = sorted(scored, key=lambda c: c.get('score', 0) or 0, reverse=True)
 
     threshold = _get_threshold(cfg)
     if threshold > 0:
@@ -128,10 +127,24 @@ def run(cfg, cache):
         low_score = []
         print('  no threshold (min_score=0): keeping all %d commits' % len(relevant))
 
+    # Enrich with backport indicators (including pick_priority) before sorting
+    # and ranking, so we can sort by pick_priority on the Python side.
+    _enrich_backport(cfg, relevant)
+
+    # Sort by pick_priority descending, then score descending, then
+    # backport_complexity ascending (lower = easier to backport).
+    # Using a tuple key for multi-level sorting as tie-breakers.
+    relevant = sorted(
+        relevant,
+        key=lambda c: (
+            -(c.get('pick_priority', 0) or 0),   # descending: negate for ascending sort
+            -(c.get('score', 0) or 0),             # descending
+            c.get('backport_complexity', 0) or 0,  # ascending: lower complexity first
+        )
+    )
+
     for rank, c in enumerate(relevant, 1):
         c['_rank'] = rank
-
-    _enrich_backport(cfg, relevant)
 
     save_json(os.path.join(cache, CACHE_FILES['relevant']), relevant)
 

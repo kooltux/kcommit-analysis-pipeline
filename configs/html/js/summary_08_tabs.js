@@ -41,6 +41,8 @@ function switchTab(name) {
     sortDir = DEFAULT_SORT.dir === -1 ? -1 : 1;
   }
   haystackRows = null;
+  /* Re-sort rows after switching tabs or restoring default sort. */
+  if (sortKey) applySort();
 
   Object.keys(colFilters).forEach(k => { delete colFilters[k]; });
   COLS.forEach(c => { colFilters[c.key] = ''; });
