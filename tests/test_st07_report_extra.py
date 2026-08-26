@@ -89,7 +89,7 @@ def test_commit_rows_basic():
     row = rows[0]
     assert row[0] == 1        # rank
     assert 'abc' in row[1]   # sha (truncated to 12)
-    assert row[5] == 80       # score
+    assert row[11] == 80      # score (raw, now at index 11)
 
 
 def test_commit_rows_include_reason():
@@ -104,33 +104,39 @@ def test_commit_rows_empty():
 
 
 def test_commit_rows_size_indicators():
-    """Score%/Files/Lines/Hunks + backport columns are populated."""
+    """Pick Priority, Score, Complexity + size columns are populated."""
     c = _commit('abc', score=80, rank=1)
     c['score_norm'] = 64
+    c['scoring'] = {'profiles': {'security_fixes': 80}}
     c['stats'] = {'files_changed': 4, 'insertions': 30,
                   'deletions': 12, 'lines_changed': 42, 'hunks': 7}
     c['backport_complexity'] = 55
     c['pick_priority'] = 88
     rows = _commit_rows([c])
     row = rows[0]
-    assert row[5] == 80          # score
-    assert row[6] == 64          # score_norm (Score %)
-    assert row[7] == 4           # files_changed
-    assert row[8] == 42          # lines_changed
-    assert row[9] == 7           # hunks
-    assert row[10] == 55         # backport_complexity
-    assert row[11] == 88         # pick_priority
+    assert row[5] == 88          # pick_priority
+    assert row[6] == 64          # score_norm (Score)
+    assert row[7] == 55          # backport_complexity (Complexity)
+    assert row[8] == 'security_fixes'        # profiles
+    assert row[9] == 'security_fixes:80'     # profile_scores
+    assert row[10] == 'config_map:CONFIG_USB'  # product_evidence
+    assert row[11] == 80          # score (raw, hidden)
+    assert row[12] == 4           # files_changed (hidden)
+    assert row[13] == 42          # lines_changed (hidden)
+    assert row[14] == 7           # hunks (hidden)
 
 
 def test_commit_rows_size_indicators_default_zero_without_stats():
     rows = _commit_rows([_commit('abc', score=10, rank=1)])
     row = rows[0]
+    assert row[5] == 0   # pick_priority
     assert row[6] == 0   # score_norm
-    assert row[7] == 0   # files_changed
-    assert row[8] == 0   # lines_changed
-    assert row[9] == 0   # hunks
-    assert row[10] == 0  # backport_complexity
-    assert row[11] == 0  # pick_priority
+    assert row[7] == 0   # backport_complexity
+    assert row[8] == 'security_fixes'  # profiles
+    assert row[11] == 10  # score (raw, hidden)
+    assert row[12] == 0  # files_changed (hidden)
+    assert row[13] == 0  # lines_changed (hidden)
+    assert row[14] == 0  # hunks (hidden)
 
 # ── XLSX output ───────────────────────────────────────────────────────────────
 def test_xlsx_output_written(tmp_path):

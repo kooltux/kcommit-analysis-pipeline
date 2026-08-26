@@ -145,8 +145,8 @@
     cherry-pick) and
     `pick_priority` (0–100, higher = look first) for every relevant commit.
     These are informational and never affect the raw score. `score_norm` is
-    the single normalization used by both the "Score %" column and
-    `pick_priority`. See the README "Scoring model" and "Backport indicators"
+    the single normalization used by both the "Score" column (formerly "Score %")
+    and `pick_priority`. See the README "Scoring model" and "Backport indicators"
     sections for the formulas.
 - Outputs `relevant_commits.json`.
 

@@ -118,16 +118,16 @@ def _commit_row(c, include_reason=False, native_types=False):
         c.get("subject", ""),
         c.get("author_name", ""),
         date_val,
-        float(c.get("score", 0) or 0),
-        float(score_norm) if native_types else score_norm,
-        float(files_changed) if native_types else files_changed,
-        float(lines_changed) if native_types else lines_changed,
-        float(hunks) if native_types else hunks,
-        float(complexity) if native_types else complexity,
         float(priority) if native_types else priority,
+        float(score_norm) if native_types else score_norm,
+        float(complexity) if native_types else complexity,
         fmt_profiles(c),
         _profile_scores_text(c),
         fmt_evidence(c),
+        float(c.get("score", 0) or 0),
+        float(files_changed) if native_types else files_changed,
+        float(lines_changed) if native_types else lines_changed,
+        float(hunks) if native_types else hunks,
     ]
     if include_reason:
         row.append(c.get("_filter_reason", ""))

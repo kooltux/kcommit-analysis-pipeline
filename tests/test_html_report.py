@@ -160,10 +160,10 @@ def test_html_report_size_indicators_default_zero_without_stats(tmp_path):
 
 
 def test_html_report_exposes_hunks_and_backport_columns(tmp_path):
-    """Hunks, Backport Cx and Pick Priority columns + row values.
+    """Hunks, Complexity and Pick Priority columns + row values.
     
-    backport_tier was removed; complexity is now heat-coloured directly in the
-    Backport Cx cell via a 4-level (higher-worse) heat scheme.
+    Complexity (formerly Backport Cx) is now heat-coloured directly in the cell
+    via a 4-level (higher-worse) heat scheme. Pick Priority uses higher-better.
     """
     tpl_dir = _tpl_dir(tmp_path)
     out = tmp_path / 'report.html'
@@ -195,7 +195,7 @@ def test_html_report_exposes_hunks_and_backport_columns(tmp_path):
 
 
 def test_html_report_exposes_score_norm_column(tmp_path):
-    """Score % (score_norm) column and row value are present."""
+    """Score (score_norm) column and row value are present."""
     tpl_dir = _tpl_dir(tmp_path)
     out = tmp_path / 'report.html'
     commits = [{
@@ -629,7 +629,7 @@ def test_summary_css_detail_pane_is_scrollable():
 def test_summary_css_has_heat_pills():
     """v18.5.0: Numeric columns use a unified 4-level heat-pill scheme.
     
-    Backport Cx, Score % and Pick Priority are rendered as heat-coloured pills
+    Complexity, Score and Pick Priority are rendered as heat-coloured pills
     (higher-better or higher-worse polarity) via .kc-heat-1..4 classes.
     """
     css_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
@@ -753,7 +753,7 @@ def test_summary_js_has_heat_pill_helpers():
     code = _strip_comments(js)
     assert 'function heatLevel' in code
     assert 'function heatPill' in code
-    # Backport Cx uses heatPill with higher-worse polarity
+    # Complexity uses heatPill with higher-worse polarity
     assert 'heatPill(v, {scale: 100, polarity: \'higher-worse\'})' in code
 
 
@@ -781,13 +781,13 @@ def test_summary_js_has_profile_bullet_helpers():
 def test_summary_js_overview_shows_backport_indicators():
     """v18.5.0: the detail Overview tab surfaces the size + backport
     indicators (files/lines/hunks/complexity/pick_priority).
-    backport_tier was removed; complexity is now heat-coloured directly."""
+    backport_tier was removed; Complexity is now heat-coloured directly."""
     js   = _read_assembled_js()
     code = _strip_comments(js)
     assert 'Files changed' in code
     assert 'Lines changed' in code
-    assert 'Backport complexity' in code
-    assert 'Pick priority' in code
+    assert 'Complexity' in code
+    assert 'Pick Priority' in code
 
 
 def test_summary_js_hidden_columns_dropped_from_visible_set():

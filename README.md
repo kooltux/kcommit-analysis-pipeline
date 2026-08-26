@@ -85,14 +85,14 @@ The only way to influence scoring is through **profile weights**
 The raw `score` above is **unbounded** and **run-relative**: its magnitude
 depends on how many rules fire and their weights, so it is only meaningful when
 comparing commits *within the same run*. For readability, each relevant commit
-also carries a **normalized score** (column **"Score %"**, field `score_norm`):
+also carries a **normalized score** (column **"Score"**, field `score_norm`):
 
 ```
 score_norm = round(100 × score / max_score_in_run)     # 0–100
 ```
 
 `score_norm` is computed in stage 06 against the current run's maximum score.
-The raw `score` is kept as the authoritative value (it preserves absolute
+The raw `score` is kept as **"Score (raw)"** in exports (it preserves absolute
 signal strength and ordering fidelity that normalization discards); `score_norm`
 is a derived, informational convenience. Like `pick_priority`, it is a
 **within-run** value and is not comparable across different runs.
@@ -121,8 +121,8 @@ They appear as columns in the **spreadsheet exports** (CSV / XLSX / ODS) and in
 the **commit-detail Overview** of the HTML report. In the HTML *table* they are
 kept as **hidden columns**: their values are still attached to every row (and
 remain searchable) but are not shown by default, to keep the table readable now
-that the backport indicators share the same row. The tier-coloured
-**Backport Cx** cell is the at-a-glance size/effort cue in the table.
+that the **Complexity** cell (formerly Backport Cx) is the at-a-glance cue in
+the table.
 
 These indicators are **purely informational**: they do **not** contribute to
 the score, which remains exclusively rule/profile driven. When commits are
@@ -181,12 +181,13 @@ default. Weights are hard-coded.
 > These are heuristic estimates from observable commit shape, **not** a real
 > cherry-pick trial. A clean estimate does not guarantee a conflict-free pick.
 
-In the HTML report the **Backport Cx** cell uses a unified 4-level heat scheme
-(higher = worse / red; lower = easier / green) for at-a-glance triage.
-The full set of indicators (Score %, files/lines/hunks, complexity, and
-pick_priority) is also listed in the commit-detail **Overview** tab, where
-Score % and Backport complexity are heat-coloured, Pick priority is heat-coloured,
-and raw Score is shown uncolored.
+In the HTML report the **Complexity** cell (column name; field: `backport_complexity`)
+uses a unified 4-level heat scheme (higher = worse / red; lower = easier / green)
+for at-a-glance triage. The full set of indicators (Score, files/lines/hunks,
+complexity, and pick_priority) is also listed in the commit-detail **Overview**
+tab, where Score and Complexity are heat-coloured (higher-better for Score,
+higher-worse for Complexity), Pick priority is heat-coloured (higher-better),
+and raw Score (raw) is shown uncolored.
 
 
 ### Profile colour legend

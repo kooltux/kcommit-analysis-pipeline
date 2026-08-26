@@ -46,9 +46,9 @@ CACHE_FILES = {
 # -- Column definitions -- single source of truth ----------------------------
 # Import via: from lib.manifest import COMMIT_COLS, COMMIT_COLS_FILTERED, ...
 COMMIT_COLS          = ["Rank", "SHA", "Subject", "Author", "Date",
-                        "Score", "Score %", "Files Changed", "Lines Changed",
-                        "Hunks", "Backport Cx", "Pick Priority",
-                        "Profiles", "Profile Scores", "Product Evidence"]
+                        "Pick Priority", "Score", "Complexity",
+                        "Profiles", "Profile Scores", "Product Evidence",
+                        "Score (raw)", "Files Changed", "Lines Changed", "Hunks"]
 COMMIT_COLS_FILTERED = COMMIT_COLS + ["Filter Reason"]
 SUMMARY_COLS         = ["Profile", "Count", "Total Score", "Avg Score"]
 MATRIX_COLS          = ["Rank", "SHA", "Subject", "Profile",

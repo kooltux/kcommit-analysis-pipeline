@@ -170,19 +170,19 @@ _COMMIT_COLUMNS = [
     ('subject',       'Subject',        'string'),
     ('author',        'Author',         'string'),
     ('date',          'Date',           'date'),
-    # score (raw) is hidden from the table: it is unbounded/run-relative and
-    # the bounded 'Score %' (score_norm) carries the same signal in a
-    # colour-comparable 0..100 range.  The raw value is still on each row
-    # (searchable / exported) and shown uncoloured in the commit-detail
-    # Overview.
-    ('score',         'Score',          'number',  True),
-    ('score_norm',    'Score %',        'number'),
+    # Pick priority is the primary triage indicator (higher = more relevant & easier)
+    ('pick_priority', 'Pick Priority',  'number'),
+    # Score (normalized 0-100) — bounded, colour-comparable signal.
+    # The raw score is hidden below.
+    ('score_norm',    'Score',          'number'),
+    # Backport complexity — higher = harder to backport.
+    ('backport_cx',   'Complexity',     'number'),
+    ('profiles',      'Profiles',       'select'),
+    # Hidden columns: raw data kept for search/export but not shown in table.
+    ('score',         'Score (raw)',    'number',  True),
     ('files',         'Files Changed',  'number',  True),
     ('lines',         'Lines Changed',  'number',  True),
     ('hunks',         'Hunks',          'number',  True),
-    ('backport_cx',   'Backport Cx',    'number'),
-    ('pick_priority', 'Pick Priority',  'number'),
-    ('profiles',      'Profiles',       'select'),
 ]
 
 # Default table sort: highest pick_priority first (look at the best

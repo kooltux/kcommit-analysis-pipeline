@@ -8,10 +8,10 @@ All notable changes to this project are documented in this file.
 
 - **Normalized score** (`score_norm`, 0–100) — the raw `score` normalized
   against the current run's maximum: `round(100 · score / max_score_in_run)`.
-  Surfaced as a new **"Score %"** report column right after **"Score"**
-  (CSV / XLSX / ODS / HTML + `relevant_commits.table.json`). Computed in stage
-  06 over the relevant set; informational, run-relative, not comparable across
-  runs. The raw `score` is retained as the authoritative value.
+  Surfaced as the **"Score"** report column (CSV / XLSX / ODS / HTML +
+  `relevant_commits.table.json`). Computed in stage 06 over the relevant set;
+  informational, run-relative, not comparable across runs. The raw `score` is
+  retained as **"Score (raw)"** (hidden in HTML table but exported).
   - `lib/backport.py::normalize_score()` is the single source of truth for
     score normalization.
 
@@ -20,7 +20,9 @@ All notable changes to this project are documented in this file.
 - `lib/backport.py::compute_pick_priority()` now takes the already-normalized
   `score_norm` (instead of `score` + `max_score`) so normalization happens
   exactly once; `pick_priority` output is numerically unchanged.
-- `lib/manifest.py::COMMIT_COLS` gains **"Score %"** and drops **"Backport Tier"**.
+- `lib/manifest.py::COMMIT_COLS` updated: **"Pick Priority"** moved before
+  **"Score"** (formerly "Score %"), **"Backport Cx"** renamed to **"Complexity"**,
+  **"Backport Tier"** dropped.
 - HTML: per-profile score columns are now anchored after the score family
   (`score`, `score_norm`) so the header stays grouped.
 - HTML: report table header labels (`tr.kc-sort-row th`) now wrap onto
@@ -42,23 +44,23 @@ All notable changes to this project are documented in this file.
 
 ### HTML report — table de-clutter & unified heat coloring
 
-- **Hidden columns.** `Files Changed`, `Lines Changed`, `Hunks`, **Score**
-  and **Backport Tier** are now emitted with `hidden: true` in the relevant-tab
-  column definitions (`lib/html_report.py::_COMMIT_COLUMNS` / `_columns_def()`).
-  Their values are still attached to every row (available to global search,
-  exports and the detail pane), but the browser-side JS drops them from the
-  *visible* table so it stays readable.
+- **Hidden columns.** `Files Changed`, `Lines Changed`, `Hunks`,
+  **Score (raw)** and **Backport Tier** are now emitted with `hidden: true` in the
+  relevant-tab column definitions (`lib/html_report.py::_COMMIT_COLUMNS` /
+  `_columns_def()`). Their values are still attached to every row (available to
+  global search, exports and the detail pane), but the browser-side JS drops them
+  from the *visible* table so it stays readable.
   `configs/html/js/summary_01_globals.js::REL_COLS` filters `!c.hidden` out of
   the visible column set. The CSV/XLSX/ODS spreadsheet exports remain unchanged.
-  The raw **Score** is still shown uncolored in the commit-detail Overview.
 
 - **Unified 4-level heat coloring for numeric columns.** A shared visual scheme
   colours the main numeric indicators using a 4-step palette mapped to even
   quartiles of each column's scale (0–100). Polarity is per-column:
-  - **Score %**, **Pick Priority**: `higher-better` → level 4 (75–100) green,
+  - **Score**, **Pick Priority**: `higher-better` → level 4 (75–100) green,
     level 3 (50–74) lime, level 2 (25–49) orange, level 1 (0–24) red.
-  - **Backport Cx**: `higher-worse` → same 4 levels but inverted: level 4
-    (75–100) red, level 3 orange, level 2 lime, level 1 green (low complexity = good).
+  - **Complexity** (formerly Backport Cx): `higher-worse` → same 4 levels but
+    inverted: level 4 (75–100) red, level 3 orange, level 2 lime, level 1 green
+    (low complexity = good).
   Implementation: `heatLevel(value, scale)` / `heatPill(value, {scale, polarity})`
   in `summary_02_utils.js`; CSS `.kc-heat-pill` + `.kc-heat-{1..4}` in `summary.css`.
 
@@ -77,16 +79,17 @@ All notable changes to this project are documented in this file.
   (searchable) and shown in full in the commit-detail **Scoring** tab.
 
 - **Richer Overview tab.** The commit-detail Overview lists the size and
-  backport indicators below Score — Score % (heat-coloured), Files changed,
-  Lines changed, Hunks, Backport complexity (heat-coloured, higher-worse), and
-  Pick priority (heat-coloured, higher-better). Raw Score is shown uncolored.
+  backport indicators below Score — Score (heat-coloured), Files changed,
+  Lines changed, Hunks, Complexity (heat-coloured, higher-worse), and Pick
+  priority (heat-coloured, higher-better). Raw Score (raw) is shown uncolored.
   All pillars use the same `.kc-heat-*` classes so the visual language is
   consistent between the table and the detail pane.
 
-- **Score column hidden from table.** The unbounded raw `score` is hidden from
-  the visible HTML table but retained in row data (searchable / exported) and
-  shown uncolored in the Overview. The bounded **Score %** carries the comparable
-  signal and is heat-coloured.
+- **Column reordering.** The visible HTML table columns are now ordered with
+  the most important triage indicators first: Rank, SHA, Subject, Author, Date,
+  **Pick Priority**, **Score**, **Complexity**, Profiles. Less important columns
+  (Score (raw), Files Changed, Lines Changed, Hunks, Backport Tier) are hidden
+  but remain searchable and exported.
 
 ### Tests
 
@@ -94,10 +97,11 @@ All notable changes to this project are documented in this file.
   in `tests/test_backport.py` (removed `tier_for_complexity` import and tests).
 - Stage-06 `score_norm` tests (top=100, proportional, zero-max safe) in
   `tests/test_st06_postfilter.py`; updated to drop `backport_tier` assertion.
-- HTML tests updated: "Score %" column, heat-pill CSS/JS assets, hidden-column
-  assertions (`files`/`lines`/`hunks`/`score`/`backport_tier` hidden; `backport_cx`
-  and `pick_priority` visible and heat-coloured), profile colour bullets/legend
-  and enriched Overview tab, in `tests/test_html_report.py`.
+- HTML tests updated: Score column (formerly "Score %"), heat-pill CSS/JS
+  assets, hidden-column assertions (`files`/`lines`/`hunks`/`score`/`backport_tier`
+  hidden; `backport_cx` (Complexity) and `pick_priority` visible and heat-coloured),
+  profile colour bullets/legend and enriched Overview tab, in
+  `tests/test_html_report.py`.
 - `test_summary_js_does_not_inject_per_profile_columns` replaces the old
   per-profile-column assertion (columns removed; row keys retained).
 - Spreadsheet column-index assertions updated in `tests/test_spreadsheet.py`

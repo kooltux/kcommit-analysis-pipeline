@@ -149,16 +149,16 @@ def _commit_rows(commits, include_reason=False):
             c.get('subject', ''),
             c.get('author_name', ''),
             _fmt_date(c.get('author_time', '')),
-            c.get('score', 0) or 0,
-            c.get('score_norm', 0) or 0,
-            stats.get('files_changed', 0) or 0,
-            stats.get('lines_changed', 0) or 0,
-            stats.get('hunks', 0) or 0,
-            c.get('backport_complexity', 0) or 0,
             c.get('pick_priority', 0) or 0,
+            c.get('score_norm', 0) or 0,
+            c.get('backport_complexity', 0) or 0,
             fmt_profiles(c),
             prof_scores,
             fmt_evidence(c),
+            c.get('score', 0) or 0,
+            stats.get('files_changed', 0) or 0,
+            stats.get('lines_changed', 0) or 0,
+            stats.get('hunks', 0) or 0,
         ]
         if include_reason:
             row.append(c.get('_filter_reason', ''))

@@ -126,7 +126,7 @@ def test_commit_row_contains_profile_scores_text():
         'scoring': {'profiles': {'p2': 3, 'p1': 7}}
     })
     assert row[0] == ''          # _rank not set → empty string
-    # After Score(5) come the descriptive/backport indicators:
-    #   Score%(6) Files(7) Lines(8) Hunks(9) Backport Cx(10)
-    #   Pick Priority(11) Profiles(12) Profile Scores(13) Product Evidence(14)
-    assert row[13] == 'p1:7; p2:3'
+    # After Date(4) come the main indicators:
+    #   Pick Priority(5) Score(6) Complexity(7) Profiles(8) Profile Scores(9) Product Evidence(10)
+    #   Score (raw)(11) Files(12) Lines(13) Hunks(14)
+    assert row[9] == 'p1:7; p2:3'

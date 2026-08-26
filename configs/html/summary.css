@@ -659,7 +659,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   letter-spacing: .05em;
   /* Labels wrap onto multiple lines instead of overflowing into the next
    * column (fixed-layout columns are narrow for multi-word headings like
-   * "Files Changed" / "Backport Tier" / "Score %"). break-word prevents a
+   * "Files Changed" / "Pick Priority" / "Score (raw)"). break-word prevents a
    * single long token from overflowing. */
   white-space: normal;
   overflow-wrap: break-word;
