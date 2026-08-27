@@ -473,13 +473,14 @@ def _sidebar_payload(report_stats, profile_summary, run_stats_data=None):
     # since v16.8.0).  When run_stats_data is supplied these fields are always
     # present and non-zero.
     score_dist = (st05_full.get('score_distribution') or {}).get('items') or []
+    score_norm_dist = (st05_full.get('score_norm_distribution') or {}).get('items') or []
 
     st05_glob = {
-        'score_max':    int(st05_full.get('score_max', score_hi or 0) or 0),
-        'score_min':    int(st05_full.get('score_min', score_lo or 0) or 0),
-        'score_avg':    round(float(st05_full.get('score_avg', 0) or 0), 1),
-        'score_median': round(float(st05_full.get('score_median', 0) or 0), 1),
-        'distribution': score_dist,
+        'score_max':    int(st05_full.get('score_norm_max', 0) or 0),
+        'score_min':    int(st05_full.get('score_norm_min', 0) or 0),
+        'score_avg':    round(float(st05_full.get('score_norm_avg', 0) or 0), 1),
+        'score_median': round(float(st05_full.get('score_norm_median', 0) or 0), 1),
+        'distribution': score_norm_dist,
     }
 
     try:

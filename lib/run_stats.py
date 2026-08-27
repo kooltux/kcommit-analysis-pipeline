@@ -102,6 +102,53 @@ def _score_dist(commits, target_bins=16):
     return bins
 
 
+def _score_norm_dist(commits, target_bins=16):
+    """Return an equal-width histogram over the normalized score range (0-100).
+
+    Each bucket item has the shape:
+        {'label': '0-9', 'lo': 0, 'hi': 9, 'mid': 4.5, 'count': N}
+
+    Uses score_norm (0..100 normalized scores) if available, otherwise computes
+    normalized scores on the fly from raw scores. The range is fixed at 0-100
+    with buckets at 0-9, 10-19, ..., 90-100.
+    """
+    # Try to get score_norm from commits first (if stage 06 has run)
+    norm_scores = [int(x.get('score_norm', 0) or 0) for x in commits]
+    
+    # If no score_norm available, compute it from raw scores
+    if all(s == 0 for s in norm_scores):
+        raw_scores = [int(x.get('score', 0) or 0) for x in commits]
+        max_score = max(raw_scores) if raw_scores else 1
+        norm_scores = [round(100 * s / max(max_score, 1)) for s in raw_scores]
+    
+    if not norm_scores:
+        return []
+
+    # Fixed 0-100 range with 10-point buckets: 0-9, 10-19, ..., 90-100
+    # Use simple labels "0", "10", "20", ..., "100" for cleaner x-axis
+    bins = []
+    for i in range(10):
+        b_lo = i * 10
+        b_hi = (i + 1) * 10 - 1 if i < 9 else 100
+        bins.append({
+            'label': str(b_lo),  # "0", "10", "20", ..., "90" (last is 90 but represents 90-100)
+            'lo': b_lo,
+            'hi': b_hi,
+            'mid': (b_lo + b_hi) / 2.0,
+            'count': 0,
+        })
+    # Fix the last label to be "100" instead of "90"
+    if bins:
+        bins[-1]['label'] = '100'
+
+    for s in norm_scores:
+        s_clamped = max(0, min(100, s))  # Ensure within 0-100
+        idx = min(s_clamped // 10, 9)  # 0-9 -> 0, 10-19 -> 1, ..., 90-100 -> 9
+        bins[idx]['count'] += 1
+
+    return bins
+
+
 # ---------------------------------------------------------------------------
 # Generic ranked-list helpers
 # ---------------------------------------------------------------------------
@@ -298,6 +345,22 @@ def _build_stage05(scored):
     g_avg    = round(statistics.mean(all_scores),          1) if all_scores else 0
     g_median = round(statistics.median(all_scores),        1) if all_scores else 0
 
+    # Normalized score statistics (score_norm is 0-100)
+    # Try to get score_norm from commits first (if stage 06 has run),
+    # otherwise compute it from raw scores
+    all_norm_scores = [int(c.get('score_norm', 0) or 0) for c in scored]
+    if all(s == 0 for s in all_norm_scores):
+        # score_norm not available, compute from raw scores
+        max_score = max(all_scores) if all_scores else 1
+        all_norm_scores = [round(100 * s / max(max_score, 1)) for s in all_scores]
+    
+    nonzero_norm    = [s for s in all_norm_scores if s > 0]
+
+    g_norm_max    = max(all_norm_scores)          if all_norm_scores else 0
+    g_norm_min    = min(nonzero_norm)             if nonzero_norm    else 0
+    g_norm_avg    = round(statistics.mean(all_norm_scores), 1) if all_norm_scores else 0
+    g_norm_median = round(statistics.median(all_norm_scores), 1) if all_norm_scores else 0
+
     return {
         'total_scored':           len(scored),
         'zero_score_commits':     sum(1 for s in all_scores if s == 0),
@@ -308,6 +371,12 @@ def _build_stage05(scored):
         'score_avg':              g_avg,
         'score_median':           g_median,
         'score_distribution':     {'items': _score_dist(scored)},
+        'score_norm_distribution': {'items': _score_norm_dist(scored)},
+        # Normalized score stats for Score % distribution
+        'score_norm_max':         g_norm_max,
+        'score_norm_min':         g_norm_min,
+        'score_norm_avg':         g_norm_avg,
+        'score_norm_median':      g_norm_median,
         'profiles_hit':           {'items': _rank_items(profiles_hit, 'profile')},
         'profiles':               profiles_out,
     }

@@ -137,7 +137,7 @@
 
     const ss = st5.score_stats || {}, dist = ss.distribution || [];
     if (dist.length || ss.score_max != null) {
-      html += `<div class="kc-stat-block"><div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udcca</span>Score distribution</div><div class="kc-stat-block-body kc-chart-body">${renderScoreChart(dist, ss)}</div></div>`;
+      html += `<div class="kc-stat-block"><div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udcca</span>Score % distribution</div><div class="kc-stat-block-body kc-chart-body">${renderScoreChart(dist, ss)}</div></div>`;
     }
 
     const profs = st5.profiles || {};
