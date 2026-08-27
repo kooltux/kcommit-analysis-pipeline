@@ -1,5 +1,10 @@
 """Tests for lib.gitutils — parse_pretty_block, parse_tail_block,
-run_git (mocked), iter_git_log_records (mocked), batch_show_paths (F)."""
+run_git (mocked), iter_git_log_records (mocked), batch_show_paths (F).
+
+v19.0.0 (G):
+  - Updated cherry-pick tests to mock subprocess.run() instead of run_git()
+  - can_cherry_pick() now uses subprocess directly for git apply --check
+"""
 import io
 import sys
 from unittest.mock import patch, MagicMock, call
@@ -519,52 +524,54 @@ from lib.gitutils import can_cherry_pick, batch_can_cherry_pick
 def _cfg_with_kernel(source_dir='/fake/git'):
     return {
         'kernel': {'source_dir': source_dir, 'rev_old': 'v6.1'},
-        'collect': {},
+        'collect': {'git_binary': 'git'},
     }
 
 
 def test_can_cherry_pick_success():
     """Test that a clean cherry-pick (apply --check) returns ok=True with no conflicts."""
     cfg = _cfg_with_kernel()
-    # Mock successful git show + apply --check
-    # run_git returns stdout string directly
-    with patch('lib.gitutils.run_git', side_effect=[
-        'diff --git a/file.c b/file.c\n@@ -1 +1 @@\n-old\n+new\n',  # git show
-        '',  # git apply --check (success, empty output)
-    ]) as mock_run:
+    # Mock subprocess.run for git show and git apply --check
+    # git show returns patch, git apply --check returns rc=0 (success)
+    with patch('subprocess.run') as mock_run:
+        # First call: git show (returns patch)
+        mock_run.return_value = _ok('diff --git a/file.c b/file.c\n@@ -1 +1 @@\n-old\n+new\n')
         result = can_cherry_pick(cfg, 'def456', 'v6.1')
         assert result['ok'] is True
         assert result['conflicts'] == []
         assert result['error'] is None
-        # Verify two git calls were made: show + apply --check
+        # Verify two subprocess calls were made: show + apply --check
         assert mock_run.call_count == 2
 
 
 def test_can_cherry_pick_with_conflicts():
     """Test that a patch with conflicts returns ok=False with conflict list."""
     cfg = _cfg_with_kernel()
-    # Mock git show + apply --check with conflict error
-    with patch('lib.gitutils.run_git', side_effect=[
-        'diff --git a/file.c b/file.c\n@@ -1 +1 @@\n-old\n+new\n',  # git show
-        'error: file.c: does not match index\n',  # apply --check error
-    ]) as mock_run:
+    # Mock subprocess.run for git show and git apply --check
+    # git apply --check returns rc=1 with error message
+    with patch('subprocess.run') as mock_run:
+        # First call: git show (returns patch)
+        mock_run.return_value = _ok('diff --git a/file.c b/file.c\n')
+        # Second call: git apply --check (returns error)
+        mock_run.return_value.stderr = 'error: file.c: does not match index\n'
+        mock_run.return_value.returncode = 1
         result = can_cherry_pick(cfg, 'def456', 'v6.1')
         assert result['ok'] is False
         assert 'file.c' in result['conflicts']
         assert result['error'] is None
-        # Verify two git calls were made: show + apply --check
+        # Verify two subprocess calls were made: show + apply --check
         assert mock_run.call_count == 2
 
 
 def test_can_cherry_pick_error():
     """Test that git errors are captured and returned."""
     cfg = _cfg_with_kernel()
-    with patch('lib.gitutils.run_git', side_effect=Exception('git not found')) as mock_run:
+    with patch('subprocess.run', side_effect=Exception('git not found')) as mock_run:
         result = can_cherry_pick(cfg, 'def456', 'v6.1')
         assert result['ok'] is False
         assert result['error'] is not None
         assert 'git not found' in result['error']
-        # Verify one git call was made (show failed)
+        # Verify one subprocess call was made (show failed)
         assert mock_run.call_count == 1
 
 
@@ -578,20 +585,21 @@ def test_batch_can_cherry_pick_empty():
 def test_batch_can_cherry_pick_single_success():
     """Test batch function with a single successful cherry-pick."""
     cfg = _cfg_with_kernel()
-    with patch('lib.gitutils.run_git') as mock_run:
+    with patch('subprocess.run') as mock_run:
         # Sequence: get HEAD, checkout target, show, apply --check, restore HEAD
+        # For can_cherry_pick: show returns patch, apply --check returns rc=0
         mock_run.side_effect = [
-            'abc123\n',      # current HEAD
-            '',             # checkout target
-            'diff --git...\n',  # git show (patch)
-            '',             # apply --check (success)
-            '',             # restore HEAD
+            _ok('abc123\n'),      # current HEAD
+            _ok(''),             # checkout target
+            _ok('diff --git...\n'),  # git show (patch)
+            _ok(''),             # apply --check (success, rc=0)
+            _ok(''),             # restore HEAD
         ]
         shas = ['c1' * 40]
         results = batch_can_cherry_pick(cfg, shas, 'v6.1')
         assert len(results) == 1
         assert results['c1' * 40]['ok'] is True
-        # Verify 5 git calls: rev-parse HEAD, checkout target, show, apply --check, restore
+        # Verify 5 subprocess calls: rev-parse HEAD, checkout target, show, apply --check, restore
         assert mock_run.call_count == 5
 
 
@@ -600,23 +608,23 @@ def test_batch_can_cherry_pick_multiple():
     cfg = _cfg_with_kernel()
     shas = ['a' * 40, 'b' * 40]
     
-    with patch('lib.gitutils.run_git') as mock_run:
+    with patch('subprocess.run') as mock_run:
         # Sequence: get HEAD, checkout target, 2x (show + apply --check), restore HEAD
         mock_run.side_effect = [
-            'abc123\n',      # current HEAD
-            '',             # checkout target
-            'diff --git...\n',  # show sha1 (patch)
-            '',             # apply --check sha1 (success)
-            'diff --git...\n',  # show sha2 (patch)
-            'error: conflict',  # apply --check sha2 (conflict)
-            '',             # restore HEAD
+            _ok('abc123\n'),      # current HEAD
+            _ok(''),             # checkout target
+            _ok('diff --git...\n'),  # show sha1 (patch)
+            _ok(''),             # apply --check sha1 (success, rc=0)
+            _ok('diff --git...\n'),  # show sha2 (patch)
+            _fail('error: conflict', rc=1),  # apply --check sha2 (conflict, rc=1)
+            _ok(''),             # restore HEAD
         ]
         results = batch_can_cherry_pick(cfg, shas, 'v6.1')
         
         assert len(results) == 2
         assert results['a' * 40]['ok'] is True
         assert results['b' * 40]['ok'] is False
-        # Verify 7 git calls: rev-parse HEAD, checkout target, 2x (show + apply), restore
+        # Verify 7 subprocess calls: rev-parse HEAD, checkout target, 2x (show + apply), restore
         assert mock_run.call_count == 7
 
 
@@ -624,13 +632,13 @@ def test_batch_can_cherry_pick_restores_head_on_error():
     """Test that batch function restores HEAD even if show fails."""
     cfg = _cfg_with_kernel()
     
-    with patch('lib.gitutils.run_git') as mock_run:
+    with patch('subprocess.run') as mock_run:
         # Sequence: get HEAD, checkout target, show raises, restore HEAD
         mock_run.side_effect = [
-            'abc123\n',      # current HEAD
-            '',             # checkout target
+            _ok('abc123\n'),      # current HEAD
+            _ok(''),             # checkout target
             Exception('git error'),  # show fails
-            '',             # restore HEAD (in finally block)
+            _ok(''),             # restore HEAD (in finally block)
         ]
         shas = ['c1' * 40]
         results = batch_can_cherry_pick(cfg, shas, 'v6.1')

@@ -8,6 +8,9 @@ v13.0.0 (E.7):
 
 v18.0.1 (Fix 5): updated bucket-label assertions from '100+' to '>=100'.
   The score cap was removed in v16.5.0; the old label was misleading.
+
+v19.0.0 (G):
+  - Updated cherry-pick test to mock batch_can_cherry_pick_cached() from lib.gitutils
 """
 import json
 import os
@@ -420,8 +423,8 @@ def test_run_generates_cherry_pick_check_script_when_enabled(tmp_path):
     _write_json(os.path.join(cache, CACHE_FILES['scored']), commits)
     _write_json(os.path.join(cache, CACHE_FILES['filtered']), [])
     
-    # Mock batch_can_cherry_pick to avoid actual git calls
-    with patch('lib.stages.st06_postfilter.batch_can_cherry_pick') as mock_cp:
+    # Mock batch_can_cherry_pick_cached from lib.gitutils to avoid actual git calls
+    with patch('lib.gitutils.batch_can_cherry_pick_cached') as mock_cp:
         mock_cp.return_value = {
             'abc123' + '0' * 34: {'ok': True, 'conflicts': [], 'error': None},
             'def456' + '0' * 34: {'ok': False, 'conflicts': ['file.c'], 'error': None},
