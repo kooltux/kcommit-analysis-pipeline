@@ -388,3 +388,94 @@ def test_cache_files_has_postfilter_debug_key():
     stable, named key to reference rather than a hardcoded filename."""
     assert 'postfilter_debug' in CACHE_FILES
     assert CACHE_FILES['postfilter_debug'].endswith('.json')
+
+
+# == cherry-pick test script generation (v18.6.0) =============================
+
+def _cfg_cherry_pick_test():
+    """Config with cherry_pick_test enabled."""
+    return {
+        'kernel': {
+            'source_dir': '/kernel/src',
+            'rev_old': 'v6.1',
+            'rev_new': 'v6.6',
+        },
+        'collect': {
+            'cherry_pick_test': True,
+        },
+    }
+
+
+def test_run_generates_cherry_pick_check_script_when_enabled(tmp_path):
+    """v18.6.0: when cherry_pick_test is enabled, run() generates a standalone
+    cherry_pick_check.py script in the output directory."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    
+    # Create scored commits
+    commits = [
+        _scored_commit('abc123' + '0' * 34, 80),
+        _scored_commit('def456' + '0' * 34, 60),
+    ]
+    _write_json(os.path.join(cache, CACHE_FILES['scored']), commits)
+    _write_json(os.path.join(cache, CACHE_FILES['filtered']), [])
+    
+    # Mock batch_can_cherry_pick to avoid actual git calls
+    with patch('lib.stages.st06_postfilter.batch_can_cherry_pick') as mock_cp:
+        mock_cp.return_value = {
+            'abc123' + '0' * 34: {'ok': True, 'conflicts': [], 'error': None},
+            'def456' + '0' * 34: {'ok': False, 'conflicts': ['file.c'], 'error': None},
+        }
+        run(_cfg_cherry_pick_test(), cache)
+    
+    # Script should be generated in output directory (sibling of cache)
+    output_dir = os.path.join(os.path.dirname(cache), 'output')
+    script_path = os.path.join(output_dir, 'cherry_pick_check.py')
+    assert os.path.isfile(script_path), 'cherry_pick_check.py not generated'
+    
+    # Script should be executable
+    assert os.access(script_path, os.X_OK), 'cherry_pick_check.py not executable'
+    
+    # Script should contain expected content
+    with open(script_path, 'r') as f:
+        content = f.read()
+    assert 'git apply --check' in content
+    assert '--verbose' in content
+    assert '--json' in content
+    assert 'v6.1' in content  # target_rev
+    assert 'abc123' in content  # commit SHA
+    assert 'def456' in content  # commit SHA
+    # Script should only contain SHAs, not full commit metadata
+    assert 'subject' not in content or 'subject' in content and 'COMMITS = ' in content
+
+
+def test_run_no_cherry_pick_script_when_disabled(tmp_path):
+    """v18.6.0: when cherry_pick_test is disabled, no script is generated."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    
+    commits = [_scored_commit('abc', 80)]
+    _write_json(os.path.join(cache, CACHE_FILES['scored']), commits)
+    _write_json(os.path.join(cache, CACHE_FILES['filtered']), [])
+    
+    run({}, cache)  # No cherry_pick_test config
+    
+    output_dir = os.path.join(os.path.dirname(cache), 'output')
+    script_path = os.path.join(output_dir, 'cherry_pick_check.py')
+    assert not os.path.exists(script_path), 'Script should not be generated when disabled'
+
+
+def test_run_cherry_pick_script_with_empty_commits(tmp_path):
+    """v18.6.0: script generation handles empty commit list gracefully."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    
+    _write_json(os.path.join(cache, CACHE_FILES['scored']), [])
+    _write_json(os.path.join(cache, CACHE_FILES['filtered']), [])
+    
+    run(_cfg_cherry_pick_test(), cache)
+    
+    output_dir = os.path.join(os.path.dirname(cache), 'output')
+    script_path = os.path.join(output_dir, 'cherry_pick_check.py')
+    # Script should still be generated (even if empty)
+    assert os.path.isfile(script_path)

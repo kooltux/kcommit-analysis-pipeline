@@ -472,48 +472,59 @@ def _serial_fallback(cfg, tasks, progress_callback):
     return results
 
 
-# ── Cherry-pick test (efficient: checkout target once, dry-run per commit) ──
+# ── Cherry-pick test (fast: git apply --check) ────────────────────────────────
 
 def can_cherry_pick(cfg, commit_sha, target_rev):
     """Test if *commit_sha* can be cherry-picked cleanly on top of *target_rev*.
     
-    Uses ``git cherry-pick --dry-run`` which simulates the pick without
-    modifying the working tree. This is the official git command for testing
-    cherry-pick feasibility.
+    Uses ``git show | git apply --check`` which tests if the patch applies
+    without modifying the working tree. This is much faster than cherry-pick
+    because it doesn't touch the index or working directory.
     
     Returns a dict with:
-      'ok':        bool   – True if cherry-pick would succeed without conflicts
+      'ok':        bool   – True if patch would apply without conflicts
       'conflicts': list   – list of conflicted file paths (empty if ok=True)
       'error':     str    – error message if git command failed, else None
     
-    This is a best-effort test: a clean cherry-pick here does not guarantee
+    This is a best-effort test: a clean apply here does not guarantee
     conflict-free backport to the actual product (different configs, local
     patches, etc.), but conflicts here guarantee the backport will need work.
     """
     try:
-        # Single git call: dry-run cherry-pick onto current HEAD
-        # Caller is responsible for ensuring HEAD is at target_rev
+        # Step 1: Get the patch for this commit
+        patch = run_git(cfg, ['show', '--no-renames', commit_sha], check=False)
+        
+        if not patch.strip():
+            # Empty commit (e.g., just a message change) - always "applies"
+            return {'ok': True, 'conflicts': [], 'error': None}
+        
+        # Step 2: Test if patch applies cleanly at target revision
+        # --check: test if patch applies, don't modify anything
+        # --3way: fall back to 3-way merge if direct apply fails (like cherry-pick does)
         out = run_git(cfg, 
-                     ['cherry-pick', '--dry-run', commit_sha],
+                     ['apply', '--check', '--3way', '--unidiff-zero'],
                      check=False)
         
-        # Check for conflict messages in output
-        # git cherry-pick --dry-run outputs conflict info to stdout/stderr
-        # When successful, output is empty or contains only informational messages
-        if 'conflict' in out.lower() or 'error' in out.lower():
+        # Check for error messages in output
+        # When successful, output is empty
+        if out.strip():
             # Parse conflicted files from output
             conflicts = []
             for line in out.splitlines():
-                if 'conflict' in line.lower():
-                    # Extract filename from lines like "CONFLICT (modify/delete): file.c"
-                    # Format: "CONFLICT (type): filename description..."
+                # Lines like "error: file.c: does not match index"
+                # or "error: file.c: patch does not apply"
+                if 'error:' in line.lower() or 'does not match' in line.lower():
+                    # Extract filename
                     if ':' in line:
-                        # Split on first colon, take the part after it
-                        after_colon = line.split(':', 1)[1].strip()
-                        # The filename is the first word after the colon
-                        fname = after_colon.split()[0] if after_colon else ''
-                        if fname and not fname.startswith('('):
-                            conflicts.append(fname)
+                        parts = line.split(':')
+                        # Look for a part that looks like a file path
+                        for part in parts:
+                            part = part.strip()
+                            if '/' in part or part.endswith(('.c', '.h', '.S', '.make', '.mk')):
+                                # This looks like a file path
+                                fname = part.split()[0] if part else ''
+                                if fname and fname not in conflicts:
+                                    conflicts.append(fname)
             return {'ok': False, 'conflicts': conflicts, 'error': None}
         
         return {'ok': True, 'conflicts': [], 'error': None}
@@ -531,10 +542,10 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
     
     Strategy:
       1. Checkout target_rev once (detach HEAD)
-      2. For each commit: git cherry-pick --dry-run (single call, no worktree changes)
+      2. For each commit: git show | git apply --check (no worktree changes)
       3. Restore original HEAD
     
-    This is efficient: 1 checkout + N dry-run calls, no reset/cleanup per commit.
+    This is efficient: 1 checkout + N (show + apply) calls, no reset needed.
     
     Args:
         cfg:           pipeline config dict
@@ -562,7 +573,7 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
         # Checkout target revision once (detached HEAD)
         run_git(cfg, ['checkout', '--force', '--detach', target_rev], check=False)
         
-        # Test each commit with dry-run (no worktree modification)
+        # Test each commit with apply --check (no worktree modification)
         for i, sha in enumerate(shas):
             if progress_callback:
                 progress_callback(i + 1, total)
