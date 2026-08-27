@@ -664,13 +664,16 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
     reuses existing results for already-tested commits.
     
     Args:
-        cfg: pipeline config dict (may contain cherry_pick.cache_dir)
+        cfg: pipeline config dict (MUST contain cherry_pick.cache_dir)
         commit_shas: list of commit SHAs to test
         target_rev: revision to cherry-pick onto (e.g., config.kernel.rev_old)
         progress_callback: optional callable(current, total, eta_seconds)
     
     Returns:
         dict mapping sha -> {'ok': bool, 'conflicts': list, 'error': str or None}
+    
+    Raises:
+        RuntimeError: if cherry_pick.cache_dir is not configured
     """
     from lib.cherrypick_db import load_or_create_db
     
@@ -678,9 +681,15 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
     if not shas:
         return {}
     
-    # Get cache directory from config
-    cache_dir = cfg.get('cherry_pick', {}).get('cache_dir', 
-                os.path.expanduser('~/.kcommit/cherry-cache'))
+    # Get cache directory from config - REQUIRED, no default
+    cherry_pick_cfg = cfg.get('cherry_pick', {}) or {}
+    cache_dir = cherry_pick_cfg.get('cache_dir')
+    
+    if not cache_dir:
+        raise RuntimeError(
+            'cherry_pick.cache_dir is required when cherry_pick_test is enabled. '
+            'Please set "cherry_pick": {"cache_dir": "/path/to/cache"} in your config.'
+        )
     
     # Load or create database for this target
     db = load_or_create_db(cache_dir, target_rev)
