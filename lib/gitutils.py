@@ -500,35 +500,55 @@ def can_cherry_pick(cfg, commit_sha, target_rev):
             return {'ok': True, 'conflicts': [], 'error': None}
         
         # Step 2: Test if patch applies cleanly at target revision
-        # --check: test if patch applies, don't modify anything
-        # --3way: fall back to 3-way merge if direct apply fails (like cherry-pick does)
-        out = run_git(cfg, 
-                     ['apply', '--check', '--3way', '--unidiff-zero'],
-                     check=False)
+        # We need to check the return code, so we use subprocess directly
+        collect = cfg.get('collect', {}) or {}
+        git_bin = collect.get('git_binary', 'git')
+        src = cfg['kernel']['source_dir']
         
-        # Check for error messages in output
-        # When successful, output is empty
-        if out.strip():
-            # Parse conflicted files from output
-            conflicts = []
-            for line in out.splitlines():
-                # Lines like "error: file.c: does not match index"
-                # or "error: file.c: patch does not apply"
-                if 'error:' in line.lower() or 'does not match' in line.lower():
-                    # Extract filename
-                    if ':' in line:
-                        parts = line.split(':')
-                        # Look for a part that looks like a file path
-                        for part in parts:
-                            part = part.strip()
-                            if '/' in part or part.endswith(('.c', '.h', '.S', '.make', '.mk')):
-                                # This looks like a file path
-                                fname = part.split()[0] if part else ''
-                                if fname and fname not in conflicts:
-                                    conflicts.append(fname)
-            return {'ok': False, 'conflicts': conflicts, 'error': None}
+        if _PY37:
+            result = subprocess.run(
+                [git_bin, '-C', src, 'apply', '--check', '--3way', '--unidiff-zero'],
+                input=patch,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            out, err, rc = result.stdout, result.stderr, result.returncode
+        else:
+            p = subprocess.Popen(
+                [git_bin, '-C', src, 'apply', '--check', '--3way', '--unidiff-zero'],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+            out, err = p.communicate(input=patch)
+            rc = p.returncode
         
-        return {'ok': True, 'conflicts': [], 'error': None}
+        # Check return code: 0 = success, non-zero = conflict
+        if rc == 0:
+            return {'ok': True, 'conflicts': [], 'error': None}
+        
+        # Parse conflicted files from error output
+        conflicts = []
+        error_output = err if err else out
+        for line in error_output.splitlines():
+            # Lines like "error: file.c: does not match index"
+            # or "error: file.c: patch does not apply"
+            if 'error:' in line.lower() or 'does not match' in line.lower():
+                # Extract filename
+                if ':' in line:
+                    parts = line.split(':')
+                    # Look for a part that looks like a file path
+                    for part in parts:
+                        part = part.strip()
+                        if '/' in part or part.endswith(('.c', '.h', '.S', '.make', '.mk')):
+                            # This looks like a file path
+                            fname = part.split()[0] if part else ''
+                            if fname and fname not in conflicts:
+                                conflicts.append(fname)
+        
+        return {'ok': False, 'conflicts': conflicts, 'error': None}
         
     except Exception as exc:
         return {'ok': False, 'conflicts': [], 'error': str(exc)}
@@ -552,7 +572,7 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
         cfg:           pipeline config dict
         commit_shas:  list of commit SHAs to test
         target_rev:   revision to cherry-pick onto (e.g., config.kernel.rev_old)
-        progress_callback: optional callable(current, total)
+        progress_callback: optional callable(current, total, eta_seconds)
     """
     shas = [s for s in (commit_shas or []) if s]
     if not shas:
