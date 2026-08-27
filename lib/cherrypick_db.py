@@ -12,7 +12,7 @@ v19.0.0 (G):
 import os
 import sqlite3
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class CherryDB:
@@ -57,7 +57,7 @@ class CherryDB:
             results: dict mapping sha -> {'ok': bool, 'conflicts': list, 'error': str or None}
         """
         cursor = self.conn.cursor()
-        tested_at = datetime.utcnow().isoformat()
+        tested_at = datetime.now(timezone.utc).isoformat()
         
         for sha, result in results.items():
             conflicts_json = json.dumps(result.get('conflicts', []))
