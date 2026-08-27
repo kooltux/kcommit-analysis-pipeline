@@ -190,7 +190,8 @@ const AUTO_MIN_WIDTHS = {
   'score': 48,
   'score_norm': 48,
   'pick_priority': 40,
-  'backport_cx': 64
+  'backport_cx': 64,
+  'cherry_pickable': 48  /* Cherry-pick test: Yes/No select column */
 };
 
 function autoSizeColumns() {
@@ -409,6 +410,9 @@ function rowHtml(r) {
        * The numeric value is the authoritative signal; the level is just a
        * 4-step bucket for the pill color. */
       out += `<td class="kc-td-num ${cssClass}"${widthStyle}>${heatPill(v, {scale: 100, polarity: 'higher-worse'})}</td>`;
+    } else if (!isFiltered && col.key === 'cherry_pickable') {
+      /* Cherry-pick test result: Yes/No select column with appropriate styling */
+      out += `<td class="kc-td-text ${cssClass}"${widthStyle}>${esc(v)}</td>`;
     } else if (!isFiltered && col.key === 'profiles') {
       out += `<td class="${cssClass}"${widthStyle}>${profileBullets(Array.isArray(v) ? v : [v])}</td>`;
     } else if (col.key === 'date') {

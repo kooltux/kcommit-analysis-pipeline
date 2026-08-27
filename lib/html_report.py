@@ -191,7 +191,7 @@ _COMMIT_COLUMNS = [
     # Backport complexity — higher = harder to backport.
     ('backport_cx',   'Complexity',     'number'),
     # Cherry-pick test result (opt-in via collect.cherry_pick_test)
-    ('cherry_pickable', 'Cherry\nPickable', 'select'),
+    ('cherry_pickable', 'CP-able', 'select'),
     ('profiles',      'Profiles',       'select'),
     # Hidden columns: raw data kept for search/export but not shown in table.
     ('score',         'Score (raw)',    'number',  True),
