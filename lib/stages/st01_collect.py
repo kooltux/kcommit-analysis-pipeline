@@ -13,6 +13,19 @@ from lib.manifest import CACHE_FILES, NSTAGES
 _PROGRESS_INTERVAL = 100
 
 
+def _extract_author_org(email):
+    """Extract organization domain from author email address.
+    
+    Returns the domain part after '@' if email is valid, otherwise empty string.
+    """
+    if not email:
+        return ''
+    parts = str(email).rsplit('@', 1)
+    if len(parts) == 2:
+        return parts[1]
+    return ''
+
+
 def run(cfg, cache):
     collect_cfg     = cfg.get('collect', {}) or {}
     max_commits     = int(collect_cfg.get('max_commits', 0) or 0)
@@ -42,6 +55,7 @@ def run(cfg, cache):
             'commit_time':  rec.get('commit_time'),
             'author_name':  rec.get('author_name'),
             'author_email': rec.get('author_email'),
+            'author_org':   _extract_author_org(rec.get('author_email')),
         }
         if include_parents:
             entry['parents'] = rec.get('parents', [])

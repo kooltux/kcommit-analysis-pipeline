@@ -91,7 +91,7 @@ from lib.run_stats import build_run_stats
 # Column definitions imported from manifest (single source of truth)
 from lib.manifest import COMMIT_COLS as _MC, COMMIT_COLS_FILTERED as _MCF
 # Use lowercase keys for CSV row construction; headers come from manifest
-_COMMIT_KEYS          = ["rank", "sha", "subject", "author", "date",
+_COMMIT_KEYS          = ["rank", "sha", "subject", "author_org", "date",
                          "score", "profiles"]
 _COMMIT_KEYS_FILTERED = _COMMIT_KEYS + ["filter_reason"]
 
@@ -147,7 +147,7 @@ def _commit_rows(commits, include_reason=False):
             c.get('_rank', ''),
             (c.get('commit') or '')[:12],
             c.get('subject', ''),
-            c.get('author_name', ''),
+            c.get('author_org', ''),
             _fmt_date(c.get('author_time', '')),
             c.get('pick_priority', 0) or 0,
             c.get('score_norm', 0) or 0,
@@ -259,6 +259,8 @@ def _write_table_json(path, commits, include_reason=False):
             'commit': c.get('commit', ''),
             'subject': c.get('subject', ''),
             'author_name': c.get('author_name', ''),
+            'author_email': c.get('author_email', ''),
+            'author_org': c.get('author_org', ''),
             'author_time': c.get('author_time', ''),
             'score': c.get('score', 0) or 0,
             'score_norm': c.get('score_norm', 0) or 0,

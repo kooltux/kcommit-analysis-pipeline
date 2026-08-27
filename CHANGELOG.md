@@ -14,6 +14,14 @@ All notable changes to this project are documented in this file.
   retained as **"Score (raw)"** (hidden in HTML table but exported).
   - `lib/backport.py::normalize_score()` is the single source of truth for
     score normalization.
+- **Author Organization column.** The **"Author"** column is replaced by
+  **"Author Organization"** in the HTML table and spreadsheet exports (CSV, XLSX,
+  ODS, `relevant_commits.table.json`). The organization is derived from the domain
+  part of the commit's `author_email` (the substring after '@'). This allows
+  reviewers to quickly identify the company or entity behind each commit at a glance.
+  The commit-detail pane shows all author information: Author (name), Author Email,
+  and Organization. The raw `author_name` and `author_email` fields are also retained
+  in the JSON exports.
 
 ### Changed
 
@@ -86,8 +94,8 @@ All notable changes to this project are documented in this file.
   consistent between the table and the detail pane.
 
 - **Column reordering.** The visible HTML table columns are now ordered with
-  the most important triage indicators first: Rank, SHA, Subject, Author, Date,
-  **Pick Priority**, **Score**, **Complexity**, Profiles. Less important columns
+  the most important triage indicators first: Rank, SHA, Subject, **Author Organization**,
+  Date, **Pick Priority**, **Score**, **Complexity**, Profiles. Less important columns
   (Score (raw), Files Changed, Lines Changed, Hunks, Backport Tier) are hidden
   but remain searchable and exported.
 

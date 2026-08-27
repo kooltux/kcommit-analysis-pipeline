@@ -56,7 +56,7 @@ def order_commit_details(commit):
     commit = dict(commit or {})
     ordered = {}
     first = [
-        'commit', 'subject', 'author_name', 'author_email', 'author_time',
+        'commit', 'subject', 'author_name', 'author_email', 'author_org', 'author_time',
         'files', 'stats', 'meta', 'product_evidence',
         'pick_priority', 'score_norm', 'backport_complexity', 'backport',
         'matched_profiles', 'scoring', 'body', '_filter_reason', 'prefilter_debug',

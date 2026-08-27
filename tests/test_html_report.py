@@ -305,14 +305,14 @@ def test_html_report_rows_contain_expected_fields(tmp_path):
     out = tmp_path / 'report.html'
     commits = [{
         'commit': 'deadbeef1234' + 'a' * 28, 'subject': 'net fix',
-        'author_name': 'Bob', 'author_time': 1710000100,
+        'author_name': 'Bob', 'author_email': 'bob@example.com', 'author_time': 1710000100,
         'score': 17, 'matched_profiles': ['network'], 'product_evidence': []
     }]
     generate_html_report(commits, {}, {}, str(out))
     row = _kc_ui(out.read_text())['rows'][0]
     assert row['sha12'] == 'deadbeef1234'
     assert row['subject'] == 'net fix'
-    assert row['author'] == 'Bob'
+    assert row['author_org'] == 'example.com'
     assert row['score'] == 17
     assert row['profiles'] == ['network']
 

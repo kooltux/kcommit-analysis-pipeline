@@ -97,6 +97,16 @@ signal strength and ordering fidelity that normalization discards); `score_norm`
 is a derived, informational convenience. Like `pick_priority`, it is a
 **within-run** value and is not comparable across different runs.
 
+## Author organization
+
+Each commit's **Author** column in the HTML table and spreadsheet exports (CSV,
+XLSX, ODS) shows the **Author Organization** — the domain part of the commit's
+`author_email` (field: `author_org`). This allows reviewers to quickly identify the
+company or entity behind each commit at a glance. The commit-detail pane shows all
+author information: **Author** (name), **Author Email**, and **Organization**.
+The raw `author_name` and `author_email` fields are also retained in the JSON exports
+(`relevant_commits.json`, `filtered_commits.json`).
+
 ## Commit size indicators
 
 Independently of scoring, every commit carries two descriptive **size

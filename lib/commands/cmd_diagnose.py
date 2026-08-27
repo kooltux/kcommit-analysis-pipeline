@@ -142,6 +142,7 @@ def _commit_section(c):
         'subject':      c.get('subject', ''),
         'author_name':  c.get('author_name', ''),
         'author_email': c.get('author_email', ''),
+        'author_org':   c.get('author_org', ''),
         'author_time':  c.get('author_time', ''),
         'files':        list(c.get('files', []) or []),
         'stats':        c.get('stats'),

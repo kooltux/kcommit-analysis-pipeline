@@ -668,9 +668,10 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
   letter-spacing: .05em;
   /* Labels wrap onto multiple lines instead of overflowing into the next
    * column (fixed-layout columns are narrow for multi-word headings like
-   * "Files Changed" / "Pick Priority" / "Score (raw)"). break-word prevents a
-   * single long token from overflowing. */
-  white-space: normal;
+   * "Files Changed" / "Pick Priority" / "Score (raw)").
+   * pre-line preserves explicit newlines (\n) for labels like "Pick\nPriority"
+   * while still wrapping long words. */
+  white-space: pre-line;
   overflow-wrap: break-word;
   line-height: 1.2;
   cursor: pointer;
@@ -693,7 +694,7 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 .kc-col-subject  { min-width: 25em; }
 .kc-col-author   { min-width: 8em; max-width: 15em; }
 .kc-col-date     { min-width: 5em; max-width: 8em; }
-.kc-col-pill     { min-width: 3.5em; max-width: 6em; } /* score, score_norm, pick_priority, backport_cx */
+.kc-col-pill     { min-width: 4em; max-width: 7em; } /* score, score_norm, pick_priority, backport_cx */
 .kc-col-profiles { min-width: 6em; }
 
 /* Column resize handle */

@@ -151,6 +151,19 @@ def _fmt_date(ts):
         return str(ts)[:16]
 
 
+def _extract_author_org(email):
+    """Extract organization domain from author email address.
+    
+    Returns the domain part after '@' if email is valid, otherwise empty string.
+    """
+    if not email:
+        return ''
+    parts = str(email).rsplit('@', 1)
+    if len(parts) == 2:
+        return parts[1]
+    return ''
+
+
 # ---------------------------------------------------------------------------
 # Column definitions — relevant tab
 # ---------------------------------------------------------------------------
@@ -165,13 +178,13 @@ def _fmt_date(ts):
 # hidden by default to keep the table narrow; the same numbers are surfaced in
 # the commit-detail Overview tab and in the spreadsheet exports (COMMIT_COLS).
 _COMMIT_COLUMNS = [
-    ('rank',          'Rank',           'number'),
+    ('rank',          '#',              'number'),
     ('sha12',         'SHA',            'string'),
     ('subject',       'Subject',        'string'),
-    ('author',        'Author',         'string'),
+    ('author_org',    'ORG',            'string'),
     ('date',          'Date',           'date'),
     # Pick priority is the primary triage indicator (higher = more relevant & easier)
-    ('pick_priority', 'Pick Priority',  'number'),
+    ('pick_priority', 'Pick\nPriority', 'number'),
     # Score (normalized 0-100) — bounded, colour-comparable signal.
     # The raw score is hidden below.
     ('score_norm',    'Score',          'number'),
@@ -228,7 +241,7 @@ def _commit_row(i, c, all_profiles=None):
         'sha12':    sha12,
         'sha':      sha,
         'subject':  c.get('subject') or '',
-        'author':   c.get('author_name') or '',
+        'author_org': _extract_author_org(c.get('author_email', '')),
         'date':     _fmt_date(c.get('author_time')),
         'score':    c.get('score', 0) or 0,
         'score_norm': c.get('score_norm', 0) or 0,
@@ -259,7 +272,7 @@ _FILTERED_COLUMNS = [
     ('rank',         'Rank',         'number'),
     ('sha12',        'SHA',          'string'),
     ('subject',      'Subject',      'string'),
-    ('author',       'Author',       'string'),
+    ('author_org',   'Author Organization', 'string'),
     ('date',         'Date',         'date'),
     ('filter_stage', 'Filter stage', 'select'),
     ('reason',       'Drop reason',  'string'),
@@ -305,7 +318,7 @@ def _filtered_commit_row(i, c):
         'sha12':        sha12,
         'sha':          sha,
         'subject':      c.get('subject') or '',
-        'author':       c.get('author_name') or '',
+        'author_org':   _extract_author_org(c.get('author_email', '')),
         'date':         _fmt_date(c.get('author_time')),
         'filter_stage': filter_stage,
         'reason':       reason,

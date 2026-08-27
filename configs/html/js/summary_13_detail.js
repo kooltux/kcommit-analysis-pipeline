@@ -129,14 +129,16 @@ function populateDetail(commit) {
   }
 
   /* ---- Overview tab ---- */
-  const sha      = commit.commit || commit.sha || '';
-  const subject  = commit.subject || '';
-  const body     = commit.body || '';
-  const author   = commit.author_name || '';
-  const date     = fmtDate(commit.author_time);
-  const score    = commit.score != null ? commit.score : '—';
-  const profiles = (commit.matched_profiles || []);
-  const evidence = (commit.product_evidence || []);
+  const sha        = commit.commit || commit.sha || '';
+  const subject    = commit.subject || '';
+  const body       = commit.body || '';
+  const authorName = commit.author_name || '';
+  const authorEmail = commit.author_email || '';
+  const authorOrg  = commit.author_org || '';
+  const date       = fmtDate(commit.author_time);
+  const score      = commit.score != null ? commit.score : '—';
+  const profiles   = (commit.matched_profiles || []);
+  const evidence   = (commit.product_evidence || []);
 
   /* Size + backport indicators — the same values shown (some hidden) in the
    * table, gathered here so the Overview is a self-contained triage summary.
@@ -162,10 +164,12 @@ function populateDetail(commit) {
 
   const overviewHtml = detailCard('Commit', `
     <div class="kc-kv-grid">
-      ${kv('SHA',     `<code>${esc(sha)}</code>`)}
-      ${kv('Author',  esc(author))}
-      ${kv('Date',    esc(date))}
-      ${kv('Score',   esc(score))}
+      ${kv('SHA',           `<code>${esc(sha)}</code>`)}
+      ${kv('Author',       esc(authorName))}
+      ${kv('Author Email', esc(authorEmail))}
+      ${kv('Organization', esc(authorOrg))}
+      ${kv('Date',        esc(date))}
+      ${kv('Score',        esc(score))}
       ${indicatorRows}
       ${profiles.length ? kv('Profiles', profileBullets(profiles) + ' ' + chips(profiles)) : ''}
     </div>

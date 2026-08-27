@@ -116,7 +116,7 @@ def _commit_row(c, include_reason=False, native_types=False):
         c.get("_rank", ""),
         (c.get("commit") or "")[:12],
         c.get("subject", ""),
-        c.get("author_name", ""),
+        c.get("author_org", ""),
         date_val,
         float(priority) if native_types else priority,
         float(score_norm) if native_types else score_norm,

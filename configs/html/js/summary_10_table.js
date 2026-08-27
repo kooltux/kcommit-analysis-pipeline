@@ -134,7 +134,7 @@ function colCssClass(colKey) {
     case 'rank':     return 'kc-col-rank';
     case 'sha12':    return 'kc-col-sha12';
     case 'subject':  return 'kc-col-subject';
-    case 'author':   return 'kc-col-author';
+    case 'author_org': return 'kc-col-author';
     case 'date':     return 'kc-col-date';
     case 'profiles': return 'kc-col-profiles';
     default:        return 'kc-col-pill';
@@ -181,16 +181,16 @@ function syncColgroup() {
 /* ── Auto-size columns based on content ──────────────────────────────── */
 /* Minimum widths per column key (in px) - used as fallback when content is narrow */
 const AUTO_MIN_WIDTHS = {
-  'rank': 40,
-  'sha12': 60,
-  'subject': 200,
-  'author': 100,
-  'date': 80,
-  'profiles': 80,
-  'score': 60,
-  'score_norm': 60,
-  'pick_priority': 60,
-  'backport_cx': 60
+  'rank': 32,
+  'sha12': 48,
+  'subject': 160,
+  'author_org': 80,
+  'date': 64,
+  'profiles': 64,
+  'score': 48,
+  'score_norm': 48,
+  'pick_priority': 40,
+  'backport_cx': 64
 };
 
 function autoSizeColumns() {
