@@ -310,7 +310,7 @@ _BATCH_CHUNK = 500   # progress callback interval
 def batch_show_paths(cfg, tasks, progress_callback=None, fallback_serial=True):
     """Fetch a list of (rev, path) blobs using a single ``git cat-file --batch`` pipe.
 
-    This is 10–20× faster than one subprocess per object because it eliminates
+    This is 10–20×¹ faster than one subprocess per object because it eliminates
     fork/exec overhead for every lookup: a single long-lived git process is
     opened and all object queries are piped through it.
 
@@ -470,3 +470,115 @@ def _serial_fallback(cfg, tasks, progress_callback):
     if progress_callback:
         progress_callback(total, total)
     return results
+
+
+# ── Cherry-pick test (efficient: checkout target once, dry-run per commit) ──
+
+def can_cherry_pick(cfg, commit_sha, target_rev):
+    """Test if *commit_sha* can be cherry-picked cleanly on top of *target_rev*.
+    
+    Uses ``git cherry-pick --dry-run`` which simulates the pick without
+    modifying the working tree. This is the official git command for testing
+    cherry-pick feasibility.
+    
+    Returns a dict with:
+      'ok':        bool   – True if cherry-pick would succeed without conflicts
+      'conflicts': list   – list of conflicted file paths (empty if ok=True)
+      'error':     str    – error message if git command failed, else None
+    
+    This is a best-effort test: a clean cherry-pick here does not guarantee
+    conflict-free backport to the actual product (different configs, local
+    patches, etc.), but conflicts here guarantee the backport will need work.
+    """
+    try:
+        # Single git call: dry-run cherry-pick onto current HEAD
+        # Caller is responsible for ensuring HEAD is at target_rev
+        out = run_git(cfg, 
+                     ['cherry-pick', '--dry-run', commit_sha],
+                     check=False)
+        
+        # Check for conflict messages in output
+        # git cherry-pick --dry-run outputs conflict info to stdout/stderr
+        # When successful, output is empty or contains only informational messages
+        if 'conflict' in out.lower() or 'error' in out.lower():
+            # Parse conflicted files from output
+            conflicts = []
+            for line in out.splitlines():
+                if 'conflict' in line.lower():
+                    # Extract filename from lines like "CONFLICT (modify/delete): file.c"
+                    # Format: "CONFLICT (type): filename description..."
+                    if ':' in line:
+                        # Split on first colon, take the part after it
+                        after_colon = line.split(':', 1)[1].strip()
+                        # The filename is the first word after the colon
+                        fname = after_colon.split()[0] if after_colon else ''
+                        if fname and not fname.startswith('('):
+                            conflicts.append(fname)
+            return {'ok': False, 'conflicts': conflicts, 'error': None}
+        
+        return {'ok': True, 'conflicts': [], 'error': None}
+        
+    except Exception as exc:
+        return {'ok': False, 'conflicts': [], 'error': str(exc)}
+
+
+def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
+    """Test multiple commits for cherry-pick feasibility on *target_rev*.
+    
+    Returns dict mapping commit SHA -> result dict (same format as
+    can_cherry_pick()):
+      {sha: {'ok': bool, 'conflicts': list, 'error': str or None}, ...}
+    
+    Strategy:
+      1. Checkout target_rev once (detach HEAD)
+      2. For each commit: git cherry-pick --dry-run (single call, no worktree changes)
+      3. Restore original HEAD
+    
+    This is efficient: 1 checkout + N dry-run calls, no reset/cleanup per commit.
+    
+    Args:
+        cfg:           pipeline config dict
+        commit_shas:  list of commit SHAs to test
+        target_rev:   revision to cherry-pick onto (e.g., config.kernel.rev_old)
+        progress_callback: optional callable(current, total)
+    """
+    shas = [s for s in (commit_shas or []) if s]
+    if not shas:
+        return {}
+    
+    kernel  = cfg['kernel']
+    collect = cfg.get('collect', {}) or {}
+    
+    # Save current HEAD so we can restore it
+    try:
+        current_head = run_git(cfg, ['rev-parse', 'HEAD']).strip()
+    except Exception:
+        current_head = None
+    
+    results = {}
+    total = len(shas)
+    
+    try:
+        # Checkout target revision once (detached HEAD)
+        run_git(cfg, ['checkout', '--force', '--detach', target_rev], check=False)
+        
+        # Test each commit with dry-run (no worktree modification)
+        for i, sha in enumerate(shas):
+            if progress_callback:
+                progress_callback(i + 1, total)
+            
+            try:
+                result = can_cherry_pick(cfg, sha, target_rev)
+                results[sha] = result
+            except Exception as exc:
+                results[sha] = {'ok': False, 'conflicts': [], 'error': str(exc)}
+        
+        return results
+        
+    finally:
+        # Always restore original HEAD
+        if current_head:
+            try:
+                run_git(cfg, ['checkout', '--force', '--detach', current_head], check=False)
+            except Exception:
+                pass

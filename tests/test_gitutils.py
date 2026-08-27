@@ -509,3 +509,131 @@ def test_batch_show_paths_stdin_receives_all_queries():
     combined = b''.join(written)
     assert b'v6.1:drivers/usb/Makefile\n' in combined
     assert b'v6.6:net/Makefile\n' in combined
+
+
+# ── Cherry-pick test (efficient: checkout target once, dry-run per commit) ──
+
+from lib.gitutils import can_cherry_pick, batch_can_cherry_pick
+
+
+def _cfg_with_kernel(source_dir='/fake/git'):
+    return {
+        'kernel': {'source_dir': source_dir, 'rev_old': 'v6.1'},
+        'collect': {},
+    }
+
+
+def test_can_cherry_pick_success():
+    """Test that a clean cherry-pick (dry-run) returns ok=True with no conflicts."""
+    cfg = _cfg_with_kernel()
+    # Mock successful cherry-pick --dry-run with no conflicts
+    # run_git returns stdout string (single call)
+    with patch('lib.gitutils.run_git', return_value='') as mock_run:
+        result = can_cherry_pick(cfg, 'def456', 'v6.1')
+        assert result['ok'] is True
+        assert result['conflicts'] == []
+        assert result['error'] is None
+        # Verify only one git call was made
+        mock_run.assert_called_once()
+
+
+def test_can_cherry_pick_with_conflicts():
+    """Test that a cherry-pick with conflicts returns ok=False with conflict list."""
+    cfg = _cfg_with_kernel()
+    # Mock cherry-pick --dry-run output with conflict message
+    conflict_output = (
+        'error: could not apply def456...\n'
+        'CONFLICT (modify/delete): file1.c deleted in HEAD and modified in def456.\n'
+        'CONFLICT (modify/delete): file2.h deleted in HEAD and modified in def456.\n'
+    )
+    with patch('lib.gitutils.run_git', return_value=conflict_output) as mock_run:
+        result = can_cherry_pick(cfg, 'def456', 'v6.1')
+        assert result['ok'] is False
+        assert 'file1.c' in result['conflicts']
+        assert 'file2.h' in result['conflicts']
+        assert result['error'] is None
+        # Verify only one git call was made
+        mock_run.assert_called_once()
+
+
+def test_can_cherry_pick_error():
+    """Test that git errors are captured and returned."""
+    cfg = _cfg_with_kernel()
+    with patch('lib.gitutils.run_git', side_effect=Exception('git not found')) as mock_run:
+        result = can_cherry_pick(cfg, 'def456', 'v6.1')
+        assert result['ok'] is False
+        assert result['error'] is not None
+        assert 'git not found' in result['error']
+        # Verify only one git call was made
+        mock_run.assert_called_once()
+
+
+def test_batch_can_cherry_pick_empty():
+    """Test batch function with empty SHA list."""
+    cfg = _cfg_with_kernel()
+    result = batch_can_cherry_pick(cfg, [], 'v6.1')
+    assert result == {}
+
+
+def test_batch_can_cherry_pick_single_success():
+    """Test batch function with a single successful cherry-pick."""
+    cfg = _cfg_with_kernel()
+    with patch('lib.gitutils.run_git') as mock_run:
+        # Sequence: get HEAD, checkout target, cherry-pick --dry-run, restore HEAD
+        mock_run.side_effect = [
+            'abc123\n',      # current HEAD
+            '',             # checkout target
+            '',             # cherry-pick --dry-run (success)
+            '',             # restore HEAD
+        ]
+        shas = ['c1' * 40]
+        results = batch_can_cherry_pick(cfg, shas, 'v6.1')
+        assert len(results) == 1
+        assert results['c1' * 40]['ok'] is True
+        # Verify 4 git calls: rev-parse HEAD, checkout target, dry-run, restore
+        assert mock_run.call_count == 4
+
+
+def test_batch_can_cherry_pick_multiple():
+    """Test batch function with multiple commits."""
+    cfg = _cfg_with_kernel()
+    shas = ['a' * 40, 'b' * 40]
+    
+    with patch('lib.gitutils.run_git') as mock_run:
+        # Sequence: get HEAD, checkout target, 2x dry-run, restore HEAD
+        mock_run.side_effect = [
+            'abc123\n',      # current HEAD
+            '',             # checkout target
+            '',             # dry-run sha1 (success)
+            'error: conflict',  # dry-run sha2 (conflict)
+            '',             # restore HEAD
+        ]
+        results = batch_can_cherry_pick(cfg, shas, 'v6.1')
+        
+        assert len(results) == 2
+        assert results['a' * 40]['ok'] is True
+        assert results['b' * 40]['ok'] is False
+        # Verify 5 git calls: rev-parse HEAD, checkout target, 2x dry-run, restore
+        assert mock_run.call_count == 5
+
+
+def test_batch_can_cherry_pick_restores_head_on_error():
+    """Test that batch function restores HEAD even if dry-run fails."""
+    cfg = _cfg_with_kernel()
+    
+    with patch('lib.gitutils.run_git') as mock_run:
+        # Sequence: get HEAD, checkout target, dry-run raises, restore HEAD
+        mock_run.side_effect = [
+            'abc123\n',      # current HEAD
+            '',             # checkout target
+            Exception('git error'),  # dry-run fails
+            '',             # restore HEAD (in finally block)
+        ]
+        shas = ['c1' * 40]
+        results = batch_can_cherry_pick(cfg, shas, 'v6.1')
+        
+        assert len(results) == 1
+        assert results['c1' * 40]['ok'] is False
+        assert 'git error' in results['c1' * 40]['error']
+        # Verify HEAD was restored (4 calls total)
+        assert mock_run.call_count == 4

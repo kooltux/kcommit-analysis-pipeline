@@ -145,6 +145,22 @@ def test_validate_inputs_invalid_git_dir(tmp_path):
 
 
 # ── collect section (I-series: new schema keys) ───────────────────────────────
+def test_collect_cherry_pick_test_valid_bool(tmp_path):
+    """collect.cherry_pick_test must be bool (new in v18.6.0)."""
+    cfg = _base(tmp_path)
+    cfg['collect'] = {'cherry_pick_test': True}
+    problems, _ = validate_config_only(cfg)
+    assert not any('cherry_pick_test' in p for p in problems)
+
+
+def test_collect_cherry_pick_test_wrong_type(tmp_path):
+    """collect.cherry_pick_test must be bool — string triggers type error."""
+    cfg = _base(tmp_path)
+    cfg['collect'] = {'cherry_pick_test': 'yes'}
+    problems, _ = validate_config_only(cfg)
+    assert any('cherry_pick_test' in p for p in problems)
+
+
 def test_collect_unknown_key_is_not_a_problem(tmp_path):
     """Unrecognised collect keys are tolerated (schema validates known keys only)."""
     cfg = _base(tmp_path)

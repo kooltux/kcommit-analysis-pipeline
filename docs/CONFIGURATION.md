@@ -135,10 +135,28 @@ using `git show` on Makefiles across the revision range.
 | `history_workers` | `0` | Parallel worker count for history mapping (`0` = auto/implementation default). |
 
 ### `collect`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `use_numstat` | `false` | Use `git log --numstat` to capture insertions/deletions per file |
+| `count_hunks` | `false` | Count unified-diff hunks for relevant commits (opt-in; reads patch text) |
+| `cherry_pick_test` | `false` | Test cherry-pick feasibility onto `kernel.rev_old` for relevant commits (opt-in; expensive: modifies git worktree) |
+| `no_merges` | `true` | Pass `--no-merges` to `git log` |
+| `first_parent` | `false` | Pass `--first-parent` to `git log` |
+| `max_commits` | `0` | Maximum commits to collect (`0` = no limit) |
+| `score_workers` | `0` | Parallel scoring workers (`0` = auto-detect) |
+| `git_binary` | `"git"` | Path to git executable |
+| `use_name_only` | `false` | Use `--name-only` instead of `--name-status` |
+| `extra_git_log_args` | `[]` | Extra arguments appended to `git log` |
+| `jsonl` | `false` | Also write `commits.jsonl` for streaming consumers |
+| `include_parents` | `false` | Attach parent SHA list to each commit |
+
+
 ```json
 "collect": {
   "use_numstat":         false,  // git log --numstat (adds per-line change data; enables full lines_changed/insertions/deletions size indicators)
   "count_hunks":         false,  // inspect patches of relevant (post-filter) commits to count diff hunks (stats.hunks); feeds backport_complexity. opt-in (reads patch text via git; kept set only)
+  "cherry_pick_test":    false,  // test if each relevant commit can be cherry-picked cleanly onto kernel.rev_old; adds cherry_pickable indicator. opt-in (expensive: requires git worktree manipulation)
   "no_merges":           true,   // git log --no-merges
   "first_parent":        false,  // git log --first-parent
   "max_commits":         0,      // cap on commits collected (0 = no limit)

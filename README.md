@@ -152,9 +152,9 @@ informational and never affect the score.
 
 | Field | Meaning |
 |-------|---------|
-| `backport_complexity` | `0–100`, higher = harder to cherry-pick. |
-| backport_tier | Removed (replaced by heat-coloured Backport Cx cell).
+| `backport_complexity` | `0–100`, higher = harder to cherry-pick (heuristic estimate). |
 | `pick_priority` | `0–100`, higher = look at this first (relevant **and** easy). |
+| `cherry_pickable` | `Yes` / `No` / `""` — actual cherry-pick test result onto `kernel.rev_old` (opt-in via `collect.cherry_pick_test`). |
 
 `backport_complexity` is a bounded, weighted blend of commit-shape signals that
 correlate with cherry-pick difficulty, with a reduction for commits authored to
@@ -190,6 +190,9 @@ default. Weights are hard-coded.
 
 > These are heuristic estimates from observable commit shape, **not** a real
 > cherry-pick trial. A clean estimate does not guarantee a conflict-free pick.
+> For definitive answers, enable `collect.cherry_pick_test` to run actual
+> `git cherry-pick --no-commit` tests onto `kernel.rev_old`; results appear in
+> the `cherry_pickable` column.
 
 In the HTML report the **Complexity** cell (column name; field: `backport_complexity`)
 uses a unified 4-level heat scheme (higher = worse / red; lower = easier / green)

@@ -59,6 +59,7 @@ def order_commit_details(commit):
         'commit', 'subject', 'author_name', 'author_email', 'author_org', 'author_time',
         'files', 'stats', 'meta', 'product_evidence',
         'pick_priority', 'score_norm', 'backport_complexity', 'backport',
+        'cherry_pickable', 'cherry_pick_info',
         'matched_profiles', 'scoring', 'body', '_filter_reason', 'prefilter_debug',
     ]
     for key in first:

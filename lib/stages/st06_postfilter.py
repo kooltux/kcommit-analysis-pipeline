@@ -16,7 +16,7 @@ v18.0.1 fix (Fix 5):
 import os
 from lib.config import load_json, save_json
 from lib.manifest import CACHE_FILES
-from lib.gitutils import batch_count_hunks
+from lib.gitutils import batch_count_hunks, batch_can_cherry_pick
 from lib.backport import enrich_commit_backport
 
 
@@ -75,15 +75,24 @@ def _enrich_backport(cfg, relevant):
     stats['hunks'] stays 0 and the hunks term contributes nothing to
     backport_complexity.
 
+    Cherry-pick test is opt-in via collect.cherry_pick_test; when enabled,
+    each relevant commit is tested for clean cherry-pick onto kernel.rev_old
+    and the result is stored as cherry_pickable (bool) plus optional details
+    in cherry_pick_info.
+
     Order of operations:
       1. (optional) count hunks per commit via a single batched git show.
-      2. compute score_norm / backport_complexity / pick_priority, using the
+      2. (optional) test cherry-pick feasibility via batched git cherry-pick.
+      3. compute score_norm / backport_complexity / pick_priority, using the
          run-relative max score for score normalization.
     """
     if not relevant:
         return relevant
 
     collect = cfg.get('collect', {}) or {}
+    kernel = cfg.get('kernel', {}) or {}
+    
+    # 1. Optional hunk counting
     if collect.get('count_hunks'):
         shas = [c.get('commit') for c in relevant if c.get('commit')]
         try:
@@ -97,6 +106,39 @@ def _enrich_backport(cfg, relevant):
                 stats = {}
                 c['stats'] = stats
             stats['hunks'] = int(counts.get(c.get('commit'), 0) or 0)
+    
+    # 2. Optional cherry-pick test
+    if collect.get('cherry_pick_test') and kernel.get('rev_old'):
+        shas = [c.get('commit') for c in relevant if c.get('commit')]
+        target_rev = kernel['rev_old']
+        print('  testing cherry-pick feasibility for %d commits onto %s...' % (
+            len(shas), target_rev))
+        try:
+            cp_results = batch_can_cherry_pick(cfg, shas, target_rev)
+        except Exception as exc:
+            print('  warning: cherry-pick test failed (%s); skipping' % exc)
+            cp_results = {}
+        
+        ok_count = sum(1 for r in cp_results.values() if r.get('ok'))
+        fail_count = len(cp_results) - ok_count
+        print('  cherry-pick: %d/%d clean, %d with conflicts' % (
+            ok_count, len(cp_results), fail_count))
+        
+        for c in relevant:
+            sha = c.get('commit', '')
+            if sha in cp_results:
+                result = cp_results[sha]
+                c['cherry_pickable'] = result.get('ok', False)
+                # Store full result for inspection if needed
+                c['cherry_pick_info'] = {
+                    'ok': result.get('ok', False),
+                    'conflicts': result.get('conflicts', []),
+                    'error': result.get('error'),
+                }
+            else:
+                # Commit not in results (e.g., missing SHA)
+                c['cherry_pickable'] = None
+                c['cherry_pick_info'] = None
 
     max_score = max((int(c.get('score', 0) or 0) for c in relevant), default=0)
     for c in relevant:

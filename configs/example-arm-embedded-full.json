@@ -116,6 +116,11 @@
     // backport_complexity indicator.  Opt-in because it reads patch text via
     // git; only the small kept set is inspected, never the full range.
     "count_hunks":       false,
+    // cherry_pick_test: test if each relevant commit can be cherry-picked
+    // cleanly onto kernel.rev_old. Adds cherry_pickable indicator.
+    // Opt-in because it requires git worktree manipulation (checkout target,
+    // attempt cherry-pick, clean up) for each commit — expensive for large sets.
+    "cherry_pick_test": true,
     // use_no_merges: pass --no-merges to git log (recommended).
     "no_merges":     true,
     // use_first_parent: pass --first-parent to git log.

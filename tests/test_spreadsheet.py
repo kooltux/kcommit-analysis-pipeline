@@ -127,6 +127,6 @@ def test_commit_row_contains_profile_scores_text():
     })
     assert row[0] == ''          # _rank not set → empty string
     # After Date(4) come the main indicators:
-    #   Pick Priority(5) Score(6) Complexity(7) Profiles(8) Profile Scores(9) Product Evidence(10)
-    #   Score (raw)(11) Files(12) Lines(13) Hunks(14)
-    assert row[9] == 'p1:7; p2:3'
+    #   Pick Priority(5) Score(6) Complexity(7) Cherry-Pickable(8) Profiles(9) Profile Scores(10) Product Evidence(11)
+    #   Score (raw)(12) Files(13) Lines(14) Hunks(15)
+    assert row[10] == 'p1:7; p2:3'

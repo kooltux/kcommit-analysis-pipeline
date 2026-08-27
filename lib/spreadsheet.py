@@ -112,6 +112,14 @@ def _commit_row(c, include_reason=False, native_types=False):
     score_norm    = int(c.get("score_norm", 0) or 0)
     complexity    = int(c.get("backport_complexity", 0) or 0)
     priority      = int(c.get("pick_priority", 0) or 0)
+    # cherry_pickable: can be True, False, or None
+    cp_val = c.get("cherry_pickable")
+    if cp_val is True:
+        cherry_pickable_str = "Yes"
+    elif cp_val is False:
+        cherry_pickable_str = "No"
+    else:
+        cherry_pickable_str = ""
     row = [
         c.get("_rank", ""),
         (c.get("commit") or "")[:12],
@@ -121,6 +129,7 @@ def _commit_row(c, include_reason=False, native_types=False):
         float(priority) if native_types else priority,
         float(score_norm) if native_types else score_norm,
         float(complexity) if native_types else complexity,
+        cherry_pickable_str,
         fmt_profiles(c),
         _profile_scores_text(c),
         fmt_evidence(c),

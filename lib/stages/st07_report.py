@@ -143,6 +143,14 @@ def _commit_rows(commits, include_reason=False):
             for p in sorted(profiles)
         )
         stats = c.get('stats') or {}
+        # cherry_pickable: None -> empty string, True -> 'Yes', False -> 'No'
+        cp_val = c.get('cherry_pickable')
+        if cp_val is True:
+            cherry_pick_str = 'Yes'
+        elif cp_val is False:
+            cherry_pick_str = 'No'
+        else:
+            cherry_pick_str = ''
         row = [
             c.get('_rank', ''),
             (c.get('commit') or '')[:12],
@@ -152,6 +160,7 @@ def _commit_rows(commits, include_reason=False):
             c.get('pick_priority', 0) or 0,
             c.get('score_norm', 0) or 0,
             c.get('backport_complexity', 0) or 0,
+            cherry_pick_str,
             fmt_profiles(c),
             prof_scores,
             fmt_evidence(c),
@@ -255,6 +264,8 @@ def _write_table_json(path, commits, include_reason=False):
     rows = []
     for c in commits:
         stats = c.get('stats') or {}
+        # cherry_pickable: include boolean value directly (None -> null in JSON)
+        cp_val = c.get('cherry_pickable')
         row = {
             'commit': c.get('commit', ''),
             'subject': c.get('subject', ''),
@@ -269,6 +280,7 @@ def _write_table_json(path, commits, include_reason=False):
             'hunks': stats.get('hunks', 0) or 0,
             'backport_complexity': c.get('backport_complexity', 0) or 0,
             'pick_priority': c.get('pick_priority', 0) or 0,
+            'cherry_pickable': cp_val,
             'matched_profiles': list(c.get('matched_profiles') or []),
         }
         if include_reason and c.get('_filter_reason', ''):

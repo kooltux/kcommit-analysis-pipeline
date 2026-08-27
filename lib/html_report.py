@@ -190,6 +190,8 @@ _COMMIT_COLUMNS = [
     ('score_norm',    'Score',          'number'),
     # Backport complexity — higher = harder to backport.
     ('backport_cx',   'Complexity',     'number'),
+    # Cherry-pick test result (opt-in via collect.cherry_pick_test)
+    ('cherry_pickable', 'Cherry\nPickable', 'select'),
     ('profiles',      'Profiles',       'select'),
     # Hidden columns: raw data kept for search/export but not shown in table.
     ('score',         'Score (raw)',    'number',  True),
@@ -221,6 +223,8 @@ def _columns_def(profile_names):
     for col in cols:
         if col['key'] == 'profiles' and profile_names:
             col['options'] = sorted(profile_names)
+        elif col['key'] == 'cherry_pickable':
+            col['options'] = ['Yes', 'No', '']
     return cols
 
 
@@ -236,6 +240,16 @@ def _commit_row(i, c, all_profiles=None):
     profs = c.get('matched_profiles') or []
     stats = c.get('stats') or {}
 
+    # cherry_pickable: can be True, False, or None (if not tested)
+    # Convert to string for the select type column
+    cp_val = c.get('cherry_pickable')
+    if cp_val is True:
+        cherry_pickable_str = 'Yes'
+    elif cp_val is False:
+        cherry_pickable_str = 'No'
+    else:
+        cherry_pickable_str = ''
+    
     row = {
         'rank':     i,
         'sha12':    sha12,
@@ -249,6 +263,7 @@ def _commit_row(i, c, all_profiles=None):
         'lines':    stats.get('lines_changed', 0) or 0,
         'hunks':    stats.get('hunks', 0) or 0,
         'backport_cx':   c.get('backport_complexity', 0) or 0,
+        'cherry_pickable': cherry_pickable_str,
         'pick_priority': c.get('pick_priority', 0) or 0,
         'profiles': profs,
     }

@@ -89,7 +89,7 @@ def test_commit_rows_basic():
     row = rows[0]
     assert row[0] == 1        # rank
     assert 'abc' in row[1]   # sha (truncated to 12)
-    assert row[11] == 80      # score (raw, now at index 11)
+    assert row[12] == 80      # score (raw, now at index 12 after cherry_pickable)
 
 
 def test_commit_rows_include_reason():
@@ -104,7 +104,7 @@ def test_commit_rows_empty():
 
 
 def test_commit_rows_size_indicators():
-    """Pick Priority, Score, Complexity + size columns are populated."""
+    """Pick Priority, Score, Complexity, Cherry-Pickable + size columns are populated."""
     c = _commit('abc', score=80, rank=1)
     c['score_norm'] = 64
     c['scoring'] = {'profiles': {'security_fixes': 80}}
@@ -117,13 +117,14 @@ def test_commit_rows_size_indicators():
     assert row[5] == 88          # pick_priority
     assert row[6] == 64          # score_norm (Score)
     assert row[7] == 55          # backport_complexity (Complexity)
-    assert row[8] == 'security_fixes'        # profiles
-    assert row[9] == 'security_fixes:80'     # profile_scores
-    assert row[10] == 'config_map:CONFIG_USB'  # product_evidence
-    assert row[11] == 80          # score (raw, hidden)
-    assert row[12] == 4           # files_changed (hidden)
-    assert row[13] == 42          # lines_changed (hidden)
-    assert row[14] == 7           # hunks (hidden)
+    assert row[8] == ''           # cherry_pickable (empty string when not set)
+    assert row[9] == 'security_fixes'        # profiles
+    assert row[10] == 'security_fixes:80'     # profile_scores
+    assert row[11] == 'config_map:CONFIG_USB'  # product_evidence
+    assert row[12] == 80          # score (raw, hidden)
+    assert row[13] == 4           # files_changed (hidden)
+    assert row[14] == 42          # lines_changed (hidden)
+    assert row[15] == 7           # hunks (hidden)
 
 
 def test_commit_rows_size_indicators_default_zero_without_stats():
@@ -132,11 +133,12 @@ def test_commit_rows_size_indicators_default_zero_without_stats():
     assert row[5] == 0   # pick_priority
     assert row[6] == 0   # score_norm
     assert row[7] == 0   # backport_complexity
-    assert row[8] == 'security_fixes'  # profiles
-    assert row[11] == 10  # score (raw, hidden)
-    assert row[12] == 0  # files_changed (hidden)
-    assert row[13] == 0  # lines_changed (hidden)
-    assert row[14] == 0  # hunks (hidden)
+    assert row[8] == ''  # cherry_pickable (empty string when not set)
+    assert row[9] == 'security_fixes'  # profiles
+    assert row[12] == 10  # score (raw, hidden)
+    assert row[13] == 0  # files_changed (hidden)
+    assert row[14] == 0  # lines_changed (hidden)
+    assert row[15] == 0  # hunks (hidden)
 
 # ── AI Analysis ───────────────────────────────────────────────────────────
 def _product_map_for_test():
