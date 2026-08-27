@@ -17,6 +17,7 @@ v19.0.0 (G):
   - Use batch_can_cherry_pick_cached() for SQLite-based caching
   - Incremental updates: only test new commits, reuse cached results
   - Per-target storage: one DB per rev_old
+  - Progress bar with ETA during cherry-pick testing
 """
 import os
 import sys
@@ -336,7 +337,7 @@ def _enrich_backport(cfg, relevant):
                 c['stats'] = stats
             stats['hunks'] = int(counts.get(c.get('commit'), 0) or 0)
     
-    # 2. Optional cherry-pick test (with SQLite caching)
+    # 2. Optional cherry-pick test (with SQLite caching and progress bar)
     if collect.get('cherry_pick_test') and kernel.get('rev_old'):
         shas = [c.get('commit') for c in relevant if c.get('commit')]
         target_rev = kernel['rev_old']
@@ -345,21 +346,18 @@ def _enrich_backport(cfg, relevant):
         total = len(shas)
         step = max(1, total // 80)
         
-        def _progress(done, total):
+        def _progress(done, total, eta_seconds=None):
+            """Update stage progress (eta_seconds is ignored for pipeline progress)."""
             if done % step == 0 or done == total:
                 update_stage_progress(6, NSTAGES, done / max(total, 1),
                                       'cherry-pick test', n_done=done, n_total=total)
         
         try:
-            # Use cached version - only tests new commits
+            # Use cached version - only tests new commits, shows progress bar with ETA
             cp_results = batch_can_cherry_pick_cached(cfg, shas, target_rev, progress_callback=_progress)
         except Exception as exc:
             print('  warning: cherry-pick test failed (%s); skipping' % exc)
             cp_results = {}
-        
-        # Clear progress line and print final summary
-        sys.stdout.write('\\n')
-        sys.stdout.flush()
         
         ok_count = sum(1 for r in cp_results.values() if r.get('ok'))
         fail_count = len(cp_results) - ok_count

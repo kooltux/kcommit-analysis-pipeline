@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 
 _PY37 = sys.version_info >= (3, 7)
 
@@ -574,15 +575,31 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
         run_git(cfg, ['checkout', '--force', '--detach', target_rev], check=False)
         
         # Test each commit with apply --check (no worktree modification)
+        # Track timing for ETA calculation
+        start_time = time.time()
+        last_times = []  # Keep last 10 timings for rolling average
+        
         for i, sha in enumerate(shas):
-            if progress_callback:
-                progress_callback(i + 1, total)
+            step_start = time.time()
             
             try:
                 result = can_cherry_pick(cfg, sha, target_rev)
                 results[sha] = result
             except Exception as exc:
                 results[sha] = {'ok': False, 'conflicts': [], 'error': str(exc)}
+            
+            step_end = time.time()
+            step_time = step_end - step_start
+            last_times.append(step_time)
+            if len(last_times) > 10:
+                last_times.pop(0)
+            
+            # Report progress with ETA
+            if progress_callback:
+                avg_time = sum(last_times) / len(last_times)
+                remaining = total - (i + 1)
+                eta_seconds = remaining * avg_time
+                progress_callback(i + 1, total, eta_seconds)
         
         return results
         
@@ -597,6 +614,29 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
 
 # ── Cherry-pick cache (SQLite-based, per-target) ─────────────────────────────
 
+def _format_eta(seconds):
+    """Format ETA in human-readable format."""
+    if seconds < 60:
+        return '%ds' % int(seconds)
+    elif seconds < 3600:
+        mins = int(seconds // 60)
+        secs = int(seconds % 60)
+        return '%dm %ds' % (mins, secs)
+    else:
+        hours = int(seconds // 3600)
+        mins = int((seconds % 3600) // 60)
+        return '%dh %dm' % (hours, mins)
+
+
+def _progress_bar(current, total, eta_seconds, width=40):
+    """Generate a progress bar string with ETA."""
+    percent = current / float(total)
+    filled = int(width * percent)
+    bar = '█' * filled + '░' * (width - filled)
+    eta_str = _format_eta(eta_seconds)
+    return '[%s] %d/%d (%.1f%%) ETA: %s' % (bar, current, total, percent * 100, eta_str)
+
+
 def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback=None):
     """Test commits for cherry-pick feasibility with SQLite caching.
     
@@ -607,7 +647,7 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
         cfg: pipeline config dict (may contain cherry_pick.cache_dir)
         commit_shas: list of commit SHAs to test
         target_rev: revision to cherry-pick onto (e.g., config.kernel.rev_old)
-        progress_callback: optional callable(current, total)
+        progress_callback: optional callable(current, total, eta_seconds)
     
     Returns:
         dict mapping sha -> {'ok': bool, 'conflicts': list, 'error': str or None}
@@ -634,10 +674,32 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
     
     # Test new commits only
     if new_shas:
-        print(f'  Testing {len(new_shas)} new commits for cherry-pick onto {target_rev}...')
+        print('  Testing %d new commits for cherry-pick onto %s...' % (
+            len(new_shas), target_rev))
+        
+        # Progress wrapper with ETA display
+        start_time = time.time()
+        last_progress_display = -1
+        
+        def _progress_with_eta(done, total, eta_seconds):
+            """Display progress bar with ETA, updating every 5% or at completion."""
+            nonlocal last_progress_display
+            percent = int(done / float(total) * 100)
+            
+            # Only update display every 5% or at completion
+            if percent % 5 == 0 and percent != last_progress_display or done == total:
+                last_progress_display = percent
+                bar = _progress_bar(done, total, eta_seconds)
+                sys.stdout.write('\r  %s' % bar)
+                sys.stdout.flush()
         
         # Test new commits
-        new_results = batch_can_cherry_pick(cfg, new_shas, target_rev, progress_callback)
+        new_results = batch_can_cherry_pick(cfg, new_shas, target_rev, 
+                                           progress_callback=_progress_with_eta)
+        
+        # Clear progress line
+        sys.stdout.write('\n')
+        sys.stdout.flush()
         
         # Save to database
         db.add_results(new_results)
@@ -646,7 +708,9 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
         # Merge with cached results
         results.update(new_results)
         
+        elapsed = time.time() - start_time
+        print('  Completed: tested %d new commits in %.1fs' % (len(new_shas), elapsed))
         if len(tested_shas) > 0:
-            print(f'  Reused {len(tested_shas)} cached results, tested {len(new_shas)} new commits')
+            print('  Reused %d cached results' % len(tested_shas))
     
     return results
