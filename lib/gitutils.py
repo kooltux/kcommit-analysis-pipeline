@@ -593,3 +593,60 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
                 run_git(cfg, ['checkout', '--force', '--detach', current_head], check=False)
             except Exception:
                 pass
+
+
+# ── Cherry-pick cache (SQLite-based, per-target) ─────────────────────────────
+
+def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback=None):
+    """Test commits for cherry-pick feasibility with SQLite caching.
+    
+    Uses CherryDB to cache results per target_rev. Only tests new commits,
+    reuses existing results for already-tested commits.
+    
+    Args:
+        cfg: pipeline config dict (may contain cherry_pick.cache_dir)
+        commit_shas: list of commit SHAs to test
+        target_rev: revision to cherry-pick onto (e.g., config.kernel.rev_old)
+        progress_callback: optional callable(current, total)
+    
+    Returns:
+        dict mapping sha -> {'ok': bool, 'conflicts': list, 'error': str or None}
+    """
+    from lib.cherrypick_db import load_or_create_db
+    
+    shas = [s for s in (commit_shas or []) if s]
+    if not shas:
+        return {}
+    
+    # Get cache directory from config
+    cache_dir = cfg.get('cherry_pick', {}).get('cache_dir', 
+                os.path.expanduser('~/.kcommit/cherry-cache'))
+    
+    # Load or create database for this target
+    db = load_or_create_db(cache_dir, target_rev)
+    
+    # Get already-tested SHAs
+    tested_shas = db.get_all_shas()
+    new_shas = [s for s in shas if s not in tested_shas]
+    
+    # Load cached results
+    results = db.get_results(shas)
+    
+    # Test new commits only
+    if new_shas:
+        print(f'  Testing {len(new_shas)} new commits for cherry-pick onto {target_rev}...')
+        
+        # Test new commits
+        new_results = batch_can_cherry_pick(cfg, new_shas, target_rev, progress_callback)
+        
+        # Save to database
+        db.add_results(new_results)
+        db.save()
+        
+        # Merge with cached results
+        results.update(new_results)
+        
+        if len(tested_shas) > 0:
+            print(f'  Reused {len(tested_shas)} cached results, tested {len(new_shas)} new commits')
+    
+    return results

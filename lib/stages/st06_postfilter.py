@@ -12,13 +12,18 @@ v13.0.0 changes (E.7):
 v18.0.1 fix (Fix 5):
   - Top score bucket label renamed '100+' -> '>=100' to match uncapped score
     semantics introduced in v16.5.0.
+
+v19.0.0 (G):
+  - Use batch_can_cherry_pick_cached() for SQLite-based caching
+  - Incremental updates: only test new commits, reuse cached results
+  - Per-target storage: one DB per rev_old
 """
 import os
 import sys
 from lib.config import load_json, save_json
 from lib.manifest import CACHE_FILES, NSTAGES
 from lib.pipeline_runtime import update_stage_progress
-from lib.gitutils import batch_count_hunks, batch_can_cherry_pick
+from lib.gitutils import batch_count_hunks, batch_can_cherry_pick_cached
 from lib.backport import enrich_commit_backport
 
 
@@ -331,12 +336,10 @@ def _enrich_backport(cfg, relevant):
                 c['stats'] = stats
             stats['hunks'] = int(counts.get(c.get('commit'), 0) or 0)
     
-    # 2. Optional cherry-pick test
+    # 2. Optional cherry-pick test (with SQLite caching)
     if collect.get('cherry_pick_test') and kernel.get('rev_old'):
         shas = [c.get('commit') for c in relevant if c.get('commit')]
         target_rev = kernel['rev_old']
-        print('  testing cherry-pick feasibility for %d commits onto %s...' % (
-            len(shas), target_rev))
         
         # Progress callback for cherry-pick test using standard mechanism
         total = len(shas)
@@ -348,7 +351,8 @@ def _enrich_backport(cfg, relevant):
                                       'cherry-pick test', n_done=done, n_total=total)
         
         try:
-            cp_results = batch_can_cherry_pick(cfg, shas, target_rev, progress_callback=_progress)
+            # Use cached version - only tests new commits
+            cp_results = batch_can_cherry_pick_cached(cfg, shas, target_rev, progress_callback=_progress)
         except Exception as exc:
             print('  warning: cherry-pick test failed (%s); skipping' % exc)
             cp_results = {}
