@@ -3,7 +3,6 @@
   "name": "security_fixes",
   "description": "Security bug fixes, CVE backports, and stability-related security updates.",
   "rules": {
-    "product_scope":          10,
     "generic":                20,
     "security_general":       50,
     "security_bugs":         100,

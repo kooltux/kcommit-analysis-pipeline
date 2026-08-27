@@ -454,6 +454,327 @@ def _load_profile_rules_safe(cfg, cache):
             return {}
 
 
+# -- AI Analysis helpers -------------------------------------------------------
+
+def _build_ai_analysis_schema():
+    """Return the schema description for AI analysis input.
+    
+    This describes all fields available in each commit so the AI understands
+    the context of the data it's analyzing.
+    """
+    return {
+        'version': '1.0',
+        'description': 'Schema for commits passed to AI for backport triage analysis',
+        'fields': {
+            'commit': {
+                'type': 'string',
+                'description': 'Full SHA-1 hash of the commit',
+            },
+            'subject': {
+                'type': 'string',
+                'description': 'Commit subject line (title)',
+            },
+            'author_name': {
+                'type': 'string',
+                'description': 'Name of the commit author',
+            },
+            'author_email': {
+                'type': 'string',
+                'description': 'Email address of the commit author',
+            },
+            'author_org': {
+                'type': 'string',
+                'description': 'Organization extracted from the email domain (e.g., "linuxfoundation.org" -> "linuxfoundation")',
+            },
+            'author_time': {
+                'type': 'integer',
+                'description': 'Unix timestamp of the commit date',
+            },
+            'body': {
+                'type': 'string',
+                'description': 'Full commit message body (excluding subject)',
+            },
+            'files': {
+                'type': 'array',
+                'description': 'List of file paths modified by this commit',
+                'items': {'type': 'string'},
+            },
+            'stats': {
+                'type': 'object',
+                'description': 'Commit size indicators',
+                'properties': {
+                    'files_changed': {
+                        'type': 'integer',
+                        'description': 'Number of files modified by this commit',
+                    },
+                    'lines_changed': {
+                        'type': 'integer',
+                        'description': 'Total lines added + removed (commit churn)',
+                    },
+                    'hunks': {
+                        'type': 'integer',
+                        'description': 'Number of unified diff hunks (@@ blocks)',
+                    },
+                },
+            },
+            'meta': {
+                'type': 'object',
+                'description': 'Linux kernel commit annotation flags extracted from commit message',
+                'properties': {
+                    'is_fix': {
+                        'type': 'boolean',
+                        'description': 'True if commit message contains "Fixes:" tag (references another commit)',
+                    },
+                    'has_cve': {
+                        'type': 'boolean',
+                        'description': 'True if commit message mentions a CVE ID (e.g., CVE-2024-1234)',
+                    },
+                    'has_syzbot': {
+                        'type': 'boolean',
+                        'description': 'True if commit message mentions "syzbot" (syzkaller bug finder)',
+                    },
+                    'has_stable_cc': {
+                        'type': 'boolean',
+                        'description': 'True if commit message has "Cc: stable" tag (backport candidate)',
+                    },
+                },
+            },
+            'product_evidence': {
+                'type': 'array',
+                'description': 'List of product relevance evidence tags (why this commit impacts the product)',
+                'items': {'type': 'string'},
+            },
+        },
+    }
+
+
+def _build_ai_analysis_input(cfg, prefilter_kept_commits, product_map):
+    """Build the AI analysis input JSON structure.
+    
+    Returns a dict with metadata, schema, and commits ready for JSON serialization.
+    The commits are the prefilter_kept commits (after prefilter, before scoring),
+    with product_evidence computed but WITHOUT any scoring or backport indicators.
+    """
+    from lib.manifest import VERSION
+    from lib.scoring import _collect_product_evidence
+    import datetime
+    
+    commits_for_ai = []
+    for c in prefilter_kept_commits:
+        # Compute product_evidence for this commit
+        evidence = _collect_product_evidence(c, product_map) if product_map else []
+        
+        commit_data = {
+            'commit': c.get('commit', ''),
+            'subject': c.get('subject', ''),
+            'author_name': c.get('author_name', ''),
+            'author_email': c.get('author_email', ''),
+            'author_org': c.get('author_org', ''),
+            'author_time': c.get('author_time', 0),
+            'body': c.get('body', ''),
+            'files': list(c.get('files') or []),
+            'stats': c.get('stats') or {},
+            'meta': c.get('meta') or {},
+            'product_evidence': evidence,
+        }
+        commits_for_ai.append(commit_data)
+    
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    except AttributeError:
+        # Python 3.6-3.7 fallback
+        now = datetime.datetime.utcnow()
+    return {
+        'version': '1.0',
+        'pipeline_version': VERSION,
+        'purpose': 'Input for AI analysis to triage commits for backporting',
+        'generated_at': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'total_commits': len(commits_for_ai),
+        'schema': _build_ai_analysis_schema(),
+        'commits': commits_for_ai,
+    }
+
+
+def _write_ai_analysis_files(cfg, cache, outdir):
+    """Write AI analysis input JSON and prompt template files.
+    
+    Returns list of paths written.
+    """
+    from lib.config import load_json
+    from lib.manifest import CACHE_FILES
+    
+    written = []
+    
+    # Load prefilter_kept commits (after prefilter, before scoring/filtering)
+    prefilter_kept = load_json(
+        os.path.join(cache, CACHE_FILES['prefilter_kept']), default=[]
+    ) or []
+    
+    # Load product_map to compute product_evidence
+    product_map = load_json(
+        os.path.join(cache, CACHE_FILES['product_map']), default={}
+    ) or {}
+    
+    if not prefilter_kept:
+        return written
+    
+    # Build and write AI analysis input JSON
+    ai_input = _build_ai_analysis_input(cfg, prefilter_kept, product_map)
+    ai_input_path = os.path.join(outdir, 'ai_analysis_input.json')
+    _save_ordered_json(ai_input_path, ai_input)
+    written.append(ai_input_path)
+    
+    # Write AI analysis prompt template
+    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.txt')
+    with open(prompt_path, 'w', encoding='utf-8') as f:
+        f.write(_get_ai_analysis_prompt())
+    written.append(prompt_path)
+    
+    return written
+
+
+def _get_ai_analysis_prompt():
+    """Return the AI analysis prompt template as a string."""
+    return '''# AI Analysis Prompt for kcommit-analysis-pipeline
+
+## Task Overview
+
+You are an expert Linux kernel analyst. Your task is to analyze commits that have
+been identified as relevant to a specific embedded product (they modify code that
+is built in the product) and provide recommendations on whether they should be
+backported.
+
+## Input Data
+
+The input file `ai_analysis_input.json` contains:
+- Commits that passed the prefilter (they modify what is built in the product)
+- These are commits BEFORE any scoring or threshold filtering
+- Each commit has metadata including subject, author, files changed, and annotation flags
+- The `meta` field contains flags like `is_fix`, `has_cve`, `has_syzbot`, `has_stable_cc`
+- The `product_evidence` field explains why the commit is relevant to the product
+- NO scoring information (score, matched_profiles) or backport indicators (complexity, pick_priority) are included
+- The AI should make its own independent assessment
+
+## Analysis Requirements
+
+For EACH commit, analyze the following:
+
+### 1. Classification
+Identify what type of change this is:
+- `ai_is_security_fix`: Is this a security vulnerability fix?
+- `ai_is_bug_fix`: Is this a bug fix (non-security)?
+- `ai_is_performance_enhancement`: Does this improve performance?
+- `ai_is_new_feature`: Is this adding a new feature?
+- `ai_is_new_security_feature`: Is this adding a new security feature?
+
+### 2. Risk Assessment (if NOT backported)
+Identify the risks of NOT backporting this commit. Select all that apply:
+- "security_vulnerability": The product would remain vulnerable to a security issue
+- "system_stability": The product may experience crashes, hangs, or undefined behavior
+- "data_corruption": Data could be corrupted or lost
+- "performance_degradation": The product would have suboptimal performance
+- "missing_feature": A useful/necessary feature would be missing
+- "compliance_violation": The product would fail compliance requirements
+- "none": No significant risk
+
+### 3. Impact on Product
+Assess how much this commit matters:
+- `ai_impact_on_product`: "critical" | "high" | "medium" | "low" | "none"
+- `ai_impact_description`: 1-2 sentences explaining the impact
+
+### 4. Backport Effort Estimation
+Estimate how difficult it would be to backport:
+- `ai_backport_effort`: "very_easy" | "easy" | "moderate" | "hard" | "very_hard"
+- `ai_backport_effort_reason`: Brief explanation (e.g., "simple one-line fix", 
+  "touches many subsystems", "depends on newer kernel APIs")
+
+### 5. CVE Information
+- `ai_cve_ids`: Array of CVE IDs mentioned or relevant (empty array if none)
+
+### 6. Recommendation
+- `ai_backport_recommendation`: "strong_yes" | "yes" | "maybe" | "no" | "strong_no"
+- `ai_summary`: 2-3 sentence summary explaining your recommendation
+
+## Output Format
+
+Return a JSON object with commit SHAs as keys:
+
+{
+  "<sha1>": {
+    "ai_is_security_fix": true,
+    "ai_is_bug_fix": false,
+    "ai_is_performance_enhancement": false,
+    "ai_is_new_feature": false,
+    "ai_is_new_security_feature": false,
+    "ai_risks_if_not_backported": ["security_vulnerability", "system_stability"],
+    "ai_impact_on_product": "critical",
+    "ai_impact_description": "Fixes a use-after-free vulnerability that could lead to privilege escalation",
+    "ai_backport_effort": "easy",
+    "ai_backport_effort_reason": "Isolated fix in a single function",
+    "ai_cve_ids": ["CVE-2024-1234"],
+    "ai_backport_recommendation": "strong_yes",
+    "ai_summary": "This critical security fix addresses CVE-2024-1234. The vulnerability allows local privilege escalation. The fix is simple and self-contained, making it easy to backport."
+  },
+  "<sha2>": {
+    ...
+  }
+}
+
+## Guidelines
+
+1. BE CONSERVATIVE: When uncertain about a classification, it's better to mark it as
+   false or use "maybe" than to make an incorrect positive identification.
+
+2. Use the `meta` flags as hints:
+   - If `meta.has_cve` is true, there's likely a CVE to extract
+   - If `meta.is_fix` is true, it's likely a bug or security fix
+   - If `meta.has_stable_cc` is true, the upstream maintainers think it's worth backporting
+
+3. Consider the `product_evidence` field:
+   - This tells you WHY the commit is relevant to the product
+   - Focus on commits with strong product relevance
+
+4. For `ai_cve_ids`:
+   - Extract CVE IDs from the commit message (look for CVE-YYYY-NNNN patterns)
+   - Also infer CVEs from the description even if not explicitly mentioned
+   - Return an empty array [] if no CVEs are found
+
+5. For effort estimation:
+   - "very_easy": 1-5 lines changed, single file, no API changes
+   - "easy": <20 lines, few files, minimal dependencies
+   - "moderate": 20-100 lines, multiple files, some dependencies
+   - "hard": 100-500 lines, many files, significant dependencies
+   - "very_hard": >500 lines, extensive changes, new APIs
+
+6. For recommendation logic:
+   - "strong_yes": Security fix + critical/high impact + easy/very_easy effort
+   - "yes": Security fix OR high impact with reasonable effort
+   - "maybe": Unclear benefit, medium/hard effort, or borderline impact
+   - "no": Low impact + hard/very_hard effort
+   - "strong_no": Breaking change, not applicable to product, or very high risk
+
+## Example Output
+
+{
+  "abc123def456": {
+    "ai_is_security_fix": true,
+    "ai_is_bug_fix": true,
+    "ai_is_performance_enhancement": false,
+    "ai_is_new_feature": false,
+    "ai_is_new_security_feature": false,
+    "ai_risks_if_not_backported": ["security_vulnerability"],
+    "ai_impact_on_product": "critical",
+    "ai_impact_description": "Fixes a buffer overflow in the network stack that can be triggered remotely",
+    "ai_backport_effort": "easy",
+    "ai_backport_effort_reason": "Single function fix with clear boundaries",
+    "ai_cve_ids": ["CVE-2024-5678"],
+    "ai_backport_recommendation": "strong_yes",
+    "ai_summary": "Critical security fix for CVE-2024-5678 addressing a remote buffer overflow. The fix is isolated and easy to backport. Strongly recommended."
+  }
+}
+'''
+
+
 # -- Stage entry point -------------------------------------------------------
 
 def run(cfg, cache, outdir):
@@ -806,6 +1127,10 @@ def run(cfg, cache, outdir):
         except Exception as _e:
             logging.debug('finish_progress_line (st07) failed: %s', _e)
 
+    # AI Analysis: write input JSON and prompt template
+    ai_written = _write_ai_analysis_files(cfg, cache, outdir)
+    _written.extend(ai_written)
+    
     # Embed generated_files list, then write report_stats.json last
     report_stats['generated_files'] = sorted(set(
         f for f in _written if f != 'report_stats.json'))

@@ -3,7 +3,6 @@
   "name": "security_fixes_noCVEs",
   "description": "Security bug fixes and stability-related security updates.",
   "rules": {
-    "product_scope":          10,
     "generic":                20,
     "security_general":       50,
     "security_bugs":         100,

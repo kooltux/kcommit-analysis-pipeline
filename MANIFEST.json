@@ -42,7 +42,9 @@
       "output/prefilter_debug.json",
       "output/pipeline_run_stats.json",
       "output/serve_report.pyz",
-      "output/commits"
+      "output/commits",
+      "output/ai_analysis_input.json",
+      "output/ai_analysis_prompt.txt"
     ]}
   ],
   "tools": [

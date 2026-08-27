@@ -138,6 +138,172 @@ def test_commit_rows_size_indicators_default_zero_without_stats():
     assert row[13] == 0  # lines_changed (hidden)
     assert row[14] == 0  # hunks (hidden)
 
+# ── AI Analysis ───────────────────────────────────────────────────────────
+def _product_map_for_test():
+    """Create a minimal product_map for testing product_evidence computation."""
+    return {
+        'config_enabled_map': {
+            'CONFIG_USB': ['drivers/usb/core/hub.c'],
+        },
+        'config_enabled_dirs': ['drivers/usb/core'],
+        'built_artifacts_from_dir': ['drivers/usb/core/hub.o'],
+        'built_objects_from_log': ['hub.o'],
+    }
+
+
+def test_ai_analysis_input_written(tmp_path):
+    """AI analysis input JSON is written when prefilter_kept commits exist."""
+    cache, outdir, cfg = _setup(tmp_path, outputs=['csv'])
+    # Write prefilter_kept cache file (required for AI analysis)
+    from lib.manifest import CACHE_FILES
+    prefilter_kept = [
+        {
+            'commit': 'a' * 40,
+            'subject': 'fix: security vulnerability',
+            'author_name': 'Dev One',
+            'author_email': 'dev@linux.org',
+            'author_org': 'linux',
+            'author_time': 1700000000,
+            'body': 'Fixes CVE-2024-1234\n\nDetailed description',
+            'files': ['drivers/usb/core/hub.c'],
+            'stats': {'files_changed': 1, 'lines_changed': 10, 'hunks': 1},
+            'meta': {'is_fix': True, 'has_cve': True, 'has_syzbot': False, 'has_stable_cc': True},
+            'prefilter_debug': {'filter_enabled': True},
+        }
+    ]
+    import json
+    with open(os.path.join(cache, CACHE_FILES['prefilter_kept']), 'w') as f:
+        json.dump(prefilter_kept, f)
+    with open(os.path.join(cache, CACHE_FILES['product_map']), 'w') as f:
+        json.dump(_product_map_for_test(), f)
+    
+    run(cfg, cache, outdir)
+    
+    # Check AI input file was written
+    ai_input_path = os.path.join(outdir, 'ai_analysis_input.json')
+    assert os.path.exists(ai_input_path)
+    
+    # Validate content
+    with open(ai_input_path, 'r') as f:
+        ai_data = json.load(f)
+    
+    assert ai_data['version'] == '1.0'
+    assert ai_data['total_commits'] == 1
+    assert 'schema' in ai_data
+    assert 'commits' in ai_data
+    assert len(ai_data['commits']) == 1
+    
+    commit = ai_data['commits'][0]
+    assert commit['commit'] == 'a' * 40
+    assert commit['subject'] == 'fix: security vulnerability'
+    assert commit['author_name'] == 'Dev One'
+    assert commit['author_email'] == 'dev@linux.org'
+    assert commit['author_org'] == 'linux'
+    assert commit['meta']['has_cve'] is True
+    assert commit['meta']['is_fix'] is True
+    # Verify product_evidence is computed
+    assert len(commit['product_evidence']) > 0
+    # Verify prefilter_debug is NOT included
+    assert 'prefilter_debug' not in commit
+    # Verify no scoring/backport fields
+    assert 'score' not in commit
+    assert 'score_norm' not in commit
+    assert 'matched_profiles' not in commit
+    assert 'backport_complexity' not in commit
+    assert 'pick_priority' not in commit
+
+
+def test_ai_analysis_prompt_written(tmp_path):
+    """AI analysis prompt template is written."""
+    cache, outdir, cfg = _setup(tmp_path, outputs=['csv'])
+    # Write prefilter_kept cache file (required for AI analysis)
+    from lib.manifest import CACHE_FILES
+    import json
+    with open(os.path.join(cache, CACHE_FILES['prefilter_kept']), 'w') as f:
+        json.dump([{'commit': 'x' * 40, 'subject': 'test', 'files': []}], f)
+    with open(os.path.join(cache, CACHE_FILES['product_map']), 'w') as f:
+        json.dump({}, f)
+    
+    run(cfg, cache, outdir)
+    
+    # Check prompt file was written
+    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.txt')
+    assert os.path.exists(prompt_path)
+    
+    # Validate content
+    with open(prompt_path, 'r') as f:
+        content = f.read()
+    
+    assert '# AI Analysis Prompt' in content
+    assert 'ai_is_security_fix' in content
+    assert 'ai_risks_if_not_backported' in content
+    assert 'ai_backport_recommendation' in content
+
+
+def test_ai_analysis_input_empty_prefilter_kept(tmp_path):
+    """No AI files written when prefilter_kept is empty."""
+    cache, outdir, cfg = _setup(tmp_path, outputs=['csv'])
+    # Write empty prefilter_kept
+    from lib.manifest import CACHE_FILES
+    import json
+    with open(os.path.join(cache, CACHE_FILES['prefilter_kept']), 'w') as f:
+        json.dump([], f)
+    with open(os.path.join(cache, CACHE_FILES['product_map']), 'w') as f:
+        json.dump({}, f)
+    
+    run(cfg, cache, outdir)
+    
+    # AI files should not be written for empty input
+    ai_input_path = os.path.join(outdir, 'ai_analysis_input.json')
+    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.txt')
+    assert not os.path.exists(ai_input_path)
+    assert not os.path.exists(prompt_path)
+
+
+def test_ai_analysis_schema_structure(tmp_path):
+    """AI analysis input contains proper schema description."""
+    cache, outdir, cfg = _setup(tmp_path, outputs=['csv'])
+    from lib.manifest import CACHE_FILES
+    import json
+    prefilter_kept = [{'commit': 'x' * 40, 'subject': 'test', 'files': []}]
+    with open(os.path.join(cache, CACHE_FILES['prefilter_kept']), 'w') as f:
+        json.dump(prefilter_kept, f)
+    with open(os.path.join(cache, CACHE_FILES['product_map']), 'w') as f:
+        json.dump({}, f)
+    
+    run(cfg, cache, outdir)
+    
+    with open(os.path.join(outdir, 'ai_analysis_input.json'), 'r') as f:
+        ai_data = json.load(f)
+    
+    schema = ai_data['schema']
+    assert schema['version'] == '1.0'
+    assert 'fields' in schema
+    
+    fields = schema['fields']
+    assert 'commit' in fields
+    assert 'subject' in fields
+    assert 'author_name' in fields
+    assert 'author_email' in fields
+    assert 'author_org' in fields
+    assert 'meta' in fields
+    assert 'product_evidence' in fields
+    # Verify prefilter_debug is NOT in schema
+    assert 'prefilter_debug' not in fields
+    # Verify no scoring/backport fields in schema
+    assert 'score' not in fields
+    assert 'score_norm' not in fields
+    assert 'matched_profiles' not in fields
+    assert 'backport_complexity' not in fields
+    assert 'pick_priority' not in fields
+    
+    # Check meta sub-fields
+    assert 'is_fix' in fields['meta']['properties']
+    assert 'has_cve' in fields['meta']['properties']
+    assert 'has_syzbot' in fields['meta']['properties']
+    assert 'has_stable_cc' in fields['meta']['properties']
+
+
 # ── XLSX output ───────────────────────────────────────────────────────────────
 def test_xlsx_output_written(tmp_path):
     pytest.importorskip('openpyxl')

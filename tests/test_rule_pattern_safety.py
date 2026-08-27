@@ -88,14 +88,6 @@ def test_security_general_matches_security_fix_phrase():
 
 
 # ---------------------------------------------------------------------------
-# product_scope
-# ---------------------------------------------------------------------------
-
-def test_product_scope_qcom_word_boundary():
-    assert _any('configs/rules/product_scope/keywords_whitelist.txt', 'qcom: fix glink transport')
-
-
-# ---------------------------------------------------------------------------
 # security_memory
 # ---------------------------------------------------------------------------
 

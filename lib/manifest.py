@@ -40,6 +40,7 @@ CACHE_FILES = {
     'postfilter_dropped': 'postfilter_dropped_commits.json',
     'postfilter_debug':   'postfilter_debug.json',         # E.7: post-filter observability summary
     'run_stats':          'pipeline_run_stats.json',       # v14.1.0: aggregated pipeline-run stats
+    'ai_analysis_input':  'ai_analysis_input.json',        # AI analysis input: prefilter_kept commits
 }
 
 
