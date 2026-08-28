@@ -2,6 +2,71 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.2.0 — cp-check subcommand + config validation (2026-08-28)
+
+### Added
+
+- **Standalone `cp-check` subcommand** (`lib/commands/cmd_cp_check.py`) —
+  replaces the previously generated `output/cherry_pick_check.py` script.
+  Running the real `lib.gitutils` logic directly (instead of an embedded copy
+  baked into a generated file) eliminates the risk of the two implementations
+  drifting apart. The command always runs regardless of `collect.cherry_pick_test`
+  config flag — it's an explicit, on-demand tool to check cherry-pick feasibility
+  for the current prefilter commit set.
+  - Reads commits from `cache/prefilter_kept_commits.json` (stage 04 output)
+  - Uses the same SQLite cherry-pick cache as the pipeline (`CherryDB`)
+  - Supports `--force` to wipe cache and retest all, `--json` for machine output,
+    `--verbose` for per-commit status
+  - Requires `collect.cherry_pick_cache_dir` and `kernel.rev_old` in config
+
+- **Config variable validation** (`lib/config.py::load_config()`) — critical
+  variables (`WORKSPACE`, `TOOLDIR`, `CONFIGDIR`, `CWD`) are now validated to
+  be non-empty after expansion. If any critical variable is empty, the loader
+  raises a clear `SystemExit` error telling the user to set the environment
+  variable or define it in the config `"vars"` section. This prevents silent
+  path corruption (e.g., `/cache` instead of `/path/to/work/cache`) when
+  environment variables are unset.
+
+### Changed
+
+- **Cherry-pick feasibility moved to stage 05** — the `cherry_pickable` field
+  is now computed in `lib/stages/st05_score.py::score_commit()` using
+  `batch_can_cherry_pick_cached()` instead of being computed inline in stage 06.
+  This centralizes cherry-pick logic in the scoring stage and removes the
+  dependency on stage 06 for this feature.
+
+- **Backport indicators computed inline in stage 06** — `score_norm`,
+  `backport_complexity`, and `pick_priority` are now computed directly in
+  `lib/stages/st06_postfilter.py::run()` after loading scored commits, instead
+  of via a separate `_enrich_backport()` helper function. This simplifies the
+  code and removes an unnecessary abstraction layer.
+
+### Removed
+
+- **Generated `output/cherry_pick_check.py` script** — replaced by the
+  `cp-check` subcommand. The `_generate_cherry_pick_check_script()` function
+  in `lib/stages/st06_postfilter.py` has been removed along with all related
+  tests.
+
+- **`_enrich_backport()` helper function** — its logic has been inlined into
+  `run()` in `lib/stages/st06_postfilter.py`. Tests for this function have
+  been removed from `tests/test_st06_postfilter.py`.
+
+### Fixed
+
+- **cp-check command path resolution** — fixed to use `cfg['paths']['cache_dir']`
+  (with fallback to constructing from `work_dir`) instead of looking in
+  `output_dir`. The prefilter_kept_commits.json file is written to the cache
+  directory by stage 04, not the output directory.
+
+### Tests
+
+- `tests/test_st06_postfilter.py`: removed tests for `_enrich_backport()` and
+  `_generate_cherry_pick_check_script()`; updated module docstring to reflect
+  v19.2.0 changes.
+
+---
+
 ## v19.1.0 — cherry-pick engine rewrite + SQLite caching + feasibility UI (2026-08-28)
 
 ### Changed
@@ -99,43 +164,3 @@ All notable changes to this project are documented in this file.
 ---
 
 ## v18.6.0 — feat: cherry-pick test indicator (2026-08-27)
-
-### Added
-
-- **Cherry-pick test indicator** (`cherry_pickable`) — opt-in actual `git cherry-pick`
-  test onto `kernel.rev_old` for each relevant commit. When enabled via
-  `collect.cherry_pick_test: true`, the pipeline runs `git cherry-pick --no-commit`
-  for each relevant commit and records the result:
-  - `"Yes"` — commit cherry-picks cleanly without conflicts
-  - `"No"` — commit has conflicts when cherry-picked
-  - `""` (empty) — test not run (feature disabled or commit not in relevant set)
-  Surfaced as **"Cherry-Pickable"** column in HTML table (filterable), CSV, XLSX,
-  ODS, and `relevant_commits.json`/`relevant_commits.table.json`. Full details
-  (conflict file list, error messages) are stored in `cherry_pick_info` field in the
-  JSON outputs. Implemented in `lib/gitutils.py` (`can_cherry_pick()`,
-  `batch_can_cherry_pick()`) and integrated into stage 06.
-  - `lib/gitutils.py`: new `can_cherry_pick()` (single commit) and
-    `batch_can_cherry_pick()` (multiple commits with cleanup between tests) functions.
-  - `lib/stages/st06_postfilter.py`: `_enrich_backport()` extended to run
-    cherry-pick tests when `collect.cherry_pick_test` is enabled.
-  - `lib/manifest.py::COMMIT_COLS`: added **"Cherry-Pickable"** column.
-- **Author Organization column.** The **"Author"** column is replaced by
-  **"Author Organization"** in the HTML table and spreadsheet exports (CSV, XLSX,
-  ODS, `relevant_commits.table.json`). The organization is derived from the domain
-  part of the commit's `author_email` (the substring after '@'). This allows
-  reviewers to quickly identify the company or entity behind each commit at a glance.
-  The commit-detail pane shows all author information: Author (name), Author Email,
-  and Organization. The raw `author_name` and `author_email` fields are also retained
-  in the JSON exports.
-
-### Configuration
-
-- New `collect.cherry_pick_test` option (default: `false`) — enable to run
-  actual cherry-pick tests. **Warning**: This is expensive as it requires
-  git worktree manipulation (checkout, cherry-pick, cleanup) for each relevant
-  commit. Only enable when you need definitive conflict detection and have
-  time for the extra runtime.
-
----
-
-## v18.5.0 — feat: normalized score (Score %) indicator + unified heat coloring (2026-08-25)
