@@ -6,7 +6,7 @@ import re
 
 VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 
-# ── Lightweight config schema ─────────────────────────────────────────────────
+# ── Lightweight config schema ─────────────────────────────────────────────────────
 #
 # Each entry describes one key that may appear anywhere in the config tree.
 # "path"  → string (or list of strings) resolved relative to config_dir.
@@ -70,6 +70,7 @@ CONFIG_SCHEMA = {
         'count_hunks':           {'type': 'bool'},
         'cherry_pick_test':      {'type': 'bool'},
         'cherry_pick_cache_dir': {'type': 'path'},
+        'cherry_pick_workers':   {'type': 'int'},
         'no_merges':             {'type': 'bool'},
         'first_parent':          {'type': 'bool'},
         'score_workers':         {'type': 'int'},
@@ -115,7 +116,7 @@ _PATH_KEYS = frozenset(
 )
 
 
-# ── JSON helpers ──────────────────────────────────────────────────────────────
+# ── JSON helpers ────────────────────────────────────────────────────
 
 def load_json(path, default=None):
     """Return parsed JSON from *path*, or *default* when the file is absent."""
@@ -133,7 +134,7 @@ def save_json(path, data):
         f.write('\n')
 
 
-# ── Deep merge ────────────────────────────────────────────────────────────────
+# ── Deep merge ────────────────────────────────────────────────────
 
 def deep_merge(base, patch):
     """Recursively merge *patch* dict into *base* in-place. Returns base."""
@@ -147,7 +148,7 @@ def deep_merge(base, patch):
     return base
 
 
-# ── Variable expansion ────────────────────────────────────────────────────────
+# ── Variable expansion ─────────────────────────────────────────────────
 
 def _expand_string(text, variables, stack=None):
     if stack is None:
@@ -183,7 +184,7 @@ def _expand_node(node, variables):
     return node
 
 
-# ── Comment stripping ─────────────────────────────────────────────────────────
+# ── Comment stripping ─────────────────────────────────────────────────
 
 INLINE_COMMENT_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
 _INLINE_SLASH_RE  = re.compile(r'(^|(?<=\s))//.*$', re.MULTILINE)
@@ -221,7 +222,7 @@ def _load_json(path):
     return json.loads(raw)
 
 
-# ── Path resolution (schema-driven) ──────────────────────────────────────────
+# ── Path resolution (schema-driven) ───────────────────────────────────
 
 def _resolve_path(value, base_dir):
     """Resolve *value* as a path relative to *base_dir*.
@@ -258,7 +259,7 @@ def _resolve_known_paths(node, base_dir):
     return node
 
 
-# ── Config loader ─────────────────────────────────────────────────────────────
+# ── Config loader ──────────────────────────────────────────────────
 
 _ALLOWED_TOP_LEVEL = frozenset(CONFIG_SCHEMA.keys())
 
@@ -304,10 +305,19 @@ def load_config(path, inherited_vars=None, seen=None):
         vars_map[k] = _expand_string(v, vars_map)
     merged['vars'] = vars_map
 
+    # Validate critical variables — they must be non-empty to avoid silent path corruption
+    _critical_vars = ['WORKSPACE', 'TOOLDIR', 'CONFIGDIR', 'CWD']
+    for var in _critical_vars:
+        if not vars_map.get(var):
+            raise SystemExit(
+                'Config error: required variable {} is not set. '
+                'Set the {} environment variable or define it in the config "vars" section.'.format(
+                    var, var))
+
     expanded = _expand_node(merged, vars_map)
     expanded = _resolve_known_paths(expanded, config_dir)
 
-    # ── Canonical paths namespace ─────────────────────────────────────────────
+    # ── Canonical paths namespace ───────────────────────────────────
     work_raw = (expanded.get('paths', {}) or {}).get('work_dir', './work')
     work = (os.path.normpath(os.path.join(config_dir, work_raw))
             if not os.path.isabs(work_raw) else work_raw)
@@ -362,7 +372,7 @@ def load_config(path, inherited_vars=None, seen=None):
     return expanded
 
 
-# ── Override helper ───────────────────────────────────────────────────────────
+# ── Override helper ───────────────────────────────────────────────
 
 def apply_override(cfg, override_json):
     """Parse *override_json* string and deep-merge into *cfg*.
@@ -374,5 +384,5 @@ def apply_override(cfg, override_json):
     except json.JSONDecodeError as exc:
         raise SystemExit('--override invalid JSON: {}'.format(exc))
     if not isinstance(patch, dict):
-        raise SystemExit('--override top-level JSON value must be an object')
+        raise SystemExit('--override top-level value must be an object')
     return deep_merge(cfg, patch)

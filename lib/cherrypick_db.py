@@ -9,6 +9,15 @@ v19.0.0 (G):
   - Incremental updates: only test new commits
   - Immutable history: released kernel commits never change
   - Auto-save every 5s during batch operations to avoid data loss
+
+v19.2.0:
+  - add_result() now also flushes after BATCH_SIZE (20) pending results,
+    whichever of the count or time threshold is hit first.  This bounds
+    data loss to at most 20 commits (or 5s) instead of only the time bound,
+    which matters for fast batches where 20 results could otherwise
+    accumulate well within the 5s window.
+  - New delete_db() helper: removes the per-target cherry.db file, used by
+    the `cp-check --force` command to restart testing from scratch.
 """
 import os
 import sqlite3
@@ -32,6 +41,11 @@ class CherryDB:
     
     # Auto-save interval in seconds
     AUTO_SAVE_INTERVAL = 5.0
+
+    # Auto-save batch size (v19.2.0): flush after this many pending results
+    # even if AUTO_SAVE_INTERVAL has not elapsed yet.  Whichever threshold
+    # (count or time) is reached first triggers a flush.
+    BATCH_SIZE = 20
     
     def __init__(self, db_path):
         """Initialize or open existing database."""
@@ -60,7 +74,11 @@ class CherryDB:
     def add_result(self, sha, result):
         """Add or update a single cherry-pick result with auto-save.
         
-        This method buffers the result and auto-saves every AUTO_SAVE_INTERVAL seconds.
+        This method buffers the result and auto-saves whenever either
+        threshold is reached, whichever comes first:
+          - BATCH_SIZE (20) pending results accumulate, or
+          - AUTO_SAVE_INTERVAL (5.0s) has elapsed since the last flush.
+        
         Use this for streaming results during batch operations.
         
         Args:
@@ -69,9 +87,9 @@ class CherryDB:
         """
         self._pending_results[sha] = result
         
-        # Auto-save if interval has elapsed
         now = time.time()
-        if now - self._last_save_time >= self.AUTO_SAVE_INTERVAL:
+        if (len(self._pending_results) >= self.BATCH_SIZE
+                or now - self._last_save_time >= self.AUTO_SAVE_INTERVAL):
             self.flush()
             self._last_save_time = now
     
@@ -100,7 +118,8 @@ class CherryDB:
         self.conn.commit()
     
     def flush(self):
-        """Flush pending results to database (called automatically every 5s)."""
+        """Flush pending results to database (called automatically every 5s
+        or every BATCH_SIZE results, whichever comes first)."""
         if self._pending_results:
             self.add_results(self._pending_results)
             self._pending_results = {}
@@ -202,3 +221,24 @@ def load_or_create_db(cache_dir, rev_old):
     db_path = get_cherry_db_path(cache_dir, rev_old)
     ensure_cache_dir(cache_dir, rev_old)
     return CherryDB(db_path)
+
+
+def delete_db(cache_dir, rev_old):
+    """Delete the cherry-pick database for a target revision, if present.
+
+    Used by the ``cp-check --force`` command to clear cached results and
+    restart testing from scratch.  Silently no-ops if the file does not
+    exist.
+
+    Args:
+        cache_dir: base cache directory
+        rev_old: target revision
+
+    Returns:
+        True if a database file was removed, False if none existed.
+    """
+    db_path = get_cherry_db_path(cache_dir, rev_old)
+    if os.path.exists(db_path):
+        os.remove(db_path)
+        return True
+    return False

@@ -49,7 +49,7 @@
 
 ### Stage 04 — prefilter_commits
 - Loads compiled rules and applies the multi-level filter hierarchy.
-- **L2½ artifact evidence** (`_file_has_artifact()`) uses two sources:
+- **L2� artifact evidence** (`_file_has_artifact()`) uses two sources:
   1. `artifact_stems` — full-path stems from `built_artifacts_from_dir`
      (e.g. `drivers/usb/core/hub`).  Precise; no extra qualification needed.
   2. `log_basenames` — bare filename stems from build-log tokens
@@ -60,7 +60,7 @@
      path returned by `os.path.dirname()` is normalised to `fdir + "/"` before
      the `compiled_dirs` membership test, matching the form stored by
      `st03._derive_config_dirs()` (v16.0.1).
-- **L2½ kconfig coverage** — `_file_is_kconfig_covered()` determines whether
+- **L2� kconfig coverage** — `_file_is_kconfig_covered()` determines whether
   a file belongs to the product build.  Coverage is established by (in order):
   1. **Exact path** — the file appears in `compiled_files` (derived from
      `config_enabled_map` in `product_map.json`).
@@ -87,7 +87,7 @@
   The root exception (`Kconfig`, `Makefile`, `Kbuild` at the tree root) is
   preserved because those files are structurally product-relevant for any
   kernel build.
-- **File-type-aware L2½ voting** (v16.1.0) — `filter_decision()` applies
+- **File-type-aware L2� voting** (v16.1.0) — `filter_decision()` applies
   per-file type-aware votes before aggregating the final keep/drop decision:
 
   | File type | Real artifacts present | Vote |
@@ -126,6 +126,23 @@
 - Supports parallel scoring via multiprocessing (`collect.score_workers`).
 - Outputs `scored_commits.json` with `score`, `matched_profiles`,
   `product_evidence`, and `scoring.profiles` per commit.
+- **Cherry-pick feasibility enrichment** (v19.2.0, opt-in via
+  `collect.cherry_pick_test`): after scoring, tests each commit for
+  cherry-pick feasibility onto `kernel.rev_old` via
+  `lib.gitutils.batch_can_cherry_pick_cached()`. Patches are tested with
+  `git show | git apply --check --3way --unidiff-zero` and the subprocess
+  return code decides ok/conflict (no working-tree mutation). Results are
+  cached per target revision in a SQLite database at
+  `<collect.cherry_pick_cache_dir>/<rev_old>/cherry.db` — **required**
+  config when the test is enabled. Only commits not already present in the
+  cache are tested; cached results are reused, which is a 10-100x speedup
+  on incremental runs against the same (immutable) released kernel
+  history. A live progress bar with ETA is written to stdout during
+  testing. Tests can run in parallel via `collect.cherry_pick_workers`
+  (0 = auto-detect). The target revision is checked out once in the parent
+  process; workers only run read-only `git show` and `git apply --check`
+  commands against that static checkout. Each scored commit receives
+  `cherry_pickable` (bool) and `cherry_pick_info` (dict) fields.
 
 ### Stage 06 — postfilter_commits
 - Sorts scored commits descending by score.
@@ -148,25 +165,44 @@
     the single normalization used by both the "Score" column (formerly "Score %")
     and `pick_priority`. See the README "Scoring model" and "Backport indicators"
     sections for the formulas.
-  - If `collect.cherry_pick_test` is set, tests every relevant commit for
-    cherry-pick feasibility onto `kernel.rev_old` via
-    `lib.gitutils.batch_can_cherry_pick_cached()` (v19.1.0): patches are
-    tested with `git show | git apply --check --3way --unidiff-zero` and the
-    subprocess return code decides ok/conflict (no working-tree mutation).
-    Results are cached per target revision in a SQLite database at
-    `<collect.cherry_pick_cache_dir>/<rev_old>/cherry.db` — **required**
-    config when the test is enabled. Only commits not already present in the
-    cache are tested; cached results are reused, which is a 10-100x speedup
-    on incremental runs against the same (immutable) released kernel
-    history. A live progress bar with ETA is written to stdout during
-    testing. When enabled, stage 06 also writes a standalone
-    `output/cherry_pick_check.py` script (via
-    `_generate_cherry_pick_check_script()`) that re-runs the same checks
-    later without the full pipeline: it reads/writes the same SQLite cache
-    by default, and accepts `--refresh` (ignore cache, re-test and overwrite
-    every commit), `--verbose` (print every git command), and `--json`
-    (machine-readable output).
+  - Cherry-pick feasibility (`cherry_pickable`) was already attached at stage
+    05; stage 06 simply reads the pre-computed field.
 - Outputs `relevant_commits.json`.
+
+## cp-check subcommand (v19.2.0)
+
+The `cp-check` subcommand is a standalone cherry-pick feasibility tester that
+runs independently of the full pipeline and of `collect.cherry_pick_test`. It
+uses the exact same `lib.gitutils.can_cherry_pick()` implementation as stage
+05, so there is only one implementation to keep correct — no risk of the two
+drifting apart. The old `output/cherry_pick_check.py` script duplicated that
+logic inside a Python string template and was removed in v19.2.0.
+
+```
+kcommit_pipeline.py cp-check --config cfg.json
+kcommit_pipeline.py cp-check --config cfg.json --force
+kcommit_pipeline.py cp-check --config cfg.json --update --json
+kcommit_pipeline.py -v cp-check --config cfg.json   # verbose (per-commit) output
+```
+
+**Requirements:**
+- The pipeline must have completed stage 04 (prefilter_commits) at least once
+  (so `output/prefilter_kept_commits.json` exists).
+- `collect.cherry_pick_cache_dir` must be set in the config.
+
+**Behaviour:**
+- Default (no flag, or `--update`): test only commits not already present in
+  the SQLite cache for `kernel.rev_old`.
+- `--force`: clear the cache for `kernel.rev_old` and retest every relevant
+  commit from scratch.
+- `--json`: machine-readable JSON output with summary and per-commit results.
+- Uses the shared top-level `-v/--verbose` flag (must precede the subcommand
+  name) for per-commit verbose output.
+- Runs in parallel via `collect.cherry_pick_workers` (0 = auto-detect), same
+  as the main pipeline's inline test path.
+- **Commit source:** the prefilter_kept_commits.json cache (i.e. all commits
+  that passed the prefilter and entered scoring) — the largest "product-touching"
+  set before scoring/thresholding.
 
 ### Stage 07 — report_commits
 - Generates all outputs under `<work_dir>/output/`:
@@ -251,7 +287,7 @@ stale cache files before re-running.
 | `lib/pipeline_runtime.py` | Stage state, progress tracking, `wipe_downstream()` |
 | `lib/html_report.py` | HTML summary generation |
 | `lib/spreadsheet.py` | XLSX (openpyxl) and ODS export |
-| `lib/gitutils.py` | `git log` parsing |
+| `lib/gitutils.py` | `git log` parsing, cherry-pick testing (parallel-capable) |
 | `lib/history_map.py` | Historical Makefile walking |
 | `lib/kbuild.py` | Kbuild static map; exports `KBUILD_PLACEHOLDER_NAMES` |
 | `lib/parse_kconfig.py` | `.config` parsing |
@@ -260,6 +296,7 @@ stale cache files before re-running.
 | `lib/logsetup.py` | Logging configuration |
 | `lib/stages/` | Stage business logic (one module per stage) |
 | `lib/commands/cmd_diagnose.py` | `diagnose` subcommand (cache-read only) |
+| `lib/commands/cmd_cp_check.py` | `cp-check` subcommand (standalone cherry-pick tester) |
 
 
 ## v16.2.0 changes
@@ -280,7 +317,7 @@ stale cache files before re-running.
 
 ## v16.1.0 changes
 
-- Stage 04 (`filter_decision`): introduced **file-type-aware L2½ voting** (F).
+- Stage 04 (`filter_decision`): introduced **file-type-aware L2� voting** (F).
 
   **New helpers:**
   - `_file_is_header(path)` — `.h .hpp .hxx .h++`
@@ -413,7 +450,7 @@ stale cache files before re-running.
 
 ## v14.1.0 changes
 
-- Stage 04 (`filter_decision`): keyword whitelist rescue at the L2½
+- Stage 04 (`filter_decision`): keyword whitelist rescue at the L2�
   kconfig-coverage miss path is now **suppressed when `compiled_files` is
   non-empty** (A).  When file-level coverage data exists and a commit's files
   are conclusively absent from that set, the kw_wl must not override the drop
@@ -454,7 +491,7 @@ stale cache files before re-running.
 
 ## v14.0.0 changes
 
-- Stage 04 (`filter_decision`): keyword whitelist rescue at the L2½
+- Stage 04 (`filter_decision`): keyword whitelist rescue at the L2�
   kconfig-coverage miss path is now **suppressed when `compiled_files` is
   non-empty** (A).  When file-level coverage data exists and a commit's files
   are conclusively absent from that set, the kw_wl must not override the drop

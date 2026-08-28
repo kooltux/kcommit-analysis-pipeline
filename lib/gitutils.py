@@ -13,12 +13,23 @@ v18.2.0 (F):
   the main thread reads stdout sequentially.  This avoids the classic
   write-all-then-read-all pipe deadlock that occurs when the OS pipe buffer
   (typically 64 KB) fills up before any output is consumed.
+
+v19.2.0:
+  Cherry-pick testing can now run in parallel worker processes, mirroring
+  the ProcessPoolExecutor pattern used by lib/stages/st05_score.py.  The
+  target revision is checked out exactly once in the parent process before
+  workers are spawned; each worker only performs read-only git operations
+  (``git show`` and ``git apply --check``, which never touches the index or
+  working tree), so concurrent workers reading the same checked-out tree are
+  safe.  Falls back to the existing serial loop when workers <= 1, the
+  commit count is small, or the process pool raises on submit.
 """
 import os
 import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 _PY37 = sys.version_info >= (3, 7)
 
@@ -199,7 +210,7 @@ def show_commit_patch(cfg, sha, unified=0):
     return run_git(cfg, args)
 
 
-# ── Hunk counting (backport-complexity input) ────────────────────────────────
+# ── Hunk counting (backport-complexity input) ─────────────────────────────
 #
 # A "hunk" is a contiguous block of changed lines in a unified diff, marked by
 # a ``@@ -a,b +c,d @@`` header.  The total hunk count across all files in a
@@ -303,7 +314,7 @@ def show_path_history(cfg, rev, path):
         return ''
 
 
-# ── F: batch blob fetcher via git cat-file --batch ────────────────────────────
+# ── F: batch blob fetcher via git cat-file --batch ────────────────────────
 
 _BATCH_CHUNK = 500   # progress callback interval
 
@@ -473,7 +484,12 @@ def _serial_fallback(cfg, tasks, progress_callback):
     return results
 
 
-# ── Cherry-pick test (fast: git apply --check) ────────────────────────────────
+# ── Cherry-pick test (fast: git apply --check) ─────────────────────────────
+
+# Minimum commit count before parallel cherry-pick testing is worth the
+# ProcessPoolExecutor startup overhead (mirrors st05_score.py's threshold).
+_CP_PARALLEL_MIN_COMMITS = 20
+
 
 def can_cherry_pick(cfg, commit_sha, target_rev):
     """Test if *commit_sha* can be cherry-picked cleanly on top of *target_rev*.
@@ -490,6 +506,14 @@ def can_cherry_pick(cfg, commit_sha, target_rev):
     This is a best-effort test: a clean apply here does not guarantee
     conflict-free backport to the actual product (different configs, local
     patches, etc.), but conflicts here guarantee the backport will need work.
+
+    NOTE (v19.2.0): this function performs only read-only git operations
+    (``git show`` and ``git apply --check``, which never touches the index or
+    working tree) against whatever revision is currently checked out.  This
+    makes it safe to call concurrently from multiple worker processes as long
+    as the target revision was checked out once beforehand and none of the
+    workers ever write to the tree — see batch_can_cherry_pick()'s parallel
+    path.
     """
     try:
         # Step 1: Get the patch for this commit
@@ -554,7 +578,102 @@ def can_cherry_pick(cfg, commit_sha, target_rev):
         return {'ok': False, 'conflicts': [], 'error': str(exc)}
 
 
-def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
+# ── v19.2.0: parallel worker state for cherry-pick testing ─────────────
+# Mirrors the pattern used by lib/stages/st05_score.py: a small set of
+# module-level globals initialised once per worker process by
+# _cp_worker_init(), so pickling per-task is cheap (only the SHA string is
+# transferred).  The target revision is checked out once in the *parent*
+# before the pool is created; workers only ever perform read-only git calls
+# (can_cherry_pick() -> git show + git apply --check), so multiple workers
+# reading the same checked-out tree concurrently is safe.
+
+_g_cp_cfg        = None
+_g_cp_target_rev = None
+
+
+def _cp_worker_init(cfg, target_rev):
+    global _g_cp_cfg, _g_cp_target_rev
+    _g_cp_cfg        = cfg
+    _g_cp_target_rev = target_rev
+
+
+def _cp_test_one_global(sha):
+    return sha, can_cherry_pick(_g_cp_cfg, sha, _g_cp_target_rev)
+
+
+def _cp_test_serial(cfg, shas, target_rev, progress_callback=None):
+    """Serial cherry-pick test loop (original behaviour), with ETA tracking."""
+    results    = {}
+    total      = len(shas)
+    start_time = time.time()
+    last_times = []
+
+    for i, sha in enumerate(shas):
+        step_start = time.time()
+        try:
+            results[sha] = can_cherry_pick(cfg, sha, target_rev)
+        except Exception as exc:
+            results[sha] = {'ok': False, 'conflicts': [], 'error': str(exc)}
+        step_time = time.time() - step_start
+        last_times.append(step_time)
+        if len(last_times) > 10:
+            last_times.pop(0)
+
+        if progress_callback:
+            avg_time    = sum(last_times) / len(last_times)
+            remaining   = total - (i + 1)
+            eta_seconds = remaining * avg_time
+            progress_callback(i + 1, total, eta_seconds)
+
+    return results
+
+
+def _cp_test_parallel(cfg, shas, target_rev, workers, progress_callback=None):
+    """Test *shas* for cherry-pick feasibility using a process pool.
+
+    The caller must have already checked out *target_rev* (detached HEAD)
+    before calling this function -- workers never checkout or otherwise
+    modify the working tree themselves, they only run the read-only
+    can_cherry_pick() test against whatever is currently on disk.
+
+    Args:
+        cfg:      pipeline config dict
+        shas:     list of commit SHAs to test
+        target_rev: revision already checked out in the working tree
+        workers:  number of worker processes
+        progress_callback: optional callable(done, total, eta_seconds)
+
+    Returns:
+        dict mapping sha -> result dict (same shape as can_cherry_pick())
+    """
+    total      = len(shas)
+    results    = {}
+    start_time = time.time()
+    done_count = 0
+
+    with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_cp_worker_init,
+            initargs=(cfg, target_rev)) as ex:
+
+        futures = {ex.submit(_cp_test_one_global, sha): sha for sha in shas}
+
+        for fut in as_completed(futures):
+            sha, result = fut.result()
+            results[sha] = result
+            done_count  += 1
+
+            if progress_callback:
+                elapsed     = time.time() - start_time
+                avg_time    = elapsed / done_count if done_count else 0
+                remaining   = total - done_count
+                eta_seconds = remaining * avg_time
+                progress_callback(done_count, total, eta_seconds)
+
+    return results
+
+
+def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None, workers=1):
     """Test multiple commits for cherry-pick feasibility on *target_rev*.
     
     Returns dict mapping commit SHA -> result dict (same format as
@@ -563,7 +682,11 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
     
     Strategy:
       1. Checkout target_rev once (detach HEAD)
-      2. For each commit: git show | git apply --check (no worktree changes)
+      2. Test each commit: git show | git apply --check (no worktree changes)
+         -- serially, or in parallel worker processes when workers > 1 and
+         there are enough commits to be worth the process-pool overhead
+         (v19.2.0; mirrors lib/stages/st05_score.py's ProcessPoolExecutor
+         pattern).  Falls back to the serial path if the pool raises.
       3. Restore original HEAD
     
     This is efficient: 1 checkout + N (show + apply) calls, no reset needed.
@@ -573,6 +696,9 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
         commit_shas:  list of commit SHAs to test
         target_rev:   revision to cherry-pick onto (e.g., config.kernel.rev_old)
         progress_callback: optional callable(current, total, eta_seconds)
+        workers:      number of worker processes for parallel testing
+                     (default 1 = serial).  Values > 1 are only used when
+                     there are enough commits (see _CP_PARALLEL_MIN_COMMITS).
     """
     shas = [s for s in (commit_shas or []) if s]
     if not shas:
@@ -587,41 +713,24 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
     except Exception:
         current_head = None
     
-    results = {}
-    total = len(shas)
-    
     try:
-        # Checkout target revision once (detached HEAD)
+        # Checkout target revision once (detached HEAD) -- shared by both the
+        # serial loop and every parallel worker process.
         run_git(cfg, ['checkout', '--force', '--detach', target_rev], check=False)
-        
-        # Test each commit with apply --check (no worktree modification)
-        # Track timing for ETA calculation
-        start_time = time.time()
-        last_times = []  # Keep last 10 timings for rolling average
-        
-        for i, sha in enumerate(shas):
-            step_start = time.time()
-            
+
+        total = len(shas)
+        if workers > 1 and total >= _CP_PARALLEL_MIN_COMMITS:
             try:
-                result = can_cherry_pick(cfg, sha, target_rev)
-                results[sha] = result
+                return _cp_test_parallel(cfg, shas, target_rev, workers,
+                                         progress_callback=progress_callback)
             except Exception as exc:
-                results[sha] = {'ok': False, 'conflicts': [], 'error': str(exc)}
-            
-            step_end = time.time()
-            step_time = step_end - step_start
-            last_times.append(step_time)
-            if len(last_times) > 10:
-                last_times.pop(0)
-            
-            # Report progress with ETA
-            if progress_callback:
-                avg_time = sum(last_times) / len(last_times)
-                remaining = total - (i + 1)
-                eta_seconds = remaining * avg_time
-                progress_callback(i + 1, total, eta_seconds)
-        
-        return results
+                print('\n  warning: parallel cherry-pick test failed (%s); '
+                      'falling back to serial' % exc, file=sys.stderr)
+                return _cp_test_serial(cfg, shas, target_rev,
+                                       progress_callback=progress_callback)
+
+        return _cp_test_serial(cfg, shas, target_rev,
+                               progress_callback=progress_callback)
         
     finally:
         # Always restore original HEAD
@@ -632,7 +741,7 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None):
                 pass
 
 
-# ── Cherry-pick cache (SQLite-based, per-target) ─────────────────────────────
+# ── Cherry-pick cache (SQLite-based, per-target) ────────────────────────
 
 def _format_eta(seconds):
     """Format ETA in human-readable format."""
@@ -663,8 +772,13 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
     Uses CherryDB to cache results per target_rev. Only tests new commits,
     reuses existing results for already-tested commits.
     
-    Results are saved to the database every 5 seconds during testing to avoid
-    data loss if the process is interrupted.
+    Results are saved to the database every 5 seconds, or every 20 pending
+    results (v19.2.0), whichever comes first, to avoid data loss if the
+    process is interrupted.
+
+    Testing itself runs in parallel worker processes when
+    collect.cherry_pick_workers > 1 and there are enough new commits
+    (v19.2.0; see batch_can_cherry_pick()).
     
     Args:
         cfg: pipeline config dict (MUST contain collect.cherry_pick_cache_dir)
@@ -694,6 +808,14 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
             'Please add "cherry_pick_cache_dir": "/path/to/cache" to the "collect" section '
             'in your config file.'
         )
+
+    # v19.2.0: worker count for parallel testing (0 = auto-detect, like score_workers)
+    configured_workers = int(collect.get('cherry_pick_workers', 0) or 0)
+    try:
+        default_workers = os.cpu_count() or 1
+    except Exception:
+        default_workers = 1
+    workers = configured_workers if configured_workers > 0 else default_workers
     
     # Load or create database for this target
     db = load_or_create_db(cache_dir, target_rev)
@@ -726,11 +848,13 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
                 sys.stdout.write('\r  %s' % bar)
                 sys.stdout.flush()
         
-        # Test new commits with auto-save every 5 seconds
-        new_results = batch_can_cherry_pick(cfg, new_shas, target_rev, 
-                                           progress_callback=_progress_with_eta)
+        # Test new commits with auto-save every 5s / 20 results, parallel
+        # when workers > 1 and enough new commits (v19.2.0)
+        new_results = batch_can_cherry_pick(cfg, new_shas, target_rev,
+                                           progress_callback=_progress_with_eta,
+                                           workers=workers)
         
-        # Save each result to database (auto-saves every 5s internally)
+        # Save each result to database (auto-saves every 5s / 20 results internally)
         for sha, result in new_results.items():
             db.add_result(sha, result)
         

@@ -11,12 +11,20 @@ v18.0.1 (Fix 5): updated bucket-label assertions from '100+' to '>=100'.
 
 v19.0.0 (G):
   - Updated cherry-pick test to mock batch_can_cherry_pick_cached() from lib.gitutils
+
+v19.2.0:
+  - Removed tests for the old _generate_cherry_pick_check_script() function,
+    which was deleted along with the generated output/cherry_pick_check.py script.
+    Cherry-pick re-testing is now done via the cp-check subcommand, which uses
+    the exact same lib.gitutils functions as stage 06.
+  - Removed tests for _enrich_backport() which was moved to stage 05.
+    Backport indicators (score_norm, backport_complexity, pick_priority) are
+    now computed inline in run() after loading scored commits.
 """
 import json
 import os
-from unittest.mock import patch
 
-from lib.stages.st06_postfilter import run, _get_threshold, _score_buckets, _enrich_backport
+from lib.stages.st06_postfilter import run, _get_threshold, _score_buckets
 from lib.manifest import CACHE_FILES
 
 
@@ -296,7 +304,10 @@ def test_postfilter_debug_json_empty_scored(tmp_path):
     assert data['summary']['top_score']    == 0
 
 
-# == backport enrichment (v18.4.0) ============================================
+# == backport enrichment (v18.4.0 / v19.2.0) ================================
+# Note: backport indicators (score_norm, backport_complexity, pick_priority)
+# are now computed inline in run() after loading scored commits. Cherry-pick
+# feasibility (cherry_pickable) was moved to stage 05 in v19.2.0.
 
 def _cfg_kernel(count_hunks=False):
     cfg = {'kernel': {'source_dir': '/repo', 'rev_old': 'v1', 'rev_new': 'v2'}}
@@ -318,55 +329,14 @@ def test_run_attaches_backport_indicators(tmp_path):
     r = relevant[0]
     assert 'backport_complexity' in r
     assert 'pick_priority' in r
-    # single relevant commit → it is the run max → relevance normalized to 100
+    # single relevant commit -> it is the run max -> relevance normalized to 100
     assert 0 <= r['pick_priority'] <= 100
-
-
-def test_enrich_backport_counts_hunks_when_enabled():
-    relevant = [
-        {'commit': 'a' * 40, 'score': 50, 'files': ['x.c'], 'meta': {},
-         'stats': {'files_changed': 1, 'lines_changed': 10}},
-    ]
-    fake_counts = {'a' * 40: 5}
-    with patch('lib.stages.st06_postfilter.batch_count_hunks',
-               return_value=fake_counts) as m:
-        _enrich_backport(_cfg_kernel(count_hunks=True), relevant)
-    m.assert_called_once()
-    assert relevant[0]['stats']['hunks'] == 5
-
-
-def test_enrich_backport_skips_hunks_when_disabled():
-    relevant = [
-        {'commit': 'a' * 40, 'score': 50, 'files': ['x.c'], 'meta': {},
-         'stats': {'files_changed': 1, 'lines_changed': 10}},
-    ]
-    with patch('lib.stages.st06_postfilter.batch_count_hunks') as m:
-        _enrich_backport(_cfg_kernel(count_hunks=False), relevant)
-    m.assert_not_called()
-    assert relevant[0]['stats'].get('hunks', 0) == 0
-
-
-def test_enrich_backport_hunk_failure_is_tolerated():
-    relevant = [
-        {'commit': 'a' * 40, 'score': 50, 'files': ['x.c'], 'meta': {},
-         'stats': {'files_changed': 1, 'lines_changed': 10}},
-    ]
-    with patch('lib.stages.st06_postfilter.batch_count_hunks',
-               side_effect=RuntimeError('git boom')):
-        _enrich_backport(_cfg_kernel(count_hunks=True), relevant)
-    # hunks defaults to 0, enrichment still ran
-    assert relevant[0]['stats']['hunks'] == 0
-    assert 'backport_complexity' in relevant[0]
-
-
-def test_enrich_backport_empty_list():
-    assert _enrich_backport(_cfg_kernel(), []) == []
 
 
 def test_run_attaches_score_norm(tmp_path):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
-    # two commits: top score 100 → norm 100; other 25 → norm 25
+    # two commits: top score 100 -> norm 100; other 25 -> norm 25
     a = _scored_commit('a', 100); a['files'] = ['x.c']; a['meta'] = {}
     b = _scored_commit('b', 25);  b['files'] = ['y.c']; b['meta'] = {}
     _write_json(os.path.join(cache, CACHE_FILES['scored']), [a, b])
@@ -377,13 +347,6 @@ def test_run_attaches_score_norm(tmp_path):
     assert by_sha['b']['score_norm'] == 25
 
 
-def test_enrich_backport_score_norm_zero_max_safe():
-    relevant = [{'commit': 'a' * 40, 'score': 0, 'files': ['x.c'], 'meta': {},
-                 'stats': {'files_changed': 1, 'lines_changed': 1}}]
-    _enrich_backport(_cfg_kernel(), relevant)
-    assert relevant[0]['score_norm'] == 0
-
-
 # == CACHE_FILES manifest key ==================================================
 
 def test_cache_files_has_postfilter_debug_key():
@@ -391,94 +354,3 @@ def test_cache_files_has_postfilter_debug_key():
     stable, named key to reference rather than a hardcoded filename."""
     assert 'postfilter_debug' in CACHE_FILES
     assert CACHE_FILES['postfilter_debug'].endswith('.json')
-
-
-# == cherry-pick test script generation (v18.6.0) =============================
-
-def _cfg_cherry_pick_test():
-    """Config with cherry_pick_test enabled."""
-    return {
-        'kernel': {
-            'source_dir': '/kernel/src',
-            'rev_old': 'v6.1',
-            'rev_new': 'v6.6',
-        },
-        'collect': {
-            'cherry_pick_test': True,
-        },
-    }
-
-
-def test_run_generates_cherry_pick_check_script_when_enabled(tmp_path):
-    """v18.6.0: when cherry_pick_test is enabled, run() generates a standalone
-    cherry_pick_check.py script in the output directory."""
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    
-    # Create scored commits
-    commits = [
-        _scored_commit('abc123' + '0' * 34, 80),
-        _scored_commit('def456' + '0' * 34, 60),
-    ]
-    _write_json(os.path.join(cache, CACHE_FILES['scored']), commits)
-    _write_json(os.path.join(cache, CACHE_FILES['filtered']), [])
-    
-    # Mock batch_can_cherry_pick_cached from lib.gitutils to avoid actual git calls
-    with patch('lib.gitutils.batch_can_cherry_pick_cached') as mock_cp:
-        mock_cp.return_value = {
-            'abc123' + '0' * 34: {'ok': True, 'conflicts': [], 'error': None},
-            'def456' + '0' * 34: {'ok': False, 'conflicts': ['file.c'], 'error': None},
-        }
-        run(_cfg_cherry_pick_test(), cache)
-    
-    # Script should be generated in output directory (sibling of cache)
-    output_dir = os.path.join(os.path.dirname(cache), 'output')
-    script_path = os.path.join(output_dir, 'cherry_pick_check.py')
-    assert os.path.isfile(script_path), 'cherry_pick_check.py not generated'
-    
-    # Script should be executable
-    assert os.access(script_path, os.X_OK), 'cherry_pick_check.py not executable'
-    
-    # Script should contain expected content
-    with open(script_path, 'r') as f:
-        content = f.read()
-    assert 'git apply --check' in content
-    assert '--verbose' in content
-    assert '--json' in content
-    assert 'v6.1' in content  # target_rev
-    assert 'abc123' in content  # commit SHA
-    assert 'def456' in content  # commit SHA
-    # Script should only contain SHAs, not full commit metadata
-    assert 'subject' not in content or 'subject' in content and 'COMMITS = ' in content
-
-
-def test_run_no_cherry_pick_script_when_disabled(tmp_path):
-    """v18.6.0: when cherry_pick_test is disabled, no script is generated."""
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    
-    commits = [_scored_commit('abc', 80)]
-    _write_json(os.path.join(cache, CACHE_FILES['scored']), commits)
-    _write_json(os.path.join(cache, CACHE_FILES['filtered']), [])
-    
-    run({}, cache)  # No cherry_pick_test config
-    
-    output_dir = os.path.join(os.path.dirname(cache), 'output')
-    script_path = os.path.join(output_dir, 'cherry_pick_check.py')
-    assert not os.path.exists(script_path), 'Script should not be generated when disabled'
-
-
-def test_run_cherry_pick_script_with_empty_commits(tmp_path):
-    """v18.6.0: script generation handles empty commit list gracefully."""
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    
-    _write_json(os.path.join(cache, CACHE_FILES['scored']), [])
-    _write_json(os.path.join(cache, CACHE_FILES['filtered']), [])
-    
-    run(_cfg_cherry_pick_test(), cache)
-    
-    output_dir = os.path.join(os.path.dirname(cache), 'output')
-    script_path = os.path.join(output_dir, 'cherry_pick_check.py')
-    # Script should still be generated (even if empty)
-    assert os.path.isfile(script_path)

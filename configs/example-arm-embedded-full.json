@@ -129,6 +129,13 @@
     // For released kernels (immutable history), this means one-time testing per target.
     // Typical speedup: 10-100x for incremental runs.
     "cherry_pick_cache_dir": "${WORKSPACE}/work/cherry-cache",
+    // cherry_pick_workers: parallel workers for cherry-pick testing (v19.2.0).
+    // 0 = auto-detect via os.cpu_count(); a positive integer pins the worker count.
+    // Mirrors score_workers semantics. Cherry-pick tests run in parallel via a
+    // ProcessPoolExecutor, with the target revision checked out exactly once in
+    // the parent process; workers only read (git show + git apply --check), which
+    // is safe to parallelize against a shared, unchanging working tree.
+    "cherry_pick_workers": 0,
     // use_no_merges: pass --no-merges to git log (recommended).
     "no_merges":     true,
     // use_first_parent: pass --first-parent to git log.

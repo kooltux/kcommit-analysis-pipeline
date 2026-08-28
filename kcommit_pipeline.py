@@ -11,9 +11,10 @@ Subcommands
   report    Re-generate output reports from cached scored data
   dropped   Inspect commits dropped by pre/post filter
   diagnose  Full JSON diagnosis of one commit across all pipeline stages
+  cp-check  Test cherry-pick feasibility for the prefilter commit set
 
 Usage examples
-──────────────
+────────────
   kcommit_pipeline.py run      --config cfg.json
   kcommit_pipeline.py run      --config cfg.json --from 4
   kcommit_pipeline.py run      --config cfg.json --stage 5
@@ -26,6 +27,10 @@ Usage examples
   kcommit_pipeline.py dropped  --config cfg.json [--reason all|prefilter|low-score]
   kcommit_pipeline.py diagnose --cache-dir work/cache --sha <SHA_PREFIX>
   kcommit_pipeline.py diagnose --cache-dir work/cache --sha <SHA_PREFIX> --out report.json
+  kcommit_pipeline.py cp-check --config cfg.json
+  kcommit_pipeline.py cp-check --config cfg.json --update
+  kcommit_pipeline.py cp-check --config cfg.json --force
+  kcommit_pipeline.py cp-check --config cfg.json --json
 """
 import argparse
 import sys
@@ -38,6 +43,7 @@ from lib.commands.cmd_validate import cmd_validate
 from lib.commands.cmd_report   import cmd_report
 from lib.commands.cmd_dropped  import cmd_dropped
 from lib.commands.cmd_diagnose import cmd_diagnose
+from lib.commands.cmd_cp_check import cmd_cp_check
 
 def main():
     ap = argparse.ArgumentParser(
@@ -111,6 +117,34 @@ def main():
     p_diag.add_argument('--out',  default=None, metavar='FILE',
                         help='Write JSON report to FILE instead of stdout')
 
+    p_cp = sub.add_parser(
+        'cp-check',
+        help='Test cherry-pick feasibility for the prefilter commit set',
+        description=(
+            'Standalone cherry-pick feasibility checker (v19.2.0). Runs the same\n'
+            'lib.gitutils cherry-pick logic used by stage 06, directly against the\n'
+            'commits that passed the prefilter (prefilter_kept_commits.json) -- the\n'
+            'largest "product-touching" commit set before scoring/thresholding.\n\n'
+            'Requires collect.cherry_pick_cache_dir and kernel.rev_old in the config,\n'
+            'and that the pipeline has already been run through stage 04 so that\n'
+            'prefilter_kept_commits.json exists.\n\n'
+            'By default (or with --update), only commits missing from the SQLite\n'
+            'cache are tested; --force clears the cache for the target revision\n'
+            'first and retests every commit from scratch. Testing runs in parallel\n'
+            'worker processes when collect.cherry_pick_workers > 1.'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_cp.add_argument('--config',   required=True)
+    p_cp.add_argument('--override', default=None, metavar='JSON')
+    p_cp_mode = p_cp.add_mutually_exclusive_group()
+    p_cp_mode.add_argument('--force',  action='store_true',
+                           help='Clear the cherry-pick cache for this target revision '
+                                'and retest every commit from scratch')
+    p_cp_mode.add_argument('--update', action='store_true',
+                           help='Test only commits missing from the cache (default behaviour)')
+    p_cp.add_argument('--json',    action='store_true', help='Machine-readable JSON output')
+
     args = ap.parse_args()
     setup_logging(args.verbose)
     dispatch = {
@@ -120,6 +154,7 @@ def main():
         'report':   cmd_report,
         'dropped':  cmd_dropped,
         'diagnose': cmd_diagnose,
+        'cp-check': cmd_cp_check,
     }
     dispatch[args.cmd](args)
 

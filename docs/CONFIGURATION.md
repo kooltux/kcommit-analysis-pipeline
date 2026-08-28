@@ -142,6 +142,7 @@ using `git show` on Makefiles across the revision range.
 | `count_hunks` | `false` | Count unified-diff hunks for relevant commits (opt-in; reads patch text) |
 | `cherry_pick_test` | `false` | Test cherry-pick feasibility onto `kernel.rev_old` for relevant commits (opt-in; expensive: modifies git worktree) |
 | `cherry_pick_cache_dir` | `null` | Directory for the SQLite cherry-pick result cache, one `cherry.db` per target revision (`<dir>/<rev_old>/cherry.db`). **Required** when `cherry_pick_test` is enabled — incremental runs reuse cached results instead of re-testing every commit (10-100x speedup). |
+| `cherry_pick_workers` | `0` | Parallel worker count for cherry-pick testing (v19.2.0). `0` = auto-detect via `os.cpu_count()`; a positive integer pins the worker count. Mirrors `score_workers` semantics. Cherry-pick tests run in parallel via a `ProcessPoolExecutor`, with the target revision checked out exactly once in the parent process; workers only read (`git show` + `git apply --check`), which is safe to parallelize against a shared, unchanging working tree. |
 | `no_merges` | `true` | Pass `--no-merges` to `git log` |
 | `first_parent` | `false` | Pass `--first-parent` to `git log` |
 | `max_commits` | `0` | Maximum commits to collect (`0` = no limit) |
@@ -159,6 +160,7 @@ using `git show` on Makefiles across the revision range.
   "count_hunks":         false,  // inspect patches of relevant (post-filter) commits to count diff hunks (stats.hunks); feeds backport_complexity. opt-in (reads patch text via git; kept set only)
   "cherry_pick_test":    false,  // test if each relevant commit can be cherry-picked cleanly onto kernel.rev_old; adds cherry_pickable indicator. opt-in (expensive: requires git worktree manipulation)
   "cherry_pick_cache_dir": null, // REQUIRED when cherry_pick_test is enabled. SQLite cache dir, one DB per target revision: <dir>/<rev_old>/cherry.db. Only new commits are tested on reruns (10-100x speedup for incremental runs against released/immutable kernel history).
+  "cherry_pick_workers": 0,      // parallel cherry-pick workers (0 = auto-detect via cpu_count); mirrors score_workers semantics
   "no_merges":           true,   // git log --no-merges
   "first_parent":        false,  // git log --first-parent
   "max_commits":         0,      // cap on commits collected (0 = no limit)
