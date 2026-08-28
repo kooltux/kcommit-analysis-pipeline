@@ -47,6 +47,10 @@
   --heat-3-bg: #ffcccc; --heat-3-fg: #800000;
   --heat-4-bg: #e8b9f7; --heat-4-fg: #7b1fa2;
 
+  /* Cherry-pill tokens (green=Yes/easy, purple=No/hard) */
+  --cherry-easy-bg: #dafbe1; --cherry-easy-fg: #116329;
+  --cherry-hard-bg: #f3e8ff; --cherry-hard-fg: #6b21a8;
+
   /* SVG chart tokens */
   --kc-chart-curve-fill:   #0969da;
   --kc-chart-curve-stroke: #0550ae;
@@ -100,6 +104,11 @@ html[data-theme="dark"] {
   --heat-2-bg: #4a3d08; --heat-2-fg: #ffeb3b;
   --heat-3-bg: #800000; --heat-3-fg: #ffcccc;
   --heat-4-bg: #3d0c3d; --heat-4-fg: #e8b9f7;
+  
+  /* Cherry-pill tokens (green=Yes/easy, purple=No/hard) */
+  --cherry-easy-bg: #1a3a26; --cherry-easy-fg: #56d364;
+  --cherry-hard-bg: #3d0c3d; --cherry-hard-fg: #e8b9f7;
+  
   --kc-chart-curve-fill:   #58a6ff;
   --kc-chart-curve-stroke: #79c0ff;
   --kc-chart-bar-zero:    #6e7681;
@@ -870,6 +879,21 @@ button, input, select, textarea { font: inherit; cursor: pointer; }
 .kc-heat-2 { background: var(--heat-2-bg); color: var(--heat-2-fg); }
 .kc-heat-3 { background: var(--heat-3-bg); color: var(--heat-3-fg); }
 .kc-heat-4 { background: var(--heat-4-bg); color: var(--heat-4-fg); }
+
+/* ── Cherry-pill (cherry-pick feasibility) ───────────────────────── */
+/* Green = Yes/easy (cherry-pickable), Purple = No/hard (conflicts).
+ * Matches the design pattern used for other binary indicators.
+ * Theme-aware tokens ensure proper contrast in both light and dark modes. */
+.kc-cherry-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.kc-cherry-easy { background: var(--cherry-easy-bg); color: var(--cherry-easy-fg); }
+.kc-cherry-hard { background: var(--cherry-hard-bg); color: var(--cherry-hard-fg); }
 
 /* ── Profile colour bullets + legend ────────────────────────────── */
 /* Deterministic per-profile colours (JS profileColor()) shown as bullets in

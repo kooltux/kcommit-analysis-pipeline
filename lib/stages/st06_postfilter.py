@@ -106,6 +106,7 @@ Usage:
   python3 cherry_pick_check.py              # Normal mode
   python3 cherry_pick_check.py --verbose    # Verbose mode (dump git commands)
   python3 cherry_pick_check.py --json       # JSON output
+  python3 cherry_pick_check.py --refresh    # Refresh SQLite database
 
 The script uses `git show | git apply --check` to test feasibility.
 This is much faster than cherry-pick because it doesn't modify the working tree.
@@ -113,12 +114,17 @@ This is much faster than cherry-pick because it doesn't modify the working tree.
 import argparse
 import json
 import os
+import sqlite3
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 KERNEL_SOURCE = {kernel_source!r}
 TARGET_REV = {target_rev!r}
 COMMITS = {commit_shas!r}
+
+# SQLite database path (same as lib/cherrypick_db.py)
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'cache', TARGET_REV, 'cherry.db')
 
 
 def run_git(args, verbose=False):
@@ -160,37 +166,101 @@ def can_cherry_pick(sha, verbose=False):
             return {{'ok': True, 'conflicts': [], 'error': None}}
         
         # Step 2: Test if patch applies cleanly at target revision
+        # CRITICAL: Pass patch to stdin (matches lib/gitutils.py)
         if verbose:
             print('  Testing if patch applies...', file=sys.stderr)
-        out, err, rc = run_git(['apply', '--check', '--3way', '--unidiff-zero'], verbose)
+        cmd = ['git', '-C', KERNEL_SOURCE, 'apply', '--check', '--3way', '--unidiff-zero']
+        result = subprocess.run(cmd, input=patch, capture_output=True, text=True, check=False)
+        out, err, rc = result.stdout, result.stderr, result.returncode
         
-        # Check for error messages in output
-        # When successful, output is empty
-        if out.strip():
-            # Parse conflicted files from output
-            conflicts = []
-            for line in out.splitlines():
-                # Lines like "error: file.c: does not match index"
-                if 'error:' in line.lower() or 'does not match' in line.lower():
-                    # Extract filename
-                    if ':' in line:
-                        parts = line.split(':')
-                        # Look for a part that looks like a file path
-                        for part in parts:
-                            part = part.strip()
-                            if '/' in part or part.endswith(('.c', '.h', '.S', '.make', '.mk')):
-                                # This looks like a file path
-                                fname = part.split()[0] if part else ''
-                                if fname and fname not in conflicts:
-                                    conflicts.append(fname)
-            return {{'ok': False, 'conflicts': conflicts, 'error': None}}
+        # Check return code: 0 = success, non-zero = conflict
+        if rc == 0:
+            return {{'ok': True, 'conflicts': [], 'error': None}}
         
-        return {{'ok': True, 'conflicts': [], 'error': None}}
+        # Parse conflicted files from error output
+        conflicts = []
+        error_output = err if err else out
+        for line in error_output.splitlines():
+            # Lines like "error: file.c: does not match index"
+            if 'error:' in line.lower() or 'does not match' in line.lower():
+                # Extract filename
+                if ':' in line:
+                    parts = line.split(':')
+                    # Look for a part that looks like a file path
+                    for part in parts:
+                        part = part.strip()
+                        if '/' in part or part.endswith(('.c', '.h', '.S', '.make', '.mk')):
+                            # This looks like a file path
+                            fname = part.split()[0] if part else ''
+                            if fname and fname not in conflicts:
+                                conflicts.append(fname)
+        return {{'ok': False, 'conflicts': conflicts, 'error': None}}
         
     except Exception as exc:
         if verbose:
             print('  Error: %s' % exc, file=sys.stderr)
         return {{'ok': False, 'conflicts': [], 'error': str(exc)}}
+
+
+def load_cached_results():
+    """Load cached cherry-pick results from SQLite database."""
+    if not os.path.exists(DB_PATH):
+        return {{}}
+    
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT sha, ok, conflicts, error FROM commits')
+        
+        results = {{}}
+        for row in cursor.fetchall():
+            results[row['sha']] = {{
+                'ok': bool(row['ok']),
+                'conflicts': json.loads(row['conflicts']),
+                'error': row['error'],
+            }}
+        conn.close()
+        return results
+    except Exception as exc:
+        print('Warning: could not load cache (%s); re-testing all' % exc, file=sys.stderr)
+        return {{}}
+
+
+def save_results_to_cache(results):
+    """Save cherry-pick results to SQLite database."""
+    try:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Create table if not exists
+        cursor.execute(
+            'CREATE TABLE IF NOT EXISTS commits ('
+            'sha TEXT PRIMARY KEY, '
+            'ok INTEGER NOT NULL, '
+            'conflicts TEXT NOT NULL, '
+            'error TEXT, '
+            'tested_at TEXT NOT NULL)'
+        )
+        
+        # Insert or replace results
+        tested_at = datetime.now(timezone.utc).isoformat()
+        for sha, result in results.items():
+            conflicts_json = json.dumps(result.get('conflicts', []))
+            cursor.execute(
+                'INSERT OR REPLACE INTO commits '
+                '(sha, ok, conflicts, error, tested_at) '
+                'VALUES (?, ?, ?, ?, ?)',
+                (sha, 1 if result.get('ok', False) else 0,
+                 conflicts_json, result.get('error'), tested_at)
+            )
+        
+        conn.commit()
+        conn.close()
+        print('  Saved %d results to %s' % (len(results), DB_PATH), file=sys.stderr)
+    except Exception as exc:
+        print('Warning: could not save cache (%s)' % exc, file=sys.stderr)
 
 
 def main():
@@ -200,6 +270,8 @@ def main():
                         help='Print all git commands')
     parser.add_argument('--json', action='store_true',
                         help='Output results as JSON')
+    parser.add_argument('--refresh', action='store_true',
+                        help='Re-test all commits and refresh SQLite database')
     args = parser.parse_args()
     
     if not os.path.isdir(KERNEL_SOURCE):
@@ -210,6 +282,12 @@ def main():
     if args.verbose:
         print('Kernel source: %s' % KERNEL_SOURCE, file=sys.stderr)
         print('Target revision: %s' % TARGET_REV, file=sys.stderr)
+        print('Database: %s' % DB_PATH, file=sys.stderr)
+    
+    # Load cached results (unless --refresh)
+    cached = {{}} if args.refresh else load_cached_results()
+    if args.verbose and cached:
+        print('Loaded %d cached results' % len(cached), file=sys.stderr)
     
     # Save current HEAD to restore later
     if args.verbose:
@@ -231,18 +309,31 @@ def main():
         results = []
         ok_count = 0
         fail_count = 0
+        new_results = {{}}  # For caching
         
         for i, sha in enumerate(COMMITS, 1):
             if args.verbose:
                 print('\\n[%d/%d] %s' % (i, len(COMMITS), sha[:12]), file=sys.stderr)
             
-            result = can_cherry_pick(sha, verbose=args.verbose)
-            result['sha'] = sha
-            results.append(result)
+            # Check cache first (unless --refresh)
+            if not args.refresh and sha in cached:
+                result = cached[sha].copy()
+                result['sha'] = sha
+                result['cached'] = True
+                results.append(result)
+                if args.verbose:
+                    print('  [cached] %s' % ('clean' if result['ok'] else 'conflict'), file=sys.stderr)
+            else:
+                # Test this commit
+                result = can_cherry_pick(sha, verbose=args.verbose)
+                result['sha'] = sha
+                result['cached'] = False
+                results.append(result)
+                new_results[sha] = result
             
             if result['ok']:
                 ok_count += 1
-                status = '✓ clean'
+                status = '✓ clean' + (' [cached]' if result.get('cached') else '')
             else:
                 fail_count += 1
                 status = '✗ conflict' + (' (%d files)' % len(result['conflicts'])
@@ -256,6 +347,10 @@ def main():
                     if len(result['conflicts']) > 5:
                         print('    ... and %d more' % (len(result['conflicts']) - 5))
         
+        # Save new results to cache
+        if new_results:
+            save_results_to_cache(new_results)
+        
         if args.json:
             print(json.dumps({{
                 'summary': {{
@@ -264,12 +359,17 @@ def main():
                     'conflicts': fail_count,
                     'target_rev': TARGET_REV,
                     'kernel_source': KERNEL_SOURCE,
+                    'cached': len([r for r in results if r.get('cached')]),
+                    'tested': len(new_results),
                 }},
                 'results': results,
             }}, indent=2))
         else:
             print('\\nSummary: %d/%d clean, %d with conflicts' % (
                 ok_count, len(COMMITS), fail_count))
+            if new_results:
+                print('  Tested %d new commits, reused %d cached' % (
+                    len(new_results), len(cached)))
     
     finally:
         # Always restore original HEAD

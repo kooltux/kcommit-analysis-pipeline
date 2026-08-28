@@ -121,6 +121,14 @@
     // Opt-in because it requires git worktree manipulation (checkout target,
     // attempt cherry-pick, clean up) for each commit — expensive for large sets.
     "cherry_pick_test": true,
+    // cherry_pick_cache_dir: directory for SQLite cache of cherry-pick test results.
+    // REQUIRED when cherry_pick_test is enabled. Cache is organized per target revision:
+    //   <cache_dir>/v6.1/cherry.db    # SQLite DB for v6.1 target
+    //   <cache_dir>/v5.15/cherry.db   # SQLite DB for v5.15 target
+    // Only new commits are tested; cached results are reused for efficiency.
+    // For released kernels (immutable history), this means one-time testing per target.
+    // Typical speedup: 10-100x for incremental runs.
+    "cherry_pick_cache_dir": "${WORKSPACE}/work/cherry-cache",
     // use_no_merges: pass --no-merges to git log (recommended).
     "no_merges":     true,
     // use_first_parent: pass --first-parent to git log.

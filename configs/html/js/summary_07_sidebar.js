@@ -28,6 +28,8 @@
     'has_cve':             'Commits that mention a CVE identifier in their message body.',
     'has_syzbot':          'Commits that reference a syzbot bug report.',
     'stable_cc':           'Commits with a Cc: stable@vger.kernel.org line requesting stable backport.',
+    'Cherry-pick easy':    'Commits that can be cherry-picked cleanly onto the target revision (no conflicts).',
+    'Cherry-pick hard':    'Commits that would require manual work to cherry-pick (conflicts detected).',
   };
 
   /* ---- Analysis Context (v16.9.0) ------------------------------------ */
@@ -169,6 +171,23 @@
           + kv('Dropped',     `<strong>${esc(st6.dropped || 0)}</strong>`, TIPS['Dropped'])
           + kv('Top score',   `<strong>${esc(st6.top_score           || 0)}</strong>`, TIPS['Top score'])
           + kv('Bottom kept', `<strong>${esc(st6.bottom_kept_score   || 0)}</strong>`, TIPS['Bottom kept'])
+          + `</div></div>`;
+  }
+
+  /* ---- Cherry-pick Statistics -------------------------------------- */
+  const cherry = SB.cherry_pick || {};
+  if (cherry.total_commits) {
+    const total = cherry.total_commits;
+    const easy = cherry.cherry_pickable || 0;
+    const hard = cherry.cherry_pick_conflicts || 0;
+    const easyPct = total ? Math.round((easy / total) * 100) : 0;
+    const hardPct = total ? Math.round((hard / total) * 100) : 0;
+    
+    html += `<div class="kc-section-head">Cherry-pick</div>`
+          + `<div class="kc-stat-block"><div class="kc-stat-block-head"><span class="kc-icon">\ud83c\udf52</span>Cherry-pick feasibility</div><div class="kc-stat-block-body">`
+          + kv('Total tested',  `<strong>${esc(total)}</strong>`, 'Total commits tested for cherry-pick feasibility.')
+          + kv('Easy picks',    `<span class="kc-cherry-pill kc-cherry-easy">${esc(easy)} (${esc(easyPct)}%)</span>`, TIPS['Cherry-pick easy'])
+          + kv('Hard picks',    `<span class="kc-cherry-pill kc-cherry-hard">${esc(hard)} (${esc(hardPct)}%)</span>`, TIPS['Cherry-pick hard'])
           + `</div></div>`;
   }
 

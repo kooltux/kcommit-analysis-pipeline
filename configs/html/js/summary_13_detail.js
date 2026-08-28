@@ -153,10 +153,19 @@ function populateDetail(commit) {
   const ovPriority = commit.pick_priority;
   const has = v => v != null && v !== '';
 
+  /* Cherry-pick indicator */
+  const cherryOk = commit.cherry_pickable;
+  const cherryPill = cherryOk != null
+    ? cherryOk
+      ? `<span class="kc-cherry-pill kc-cherry-easy">\u2714\ufe0f Yes</span>`
+      : `<span class="kc-cherry-pill kc-cherry-hard">\u2716\ufe0f No</span>`
+    : '';
+
   const indicatorRows = [
     has(ovPriority) ? kv('Pick Priority', heatPill(ovPriority, {scale: 100, polarity: 'higher-better'})) : '',
     has(ovScoreN)   ? kv('Score',          heatPill(ovScoreN,   {scale: 100, polarity: 'higher-better'})) : '',
     has(ovCx)       ? kv('Complexity',      heatPill(ovCx,       {scale: 100, polarity: 'higher-worse'}))  : '',
+    cherryPill      ? kv('Cherry-pick',    cherryPill)                                                    : '',
     has(ovFiles)    ? kv('Files changed',  esc(ovFiles))                                                : '',
     has(ovLines)    ? kv('Lines changed',  esc(ovLines))                                                : '',
     has(ovHunks)    ? kv('Hunks',           esc(ovHunks))                                                : '',

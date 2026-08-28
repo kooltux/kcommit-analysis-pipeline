@@ -8,10 +8,12 @@ v19.0.0 (G):
   - Per-target storage: one DB per rev_old
   - Incremental updates: only test new commits
   - Immutable history: released kernel commits never change
+  - Auto-save every 5s during batch operations to avoid data loss
 """
 import os
 import sqlite3
 import json
+import time
 from datetime import datetime, timezone
 
 
@@ -28,12 +30,17 @@ class CherryDB:
       results = db.get_results(['abc123', 'def456'])
     """
     
+    # Auto-save interval in seconds
+    AUTO_SAVE_INTERVAL = 5.0
+    
     def __init__(self, db_path):
         """Initialize or open existing database."""
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
         self._create_schema()
+        self._pending_results = {}  # Buffer for auto-save
+        self._last_save_time = time.time()
     
     def _create_schema(self):
         """Create database schema if not exists."""
@@ -50,8 +57,26 @@ class CherryDB:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ok ON commits(ok)')
         self.conn.commit()
     
+    def add_result(self, sha, result):
+        """Add or update a single cherry-pick result with auto-save.
+        
+        This method buffers the result and auto-saves every AUTO_SAVE_INTERVAL seconds.
+        Use this for streaming results during batch operations.
+        
+        Args:
+            sha: commit SHA
+            result: dict {'ok': bool, 'conflicts': list, 'error': str or None}
+        """
+        self._pending_results[sha] = result
+        
+        # Auto-save if interval has elapsed
+        now = time.time()
+        if now - self._last_save_time >= self.AUTO_SAVE_INTERVAL:
+            self.flush()
+            self._last_save_time = now
+    
     def add_results(self, results):
-        """Add or update cherry-pick results.
+        """Add or update multiple cherry-pick results (immediate commit).
         
         Args:
             results: dict mapping sha -> {'ok': bool, 'conflicts': list, 'error': str or None}
@@ -73,6 +98,12 @@ class CherryDB:
             ))
         
         self.conn.commit()
+    
+    def flush(self):
+        """Flush pending results to database (called automatically every 5s)."""
+        if self._pending_results:
+            self.add_results(self._pending_results)
+            self._pending_results = {}
     
     def get_results(self, shas):
         """Get cherry-pick results for specified SHAs.
@@ -118,7 +149,8 @@ class CherryDB:
         return cursor.fetchone()[0]
     
     def save(self):
-        """Save and close database."""
+        """Save pending results and close database."""
+        self.flush()
         self.conn.commit()
         self.conn.close()
     

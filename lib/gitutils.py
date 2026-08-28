@@ -663,6 +663,9 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
     Uses CherryDB to cache results per target_rev. Only tests new commits,
     reuses existing results for already-tested commits.
     
+    Results are saved to the database every 5 seconds during testing to avoid
+    data loss if the process is interrupted.
+    
     Args:
         cfg: pipeline config dict (MUST contain collect.cherry_pick_cache_dir)
         commit_shas: list of commit SHAs to test
@@ -723,17 +726,20 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
                 sys.stdout.write('\r  %s' % bar)
                 sys.stdout.flush()
         
-        # Test new commits
+        # Test new commits with auto-save every 5 seconds
         new_results = batch_can_cherry_pick(cfg, new_shas, target_rev, 
                                            progress_callback=_progress_with_eta)
+        
+        # Save each result to database (auto-saves every 5s internally)
+        for sha, result in new_results.items():
+            db.add_result(sha, result)
         
         # Clear progress line
         sys.stdout.write('\n')
         sys.stdout.flush()
         
-        # Save to database
-        db.add_results(new_results)
-        db.save()
+        # Final flush to ensure all results are saved
+        db.flush()
         
         # Merge with cached results
         results.update(new_results)
@@ -742,5 +748,8 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
         print('  Completed: tested %d new commits in %.1fs' % (len(new_shas), elapsed))
         if len(tested_shas) > 0:
             print('  Reused %d cached results' % len(tested_shas))
+    
+    # Save and close database
+    db.save()
     
     return results
