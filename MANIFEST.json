@@ -1,10 +1,8 @@
 {
-  "version": "v18.6.0",
+  "version": "v19.1.0",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
   "library_dir": "lib",
-  "example_configs": [
-    "configs/example-arm-embedded-full.json"
-  ],
+  "example_configs": ["configs/example-arm-embedded-full.json"],
   "pipeline_stages": [
     {"index": 0, "key": "prepare_pipeline",      "outputs": ["cache/compiled_rules.json", "cache/prepare_summary.json"]},
     {"index": 1, "key": "collect_commits",        "outputs": ["cache/commits.json"]},

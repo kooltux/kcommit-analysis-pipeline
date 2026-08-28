@@ -148,6 +148,24 @@
     the single normalization used by both the "Score" column (formerly "Score %")
     and `pick_priority`. See the README "Scoring model" and "Backport indicators"
     sections for the formulas.
+  - If `collect.cherry_pick_test` is set, tests every relevant commit for
+    cherry-pick feasibility onto `kernel.rev_old` via
+    `lib.gitutils.batch_can_cherry_pick_cached()` (v19.1.0): patches are
+    tested with `git show | git apply --check --3way --unidiff-zero` and the
+    subprocess return code decides ok/conflict (no working-tree mutation).
+    Results are cached per target revision in a SQLite database at
+    `<collect.cherry_pick_cache_dir>/<rev_old>/cherry.db` — **required**
+    config when the test is enabled. Only commits not already present in the
+    cache are tested; cached results are reused, which is a 10-100x speedup
+    on incremental runs against the same (immutable) released kernel
+    history. A live progress bar with ETA is written to stdout during
+    testing. When enabled, stage 06 also writes a standalone
+    `output/cherry_pick_check.py` script (via
+    `_generate_cherry_pick_check_script()`) that re-runs the same checks
+    later without the full pipeline: it reads/writes the same SQLite cache
+    by default, and accepts `--refresh` (ignore cache, re-test and overwrite
+    every commit), `--verbose` (print every git command), and `--json`
+    (machine-readable output).
 - Outputs `relevant_commits.json`.
 
 ### Stage 07 — report_commits

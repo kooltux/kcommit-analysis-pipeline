@@ -30,8 +30,8 @@ User-defined shorthand variables expanded before any other processing:
 ```
 `work_dir` is where `cache/` and `output/` sub-directories are created.
 Override `cache_dir` or `output_dir` individually to place them on different
-storage (e.g. a RAM disk for the cache). Only `work_dir`, `cache_dir`, and
-`output_dir` are valid under `paths` in v10.
+storage (e.g. a RAM disk for the cache). `work_dir`, `cache_dir`, and
+`output_dir` are the only valid keys under `paths`.
 
 ### `kernel`
 ```json
@@ -141,6 +141,7 @@ using `git show` on Makefiles across the revision range.
 | `use_numstat` | `false` | Use `git log --numstat` to capture insertions/deletions per file |
 | `count_hunks` | `false` | Count unified-diff hunks for relevant commits (opt-in; reads patch text) |
 | `cherry_pick_test` | `false` | Test cherry-pick feasibility onto `kernel.rev_old` for relevant commits (opt-in; expensive: modifies git worktree) |
+| `cherry_pick_cache_dir` | `null` | Directory for the SQLite cherry-pick result cache, one `cherry.db` per target revision (`<dir>/<rev_old>/cherry.db`). **Required** when `cherry_pick_test` is enabled — incremental runs reuse cached results instead of re-testing every commit (10-100x speedup). |
 | `no_merges` | `true` | Pass `--no-merges` to `git log` |
 | `first_parent` | `false` | Pass `--first-parent` to `git log` |
 | `max_commits` | `0` | Maximum commits to collect (`0` = no limit) |
@@ -157,6 +158,7 @@ using `git show` on Makefiles across the revision range.
   "use_numstat":         false,  // git log --numstat (adds per-line change data; enables full lines_changed/insertions/deletions size indicators)
   "count_hunks":         false,  // inspect patches of relevant (post-filter) commits to count diff hunks (stats.hunks); feeds backport_complexity. opt-in (reads patch text via git; kept set only)
   "cherry_pick_test":    false,  // test if each relevant commit can be cherry-picked cleanly onto kernel.rev_old; adds cherry_pickable indicator. opt-in (expensive: requires git worktree manipulation)
+  "cherry_pick_cache_dir": null, // REQUIRED when cherry_pick_test is enabled. SQLite cache dir, one DB per target revision: <dir>/<rev_old>/cherry.db. Only new commits are tested on reruns (10-100x speedup for incremental runs against released/immutable kernel history).
   "no_merges":           true,   // git log --no-merges
   "first_parent":        false,  // git log --first-parent
   "max_commits":         0,      // cap on commits collected (0 = no limit)
