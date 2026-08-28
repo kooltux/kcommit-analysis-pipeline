@@ -31,6 +31,7 @@
     'Tested':              'Total commits tested for cherry-pick feasibility onto the target revision.',
     'Direct':              'Commits that can be cherry-picked cleanly onto the target revision (no conflicts).',
     'Conflict':            'Commits that would require manual work to cherry-pick (conflicts detected).',
+    'Reject rate':         'Percentage of tested commits that have cherry-pick conflicts.',
   };
 
   /* ---- Analysis Context (v16.9.0) ------------------------------------ */
@@ -85,45 +86,61 @@
     }
   })();
 
+  /* ---- Shared funnel-row renderer (gauge bar + right-aligned value) --
+   * Used by both the "Commit flow" funnel and the "Cherry-pick feasibility"
+   * sub-section so the two blocks render with identical visual language:
+   * a coloured .kc-fbar-fill gauge sized to *pct* of *total*, and the raw
+   * count right-aligned after the bar. cls selects the fill colour via
+   * .kc-funnel-row.kept (green/success) / .drop (red/danger) / default
+   * (blue/accent). ------------------------------------------------------ */
+  function fRow(label, val, total, cls) {
+    const pct = total ? Math.round((val / total) * 100) : 0;
+    const tip = TIPS[label] || '';
+    const tipHtml = tip
+      ? `<i class="kc-info-icon" role="button" aria-label="${esc(label)} help" tabindex="0">i<span class="kc-tooltip">${esc(tip)}</span></i>`
+      : '';
+    return `<div class="kc-funnel-row ${cls}"><span class="kc-fn-label"><span class="kc-kv-label-wrap">${esc(label)}${tipHtml}</span></span><div class="kc-fbar"><div class="kc-fbar-fill" style="width:${pct}%"></div></div><span class="kc-fn-val">${val}</span></div>`;
+  }
+
   /* ---- Pipeline Funnel ----------------------------------------------- */
   const f = SB.funnel || {};
   if (f.collected != null) {
     const total = f.collected || 1;
-    function fRow(label, val, cls) {
-      const pct = Math.round((val / total) * 100);
-      const tip = TIPS[label] || '';
-      const tipHtml = tip
-        ? `<i class="kc-info-icon" role="button" aria-label="${esc(label)} help" tabindex="0">i<span class="kc-tooltip">${esc(tip)}</span></i>`
-        : '';
-      return `<div class="kc-funnel-row ${cls}"><span class="kc-fn-label"><span class="kc-kv-label-wrap">${esc(label)}${tipHtml}</span></span><div class="kc-fbar"><div class="kc-fbar-fill" style="width:${pct}%"></div></div><span class="kc-fn-val">${val}</span></div>`;
-    }
     html += `<div class="kc-section-head">Pipeline Funnel</div>`
           + `<div class="kc-stat-block"><div class="kc-stat-block-head"><span class="kc-icon">\ud83d\udd0d</span>Commit flow</div><div class="kc-stat-block-body">`
           + `<div class="kc-funnel-bar">`
-          + fRow('Collected',         f.collected        || 0, '')
-          + fRow('Prefilter dropped',  f.prefilter_dropped || 0, 'drop')
-          + fRow('Scored',             f.scored            || 0, '')
-          + fRow('Postfilter dropped', f.postfilter_dropped|| 0, 'drop')
-          + fRow('Final report',       f.final_report      || 0, 'kept')
+          + fRow('Collected',         f.collected        || 0, total, '')
+          + fRow('Prefilter dropped',  f.prefilter_dropped || 0, total, 'drop')
+          + fRow('Scored',             f.scored            || 0, total, '')
+          + fRow('Postfilter dropped', f.postfilter_dropped|| 0, total, 'drop')
+          + fRow('Final report',       f.final_report      || 0, total, 'kept')
           + `</div>`
           + kv('Pass rate', `<strong>${esc(f.pass_rate_pct || 0)}%</strong>`, TIPS['Pass rate'])
           + `</div></div>`;
 
     /* ---- Cherry-pick sub-section (optional; nested under Pipeline Funnel,
-     * only rendered when cherry-pick test data is available) ---------- */
+     * only rendered when cherry-pick test data is available). Uses the same
+     * fRow() gauge-bar renderer as "Commit flow": Tested is the blue/accent
+     * denominator row (100% width), Direct is green (kept), Conflict is red
+     * (drop). No pills \u2014 plain numbers right-aligned after each gauge, plus
+     * Pass rate / Reject rate percentage rows below, mirroring the funnel's
+     * own Pass rate row. -------------------------------------------------- */
     const cherry = SB.cherry_pick || {};
     if (cherry.total_commits) {
       const cpTotal    = cherry.total_commits;
       const cpDirect   = cherry.cherry_pickable || 0;
       const cpConflict = cherry.cherry_pick_conflicts || 0;
-      const directPct   = cpTotal ? (cpDirect   / cpTotal) * 100 : 0;
-      const conflictPct = cpTotal ? (cpConflict / cpTotal) * 100 : 0;
-      const fmtPct = n => n.toFixed(1) + '%';
+      const passRatePct   = cpTotal ? (cpDirect   / cpTotal) * 100 : 0;
+      const rejectRatePct = cpTotal ? (cpConflict / cpTotal) * 100 : 0;
 
       html += `<div class="kc-stat-block"><div class="kc-stat-block-head"><span class="kc-icon">\ud83c\udf52</span>Cherry-pick feasibility</div><div class="kc-stat-block-body">`
-            + kv('Tested',   `<strong>${esc(cpTotal)}</strong>`, TIPS['Tested'])
-            + kv('Direct',   `<span class="kc-cherry-pill kc-cherry-easy">${esc(cpDirect)} (${fmtPct(directPct)})</span>`, TIPS['Direct'])
-            + kv('Conflict', `<span class="kc-cherry-pill kc-cherry-hard">${esc(cpConflict)} (${fmtPct(conflictPct)})</span>`, TIPS['Conflict'])
+            + `<div class="kc-funnel-bar">`
+            + fRow('Tested',   cpTotal,    cpTotal, '')
+            + fRow('Direct',   cpDirect,   cpTotal, 'kept')
+            + fRow('Conflict', cpConflict, cpTotal, 'drop')
+            + `</div>`
+            + kv('Pass rate',   `<strong>${passRatePct.toFixed(1)}%</strong>`,   TIPS['Pass rate'])
+            + kv('Reject rate', `<strong>${rejectRatePct.toFixed(1)}%</strong>`, TIPS['Reject rate'])
             + `</div></div>`;
     }
   }

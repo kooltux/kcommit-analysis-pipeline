@@ -16,7 +16,7 @@
  *   Escape                    — close detail panel
  */
 
-/* ── DOM refs ─────────────────────────────────────────────────────────── */
+/* ── DOM refs ──────────────────────────────────────────── */
 const detailBody     = document.getElementById('kc-detail-body');
 const tabOverview    = document.getElementById('kc-tab-overview');
 const tabScoring     = document.getElementById('kc-tab-scoring');
@@ -24,11 +24,11 @@ const tabFiles       = document.getElementById('kc-tab-files');
 const tabRaw         = document.getElementById('kc-tab-raw');
 const detailTabBtns  = document.querySelectorAll('.kc-detail-tabs .kc-tab');
 
-/* ── Active detail state ─────────────────────────────────────────────── */
+/* ── Active detail state ─────────────────────────────────── */
 let activeSha12 = null;
 let activeDetailTab = 'overview';
 
-/* ── Tab switching ───────────────────────────────────────────────────── */
+/* ── Tab switching ──────────────────────────────────────── */
 function switchDetailTab(name) {
   activeDetailTab = name;
   detailTabBtns.forEach(btn => {
@@ -45,7 +45,7 @@ detailTabBtns.forEach(btn => {
   btn.addEventListener('click', () => switchDetailTab(btn.dataset.tab));
 });
 
-/* ── clearDetailPanel ────────────────────────────────────────────────── */
+/* ── clearDetailPanel ──────────────────────────────────── */
 function clearDetailPanel() {
   activeSha12 = null;
   if (tabOverview) tabOverview.innerHTML =
@@ -57,7 +57,7 @@ function clearDetailPanel() {
   document.querySelectorAll('tr.kc-row-active').forEach(r => r.classList.remove('kc-row-active'));
 }
 
-/* ── fetchCommit ─────────────────────────────────────────────────────── */
+/* ── fetchCommit ───────────────────────────────────────── */
 function fetchCommit(sha) {
   /* 1. Inline embedded store (embedded or sidecar-index mode) */
   if (STORE) {
@@ -80,7 +80,7 @@ function fetchCommit(sha) {
   });
 }
 
-/* ── renderProfileTrace ──────────────────────────────────────────────── */
+/* ── renderProfileTrace ────────────────────────────────── */
 function renderProfileTrace(profileName, traceData) {
   if (!traceData || !traceData.rules) return '<p class="kc-muted">No trace data.</p>';
 
@@ -121,7 +121,7 @@ function renderProfileTrace(profileName, traceData) {
   </div>`;
 }
 
-/* ── populateDetail ──────────────────────────────────────────────────── */
+/* ── populateDetail ────────────────────────────────────── */
 function populateDetail(commit) {
   if (!commit) {
     clearDetailPanel();
@@ -153,12 +153,15 @@ function populateDetail(commit) {
   const ovPriority = commit.pick_priority;
   const has = v => v != null && v !== '';
 
-  /* Cherry-pick indicator */
+  /* Cherry-pick indicator — uses the same heat-pill logic (higher-better,
+   * 0-100 scale) as Pick Priority / Score / Complexity, and the same logic
+   * as the table's CP-able column: Yes -> 100 -> kc-heat-1 (green),
+   * No -> 0 -> kc-heat-4 (violet), with a checkmark/cross + Yes/No label
+   * in place of the raw number. Untested (null) renders nothing. */
   const cherryOk = commit.cherry_pickable;
   const cherryPill = cherryOk != null
-    ? cherryOk
-      ? `<span class="kc-cherry-pill kc-cherry-easy">\u2714\ufe0f Yes</span>`
-      : `<span class="kc-cherry-pill kc-cherry-hard">\u2716\ufe0f No</span>`
+    ? heatPill(cherryOk ? 100 : 0, {scale: 100, polarity: 'higher-better'},
+               cherryOk ? '\u2714\ufe0f Yes' : '\u2716\ufe0f No')
     : '';
 
   const indicatorRows = [
@@ -230,7 +233,7 @@ function populateDetail(commit) {
   }
 }
 
-/* ── openDetail ──────────────────────────────────────────────────────── */
+/* ── openDetail ───────────────────────────────────────── */
 function openDetail(sha12, sha, tabName) {
   /* Mark active row */
   document.querySelectorAll('tr.kc-row-active').forEach(r => r.classList.remove('kc-row-active'));
@@ -262,7 +265,7 @@ function openDetail(sha12, sha, tabName) {
   }
 }
 
-/* ── Row click delegation ────────────────────────────────────────────── */
+/* ── Row click delegation ────────────────────────────────── */
 document.addEventListener('click', e => {
   /* Score cell → detail + scoring tab */
   const scoreTd = e.target.closest('.kc-td-score');
@@ -290,7 +293,7 @@ document.addEventListener('click', e => {
   }
 });
 
-/* ── Keyboard navigation ─────────────────────────────────────────────── */
+/* ── Keyboard navigation ──────────────────────────────────────── */
 document.addEventListener('keydown', e => {
   /* Only handle when no input/textarea is focused */
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;

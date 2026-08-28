@@ -42,7 +42,7 @@ function chips(arr) {
  * so the same profile always gets the same hue across the sidebar legend and
  * the table "Profiles" column.  Hues are constrained to 180..330° (cyan →
  * blue → purple → magenta) to deliberately avoid the red/orange/green band
- * (0..150°) used by the numeric heat-pill scheme on Score %, Backport Cx and Pick Priority. */
+ * (0..150°) used by the numeric heat-pill scale on Score %, Backport Cx and Pick Priority. */
 function profileHue(name) {
   const s = String(name == null ? '' : name);
   let h = 0;
@@ -71,13 +71,19 @@ function profileBullets(arr) {
 /* ========= 4-level heat coloring =========
  *
  * heatLevel(value, scale) → 1..4 (even quartiles of value/scale, clamped)
- * heatPill(value, {scale, polarity}) → pill with .kc-heat-1..4; polarity:
+ * heatPill(value, {scale, polarity}, label) → pill with .kc-heat-1..4; polarity:
  *   'higher-better' (score%, pick_priority) → inverts level→class so
  *     high values (level 4, 75-100%) get kc-heat-1 (green) and
  *     low values (level 1, 0-25%) get kc-heat-4 (purple).
  *   'higher-worse' (backport_cx) → direct mapping so
  *     low values (level 1, 0-25%, easy) get kc-heat-1 (green) and
  *     high values (level 4, 75-100%, hard) get kc-heat-4 (purple).
+ *
+ * Optional *label* (v19.1.0): overrides the pill's displayed text while
+ * keeping the same heat-level colour computation from *value*. Used by the
+ * CP-able column and the commit-detail Cherry-pick indicator, which display
+ * a checkmark/cross + "Yes"/"No" label on top of the underlying 100/0 value
+ * (Yes -> green kc-heat-1, No -> violet kc-heat-4) instead of the raw number.
  *
  * Color scale (Combo 9 - High Contrast, inverted red/purple):
  *   Heat 1 = Green (#80ff80 / #004000 light, #004000 / #80ff80 dark)
@@ -92,10 +98,10 @@ function heatLevel(value, scale) {
   return q >= 75 ? 4 : q >= 50 ? 3 : q >= 25 ? 2 : 1;
 }
 
-function heatPill(value, {scale, polarity}) {
+function heatPill(value, {scale, polarity}, label) {
   const level = heatLevel(value, scale);
   const v = parseFloat(value);
-  if (!Number.isFinite(v)) return '<span class="kc-muted">—</span>';
+  if (!Number.isFinite(v)) return '<span class="kc-muted">\u2014</span>';
   /* heat classes: 1=green, 2=yellow, 3=orange, 4=red
    * Theme-aware CSS tokens ensure proper contrast in light/dark modes.
    * higher-better (score%, pick_priority): invert level→class so
@@ -103,12 +109,12 @@ function heatPill(value, {scale, polarity}) {
    * higher-worse (backport_cx): direct mapping so
    *   level 1 (0-25%, easy) → kc-heat-1 (green), level 4 (75-100%, hard) → kc-heat-4 (red) */
   const cls = polarity === 'higher-better' ? [4, 3, 2, 1][level - 1] : level;
-  return `<span class="kc-heat-pill kc-heat-${cls}">${esc(v)}</span>`;
+  return `<span class="kc-heat-pill kc-heat-${cls}">${label != null ? label : esc(v)}</span>`;
 }
 
 function stageBadge(stage) {
   const cls = stage === 'prefilter' ? 'kc-chip-prefilter' : 'kc-chip-postfilter';
-  return `<span class="kc-chip ${cls}">${esc(stage || '—')}</span>`;
+  return `<span class="kc-chip ${cls}">${esc(stage || '\u2014')}</span>`;
 }
 
 function kv(label, val, tip) {

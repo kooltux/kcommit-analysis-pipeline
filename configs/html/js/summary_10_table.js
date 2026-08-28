@@ -64,7 +64,7 @@ function scheduleAutoResize() {
   resizeTimer = setTimeout(() => autoSizeColumns(), 150);
 }
 
-/* ── Horizontal scroll sync between header and body ──────────────────── */
+/* ── Horizontal scroll sync between header and body ────────────────── */
 function syncHorizontalScroll() {
   if (!tableWrap) return;
   /* Get the scroll position from the body scroll host */
@@ -92,7 +92,7 @@ COLS.forEach(c => { colFilters[c.key] = ''; });
  * Owned here; read by summary_11_vtable.js for rendering. */
 let filteredRows = ROWS.slice();
 
-/* ── Column filter controls ──────────────────────────────────────────────── */
+/* ── Column filter controls ─────────────────────────────────────── */
 function buildFilterCtrl(col, fth) {
   const distinct = COL_DISTINCT[col.key] || [];
   const useList  = (col.type === 'select' && (col.options || []).length)
@@ -175,10 +175,10 @@ function syncColgroup() {
   if (bodyCg) bodyCg.innerHTML = colHtml;
 }
 
-/* ── Horizontal scroll sync between header and body ──────────────────── */
+/* ── Horizontal scroll sync between header and body ────────────────── */
 /* Note: syncHorizontalScroll is called directly from scroll event listener */
 
-/* ── Auto-size columns based on content ──────────────────────────────── */
+/* ── Auto-size columns based on content ────────────────────────── */
 /* Minimum widths per column key (in px) - used as fallback when content is narrow */
 const AUTO_MIN_WIDTHS = {
   'rank': 32,
@@ -252,7 +252,7 @@ function autoSizeColumns() {
   }
 }
 
-/* ── Column resize logic ──────────────────────────────────────────── */
+/* ── Column resize logic ──────────────────────────────── */
 function startResize(e) {
   if (e.target.classList.contains('kc-col-resize-handle') ||
       e.target.parentElement.classList.contains('kc-col-resize-handle')) {
@@ -411,8 +411,14 @@ function rowHtml(r) {
        * 4-step bucket for the pill color. */
       out += `<td class="kc-td-num ${cssClass}"${widthStyle}>${heatPill(v, {scale: 100, polarity: 'higher-worse'})}</td>`;
     } else if (!isFiltered && col.key === 'cherry_pickable') {
-      /* Cherry-pick test result: Yes/No select column with appropriate styling */
-      out += `<td class="kc-td-text ${cssClass}"${widthStyle}>${esc(v)}</td>`;
+      /* Cherry-pick test result rendered with the same heat-pill logic as
+       * Pick Priority / Score / Complexity (higher-better polarity, 0-100
+       * scale) but with a checkmark/cross + Yes/No label instead of the raw
+       * number: Yes -> 100 -> kc-heat-1 (green), No -> 0 -> kc-heat-4
+       * (violet). Untested (empty string) shows the standard muted dash. */
+      const cpNum = v === 'Yes' ? 100 : v === 'No' ? 0 : null;
+      const cpLabel = v === 'Yes' ? '\u2714\ufe0f Yes' : v === 'No' ? '\u2716\ufe0f No' : null;
+      out += `<td class="kc-td-num ${cssClass}"${widthStyle}>${cpNum != null ? heatPill(cpNum, {scale: 100, polarity: 'higher-better'}, cpLabel) : '<span class="kc-muted">\u2014</span>'}</td>`;
     } else if (!isFiltered && col.key === 'profiles') {
       out += `<td class="${cssClass}"${widthStyle}>${profileBullets(Array.isArray(v) ? v : [v])}</td>`;
     } else if (col.key === 'date') {
@@ -427,7 +433,7 @@ function rowHtml(r) {
   return out;
 }
 
-/* ── Sort — Schwartzian transform, no localeCompare ────────────────────────── */
+/* ── Sort — Schwartzian transform, no localeCompare ─────────────────────────── */
 function applySort() {
   if (!sortKey) return;
   const col   = COLS.find(c => c.key === sortKey);
@@ -473,7 +479,7 @@ function renderRowsAsync(onProgress, onDone) {
   setTimeout(tick, 30);
 }
 
-/* ── Filter ──────────────────────────────────────────────────────────────── */
+/* ── Filter ──────────────────────────────────────────────────── */
 let filterTimer  = 0;
 let haystackRows = null;
 
