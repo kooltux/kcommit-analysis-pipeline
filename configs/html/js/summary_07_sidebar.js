@@ -1,7 +1,7 @@
 /* summary_07_sidebar.js — kcommit-analysis-pipeline
  *
- * Left pane renderer: Analysis Context, Pipeline Funnel, Stage 04/05/06,
- * Patch Signals annotations, tooltip event wiring.
+ * Left pane renderer: Analysis Context, Pipeline Funnel (with Cherry-pick
+ * sub-section), Stage 04/05/06, Patch Signals annotations, tooltip wiring.
  */
 
 (function () {
@@ -28,8 +28,9 @@
     'has_cve':             'Commits that mention a CVE identifier in their message body.',
     'has_syzbot':          'Commits that reference a syzbot bug report.',
     'stable_cc':           'Commits with a Cc: stable@vger.kernel.org line requesting stable backport.',
-    'Cherry-pick easy':    'Commits that can be cherry-picked cleanly onto the target revision (no conflicts).',
-    'Cherry-pick hard':    'Commits that would require manual work to cherry-pick (conflicts detected).',
+    'Tested':              'Total commits tested for cherry-pick feasibility onto the target revision.',
+    'Direct':              'Commits that can be cherry-picked cleanly onto the target revision (no conflicts).',
+    'Conflict':            'Commits that would require manual work to cherry-pick (conflicts detected).',
   };
 
   /* ---- Analysis Context (v16.9.0) ------------------------------------ */
@@ -107,6 +108,24 @@
           + `</div>`
           + kv('Pass rate', `<strong>${esc(f.pass_rate_pct || 0)}%</strong>`, TIPS['Pass rate'])
           + `</div></div>`;
+
+    /* ---- Cherry-pick sub-section (optional; nested under Pipeline Funnel,
+     * only rendered when cherry-pick test data is available) ---------- */
+    const cherry = SB.cherry_pick || {};
+    if (cherry.total_commits) {
+      const cpTotal    = cherry.total_commits;
+      const cpDirect   = cherry.cherry_pickable || 0;
+      const cpConflict = cherry.cherry_pick_conflicts || 0;
+      const directPct   = cpTotal ? (cpDirect   / cpTotal) * 100 : 0;
+      const conflictPct = cpTotal ? (cpConflict / cpTotal) * 100 : 0;
+      const fmtPct = n => n.toFixed(1) + '%';
+
+      html += `<div class="kc-stat-block"><div class="kc-stat-block-head"><span class="kc-icon">\ud83c\udf52</span>Cherry-pick feasibility</div><div class="kc-stat-block-body">`
+            + kv('Tested',   `<strong>${esc(cpTotal)}</strong>`, TIPS['Tested'])
+            + kv('Direct',   `<span class="kc-cherry-pill kc-cherry-easy">${esc(cpDirect)} (${fmtPct(directPct)})</span>`, TIPS['Direct'])
+            + kv('Conflict', `<span class="kc-cherry-pill kc-cherry-hard">${esc(cpConflict)} (${fmtPct(conflictPct)})</span>`, TIPS['Conflict'])
+            + `</div></div>`;
+    }
   }
 
   /* ---- Stage 04 — Prefilter ----------------------------------------- */
@@ -171,23 +190,6 @@
           + kv('Dropped',     `<strong>${esc(st6.dropped || 0)}</strong>`, TIPS['Dropped'])
           + kv('Top score',   `<strong>${esc(st6.top_score           || 0)}</strong>`, TIPS['Top score'])
           + kv('Bottom kept', `<strong>${esc(st6.bottom_kept_score   || 0)}</strong>`, TIPS['Bottom kept'])
-          + `</div></div>`;
-  }
-
-  /* ---- Cherry-pick Statistics -------------------------------------- */
-  const cherry = SB.cherry_pick || {};
-  if (cherry.total_commits) {
-    const total = cherry.total_commits;
-    const easy = cherry.cherry_pickable || 0;
-    const hard = cherry.cherry_pick_conflicts || 0;
-    const easyPct = total ? Math.round((easy / total) * 100) : 0;
-    const hardPct = total ? Math.round((hard / total) * 100) : 0;
-    
-    html += `<div class="kc-section-head">Cherry-pick</div>`
-          + `<div class="kc-stat-block"><div class="kc-stat-block-head"><span class="kc-icon">\ud83c\udf52</span>Cherry-pick feasibility</div><div class="kc-stat-block-body">`
-          + kv('Total tested',  `<strong>${esc(total)}</strong>`, 'Total commits tested for cherry-pick feasibility.')
-          + kv('Easy picks',    `<span class="kc-cherry-pill kc-cherry-easy">${esc(easy)} (${esc(easyPct)}%)</span>`, TIPS['Cherry-pick easy'])
-          + kv('Hard picks',    `<span class="kc-cherry-pill kc-cherry-hard">${esc(hard)} (${esc(hardPct)}%)</span>`, TIPS['Cherry-pick hard'])
           + `</div></div>`;
   }
 

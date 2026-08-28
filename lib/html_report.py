@@ -69,6 +69,17 @@ Changes:
              modules in sorted order and wraps them in an IIFE.
            — generate_html_report() calls _assemble_js() instead of
              _get_template('summary.js', ...).
+  v19.1.0 — Cherry-pick ratio in the sidebar "Commit flow" section.
+           — _sidebar_payload() now accepts an optional commits kwarg (the
+             relevant/scored commit list). When commits carry a
+             cherry_pickable field (set by stage 06 when
+             collect.cherry_pick_test is enabled), a 'cherry_pick' block
+             (total_commits/cherry_pickable/cherry_pick_conflicts) is added
+             to the sidebar dict so the JS can render the easy/hard ratio
+             bars.  Previously this data was never computed server-side,
+             so the JS cherry-pick section silently never rendered.
+           — generate_html_report() now passes commits= through to
+             _sidebar_payload().
 """
 import json
 import os
@@ -428,7 +439,7 @@ def _build_context(cfg, report_stats):
 # Sidebar payload
 # ---------------------------------------------------------------------------
 
-def _sidebar_payload(report_stats, profile_summary, run_stats_data=None):
+def _sidebar_payload(report_stats, profile_summary, run_stats_data=None, commits=None):
     """Build the sidebar dict consumed by the JS left-pane renderer.
 
     v16.9.0 changes:
@@ -440,9 +451,18 @@ def _sidebar_payload(report_stats, profile_summary, run_stats_data=None):
         available (which does not carry stage_05_scoring).
       - 'evaluation' key removed from the returned dict; the JS Parameters
         section is gone.
+
+    v19.1.0:
+      - commits: the list of relevant/scored commit dicts (each may carry a
+        'cherry_pickable' bool/None field set by stage 06 when
+        collect.cherry_pick_test is enabled).  When provided, a 'cherry_pick'
+        block is added to the sidebar with total_commits/cherry_pickable/
+        cherry_pick_conflicts counts, consumed by the JS "Commit flow"
+        section to render the easy/hard cherry-pick ratio bars.
     """
     rs  = report_stats or {}
     ps  = profile_summary or {}
+    commits = commits or []
 
     collected   = rs.get('st01_collected')
     pf_kept     = rs.get('st04_prefilter_kept')
@@ -530,6 +550,20 @@ def _sidebar_payload(report_stats, profile_summary, run_stats_data=None):
         'bottom_kept_score': score_lo,
     }
 
+    # v19.1.0: cherry-pick feasibility summary (opt-in; only meaningful when
+    # collect.cherry_pick_test was enabled for this run).  cherry_pickable is
+    # True/False when tested, None when not tested -- only tested commits are
+    # counted so the ratio reflects actual test coverage, not the full report.
+    cherry_tested = [c for c in commits if c.get('cherry_pickable') is not None]
+    cherry_pick = None
+    if cherry_tested:
+        cp_ok = sum(1 for c in cherry_tested if c.get('cherry_pickable') is True)
+        cherry_pick = {
+            'total_commits':         len(cherry_tested),
+            'cherry_pickable':       cp_ok,
+            'cherry_pick_conflicts': len(cherry_tested) - cp_ok,
+        }
+
     sidebar = {
         'funnel':   funnel,
         'stage_05': {k: v for k, v in stage_05.items() if v is not None},
@@ -538,6 +572,8 @@ def _sidebar_payload(report_stats, profile_summary, run_stats_data=None):
         # 'evaluation' intentionally omitted in v16.9.0 — the Parameters
         # section has been replaced by the Context block rendered separately.
     }
+    if cherry_pick is not None:
+        sidebar['cherry_pick'] = cherry_pick
 
     drop_reasons = rs.get('st04_drop_reasons')
     if drop_reasons:
@@ -587,6 +623,9 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
 
     v18.1.0 — JS is assembled at runtime from configs/html/js/summary_*.js
     modules via _assemble_js(); configs/html/summary.js is no longer used.
+
+    v19.1.0 — *commits* is now also forwarded to _sidebar_payload() so the
+    sidebar 'cherry_pick' block can be computed from cherry_pickable flags.
     """
     if templates_dir is None:
         templates_dir = os.path.join(
@@ -605,23 +644,23 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     commits   = commits or []
     filtered  = filtered_commits or []
 
-    # ── Profile name universe (relevant tab only) ─────────────────────────
+    # ── Profile name universe (relevant tab only) ──────────────────────
     all_profile_names = sorted({
         p
         for c in commits
         for p in (c.get('matched_profiles') or [])
     })
 
-    # ── Column definitions ────────────────────────────────────────────────
+    # ── Column definitions ────────────────────────────────────────────
     cols = _columns_def(all_profile_names)
 
-    # ── Row data (relevant tab) ───────────────────────────────────────────
+    # ── Row data (relevant tab) ─────────────────────────────────────────
     rows = [
         _commit_row(i, c, all_profile_names)
         for i, c in enumerate(commits, 1)
     ]
 
-    # ── Embed full commit detail — relevant tab (embedded mode) ───────────
+    # ── Embed full commit detail — relevant tab (embedded mode) ─────────
     commit_store = {}
     if detail_mode == 'embedded' and len(commits) <= MAX_EMBEDDED_COMMITS:
         for c in commits:
@@ -630,7 +669,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
             detail = order_commit_details(c)
             if sha12: commit_store[sha12] = detail
 
-    # ── Filtered tab data (v16.14.0) ──────────────────────────────────────
+    # ── Filtered tab data (v16.14.0) ─────────────────────────────
     tabs             = None
     filtered_cols    = None
     filtered_rows    = None
@@ -655,7 +694,7 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
                 entry = _filtered_commit_store_entry(c)
                 if sha12: filtered_store[sha12] = entry
 
-    # ── Meta ──────────────────────────────────────────────────────────────
+    # ── Meta ────────────────────────────────────────────────────
     rs        = report_stats or {}
     eval_info = rs.get('evaluation') or {}
     meta = {
@@ -668,10 +707,10 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         'profiles':     eval_info.get('profiles'),
     }
 
-    # ── Context block (v16.9.0) ───────────────────────────────────────────
+    # ── Context block (v16.9.0) ──────────────────────────────────
     context = _build_context(cfg or {}, report_stats)
 
-    # ── KC_UI payload ─────────────────────────────────────────────────────
+    # ── KC_UI payload ────────────────────────────────────────────
     kc_ui = {
         'meta':        meta,
         'context':     context,
@@ -679,7 +718,8 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
         'default_sort': dict(_DEFAULT_SORT),
         'rows':        rows,
         'sidebar':     _sidebar_payload(report_stats, profile_summary,
-                                        run_stats_data=run_stats_data),
+                                        run_stats_data=run_stats_data,
+                                        commits=commits),
         'detail_root': commit_detail_root or '',
     }
 

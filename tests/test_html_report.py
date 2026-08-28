@@ -448,6 +448,53 @@ def test_html_report_context_block_present_without_cfg(tmp_path):
     assert ctx['profiles']  == []
 
 
+def test_html_report_sidebar_has_cherry_pick_block_when_tested(tmp_path):
+    """v19.1.0: sidebar.cherry_pick is populated from commits' cherry_pickable
+    flags when at least one commit was tested (cherry_pickable is not None)."""
+    out = tmp_path / 'report.html'
+    commits = [
+        {
+            'commit': 'a' * 40, 'subject': 'fix ok', 'author_name': 'Dev',
+            'author_time': 1710000000, 'score': 10,
+            'matched_profiles': [], 'product_evidence': [],
+            'cherry_pickable': True,
+        },
+        {
+            'commit': 'b' * 40, 'subject': 'fix conflict', 'author_name': 'Dev',
+            'author_time': 1710000001, 'score': 8,
+            'matched_profiles': [], 'product_evidence': [],
+            'cherry_pickable': False,
+        },
+        {
+            'commit': 'c' * 40, 'subject': 'not tested', 'author_name': 'Dev',
+            'author_time': 1710000002, 'score': 5,
+            'matched_profiles': [], 'product_evidence': [],
+            'cherry_pickable': None,
+        },
+    ]
+    generate_html_report(commits, {}, {}, str(out))
+    sb = _kc_ui(out.read_text())['sidebar']
+    assert 'cherry_pick' in sb
+    assert sb['cherry_pick']['total_commits'] == 2
+    assert sb['cherry_pick']['cherry_pickable'] == 1
+    assert sb['cherry_pick']['cherry_pick_conflicts'] == 1
+
+
+def test_html_report_sidebar_omits_cherry_pick_block_when_not_tested(tmp_path):
+    """When no commit carries a non-None cherry_pickable value (cherry-pick
+    testing disabled or not yet run), sidebar.cherry_pick must be absent so
+    the JS "Commit flow" section does not render an empty/misleading block."""
+    out = tmp_path / 'report.html'
+    commits = [{
+        'commit': 'a' * 40, 'subject': 'fix', 'author_name': 'Dev',
+        'author_time': 1710000000, 'score': 10,
+        'matched_profiles': [], 'product_evidence': [],
+    }]
+    generate_html_report(commits, {}, {}, str(out))
+    sb = _kc_ui(out.read_text())['sidebar']
+    assert 'cherry_pick' not in sb
+
+
 # ---------------------------------------------------------------------------
 # Detail / sidecar modes
 # ---------------------------------------------------------------------------
@@ -754,7 +801,7 @@ def test_summary_js_has_heat_pill_helpers():
     assert 'function heatLevel' in code
     assert 'function heatPill' in code
     # Complexity uses heatPill with higher-worse polarity
-    assert 'heatPill(v, {scale: 100, polarity: \'higher-worse\'})' in code
+    assert "heatPill(v, {scale: 100, polarity: 'higher-worse'})" in code
 
 
 def test_summary_js_has_context_section():
