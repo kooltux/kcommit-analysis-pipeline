@@ -168,12 +168,15 @@ def compute_numstat_totals(numstat):
     and 'deleted' are the raw git strings (decimal digits, or '-' for binary
     files that have no textual line delta).
 
-    Returns a dict with four commit-size indicators:
+    Returns a dict with five commit-size indicators:
 
         files_changed : number of files touched (breadth; binary files count)
         insertions    : total lines added   (binary files contribute 0)
         deletions     : total lines removed  (binary files contribute 0)
         lines_changed : insertions + deletions (churn / depth)
+        hunks         : number of diff hunks (placeholder; always 0 here;
+                        actual hunk count computed later by batch_count_hunks()
+                        when collect.count_hunks is enabled)
 
     These are descriptive size metrics only — they are NOT part of the
     profile/rule score (scoring stays exclusively rule-driven).
@@ -202,6 +205,7 @@ def compute_numstat_totals(numstat):
         'insertions':    insertions,
         'deletions':     deletions,
         'lines_changed': insertions + deletions,
+        'hunks':         0,  # placeholder; actual hunk count computed later
     }
 
 

@@ -82,12 +82,13 @@ def test_compute_numstat_totals_basic():
     assert t['insertions'] == 15
     assert t['deletions'] == 2
     assert t['lines_changed'] == 17
+    assert t['hunks'] == 0
 
 
 def test_compute_numstat_totals_empty():
     t = compute_numstat_totals([])
     assert t == {'files_changed': 0, 'insertions': 0,
-                 'deletions': 0, 'lines_changed': 0}
+                 'deletions': 0, 'lines_changed': 0, 'hunks': 0}
 
 
 def test_compute_numstat_totals_list_form():
@@ -98,12 +99,14 @@ def test_compute_numstat_totals_list_form():
     assert t['insertions'] == 5
     assert t['deletions'] == 2
     assert t['lines_changed'] == 7
+    assert t['hunks'] == 0
 
 
 def test_compute_numstat_totals_none():
     t = compute_numstat_totals(None)
     assert t['files_changed'] == 0
     assert t['lines_changed'] == 0
+    assert t['hunks'] == 0
 
 
 def test_compute_numstat_totals_binary_counts_file_not_lines():
@@ -117,6 +120,7 @@ def test_compute_numstat_totals_binary_counts_file_not_lines():
     assert t['insertions'] == 3
     assert t['deletions'] == 1
     assert t['lines_changed'] == 4
+    assert t['hunks'] == 0
 
 
 def test_compute_numstat_totals_malformed_entries_are_ignored():
@@ -130,6 +134,7 @@ def test_compute_numstat_totals_malformed_entries_are_ignored():
     assert t['insertions'] == 7
     assert t['deletions'] == 8
     assert t['lines_changed'] == 15
+    assert t['hunks'] == 0
 
 
 def _cfg(src='/fake/repo', git_bin='git', no_merges=True, numstat=True,

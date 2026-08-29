@@ -25,7 +25,7 @@ def test_st01_collect_run_writes_cache(tmp_path):
     assert row['files'] == []
     assert row['numstat'] == []
     assert row['stats'] == {'files_changed': 0, 'insertions': 0,
-                            'deletions': 0, 'lines_changed': 0}
+                            'deletions': 0, 'lines_changed': 0, 'hunks': 0}
     assert row['author_time'] is None
     assert row['commit_time'] is None
     assert row['author_name'] is None
@@ -52,6 +52,7 @@ def test_st01_collect_stats_from_numstat(tmp_path):
     assert stats['insertions'] == 15
     assert stats['deletions'] == 2
     assert stats['lines_changed'] == 17
+    assert stats['hunks'] == 0
 
 
 def test_st01_collect_files_changed_falls_back_to_files_len_in_name_only(tmp_path):
@@ -68,3 +69,4 @@ def test_st01_collect_files_changed_falls_back_to_files_len_in_name_only(tmp_pat
     stats = result[0]['stats']
     assert stats['files_changed'] == 3
     assert stats['lines_changed'] == 0
+    assert stats['hunks'] == 0

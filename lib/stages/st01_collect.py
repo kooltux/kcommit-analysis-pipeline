@@ -6,7 +6,7 @@ rendering it a dead string literal).
 import json
 import os
 from lib.config import save_json
-from lib.gitutils import iter_git_log_records, compute_numstat_totals
+from lib.gitutils import iter_git_log_records, compute_numstat_totals, batch_count_hunks
 from lib.pipeline_runtime import update_stage_progress, finish_progress_line
 from lib.manifest import CACHE_FILES, NSTAGES
 
@@ -70,6 +70,19 @@ def run(cfg, cache):
 
     update_stage_progress(1, NSTAGES, 1.0, 'collecting commits', n_done=len(commits), n_total=max_commits if max_commits else len(commits))
     finish_progress_line()
+
+    # Compute actual hunk counts for all commits (replaces placeholder hunks=0)
+    if commits:
+        shas = [c['commit'] for c in commits if c.get('commit')]
+        if shas:
+            print('  counting hunks for %d commits...' % len(shas))
+            hunk_counts = batch_count_hunks(cfg, shas)
+            for c in commits:
+                sha = c.get('commit')
+                if sha and sha in hunk_counts:
+                    c['stats']['hunks'] = hunk_counts[sha]
+            print('  done counting hunks')
+
     save_json(os.path.join(cache, CACHE_FILES['commits']), commits)
 
     if collect_cfg.get('jsonl'):

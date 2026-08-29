@@ -168,9 +168,9 @@ function populateDetail(commit) {
     ovScoreN   != null ? kv('Score',          heatPill(ovScoreN,   {scale: 100, polarity: 'higher-better'})) : '',
     ovCx       != null ? kv('Complexity',      heatPill(ovCx,       {scale: 100, polarity: 'higher-worse'}))  : '',
     cherryPill         ? kv('Cherry-pick',    cherryPill)                                                    : '',
-    kv('Files changed',  ovFiles != null ? esc(ovFiles) : '<span class="kc-muted">N/A</span>'),
-    kv('Lines changed',  ovLines != null ? esc(ovLines) : '<span class="kc-muted">N/A</span>'),
-    kv('Hunks',           ovHunks != null ? esc(ovHunks) : '<span class="kc-muted">N/A</span>'),
+    kv('Files changed',  ovFiles != null ? esc(ovFiles) : '<span class="kc-muted">0</span>'),
+    kv('Lines changed',  ovLines != null ? esc(ovLines) : '<span class="kc-muted">0</span>'),
+    kv('Hunks',           ovHunks != null ? esc(ovHunks) : '<span class="kc-muted">0</span>'),
   ].join('');
 
   const overviewHtml = detailCard('Commit', `
@@ -285,7 +285,7 @@ document.addEventListener('click', e => {
     return;
   }
 
-  /* Any other click on a data row → detail + overview */
+  /* Any other click on a row → detail + overview */
   const row = e.target.closest('tr[data-sha12]');
   if (row) {
     openDetail(row.dataset.sha12, row.dataset.sha || row.dataset.sha12);

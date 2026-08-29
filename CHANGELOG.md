@@ -2,6 +2,40 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.2.1 — fix: compute actual hunk counts for backport_complexity (2026-08-29)
+
+### Fixed
+
+- **Hunk counts now properly populated** — `lib/gitutils.py::compute_numstat_totals()`
+  now returns a `hunks` field (initially `0` as placeholder), and
+  `lib/stages/st01_collect.py` calls `batch_count_hunks()` after collecting
+  commits to populate actual hunk counts for all commits. This fixes the
+  `backport_complexity` calculation in `lib/backport.py` which uses `hunks_pts`
+  as one of the four weighted factors (along with files, lines, and spread).
+  Previously the `hunks` field was missing from stats, causing all `hunks_pts`
+  calculations to be 0.
+
+- **HTML UI shows 0 instead of N/A for missing stats** — `configs/html/js/summary_13_detail.js`
+  now displays `0` instead of `N/A` when stats fields are null, providing a
+  clearer indication that the value is zero rather than unavailable.
+
+### Changed
+
+- **Hunk counting always enabled** — `batch_count_hunks()` is now called for
+  all commits in stage 01, using a single batched `git show --unified=0` call
+  for efficiency. The hunks field is populated with actual diff hunk counts
+  before backport_complexity is computed in stage 06.
+
+### Tests
+
+- `tests/test_gitutils.py`: updated all `test_compute_numstat_totals_*` tests
+  to expect `'hunks': 0` in the output dict.
+- `tests/test_st01_collect_run.py`: updated tests to expect `'hunks': 0` in
+  commit stats (placeholder value before `batch_count_hunks()` populates actual
+  counts).
+
+---
+
 ## v19.2.0 — cp-check subcommand + config validation (2026-08-28)
 
 ### Added
