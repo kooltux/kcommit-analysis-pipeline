@@ -137,7 +137,7 @@ def test_full_pipeline_with_mini_inputs(tmp_path, capsys):
         cmd_report(report_args)
     report_out = capsys.readouterr().out
     assert 'Reports written to' in report_out
-    assert os.path.exists(os.path.join(cfg['paths']['output_dir'], 'relevant_commits.html'))
+    assert os.path.exists(os.path.join(cfg['paths']['output_dir'], 'summary.html'))
     assert os.path.exists(os.path.join(cfg['paths']['output_dir'], 'relevant_commits.csv'))
 
     with open(os.path.join(cfg['paths']['output_dir'], 'relevant_commits.table.json'), encoding='utf-8') as f:

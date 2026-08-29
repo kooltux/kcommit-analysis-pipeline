@@ -171,7 +171,7 @@ def test_full_pipeline_commands_realistic_small(tmp_path, capsys):
         cmd_report(report_args)
     report_out = capsys.readouterr().out
     assert 'Reports written to' in report_out
-    assert os.path.exists(os.path.join(cfg['paths']['output_dir'], 'relevant_commits.html'))
+    assert os.path.exists(os.path.join(cfg['paths']['output_dir'], 'summary.html'))
     assert os.path.exists(os.path.join(cfg['paths']['output_dir'], 'relevant_commits.csv'))
 
     run_args = SimpleNamespace(config='tests/fixtures/full-pipeline-mini.json', override=None,

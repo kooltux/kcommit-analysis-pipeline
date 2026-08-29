@@ -167,18 +167,18 @@ def test_html_output_written(tmp_path):
                                 cfg_extra={'reports': {'outputs': ['html']}})
     cfg['reports']['outputs'] = ['html']
     run(cfg, cache, outdir)
-    assert os.path.exists(os.path.join(outdir, 'relevant_commits.html'))
+    assert os.path.exists(os.path.join(outdir, 'summary.html'))
 
 
 def test_html_filtered_output_written(tmp_path):
     """v16.14.0: filtered commits are embedded in the unified
-    relevant_commits.html report; no separate filtered_commits.html is written.
-    Verify that relevant_commits.html is produced when filtered commits exist."""
+    summary.html report; no separate filtered_commits.html is written.
+    Verify that summary.html is produced when filtered commits exist."""
     flt = [_commit('dropped', reason='commit_blacklist')]
     cache, outdir, cfg = _setup(tmp_path, filtered=flt)
     cfg['reports']['outputs'] = ['html']
     run(cfg, cache, outdir)
-    assert os.path.exists(os.path.join(outdir, 'relevant_commits.html'))
+    assert os.path.exists(os.path.join(outdir, 'summary.html'))
 
 
 # ── top_n limiting ──────────────────────────────────────────────────────────────────────────────────

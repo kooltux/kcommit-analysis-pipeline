@@ -12,7 +12,7 @@
     {"index": 5, "key": "score_commits",          "outputs": ["cache/scored_commits.json"]},
     {"index": 6, "key": "postfilter_commits",     "outputs": ["cache/relevant_commits.json", "cache/postfilter_dropped_commits.json", "cache/postfilter_debug.json"]},
     {"index": 7, "key": "report_commits",         "outputs": [
-      "output/relevant_commits.html",
+      "output/summary.html",
       "output/relevant_commits.json",
       "output/relevant_commits.table.json",
       "output/relevant_commits.csv",

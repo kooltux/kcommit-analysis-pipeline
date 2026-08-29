@@ -151,7 +151,6 @@ function populateDetail(commit) {
   const ovCx       = commit.backport_complexity;
   const ovScoreN   = commit.score_norm;
   const ovPriority = commit.pick_priority;
-  const has = v => v != null && v !== '';
 
   /* Cherry-pick indicator — uses the same heat-pill logic (higher-better,
    * 0-100 scale) as Pick Priority / Score / Complexity, and the same logic
@@ -165,13 +164,13 @@ function populateDetail(commit) {
     : '';
 
   const indicatorRows = [
-    has(ovPriority) ? kv('Pick Priority', heatPill(ovPriority, {scale: 100, polarity: 'higher-better'})) : '',
-    has(ovScoreN)   ? kv('Score',          heatPill(ovScoreN,   {scale: 100, polarity: 'higher-better'})) : '',
-    has(ovCx)       ? kv('Complexity',      heatPill(ovCx,       {scale: 100, polarity: 'higher-worse'}))  : '',
-    cherryPill      ? kv('Cherry-pick',    cherryPill)                                                    : '',
-    has(ovFiles)    ? kv('Files changed',  esc(ovFiles))                                                : '',
-    has(ovLines)    ? kv('Lines changed',  esc(ovLines))                                                : '',
-    has(ovHunks)    ? kv('Hunks',           esc(ovHunks))                                                : '',
+    ovPriority != null ? kv('Pick Priority', heatPill(ovPriority, {scale: 100, polarity: 'higher-better'})) : '',
+    ovScoreN   != null ? kv('Score',          heatPill(ovScoreN,   {scale: 100, polarity: 'higher-better'})) : '',
+    ovCx       != null ? kv('Complexity',      heatPill(ovCx,       {scale: 100, polarity: 'higher-worse'}))  : '',
+    cherryPill         ? kv('Cherry-pick',    cherryPill)                                                    : '',
+    kv('Files changed',  ovFiles != null ? esc(ovFiles) : '<span class="kc-muted">N/A</span>'),
+    kv('Lines changed',  ovLines != null ? esc(ovLines) : '<span class="kc-muted">N/A</span>'),
+    kv('Hunks',           ovHunks != null ? esc(ovHunks) : '<span class="kc-muted">N/A</span>'),
   ].join('');
 
   const overviewHtml = detailCard('Commit', `

@@ -54,7 +54,7 @@ Changes:
                   Generation failure is non-fatal (logged as a warning).
                   'serve_report.pyz' is added to generated_files on success.
   v16.14.0      — Filtered commits are now embedded in the unified
-                  relevant_commits.html report via the filtered_commits kwarg
+                  summary.html report via the filtered_commits kwarg
                   of generate_html_report().  The separate
                   filtered_commits.html file is no longer written.
                   filtered_commits.table.json is still written as a sidecar
@@ -1076,7 +1076,7 @@ def run(cfg, cache, outdir):
         logging.warning('pipeline_run_stats.json write failed: %s', _e)
 
     # HTML -- v16.14.0: filtered commits are passed via filtered_commits= into
-    # the unified relevant_commits.html report.  No separate
+    # the unified summary.html report.  No separate
     # filtered_commits.html is written.
     _update_stage7_progress(6, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
     _hp = None  # set below; used later by serve_script_gen
@@ -1085,7 +1085,7 @@ def run(cfg, cache, outdir):
             _save_ordered_json(os.path.join(outdir, 'report_metadata.json'), metadata)
             _emit(os.path.join(outdir, 'report_metadata.json'))
             _update_stage7_progress(7, _STAGE7_MILESTONES, 'Generating HTML report')
-            _hp = os.path.join(outdir, 'relevant_commits.html')
+            _hp = os.path.join(outdir, 'summary.html')
             _tp = os.path.join(outdir, 'relevant_commits.table.json')
             _write_table_json(_tp, scored, include_reason=False)
             _emit(_tp)
