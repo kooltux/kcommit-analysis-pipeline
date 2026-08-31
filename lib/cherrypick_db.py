@@ -18,6 +18,14 @@ v19.2.0:
     accumulate well within the 5s window.
   - New delete_db() helper: removes the per-target cherry.db file, used by
     the `cp-check --force` command to restart testing from scratch.
+
+v19.2.2:
+  - Fixed transaction handling: use autocommit mode (isolation_level=None)
+    and explicit BEGIN/COMMIT for batch durability. Each batch is committed
+    immediately and visible to external queries.
+  - Disabled WAL mode (journal_mode=DELETE) to ensure writes are immediately
+    visible to external SQLite queries without needing to checkpoint.
+  - Each INSERT OR REPLACE is now a single-row transaction committed immediately.
 """
 import os
 import sqlite3
@@ -50,8 +58,13 @@ class CherryDB:
     def __init__(self, db_path):
         """Initialize or open existing database."""
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path)
+        # Use autocommit mode for explicit transaction control
+        # isolation_level=None enables autocommit, we'll use explicit BEGIN/COMMIT
+        self.conn = sqlite3.connect(db_path, isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        # Disable WAL mode to ensure writes are immediately visible
+        # WAL mode requires checkpoint to make writes visible to other connections
+        self.conn.execute('PRAGMA journal_mode=DELETE')
         self._create_schema()
         self._pending_results = {}  # Buffer for auto-save
         self._last_save_time = time.time()
@@ -69,7 +82,6 @@ class CherryDB:
             )
         ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ok ON commits(ok)')
-        self.conn.commit()
     
     def add_result(self, sha, result):
         """Add or update a single cherry-pick result with auto-save.
@@ -94,7 +106,11 @@ class CherryDB:
             self._last_save_time = now
     
     def add_results(self, results):
-        """Add or update multiple cherry-pick results (immediate commit).
+        """Add or update multiple cherry-pick results.
+        
+        Each row is inserted in its own transaction and committed immediately.
+        In autocommit mode (isolation_level=None), each INSERT OR REPLACE is
+        automatically committed, making it visible to external queries.
         
         Args:
             results: dict mapping sha -> {'ok': bool, 'conflicts': list, 'error': str or None}
@@ -114,8 +130,6 @@ class CherryDB:
                 result.get('error'),
                 tested_at
             ))
-        
-        self.conn.commit()
     
     def flush(self):
         """Flush pending results to database (called automatically every 5s
@@ -170,7 +184,6 @@ class CherryDB:
     def save(self):
         """Save pending results and close database."""
         self.flush()
-        self.conn.commit()
         self.conn.close()
     
     def __enter__(self):

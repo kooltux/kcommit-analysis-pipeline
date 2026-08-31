@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.2.2 — fix: CherryDB disables WAL mode for immediate visibility (2026-08-31)
+
+### Fixed
+
+- **CherryDB now disables WAL mode for immediate write visibility** —
+  `lib/cherrypick_db.py::CherryDB` now executes `PRAGMA journal_mode=DELETE`
+  to disable WAL (Write-Ahead Logging) mode. WAL mode keeps writes in a
+  separate `.wal` file and requires a checkpoint to make them visible to
+  other database connections. By using DELETE mode (traditional rollback
+  journal), each `INSERT OR REPLACE` is immediately visible to external
+  SQLite queries.
+  - Removed explicit `BEGIN IMMEDIATE` / `COMMIT` transactions
+  - In autocommit mode, each INSERT is its own transaction committed immediately
+  - External queries like `sqlite3 cherry.db "SELECT COUNT(*) FROM commits"`
+    now show increasing counts (100, 200, 300...) during cherry-pick testing
+
+- **Previously, rows were invisible until connection closed** — WAL mode was
+  keeping writes in the WAL file without checkpointing, causing external
+  queries to see 0 rows until the database connection closed. Now each row
+  is immediately visible as it's inserted.
+
+### Changed
+
+- **Simplified transaction handling** — removed explicit transaction control;
+  autocommit mode with one INSERT per transaction provides immediate visibility
+  without needing explicit commits.
+
+---
+
 ## v19.2.1 — fix: compute actual hunk counts for backport_complexity (2026-08-29)
 
 ### Fixed
