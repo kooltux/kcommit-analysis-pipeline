@@ -18,11 +18,9 @@ def _commit(sha='abc123', score=50, rank=1, reason=None):
 
 
 
-
 def _write_json(path, data):
     with open(path, 'w') as f:
         json.dump(data, f)
-
 def _setup(tmp_path, scored=None, filtered=None, cfg_extra=None):
     cache  = str(tmp_path / 'cache')
     outdir = str(tmp_path / 'output')
@@ -335,3 +333,188 @@ def test_commit_details_different_buckets_written_separately(tmp_path):
     data_b = json.load(open(bucket_b))
     assert sha_a in data_a and sha_b not in data_a
     assert sha_b in data_b and sha_a not in data_b
+
+
+# ── v19.3.0: AI analysis chunking support ───────────────────────────────────────────────────────────
+
+def _setup_ai(tmp_path, num_commits=5):
+    """Setup for AI analysis tests with specified number of commits."""
+    cache = str(tmp_path / 'cache')
+    outdir = str(tmp_path / 'output')
+    os.makedirs(cache)
+    
+    # Create prefilter_kept commits
+    prefilter_kept = [
+        {
+            'commit': f'{i:040x}',
+            'subject': f'fix: commit {i}',
+            'author_name': 'Dev',
+            'author_email': 'dev@example.com',
+            'author_org': 'example',
+            'author_time': 1700000000 + i,
+            'body': f'Commit body for {i}',
+            'files': [f'file{i}.c'],
+            'stats': {'files_changed': 1, 'lines_changed': 10, 'hunks': 1},
+            'meta': {'is_fix': True, 'has_cve': False, 'has_syzbot': False, 'has_stable_cc': True},
+        }
+        for i in range(num_commits)
+    ]
+    
+    # Write prefilter_kept and product_map
+    with open(os.path.join(cache, CACHE_FILES['prefilter_kept']), 'w') as f:
+        json.dump(prefilter_kept, f)
+    with open(os.path.join(cache, CACHE_FILES['product_map']), 'w') as f:
+        json.dump({}, f)
+    
+    # Also write other required cache files
+    with open(os.path.join(cache, CACHE_FILES['relevant']), 'w') as f:
+        json.dump([], f)
+    with open(os.path.join(cache, CACHE_FILES['filtered']), 'w') as f:
+        json.dump([], f)
+    with open(os.path.join(cache, CACHE_FILES['postfilter_dropped']), 'w') as f:
+        json.dump([], f)
+    with open(os.path.join(cache, CACHE_FILES['scored']), 'w') as f:
+        json.dump([], f)
+    with open(os.path.join(cache, CACHE_FILES['commits']), 'w') as f:
+        json.dump([], f)
+    
+    # Write compiled_rules.json
+    _rule_body = {
+        'keywords_whitelist': [], 'keywords_blacklist': [],
+        'path_whitelist': [],    'path_blacklist': [],
+        'commit_whitelist': [],  'commit_blacklist': [],
+    }
+    compiled_rules = {
+        'schema_hash': 'test-sentinel-hash',
+        'rules':    {},
+        'profiles': {
+            'security_fixes': {
+                'description': 'Security fixes',
+                'rules': {},
+                'merged': _rule_body,
+            }
+        },
+    }
+    with open(os.path.join(cache, CACHE_FILES['compiled_rules']), 'w') as f:
+        json.dump(compiled_rules, f)
+    
+    cfg = {
+        'reports': {'outputs': [], 'title': 'Test', 'top_n': 0},
+        'paths':   {'templates_dir': None, 'cache_dir': cache,
+                    'work_dir': str(tmp_path), 'configdir': str(tmp_path / 'configs')},
+        'profiles': {'active': {'security_fixes': 100}},
+        'ai': {},
+    }
+    
+    return cache, outdir, cfg
+
+
+def test_ai_analysis_single_file_default(tmp_path):
+    """v19.3.0 — AI analysis with chunk_size=0 (default) writes single file."""
+    cache, outdir, cfg = _setup_ai(tmp_path, num_commits=5)
+    
+    run(cfg, cache, outdir)
+    
+    # Should write ai_analysis_input.json (single file)
+    ai_path = os.path.join(outdir, 'ai_analysis_input.json')
+    assert os.path.exists(ai_path), 'ai_analysis_input.json not written'
+    
+    # Should NOT write ai_analysis_input/ directory
+    chunk_dir = os.path.join(outdir, 'ai_analysis_input')
+    assert not os.path.exists(chunk_dir), 'ai_analysis_input/ should not exist with chunk_size=0'
+    
+    # Verify content
+    data = json.load(open(ai_path))
+    assert 'commits' in data
+    assert len(data['commits']) == 5
+    assert 'chunk_info' not in data
+
+
+def test_ai_analysis_chunked_output(tmp_path):
+    """v19.3.0 — AI analysis with chunk_size > 0 writes multiple chunk files."""
+    cache, outdir, cfg = _setup_ai(tmp_path, num_commits=25)
+    cfg['ai']['chunk_size'] = 10  # 25 commits / 10 per chunk = 3 chunks
+    
+    run(cfg, cache, outdir)
+    
+    # Should NOT write ai_analysis_input.json (single file)
+    ai_path = os.path.join(outdir, 'ai_analysis_input.json')
+    assert not os.path.exists(ai_path), 'ai_analysis_input.json should not exist with chunking'
+    
+    # Should write ai_analysis_input/ directory with chunk files
+    chunk_dir = os.path.join(outdir, 'ai_analysis_input')
+    assert os.path.exists(chunk_dir), 'ai_analysis_input/ directory not created'
+    
+    # Should have 3 chunk files: 001.json, 002.json, 003.json
+    chunk_files = sorted([f for f in os.listdir(chunk_dir) if f.endswith('.json')])
+    assert len(chunk_files) == 3, f'Expected 3 chunks, got {len(chunk_files)}'
+    assert chunk_files == ['001.json', '002.json', '003.json']
+    
+    # Verify chunk content
+    for i, chunk_file in enumerate(chunk_files):
+        chunk_path = os.path.join(chunk_dir, chunk_file)
+        data = json.load(open(chunk_path))
+        
+        assert 'chunk_info' in data, f'chunk_info missing from {chunk_file}'
+        assert data['chunk_info']['chunk_number'] == i + 1
+        assert data['chunk_info']['total_chunks'] == 3
+        
+        if i < 2:  # First two chunks should have 10 commits each
+            assert len(data['commits']) == 10
+        else:  # Last chunk should have 5 commits
+            assert len(data['commits']) == 5
+
+
+def test_ai_analysis_prompt_copied_to_output(tmp_path):
+    """v19.3.0 — AI analysis prompt is copied to output directory."""
+    cache, outdir, cfg = _setup_ai(tmp_path, num_commits=5)
+    
+    # Create a prompt file
+    configs_dir = tmp_path / 'configs'
+    ai_dir = configs_dir / 'ai'
+    ai_dir.mkdir(parents=True)
+    prompt_path = ai_dir / 'ai_analysis_prompt.md'
+    prompt_path.write_text('# Test Prompt\n\nThis is a test prompt.')
+    
+    run(cfg, cache, outdir)
+    
+    # Should copy prompt to output
+    output_prompt = os.path.join(outdir, 'ai_analysis_prompt.md')
+    assert os.path.exists(output_prompt), 'ai_analysis_prompt.md not copied to output'
+    
+    content = open(output_prompt).read()
+    assert '# Test Prompt' in content
+
+
+def test_ai_analysis_custom_prompt_path(tmp_path):
+    """v19.3.0 — AI analysis respects custom ai.prompt_path config."""
+    cache, outdir, cfg = _setup_ai(tmp_path, num_commits=5)
+    
+    # Create custom prompt location
+    custom_prompt = tmp_path / 'custom_prompt.md'
+    custom_prompt.write_text('# Custom Prompt\n\nCustom content.')
+    cfg['ai']['prompt_path'] = str(custom_prompt)
+    
+    run(cfg, cache, outdir)
+    
+    # Should use custom prompt
+    output_prompt = os.path.join(outdir, 'ai_analysis_prompt.md')
+    assert os.path.exists(output_prompt)
+    
+    content = open(output_prompt).read()
+    assert '# Custom Prompt' in content
+    assert 'Custom content' in content
+
+
+def test_ai_analysis_no_commits(tmp_path):
+    """v19.3.0 — AI analysis handles empty prefilter_kept gracefully."""
+    cache, outdir, cfg = _setup_ai(tmp_path, num_commits=0)
+    
+    run(cfg, cache, outdir)
+    
+    # Should not write any AI files when no commits
+    ai_path = os.path.join(outdir, 'ai_analysis_input.json')
+    chunk_dir = os.path.join(outdir, 'ai_analysis_input')
+    
+    assert not os.path.exists(ai_path)
+    assert not os.path.exists(chunk_dir)

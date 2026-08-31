@@ -2,6 +2,54 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.3.0 — feat: externalize AI analysis prompt + add chunking support (2026-08-31)
+
+### Added
+
+- **Externalized AI analysis prompt** — `configs/ai/ai_analysis_prompt.md` is now
+  a user-editable Markdown file containing the full AI analysis prompt and
+  comprehensive JSON schema documentation. The prompt is read at runtime, so
+  changes take effect immediately on the next pipeline run.
+  - JSON schema section moved to beginning under "Input Data" chapter
+  - Describes all commit fields, chunk_info structure, and excluded fields
+  - Generic about JSON format (doesn't mention specific filenames)
+  - Documents that input may be split into multiple chunk files
+
+- **Chunking support for large commit sets** — new `ai.chunk_size` config option
+  controls output splitting:
+  - `0` (default): single `ai_analysis_input.json` file
+  - `N > 0`: creates `ai_analysis_input/` folder with `00001.json`, `00002.json`, etc.
+  - Each chunk includes `chunk_info` metadata (chunk_number, total_chunks, indices)
+  - Enables processing large commit sets in manageable pieces for AI analysis
+
+- **Custom prompt path** — `ai.prompt_path` config option allows specifying
+  custom location for the prompt file (defaults to `configs/ai/ai_analysis_prompt.md`).
+
+### Changed
+
+- **lib/stages/st07_report.py** — `_get_ai_analysis_prompt()` now reads from
+  config file instead of hardcoded string. Logs warning if file not found.
+  `_write_ai_analysis_files()` supports chunking and copies prompt to output
+  as `ai_analysis_prompt.md` for reference.
+
+- **MANIFEST.json** — added `output/ai_analysis_input/` and
+  `output/ai_analysis_prompt.md` to stage 07 outputs list.
+
+### Configuration
+
+Example config additions:
+
+```json
+{
+  "ai": {
+    "prompt_path": "configs/ai/ai_analysis_prompt.md",
+    "chunk_size": 100
+  }
+}
+```
+
+---
+
 ## v19.2.3 — fix: stream cherry-pick results to database as they complete (2026-08-31)
 
 ### Fixed

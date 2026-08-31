@@ -73,9 +73,12 @@ Changes:
                   buckets), cutting inode pressure and serve_report.pyz
                   build time for large corpora.
   v18.2.0       — _rt_progress_f and _rt_finish_line_f are now module-level
-                  variables so that tests can monkeypatch them reliably.
+                  variables so tests can monkeypatch them reliably.
                   Previously they were local variables inside run(), making
                   monkeypatching impossible.
+  v19.3.0       — AI analysis prompt externalized to configs/ai/ai_analysis_prompt.md
+                  (user-editable). Added ai.chunk_size config option to split
+                  ai_analysis_input.json into multiple chunk files when > 0.
 """
 import csv
 import json
@@ -173,7 +176,6 @@ def _commit_rows(commits, include_reason=False):
             row.append(c.get('_filter_reason', ''))
         rows.append(row)
     return rows
-
 
 
 
@@ -607,8 +609,33 @@ def _build_ai_analysis_input(cfg, prefilter_kept_commits, product_map):
     }
 
 
+def _get_ai_analysis_prompt(cfg):
+    """Load AI analysis prompt from config file.
+    
+    Reads the prompt from configs/ai/ai_analysis_prompt.md (or custom path
+    from ai.prompt_path config). Returns the prompt as a string.
+    """
+    ai_cfg = cfg.get('ai', {}) or {}
+    prompt_path = ai_cfg.get('prompt_path')
+    
+    if not prompt_path:
+        # Default path
+        prompt_path = os.path.join(cfg['paths'].get('configdir', 'configs'), 'ai', 'ai_analysis_prompt.md')
+    
+    if not os.path.exists(prompt_path):
+        logging.warning('AI analysis prompt not found at %s, using empty prompt', prompt_path)
+        return ''
+    
+    with open(prompt_path, 'r', encoding='utf-8') as f:
+        return f.read()
+
+
 def _write_ai_analysis_files(cfg, cache, outdir):
     """Write AI analysis input JSON and prompt template files.
+    
+    Supports chunking: if ai.chunk_size > 0, splits commits into multiple
+    JSON files in ai_analysis_input/ directory (00001.json, 00002.json, ...).
+    If chunk_size == 0 (default), writes single ai_analysis_input.json file.
     
     Returns list of paths written.
     """
@@ -630,161 +657,66 @@ def _write_ai_analysis_files(cfg, cache, outdir):
     if not prefilter_kept:
         return written
     
-    # Build and write AI analysis input JSON
-    ai_input = _build_ai_analysis_input(cfg, prefilter_kept, product_map)
-    ai_input_path = os.path.join(outdir, 'ai_analysis_input.json')
-    _save_ordered_json(ai_input_path, ai_input)
-    written.append(ai_input_path)
+    # Get chunk_size from config (0 = single file, >0 = split into chunks)
+    ai_cfg = cfg.get('ai', {}) or {}
+    chunk_size = int(ai_cfg.get('chunk_size', 0) or 0)
     
-    # Write AI analysis prompt template
-    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.txt')
-    with open(prompt_path, 'w', encoding='utf-8') as f:
-        f.write(_get_ai_analysis_prompt())
-    written.append(prompt_path)
+    # Build AI analysis input structure
+    ai_input = _build_ai_analysis_input(cfg, prefilter_kept, product_map)
+    
+    if chunk_size > 0:
+        # Split into chunks
+        import math
+        total_commits = len(ai_input['commits'])
+        num_chunks = math.ceil(total_commits / chunk_size)
+        digits = len(str(num_chunks))  # Number of digits for zero-padding
+        
+        # Create output directory
+        chunk_dir = os.path.join(outdir, 'ai_analysis_input')
+        os.makedirs(chunk_dir, exist_ok=True)
+        
+        # Write each chunk
+        for i in range(num_chunks):
+            start_idx = i * chunk_size
+            end_idx = min(start_idx + chunk_size, total_commits)
+            
+            chunk_input = {
+                'version': ai_input['version'],
+                'pipeline_version': ai_input['pipeline_version'],
+                'purpose': ai_input['purpose'],
+                'generated_at': ai_input['generated_at'],
+                'total_commits': end_idx - start_idx,
+                'chunk_info': {
+                    'chunk_number': i + 1,
+                    'total_chunks': num_chunks,
+                    'start_index': start_idx,
+                    'end_index': end_idx - 1,
+                },
+                'schema': ai_input['schema'],
+                'commits': ai_input['commits'][start_idx:end_idx],
+            }
+            
+            chunk_filename = str(i + 1).zfill(digits) + '.json'
+            chunk_path = os.path.join(chunk_dir, chunk_filename)
+            _save_ordered_json(chunk_path, chunk_input)
+            written.append(chunk_path)
+        
+        logging.info('AI analysis input split into %d chunks (%d commits/chunk)', num_chunks, chunk_size)
+    else:
+        # Single file (default)
+        ai_input_path = os.path.join(outdir, 'ai_analysis_input.json')
+        _save_ordered_json(ai_input_path, ai_input)
+        written.append(ai_input_path)
+    
+    # Write AI analysis prompt (copy from config to output for reference)
+    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.md')
+    prompt_content = _get_ai_analysis_prompt(cfg)
+    if prompt_content:
+        with open(prompt_path, 'w', encoding='utf-8') as f:
+            f.write(prompt_content)
+        written.append(prompt_path)
     
     return written
-
-
-def _get_ai_analysis_prompt():
-    """Return the AI analysis prompt template as a string."""
-    return '''# AI Analysis Prompt for kcommit-analysis-pipeline
-
-## Task Overview
-
-You are an expert Linux kernel analyst. Your task is to analyze commits that have
-been identified as relevant to a specific embedded product (they modify code that
-is built in the product) and provide recommendations on whether they should be
-backported.
-
-## Input Data
-
-The input file `ai_analysis_input.json` contains:
-- Commits that passed the prefilter (they modify what is built in the product)
-- These are commits BEFORE any scoring or threshold filtering
-- Each commit has metadata including subject, author, files changed, and annotation flags
-- The `meta` field contains flags like `is_fix`, `has_cve`, `has_syzbot`, `has_stable_cc`
-- The `product_evidence` field explains why the commit is relevant to the product
-- NO scoring information (score, matched_profiles) or backport indicators (complexity, pick_priority) are included
-- The AI should make its own independent assessment
-
-## Analysis Requirements
-
-For EACH commit, analyze the following:
-
-### 1. Classification
-Identify what type of change this is:
-- `ai_is_security_fix`: Is this a security vulnerability fix?
-- `ai_is_bug_fix`: Is this a bug fix (non-security)?
-- `ai_is_performance_enhancement`: Does this improve performance?
-- `ai_is_new_feature`: Is this adding a new feature?
-- `ai_is_new_security_feature`: Is this adding a new security feature?
-
-### 2. Risk Assessment (if NOT backported)
-Identify the risks of NOT backporting this commit. Select all that apply:
-- "security_vulnerability": The product would remain vulnerable to a security issue
-- "system_stability": The product may experience crashes, hangs, or undefined behavior
-- "data_corruption": Data could be corrupted or lost
-- "performance_degradation": The product would have suboptimal performance
-- "missing_feature": A useful/necessary feature would be missing
-- "compliance_violation": The product would fail compliance requirements
-- "none": No significant risk
-
-### 3. Impact on Product
-Assess how much this commit matters:
-- `ai_impact_on_product`: "critical" | "high" | "medium" | "low" | "none"
-- `ai_impact_description`: 1-2 sentences explaining the impact
-
-### 4. Backport Effort Estimation
-Estimate how difficult it would be to backport:
-- `ai_backport_effort`: "very_easy" | "easy" | "moderate" | "hard" | "very_hard"
-- `ai_backport_effort_reason`: Brief explanation (e.g., "simple one-line fix", 
-  "touches many subsystems", "depends on newer kernel APIs")
-
-### 5. CVE Information
-- `ai_cve_ids`: Array of CVE IDs mentioned or relevant (empty array if none)
-
-### 6. Recommendation
-- `ai_backport_recommendation`: "strong_yes" | "yes" | "maybe" | "no" | "strong_no"
-- `ai_summary`: 2-3 sentence summary explaining your recommendation
-
-## Output Format
-
-Return a JSON object with commit SHAs as keys:
-
-{
-  "<sha1>": {
-    "ai_is_security_fix": true,
-    "ai_is_bug_fix": false,
-    "ai_is_performance_enhancement": false,
-    "ai_is_new_feature": false,
-    "ai_is_new_security_feature": false,
-    "ai_risks_if_not_backported": ["security_vulnerability", "system_stability"],
-    "ai_impact_on_product": "critical",
-    "ai_impact_description": "Fixes a use-after-free vulnerability that could lead to privilege escalation",
-    "ai_backport_effort": "easy",
-    "ai_backport_effort_reason": "Isolated fix in a single function",
-    "ai_cve_ids": ["CVE-2024-1234"],
-    "ai_backport_recommendation": "strong_yes",
-    "ai_summary": "This critical security fix addresses CVE-2024-1234. The vulnerability allows local privilege escalation. The fix is simple and self-contained, making it easy to backport."
-  },
-  "<sha2>": {
-    ...
-  }
-}
-
-## Guidelines
-
-1. BE CONSERVATIVE: When uncertain about a classification, it's better to mark it as
-   false or use "maybe" than to make an incorrect positive identification.
-
-2. Use the `meta` flags as hints:
-   - If `meta.has_cve` is true, there's likely a CVE to extract
-   - If `meta.is_fix` is true, it's likely a bug or security fix
-   - If `meta.has_stable_cc` is true, the upstream maintainers think it's worth backporting
-
-3. Consider the `product_evidence` field:
-   - This tells you WHY the commit is relevant to the product
-   - Focus on commits with strong product relevance
-
-4. For `ai_cve_ids`:
-   - Extract CVE IDs from the commit message (look for CVE-YYYY-NNNN patterns)
-   - Also infer CVEs from the description even if not explicitly mentioned
-   - Return an empty array [] if no CVEs are found
-
-5. For effort estimation:
-   - "very_easy": 1-5 lines changed, single file, no API changes
-   - "easy": <20 lines, few files, minimal dependencies
-   - "moderate": 20-100 lines, multiple files, some dependencies
-   - "hard": 100-500 lines, many files, significant dependencies
-   - "very_hard": >500 lines, extensive changes, new APIs
-
-6. For recommendation logic:
-   - "strong_yes": Security fix + critical/high impact + easy/very_easy effort
-   - "yes": Security fix OR high impact with reasonable effort
-   - "maybe": Unclear benefit, medium/hard effort, or borderline impact
-   - "no": Low impact + hard/very_hard effort
-   - "strong_no": Breaking change, not applicable to product, or very high risk
-
-## Example Output
-
-{
-  "abc123def456": {
-    "ai_is_security_fix": true,
-    "ai_is_bug_fix": true,
-    "ai_is_performance_enhancement": false,
-    "ai_is_new_feature": false,
-    "ai_is_new_security_feature": false,
-    "ai_risks_if_not_backported": ["security_vulnerability"],
-    "ai_impact_on_product": "critical",
-    "ai_impact_description": "Fixes a buffer overflow in the network stack that can be triggered remotely",
-    "ai_backport_effort": "easy",
-    "ai_backport_effort_reason": "Single function fix with clear boundaries",
-    "ai_cve_ids": ["CVE-2024-5678"],
-    "ai_backport_recommendation": "strong_yes",
-    "ai_summary": "Critical security fix for CVE-2024-5678 addressing a remote buffer overflow. The fix is isolated and easy to backport. Strongly recommended."
-  }
-}
-'''
 
 
 # -- Stage entry point -------------------------------------------------------
