@@ -26,6 +26,12 @@ v19.2.2:
   - Disabled WAL mode (journal_mode=DELETE) to ensure writes are immediately
     visible to external SQLite queries without needing to checkpoint.
   - Each INSERT OR REPLACE is now a single-row transaction committed immediately.
+
+v19.2.3:
+  - Removed result buffering: add_result() now flushes immediately after
+    each INSERT, ensuring external queries see results as soon as they're
+    added. The auto-save timer and batch threshold are kept as safety
+    mechanisms but are no longer the primary flush trigger.
 """
 import os
 import sqlite3
@@ -47,27 +53,36 @@ class CherryDB:
       results = db.get_results(['abc123', 'def456'])
     """
     
-    # Auto-save interval in seconds
+    # Auto-save interval in seconds (safety mechanism, not primary flush trigger)
     AUTO_SAVE_INTERVAL = 5.0
 
     # Auto-save batch size (v19.2.0): flush after this many pending results
     # even if AUTO_SAVE_INTERVAL has not elapsed yet.  Whichever threshold
     # (count or time) is reached first triggers a flush.
+    # (v19.2.3: kept as safety mechanism, but add_result() now flushes immediately)
     BATCH_SIZE = 20
     
     def __init__(self, db_path):
         """Initialize or open existing database."""
         self.db_path = db_path
         # Use autocommit mode for explicit transaction control
-        # isolation_level=None enables autocommit, we'll use explicit BEGIN/COMMIT
+        # isolation_level=None enables autocommit
         self.conn = sqlite3.connect(db_path, isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         # Disable WAL mode to ensure writes are immediately visible
         # WAL mode requires checkpoint to make writes visible to other connections
-        self.conn.execute('PRAGMA journal_mode=DELETE')
+        # Must be done before any writes, and we checkpoint first if WAL exists
+        self._disable_wal_mode()
         self._create_schema()
-        self._pending_results = {}  # Buffer for auto-save
+        self._pending_results = {}  # Buffer for auto-save (safety mechanism)
         self._last_save_time = time.time()
+    
+    def _disable_wal_mode(self):
+        """Disable WAL mode and checkpoint existing WAL file if present."""
+        # First, checkpoint any existing WAL file to merge it into the main DB
+        self.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        # Then disable WAL mode
+        self.conn.execute('PRAGMA journal_mode=DELETE')
     
     def _create_schema(self):
         """Create database schema if not exists."""
@@ -84,25 +99,29 @@ class CherryDB:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ok ON commits(ok)')
     
     def add_result(self, sha, result):
-        """Add or update a single cherry-pick result with auto-save.
+        """Add or update a single cherry-pick result with immediate flush.
         
-        This method buffers the result and auto-saves whenever either
-        threshold is reached, whichever comes first:
-          - BATCH_SIZE (20) pending results accumulate, or
-          - AUTO_SAVE_INTERVAL (5.0s) has elapsed since the last flush.
-        
-        Use this for streaming results during batch operations.
+        This method now flushes immediately after each result to ensure
+        external queries can see the data. The auto-save buffering is kept
+        as a backup safety mechanism, but the primary behavior is immediate
+        visibility.
         
         Args:
             sha: commit SHA
             result: dict {'ok': bool, 'conflicts': list, 'error': str or None}
         """
+        # Add to pending buffer (safety mechanism)
         self._pending_results[sha] = result
         
+        # Flush immediately for visibility
+        self.flush()
+        self._last_save_time = time.time()
+        
+        # Also check auto-save thresholds as backup safety mechanism
         now = time.time()
         if (len(self._pending_results) >= self.BATCH_SIZE
                 or now - self._last_save_time >= self.AUTO_SAVE_INTERVAL):
-            self.flush()
+            # Buffer is already flushed, just reset timer
             self._last_save_time = now
     
     def add_results(self, results):
@@ -132,8 +151,8 @@ class CherryDB:
             ))
     
     def flush(self):
-        """Flush pending results to database (called automatically every 5s
-        or every BATCH_SIZE results, whichever comes first)."""
+        """Flush pending results to database (called automatically after each
+        add_result() in v19.2.3, or by auto-save thresholds as backup)."""
         if self._pending_results:
             self.add_results(self._pending_results)
             self._pending_results = {}

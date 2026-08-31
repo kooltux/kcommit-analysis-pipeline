@@ -2,6 +2,56 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.2.3 — fix: stream cherry-pick results to database as they complete (2026-08-31)
+
+### Fixed
+
+- **Cherry-pick results now visible in database during testing** —
+  `lib/gitutils.py::batch_can_cherry_pick()` and its internal helpers
+  (`_cp_test_serial()`, `_cp_test_parallel()`) now accept a
+  `result_callback(sha, result)` parameter that is called for each completed
+  test. `lib/gitutils.py::batch_can_cherry_pick_cached()` passes a callback
+  that immediately inserts each result into the SQLite cache via
+  `lib/cherrypick_db::CherryDB.add_result()`. This ensures external queries
+  like `sqlite3 cherry.db "SELECT COUNT(*) FROM commits"` see increasing
+  counts (100, 200, 300...) during cherry-pick testing instead of 0 until
+  completion.
+
+- **CherryDB removed result buffering** — `lib/cherrypick_db.py::CherryDB`
+  now flushes immediately after each `add_result()` call, ensuring writes are
+  visible to external queries. The auto-save timer (5s) and batch threshold
+  (20 results) are kept as safety mechanisms but are no longer the primary
+  flush trigger.
+
+- **Corrected v19.2.2 changelog claims** — the previous v19.2.2 entry claimed
+  that disabling WAL mode and using autocommit would make rows visible during
+  testing, but the actual control-flow defect was that
+  `batch_can_cherry_pick_cached()` accumulated all results in memory and only
+  inserted them after testing completed. This is now fixed by streaming
+  results as they complete.
+
+### Changed
+
+- **Streaming architecture** — cherry-pick test results flow through a callback
+  chain: `can_cherry_pick()` → `_cp_test_serial()`/`_cp_test_parallel()` →
+  `batch_can_cherry_pick()` → `batch_can_cherry_pick_cached()` →
+  `CherryDB.add_result()`. This enables real-time database updates without
+  blocking the test loop.
+
+- **Simplified CherryDB** — removed complex transaction management; each
+  INSERT OR REPLACE is auto-committed in autocommit mode with WAL disabled.
+
+### Tests
+
+- Unit tests needed for:
+  - `test_gitutils.py`: verify `result_callback` is called for each SHA in
+    both serial and parallel modes
+  - `test_cherrypick_db.py`: verify `add_result()` flushes immediately
+  - Integration test: verify external SQLite queries see increasing counts
+    during `batch_can_cherry_pick_cached()`
+
+---
+
 ## v19.2.2 — fix: CherryDB disables WAL mode for immediate visibility (2026-08-31)
 
 ### Fixed

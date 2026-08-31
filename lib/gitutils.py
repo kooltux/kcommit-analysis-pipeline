@@ -23,6 +23,13 @@ v19.2.0:
   working tree), so concurrent workers reading the same checked-out tree are
   safe.  Falls back to the existing serial loop when workers <= 1, the
   commit count is small, or the process pool raises on submit.
+
+v19.2.3:
+  Cherry-pick test results are now streamed to the caller via a
+  ``result_callback(sha, result)`` as each commit completes testing.
+  This enables ``batch_can_cherry_pick_cached()`` to insert results into
+  the SQLite cache immediately, making them visible to external queries
+  during the analysis instead of only at the end.
 """
 import os
 import subprocess
@@ -605,8 +612,19 @@ def _cp_test_one_global(sha):
     return sha, can_cherry_pick(_g_cp_cfg, sha, _g_cp_target_rev)
 
 
-def _cp_test_serial(cfg, shas, target_rev, progress_callback=None):
-    """Serial cherry-pick test loop (original behaviour), with ETA tracking."""
+def _cp_test_serial(cfg, shas, target_rev, progress_callback=None, result_callback=None):
+    """Serial cherry-pick test loop with streaming results.
+    
+    Args:
+        cfg: pipeline config dict
+        shas: list of commit SHAs to test
+        target_rev: revision to test against
+        progress_callback: optional callable(done, total, eta_seconds)
+        result_callback: optional callable(sha, result) called for each completed test
+    
+    Returns:
+        dict mapping sha -> result dict
+    """
     results    = {}
     total      = len(shas)
     start_time = time.time()
@@ -615,13 +633,18 @@ def _cp_test_serial(cfg, shas, target_rev, progress_callback=None):
     for i, sha in enumerate(shas):
         step_start = time.time()
         try:
-            results[sha] = can_cherry_pick(cfg, sha, target_rev)
+            result = can_cherry_pick(cfg, sha, target_rev)
         except Exception as exc:
-            results[sha] = {'ok': False, 'conflicts': [], 'error': str(exc)}
+            result = {'ok': False, 'conflicts': [], 'error': str(exc)}
+        results[sha] = result
         step_time = time.time() - step_start
         last_times.append(step_time)
         if len(last_times) > 10:
             last_times.pop(0)
+
+        # Stream result to callback if provided
+        if result_callback:
+            result_callback(sha, result)
 
         if progress_callback:
             avg_time    = sum(last_times) / len(last_times)
@@ -632,8 +655,8 @@ def _cp_test_serial(cfg, shas, target_rev, progress_callback=None):
     return results
 
 
-def _cp_test_parallel(cfg, shas, target_rev, workers, progress_callback=None):
-    """Test *shas* for cherry-pick feasibility using a process pool.
+def _cp_test_parallel(cfg, shas, target_rev, workers, progress_callback=None, result_callback=None):
+    """Test *shas* for cherry-pick feasibility using a process pool with streaming.
 
     The caller must have already checked out *target_rev* (detached HEAD)
     before calling this function -- workers never checkout or otherwise
@@ -646,6 +669,7 @@ def _cp_test_parallel(cfg, shas, target_rev, workers, progress_callback=None):
         target_rev: revision already checked out in the working tree
         workers:  number of worker processes
         progress_callback: optional callable(done, total, eta_seconds)
+        result_callback: optional callable(sha, result) called for each completed test
 
     Returns:
         dict mapping sha -> result dict (same shape as can_cherry_pick())
@@ -667,6 +691,10 @@ def _cp_test_parallel(cfg, shas, target_rev, workers, progress_callback=None):
             results[sha] = result
             done_count  += 1
 
+            # Stream result to callback if provided
+            if result_callback:
+                result_callback(sha, result)
+
             if progress_callback:
                 elapsed     = time.time() - start_time
                 avg_time    = elapsed / done_count if done_count else 0
@@ -677,7 +705,7 @@ def _cp_test_parallel(cfg, shas, target_rev, workers, progress_callback=None):
     return results
 
 
-def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None, workers=1):
+def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None, workers=1, result_callback=None):
     """Test multiple commits for cherry-pick feasibility on *target_rev*.
     
     Returns dict mapping commit SHA -> result dict (same format as
@@ -703,6 +731,7 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None, 
         workers:      number of worker processes for parallel testing
                      (default 1 = serial).  Values > 1 are only used when
                      there are enough commits (see _CP_PARALLEL_MIN_COMMITS).
+        result_callback: optional callable(sha, result) called for each completed test
     """
     shas = [s for s in (commit_shas or []) if s]
     if not shas:
@@ -726,15 +755,18 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None, 
         if workers > 1 and total >= _CP_PARALLEL_MIN_COMMITS:
             try:
                 return _cp_test_parallel(cfg, shas, target_rev, workers,
-                                         progress_callback=progress_callback)
+                                         progress_callback=progress_callback,
+                                         result_callback=result_callback)
             except Exception as exc:
                 print('\n  warning: parallel cherry-pick test failed (%s); '
                       'falling back to serial' % exc, file=sys.stderr)
                 return _cp_test_serial(cfg, shas, target_rev,
-                                       progress_callback=progress_callback)
+                                       progress_callback=progress_callback,
+                                       result_callback=result_callback)
 
         return _cp_test_serial(cfg, shas, target_rev,
-                               progress_callback=progress_callback)
+                               progress_callback=progress_callback,
+                               result_callback=result_callback)
         
     finally:
         # Always restore original HEAD
@@ -776,9 +808,9 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
     Uses CherryDB to cache results per target_rev. Only tests new commits,
     reuses existing results for already-tested commits.
     
-    Results are saved to the database every 5 seconds, or every 20 pending
-    results (v19.2.0), whichever comes first, to avoid data loss if the
-    process is interrupted.
+    Results are streamed to the database as each test completes (v19.2.3),
+    making them immediately visible to external SQLite queries. The database
+    flushes every 20 results or 5 seconds to balance durability and performance.
 
     Testing itself runs in parallel worker processes when
     collect.cherry_pick_workers > 1 and there are enough new commits
@@ -852,15 +884,17 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
                 sys.stdout.write('\r  %s' % bar)
                 sys.stdout.flush()
         
-        # Test new commits with auto-save every 5s / 20 results, parallel
-        # when workers > 1 and enough new commits (v19.2.0)
+        # Result callback: stream each result to database immediately
+        def _save_result(sha, result):
+            """Save a single cherry-pick result to database."""
+            db.add_result(sha, result)
+        
+        # Test new commits with streaming results, parallel when workers > 1
+        # and enough new commits (v19.2.0)
         new_results = batch_can_cherry_pick(cfg, new_shas, target_rev,
                                            progress_callback=_progress_with_eta,
-                                           workers=workers)
-        
-        # Save each result to database (auto-saves every 5s / 20 results internally)
-        for sha, result in new_results.items():
-            db.add_result(sha, result)
+                                           workers=workers,
+                                           result_callback=_save_result)
         
         # Clear progress line
         sys.stdout.write('\n')
