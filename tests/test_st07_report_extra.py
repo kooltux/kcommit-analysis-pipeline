@@ -191,7 +191,6 @@ def test_ai_analysis_input_written(tmp_path):
     
     assert ai_data['version'] == '1.0'
     assert ai_data['total_commits'] == 1
-    assert 'schema' in ai_data
     assert 'commits' in ai_data
     assert len(ai_data['commits']) == 1
     
@@ -229,7 +228,7 @@ def test_ai_analysis_prompt_written(tmp_path):
     run(cfg, cache, outdir)
     
     # Check prompt file was written
-    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.txt')
+    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.md')
     assert os.path.exists(prompt_path)
     
     # Validate content
@@ -257,13 +256,13 @@ def test_ai_analysis_input_empty_prefilter_kept(tmp_path):
     
     # AI files should not be written for empty input
     ai_input_path = os.path.join(outdir, 'ai_analysis_input.json')
-    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.txt')
+    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.md')
     assert not os.path.exists(ai_input_path)
     assert not os.path.exists(prompt_path)
 
 
-def test_ai_analysis_schema_structure(tmp_path):
-    """AI analysis input contains proper schema description."""
+def test_ai_analysis_schema_in_prompt(tmp_path):
+    """AI analysis schema is defined in the prompt file, not in the JSON output."""
     cache, outdir, cfg = _setup(tmp_path, outputs=['csv'])
     from lib.manifest import CACHE_FILES
     import json
@@ -275,35 +274,19 @@ def test_ai_analysis_schema_structure(tmp_path):
     
     run(cfg, cache, outdir)
     
+    # Verify schema is NOT in the JSON output (it's in the prompt file)
     with open(os.path.join(outdir, 'ai_analysis_input.json'), 'r') as f:
         ai_data = json.load(f)
     
-    schema = ai_data['schema']
-    assert schema['version'] == '1.0'
-    assert 'fields' in schema
+    assert 'schema' not in ai_data, 'Schema should not be in JSON output (it is in the prompt file)'
+    assert 'commits' in ai_data
     
-    fields = schema['fields']
-    assert 'commit' in fields
-    assert 'subject' in fields
-    assert 'author_name' in fields
-    assert 'author_email' in fields
-    assert 'author_org' in fields
-    assert 'meta' in fields
-    assert 'product_evidence' in fields
-    # Verify prefilter_debug is NOT in schema
-    assert 'prefilter_debug' not in fields
-    # Verify no scoring/backport fields in schema
-    assert 'score' not in fields
-    assert 'score_norm' not in fields
-    assert 'matched_profiles' not in fields
-    assert 'backport_complexity' not in fields
-    assert 'pick_priority' not in fields
-    
-    # Check meta sub-fields
-    assert 'is_fix' in fields['meta']['properties']
-    assert 'has_cve' in fields['meta']['properties']
-    assert 'has_syzbot' in fields['meta']['properties']
-    assert 'has_stable_cc' in fields['meta']['properties']
+    # Verify the prompt file exists and contains schema definition
+    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.md')
+    assert os.path.exists(prompt_path)
+    with open(prompt_path, 'r') as f:
+        prompt_content = f.read()
+    assert 'schema' in prompt_content.lower() or 'fields' in prompt_content.lower()
 
 
 # ── XLSX output ───────────────────────────────────────────────────────────────

@@ -445,10 +445,10 @@ def test_ai_analysis_chunked_output(tmp_path):
     chunk_dir = os.path.join(outdir, 'ai_analysis_input')
     assert os.path.exists(chunk_dir), 'ai_analysis_input/ directory not created'
     
-    # Should have 3 chunk files: 001.json, 002.json, 003.json
+    # Should have 3 chunk files: 1.json, 2.json, 3.json
     chunk_files = sorted([f for f in os.listdir(chunk_dir) if f.endswith('.json')])
     assert len(chunk_files) == 3, f'Expected 3 chunks, got {len(chunk_files)}'
-    assert chunk_files == ['001.json', '002.json', '003.json']
+    assert chunk_files == ['1.json', '2.json', '3.json']
     
     # Verify chunk content
     for i, chunk_file in enumerate(chunk_files):

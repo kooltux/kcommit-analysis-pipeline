@@ -629,13 +629,12 @@ def _get_ai_analysis_prompt(cfg):
     with open(prompt_path, 'r', encoding='utf-8') as f:
         return f.read()
 
-
 def _write_ai_analysis_files(cfg, cache, outdir):
     """Write AI analysis input JSON and prompt template files.
     
     Supports chunking: if ai.chunk_size > 0, splits commits into multiple
-    JSON files in ai_analysis_input/ directory (00001.json, 00002.json, ...).
-    If chunk_size == 0 (default), writes single ai_analysis_input.json file.
+    JSON files in ai_analysis_input/ directory. If chunk_size == 0 (default),
+    writes single ai_analysis_input.json file.
     
     Returns list of paths written.
     """
@@ -669,7 +668,6 @@ def _write_ai_analysis_files(cfg, cache, outdir):
         import math
         total_commits = len(ai_input['commits'])
         num_chunks = math.ceil(total_commits / chunk_size)
-        digits = len(str(num_chunks))  # Number of digits for zero-padding
         
         # Create output directory
         chunk_dir = os.path.join(outdir, 'ai_analysis_input')
@@ -692,20 +690,21 @@ def _write_ai_analysis_files(cfg, cache, outdir):
                     'start_index': start_idx,
                     'end_index': end_idx - 1,
                 },
-                'schema': ai_input['schema'],
                 'commits': ai_input['commits'][start_idx:end_idx],
             }
             
-            chunk_filename = str(i + 1).zfill(digits) + '.json'
+            # Use consistent padding based on total number of chunks
+            chunk_filename = str(i + 1).zfill(len(str(num_chunks))) + '.json'
             chunk_path = os.path.join(chunk_dir, chunk_filename)
             _save_ordered_json(chunk_path, chunk_input)
             written.append(chunk_path)
         
         logging.info('AI analysis input split into %d chunks (%d commits/chunk)', num_chunks, chunk_size)
     else:
-        # Single file (default)
+        # Single file (default) - remove schema (it's in the prompt)
+        ai_input_out = {k: v for k, v in ai_input.items() if k != 'schema'}
         ai_input_path = os.path.join(outdir, 'ai_analysis_input.json')
-        _save_ordered_json(ai_input_path, ai_input)
+        _save_ordered_json(ai_input_path, ai_input_out)
         written.append(ai_input_path)
     
     # Write AI analysis prompt (copy from config to output for reference)
@@ -716,8 +715,7 @@ def _write_ai_analysis_files(cfg, cache, outdir):
             f.write(prompt_content)
         written.append(prompt_path)
     
-    return written
-
+    return written 
 
 # -- Stage entry point -------------------------------------------------------
 

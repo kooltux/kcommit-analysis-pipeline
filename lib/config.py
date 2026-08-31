@@ -104,6 +104,12 @@ CONFIG_SCHEMA = {
         'max_failure_rate':       {'type': 'float'},
         'history_workers':        {'type': 'int'},
     },
+    # ai section (v19.3.0)
+    'ai': {
+        '__type__': 'dict',
+        'prompt_path': {'type': 'path'},
+        'chunk_size':  {'type': 'int'},
+    },
 }
 
 # Flat set of all keys that are path-typed, derived from the schema.
