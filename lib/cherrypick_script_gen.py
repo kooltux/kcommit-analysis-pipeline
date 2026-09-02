@@ -1,4 +1,4 @@
-"""cherrypick_script_gen.py -- kcommit-analysis-pipeline v19.4.2
+"""cherrypick_script_gen.py -- kcommit-analysis-pipeline v19.4.3
 
 Generates ready-to-run shell scripts that cherry-pick every commit already
 confirmed cherry-pickable (CherryDB result ok=True) onto kernel.rev_old, in
@@ -42,6 +42,16 @@ script.  SHAs that are untested or conflict (ok=False) are omitted from the
 script body but counted in a header comment and returned stats, so
 staleness (commits added since the last cp-check/pipeline run) is visible
 rather than silently hidden.
+
+v19.4.3:
+  - Generated scripts now checkout kernel.rev_old before prompting for branch
+    creation, ensuring we start from the correct base commit.
+  - cp_one() function now uses a single temp file (created with mktemp) to
+    capture git cherry-pick output, avoiding a second cherry-pick call on
+    failure. The same temp file is reused for all commits (sequential
+    processing) and cleaned up via trap at script exit.
+  - Trap now handles EXIT, INT, QUIT, and STOP signals to ensure cleanup on
+    Ctrl+C or process termination.
 
 v19.4.2:
   - Enhanced generated scripts with a cp_one() wrapper function that prints
@@ -224,13 +234,18 @@ def build_cherry_pick_script(cfg, cache, cache_key):
         'LOGFILE="%s"' % log_basename,
         'rm -f "$LOGFILE"  # start fresh each run',
         '',
-        '# v19.4.2: cp_one wrapper - prints progress and logs failures',
+        '# v19.4.3: temp file for capturing cherry-pick output (reused for all commits)',
+        'CP_TMPFILE=$(mktemp)',
+        'trap "rm -f \"$CP_TMPFILE\"" EXIT INT QUIT STOP',
+        '',
+        '# v19.4.2 + v19.4.3: cp_one wrapper - prints progress and logs failures',
+        '# Uses temp file to avoid calling git cherry-pick twice on failure',
         'cp_one() {',
         '  local sha="$1"',
         '  local idx="$2"',
         '  local total="$3"',
         '  local subject="$4"',
-        '  if git cherry-pick "$sha" >/dev/null 2>&1; then',
+        '  if git cherry-pick "$sha" >"$CP_TMPFILE" 2>&1; then',
         '    printf "${GREEN}Commit %s %s/%s - OK${NC}\\n" "$sha" "$idx" "$total"',
         '  else',
         '    printf "${RED}Commit %s %s/%s - FAIL${NC}\\n" "$sha" "$idx" "$total" >&2',
@@ -239,11 +254,16 @@ def build_cherry_pick_script(cfg, cache, cache_key):
         '      echo "Commit: $sha  ($subject)"',
         '      echo "Index:  $idx / $total"',
         '      echo "Error output:"',
-        '      git cherry-pick "$sha" 2>&1 || true',
+        '      cat "$CP_TMPFILE"',
         '      echo ""',
         '    } >> "$LOGFILE"',
         '  fi',
         '}',
+        '',
+        '# v19.4.3: checkout destination rev before prompting for branch',
+        'echo "Checking out destination rev: %s"' % target_rev,
+        'git checkout "%s" || { echo "Failed to checkout %s"; exit 1; }' % (target_rev, target_rev),
+        'echo ""',
         '',
         '# v19.4.2: propose to create a local branch before starting',
         'BRANCH_NAME="cherrypicking_from_%s"' % (rev_new or 'unknown'),

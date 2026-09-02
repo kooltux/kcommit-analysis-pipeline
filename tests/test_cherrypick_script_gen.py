@@ -257,7 +257,7 @@ def test_history_order_missing_sha_still_included_at_end(tmp_path):
     assert stats['cherry_pickable'] == 2
 
 
-# ── script content (v19.4.2 enhancements) ─────────────────────────────────
+# ── script content (v19.4.2 + v19.4.3 enhancements) ─────────────────────────────────
 
 def test_script_has_shebang_strict_mode_and_colors(tmp_path):
     cache = str(tmp_path / 'cache')
@@ -291,6 +291,40 @@ def test_script_has_logfile_and_branch_prompt(tmp_path):
     assert 'BRANCH_NAME="cherrypicking_from_v6.6"' in text
     assert 'read -p' in text
     assert 'git checkout -b "$BRANCH_NAME"' in text
+
+
+def test_script_checkouts_rev_old_before_branch_prompt(tmp_path):
+    """v19.4.3: script must checkout kernel.rev_old before prompting for branch."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    cfg = _cfg(tmp_path, rev_old='v6.1', rev_new='v6.6')
+    _write_cache(cache, 'relevant', [_commit('a')])
+    _seed_db(cfg, {'a': {'ok': True}})
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
+        text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
+    # v19.4.3: checkout destination rev before branch prompt
+    assert 'git checkout "v6.1"' in text
+    # Ensure checkout happens before the branch prompt
+    checkout_idx = text.index('git checkout "v6.1"')
+    branch_idx = text.index('BRANCH_NAME="cherrypicking_from_v6.6"')
+    assert checkout_idx < branch_idx
+
+
+def test_script_uses_tempfile_for_cherry_pick_output(tmp_path):
+    """v19.4.3: cp_one() uses a temp file to capture output, avoiding double cherry-pick."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    cfg = _cfg(tmp_path)
+    _write_cache(cache, 'relevant', [_commit('a')])
+    _seed_db(cfg, {'a': {'ok': True}})
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
+        text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
+    # v19.4.3: temp file setup and cleanup
+    assert 'CP_TMPFILE=$(mktemp)' in text
+    assert 'trap "rm -f \"$CP_TMPFILE\"" EXIT INT QUIT STOP' in text
+    # v19.4.3: cp_one uses temp file for output capture
+    assert '>"$CP_TMPFILE"' in text
+    assert 'cat "$CP_TMPFILE"' in text
 
 
 def test_script_header_reports_counts(tmp_path):
@@ -357,6 +391,9 @@ def test_write_creates_executable_file(tmp_path):
     # v19.4.2: uses cp_one wrapper
     assert 'cp_one "a"' in content
     assert 'LOGFILE="cherry_pick_relevant.log"' in content
+    # v19.4.3: temp file usage
+    assert 'CP_TMPFILE=$(mktemp)' in content
+    assert 'trap' in content
 
 
 def test_write_returns_none_path_when_nothing_cherry_pickable(tmp_path):
