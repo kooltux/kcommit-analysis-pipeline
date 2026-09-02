@@ -114,9 +114,10 @@ def test_script_orders_by_git_history_not_by_cache_order(tmp_path):
         text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
 
     assert text is not None
-    idx_c1 = text.index('git cherry-pick c1')
-    idx_c2 = text.index('git cherry-pick c2')
-    idx_c3 = text.index('git cherry-pick c3')
+    # v19.4.2: now uses cp_one() wrapper, not raw git cherry-pick
+    idx_c1 = text.index('cp_one "c1"')
+    idx_c2 = text.index('cp_one "c2"')
+    idx_c3 = text.index('cp_one "c3"')
     assert idx_c1 < idx_c2 < idx_c3
     assert stats['cherry_pickable'] == 3
 
@@ -138,7 +139,7 @@ def test_script_ignores_date_or_score_rank_and_uses_history_order(tmp_path):
               return_value=['oldest', 'middle', 'newest']):
         text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
 
-    order = [text.index('git cherry-pick %s' % s) for s in ('oldest', 'middle', 'newest')]
+    order = [text.index('cp_one "%s"' % s) for s in ('oldest', 'middle', 'newest')]
     assert order == sorted(order)
 
 
@@ -155,9 +156,10 @@ def test_only_ok_true_commits_included(tmp_path):
               return_value=['good', 'bad', 'untested']):
         text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
 
-    assert 'git cherry-pick good' in text
-    assert 'git cherry-pick bad' not in text
-    assert 'git cherry-pick untested' not in text
+    # v19.4.2: only ok=True commits get a cp_one() call
+    assert 'cp_one "good"' in text
+    assert 'cp_one "bad"' not in text
+    assert 'cp_one "untested"' not in text
     assert stats['total_in_set'] == 3
     assert stats['tested'] == 2
     assert stats['cherry_pickable'] == 1
@@ -179,8 +181,8 @@ def test_prefiltered_vs_relevant_use_different_cache_keys(tmp_path):
 
     assert stats_pf['total_in_set'] == 2
     assert stats_rel['total_in_set'] == 1
-    assert 'git cherry-pick p2' in text_pf
-    assert 'git cherry-pick p2' not in text_rel
+    assert 'cp_one "p2"' in text_pf
+    assert 'cp_one "p2"' not in text_rel
 
 
 # ── build_cherry_pick_script: edge cases ─────────────────────────
@@ -250,14 +252,14 @@ def test_history_order_missing_sha_still_included_at_end(tmp_path):
     _seed_db(cfg, {'a': {'ok': True}, 'merge_commit': {'ok': True}})
     with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
         text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
-    assert 'git cherry-pick a' in text
-    assert 'git cherry-pick merge_commit' in text
+    assert 'cp_one "a"' in text
+    assert 'cp_one "merge_commit"' in text
     assert stats['cherry_pickable'] == 2
 
 
-# ── script content ───────────────────────────────────────────────────
+# ── script content (v19.4.2 enhancements) ─────────────────────────────────
 
-def test_script_has_shebang_and_strict_mode(tmp_path):
+def test_script_has_shebang_strict_mode_and_colors(tmp_path):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
     cfg = _cfg(tmp_path)
@@ -267,6 +269,28 @@ def test_script_has_shebang_and_strict_mode(tmp_path):
         text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
     assert text.startswith('#!/usr/bin/env bash\n')
     assert 'set -euo pipefail' in text
+    # v19.4.2: color codes and cp_one wrapper
+    assert 'GREEN=' in text
+    assert 'RED=' in text
+    assert 'NC=' in text
+    assert 'cp_one()' in text
+
+
+def test_script_has_logfile_and_branch_prompt(tmp_path):
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    cfg = _cfg(tmp_path, rev_new='v6.6')
+    _write_cache(cache, 'relevant', [_commit('a')])
+    _seed_db(cfg, {'a': {'ok': True}})
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
+        text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
+    # v19.4.2: log file for failures
+    assert 'LOGFILE="cherry_pick_relevant.log"' in text
+    assert 'rm -f "$LOGFILE"' in text
+    # v19.4.2: branch creation prompt
+    assert 'BRANCH_NAME="cherrypicking_from_v6.6"' in text
+    assert 'read -p' in text
+    assert 'git checkout -b "$BRANCH_NAME"' in text
 
 
 def test_script_header_reports_counts(tmp_path):
@@ -284,7 +308,7 @@ def test_script_header_reports_counts(tmp_path):
     assert '1 with conflicts' in text
 
 
-def test_script_includes_subject_as_comment(tmp_path):
+def test_script_cp_one_uses_subject(tmp_path):
     cache = str(tmp_path / 'cache')
     os.makedirs(cache)
     cfg = _cfg(tmp_path)
@@ -292,7 +316,25 @@ def test_script_includes_subject_as_comment(tmp_path):
     _seed_db(cfg, {'a': {'ok': True}})
     with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
         text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
-    assert 'git cherry-pick a  # net: fix leak' in text
+    # v19.4.2: subject passed to cp_one for logging
+    assert "cp_one \"a\" \"1\" \"1\" 'net: fix leak'" in text
+
+
+def test_script_cp_one_progress_format(tmp_path):
+    """v19.4.2: cp_one prints 'Commit <SHA> <n>/<max> - OK/FAIL' with colors."""
+    cache = str(tmp_path / 'cache')
+    os.makedirs(cache)
+    cfg = _cfg(tmp_path)
+    _write_cache(cache, 'relevant', [_commit('a')])
+    _seed_db(cfg, {'a': {'ok': True}})
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
+        text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
+    # v19.4.2: check for the key components of the progress output
+    # (the exact format string may vary slightly due to escaping)
+    assert 'printf "${GREEN}Commit %s' in text
+    assert 'OK${NC}\\n"' in text
+    assert 'printf "${RED}Commit %s' in text
+    assert 'FAIL${NC}\\n"' in text
 
 
 # ── write_cherry_pick_script: filesystem side effects ─────────────────
@@ -312,7 +354,9 @@ def test_write_creates_executable_file(tmp_path):
     assert mode & stat.S_IXUSR
     with open(path) as f:
         content = f.read()
-    assert 'git cherry-pick a' in content
+    # v19.4.2: uses cp_one wrapper
+    assert 'cp_one "a"' in content
+    assert 'LOGFILE="cherry_pick_relevant.log"' in content
 
 
 def test_write_returns_none_path_when_nothing_cherry_pickable(tmp_path):

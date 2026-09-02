@@ -1,0 +1,7 @@
+    rel_path = os.path.join(outdir, 'cherry_pick_relevant.sh')
+    assert os.path.exists(rel_path)
+    with open(rel_path) as f:
+        content = f.read()
+    # v19.4.2: now uses cp_one() wrapper instead of raw git cherry-pick
+    assert 'cp_one "%s"' % sha in content
+    assert any('cherry_pick_relevant.sh' in f for f in stats['generated_files'])
