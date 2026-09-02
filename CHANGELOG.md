@@ -2,6 +2,80 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.4.0 — feat: cherry-pick execution scripts generated at report stage (2026-09-02)
+
+### Added
+
+- **Cherry-pick execution scripts** — stage 07 (`lib/stages/st07_report.py`)
+  now generates two ready-to-run shell scripts via a new module
+  `lib/cherrypick_script_gen.py`, whenever `collect.cherry_pick_test` is
+  enabled and `kernel.rev_old` is configured (the same gate used by stage
+  05's cherry-pick enrichment):
+  - `output/cherry_pick_prefiltered.sh` — from `cache/prefilter_kept_commits.json`
+    (stage 04 output: every commit that passed the prefilter phase, the
+    larger "positively tested" set)
+  - `output/cherry_pick_relevant.sh` — from `cache/relevant_commits.json`
+    (stage 06 output: the final, score-thresholded set)
+  - Each script lists only commits with a cached `CherryDB` result of
+    `ok=True` (SQLite database populated either by a full pipeline run —
+    stage 05's `_enrich_cherry_pick()` — or by an on-demand `cp-check` run).
+    Untested and conflicting commits are omitted from the script body but
+    counted in a header comment (e.g. "480 cherry-pickable / 512 tested /
+    530 total in set") so staleness is visible rather than silently hidden.
+  - Commits are ordered by **git history** (oldest → newest), re-derived via
+    `lib.gitutils.list_rev_commits()` (`git rev-list --reverse`) and filtered
+    down to the cherry-pickable set — independent of the score/rank ordering
+    used elsewhere in the reports (`relevant_commits.json` is sorted by
+    `pick_priority`/score, not git history).
+  - Scripts are plain `bash`, `set -euo pipefail`, one `git cherry-pick <sha>`
+    per line annotated with the commit subject, executable bit set.
+  - Generation is best-effort/non-fatal — a failure is logged as a warning
+    and does not abort the report stage (mirrors `serve_report.pyz`'s error
+    handling).
+  - Both filenames are added to `report_stats['generated_files']` and to
+    `MANIFEST.json`'s stage 07 outputs list.
+
+### Fixed
+
+- **O(N²) file I/O in cherry-pick script generation** — the initial
+  implementation of `lib/cherrypick_script_gen.py` looked up each commit's
+  subject line via a helper that re-opened and linearly re-scanned the
+  entire commit-set JSON file once *per commit*. For large commit sets
+  (thousands of entries in `prefilter_kept_commits.json`) this degenerated
+  into hundreds of thousands of redundant open/read/close cycles on the same
+  file — observable under `strace` as a repeating open/close pattern on
+  `relevant_commits.json` easily mistaken for an infinite loop, and slow
+  enough in practice to appear hung. Fixed by loading the commit-set JSON
+  exactly once per script and indexing it into an in-memory `sha -> subject`
+  dict (`_load_commits()` + `_index_shas_and_subjects()`) before the
+  per-commit loop, making the lookup O(1) and total file I/O O(1) regardless
+  of commit-set size.
+
+### Configuration
+
+No new config keys. Reuses `collect.cherry_pick_test`,
+`collect.cherry_pick_cache_dir`, and `kernel.rev_old`, already required for
+stage 05's cherry-pick enrichment.
+
+### Tests
+
+- `tests/test_cherrypick_script_gen.py` (new) — git-history ordering
+  (proven against JSON caches deliberately stored in reverse/score order),
+  `ok=True`-only filtering, `prefilter_kept` vs `relevant` cache-key
+  selection, missing-cache-dir / missing-`rev_old` / no-`CherryDB`-yet /
+  all-conflicts edge cases (all return `None` gracefully), script
+  shebang/strict-mode/header content, executable-bit verification, and two
+  explicit O(N²) regression guards: an exact `load_json()` call-count
+  assertion and a 2 000-commit timing bound (<5s).
+- `tests/test_st07_report.py` — new integration tests verifying the
+  `collect.cherry_pick_test` / `kernel.rev_old` gate (scripts absent when
+  either is unset, even with a populated `CherryDB`), that both scripts are
+  written with correct per-set content when enabled, that generation
+  failures don't abort the report stage, and a 500-commit end-to-end timing
+  regression guard for the same O(N²) bug class.
+
+---
+
 ## v19.3.0 — feat: externalize AI analysis prompt + add chunking support (2026-08-31)
 
 ### Added

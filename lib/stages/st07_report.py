@@ -2,7 +2,7 @@ from lib.scoring import fmt_profiles, fmt_evidence, order_commit_details
 """Stage 07 logic: generate all output formats.
 
 Changes:
-  v12.0.0 (A.3) — update_stage_progress() from lib.pipeline_runtime is
+  v12.0.0 (A.3) -- update_stage_progress() from lib.pipeline_runtime is
                   now called with the correct signature:
                     update_stage_progress(stage_index, stage_total,
                                           frac, label,
@@ -10,41 +10,41 @@ Changes:
                   Previously the call passed `current` as `frac` and
                   `total` as `label`, which produced a TypeError on TTYs
                   and sent meaningless values to the progress bar.
-  v12.0.0 (A.4) — report_stats['evaluation'] is now populated from cfg
+  v12.0.0 (A.4) -- report_stats['evaluation'] is now populated from cfg
                   before being passed to generate_html_report(), enabling
                   the Evaluation sidebar section in the HTML report.
-  v12.0.0 (A.5) — _commit_rows() docstring clarified: the function still
+  v12.0.0 (A.5) -- _commit_rows() docstring clarified: the function still
                   appends a product_evidence cell for CSV/XLSX/ODS output
                   (COMMIT_COLS includes that column). Only the HTML table
                   hides the column (handled in html_report.py / A.1).
-  v12.0.0 (A.3) — rule_trace.csv is now written alongside rule_trace.json
+  v12.0.0 (A.3) -- rule_trace.csv is now written alongside rule_trace.json
                   so human analysts can open it directly in a spreadsheet.
                   rule_trace.csv is only written when CSV output is enabled
                   (same guard as relevant_commits.csv).
                   _STAGE7_MILESTONES bumped from 6 to 7 to account for the
                   extra CSV milestone.
-  v13.0.0       — prefilter_debug.json is copied from cache to outdir when
+  v13.0.0       -- prefilter_debug.json is copied from cache to outdir when
                   it exists, and listed in report_stats['generated_files'].
-  v13.0.0       — load_profile_rules() failure (e.g. no active profiles) is
+  v13.0.0       -- load_profile_rules() failure (e.g. no active profiles) is
                   handled gracefully: when compiled_rules.json is already
                   present in cache the inflated in-memory form is derived
                   from it directly, so the stage does not abort.
-  v14.1.0       — build_run_stats() from lib.run_stats is called at the end
+  v14.1.0       -- build_run_stats() from lib.run_stats is called at the end
                   of run(); it writes pipeline_run_stats.json in outdir.
                   This file contains exhaustive, pre-aggregated pipeline-run
                   statistics for the HTML report right-pane "Global Stats"
                   panel.  'pipeline_run_stats.json' is added to
                   report_stats['generated_files'].
-  v16.9.0       — build_run_stats() is now called BEFORE the HTML report is
+  v16.9.0       -- build_run_stats() is now called BEFORE the HTML report is
                   generated, and its return value is passed to
                   generate_html_report() as run_stats_data.  This supplies
                   the correct stage_05_scoring top-level fields (score_avg,
                   score_median, score_max, score_min) to the HTML generator,
                   fixing the avg/median = 0 display bug.
-                — cfg is passed to generate_html_report() so that the new
+                -- cfg is passed to generate_html_report() so that the new
                   Context section can read kernel.rev_old/rev_new and
                   artifact presence flags.
-  v16.13.0      — serve_report.pyz generation: when html output is enabled,
+  v16.13.0      -- serve_report.pyz generation: when html output is enabled,
                   lib.serve_script_gen.generate_serve_script() is called
                   after both HTML reports are written.  It packs the HTML
                   file(s) and all commits/*.json detail files into a
@@ -53,32 +53,42 @@ Changes:
                   HTTP server with no external file dependencies.
                   Generation failure is non-fatal (logged as a warning).
                   'serve_report.pyz' is added to generated_files on success.
-  v16.14.0      — Filtered commits are now embedded in the unified
+  v16.14.0      -- Filtered commits are now embedded in the unified
                   summary.html report via the filtered_commits kwarg
                   of generate_html_report().  The separate
                   filtered_commits.html file is no longer written.
                   filtered_commits.table.json is still written as a sidecar
                   for the JS layer.
-  v18.1.0       — G.1: bulk JSON outputs use compact separators (',',':')
+  v18.1.0       -- G.1: bulk JSON outputs use compact separators (',',':')
                   instead of indent=2 to reduce file sizes significantly.
                   Only per-commit shard files keep indent=2 for readability
                   in the HTML raw-tab.
-                — G.2: _write_commit_details() now deduplicates makedirs
+                -- G.2: _write_commit_details() now deduplicates makedirs
                   calls using a seen_dirs set; at most 16 mkdir calls for
                   the first-level bucket dirs (one per hex digit).
-                — G.4: commit detail files are now stored as bucket JSON
+                -- G.4: commit detail files are now stored as bucket JSON
                   files: commits/<sha[0]>/<sha[1:3]>.json  Each bucket file
                   is a dict keyed by full SHA.  This reduces the total number
                   of files from N (one per commit) to at most 256 (16x16
                   buckets), cutting inode pressure and serve_report.pyz
                   build time for large corpora.
-  v18.2.0       — _rt_progress_f and _rt_finish_line_f are now module-level
+  v18.2.0       -- _rt_progress_f and _rt_finish_line_f are now module-level
                   variables so tests can monkeypatch them reliably.
                   Previously they were local variables inside run(), making
                   monkeypatching impossible.
-  v19.3.0       — AI analysis prompt externalized to configs/ai/ai_analysis_prompt.md
+  v19.3.0       -- AI analysis prompt externalized to configs/ai/ai_analysis_prompt.md
                   (user-editable). Added ai.chunk_size config option to split
                   ai_analysis_input.json into multiple chunk files when > 0.
+  v19.4.0       -- Two cherry-pick execution shell scripts are now generated
+                  (lib/cherrypick_script_gen.py) when collect.cherry_pick_test
+                  is enabled and kernel.rev_old is configured:
+                  cherry_pick_prefiltered.sh (from prefilter_kept_commits.json,
+                  the larger "positively tested" set) and cherry_pick_relevant.sh
+                  (from relevant_commits.json, the final filtered set). Both
+                  list only CherryDB-confirmed cherry-pickable commits, ordered
+                  by git history (oldest -> newest), independent of the
+                  score-based rank ordering used elsewhere in the reports.
+                  Generation is best-effort/non-fatal, like serve_report.pyz.
 """
 import csv
 import json
@@ -134,7 +144,7 @@ def _commit_rows(commits, include_reason=False):
 
     The Product Evidence cell is included here for tabular file formats
     (CSV/XLSX/ODS) because COMMIT_COLS includes it.  The HTML table uses
-    a narrower column set that excludes Product Evidence — that exclusion
+    a narrower column set that excludes Product Evidence -- that exclusion
     is handled in html_report.py (_commit_row_html) per A.1 / D.16.
     """
     rows = []
@@ -717,6 +727,63 @@ def _write_ai_analysis_files(cfg, cache, outdir):
     
     return written 
 
+# -- Cherry-pick script generation (v19.4.0) ---------------------------------
+
+def _write_cherry_pick_scripts(cfg, cache, outdir):
+    """Write cherry_pick_prefiltered.sh and cherry_pick_relevant.sh.
+
+    Only runs when collect.cherry_pick_test is enabled and kernel.rev_old is
+    configured -- the same gate used by stage 05's cherry-pick enrichment
+    (lib/stages/st05_score.py::_enrich_cherry_pick()), so scripts are never
+    generated from a CherryDB that was never intentionally populated for
+    this pipeline configuration.
+
+    Each script lists only commits with a cached CherryDB result of
+    ok=True, ordered by git history (oldest -> newest) -- see
+    lib/cherrypick_script_gen.py for the full rationale.
+
+    Generation is best-effort: any failure is logged as a warning and does
+    not abort the report stage (mirrors serve_report.pyz's error handling).
+
+    Returns list of paths written (empty list when the feature is disabled
+    or nothing was cherry-pickable).
+    """
+    written = []
+    collect = cfg.get('collect', {}) or {}
+    kernel  = cfg.get('kernel', {}) or {}
+
+    if not collect.get('cherry_pick_test') or not kernel.get('rev_old'):
+        return written
+
+    try:
+        from lib.cherrypick_script_gen import write_cherry_pick_script
+    except Exception as exc:
+        logging.warning('cherry-pick script generation unavailable: %s', exc)
+        return written
+
+    for cache_key, filename in (
+        ('prefilter_kept', 'cherry_pick_prefiltered.sh'),
+        ('relevant',       'cherry_pick_relevant.sh'),
+    ):
+        try:
+            path, stats = write_cherry_pick_script(cfg, cache, outdir, cache_key, filename)
+            if path:
+                written.append(path)
+                logging.info(
+                    '%s: %d cherry-pickable / %d tested / %d total in set',
+                    filename, stats['cherry_pickable'], stats['tested'], stats['total_in_set'],
+                )
+            else:
+                logging.info(
+                    '%s not written: no cherry-pickable commits found '
+                    '(total_in_set=%d, tested=%d)',
+                    filename, stats['total_in_set'], stats['tested'],
+                )
+        except Exception as exc:
+            logging.warning('%s generation failed: %s', filename, exc)
+
+    return written
+
 # -- Stage entry point -------------------------------------------------------
 
 def run(cfg, cache, outdir):
@@ -1005,7 +1072,7 @@ def run(cfg, cache, outdir):
     except Exception as _e:
         logging.warning('pipeline_run_stats.json write failed: %s', _e)
 
-    # HTML -- v16.14.0: filtered commits are passed via filtered_commits= into
+    # HTML -- v16.14.0: filtered commits are embedded via filtered_commits= into
     # the unified summary.html report.  No separate
     # filtered_commits.html is written.
     _update_stage7_progress(6, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
@@ -1072,7 +1139,11 @@ def run(cfg, cache, outdir):
     # AI Analysis: write input JSON and prompt template
     ai_written = _write_ai_analysis_files(cfg, cache, outdir)
     _written.extend(ai_written)
-    
+
+    # v19.4.0: cherry-pick execution scripts (gated on collect.cherry_pick_test)
+    cp_script_written = _write_cherry_pick_scripts(cfg, cache, outdir)
+    _written.extend(cp_script_written)
+
     # Embed generated_files list, then write report_stats.json last
     report_stats['generated_files'] = sorted(set(
         f for f in _written if f != 'report_stats.json'))

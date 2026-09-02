@@ -1,5 +1,5 @@
 {
-  "version": "v19.3.0",
+  "version": "v19.4.0",
   "description": "kcommit-analysis-pipeline: analyze Linux kernel commits for relevance via configurable profiles",
   "library_dir": "lib",
   "example_configs": ["configs/example-arm-embedded-full.json"],
@@ -44,7 +44,8 @@
       "output/ai_analysis_input.json",
       "output/ai_analysis_input/",
       "output/ai_analysis_prompt.md",
-      "output/ai_analysis_input.json"
+      "output/cherry_pick_prefiltered.sh",
+      "output/cherry_pick_relevant.sh"
     ]}
   ],
   "tools": [

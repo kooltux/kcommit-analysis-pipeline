@@ -518,3 +518,139 @@ def test_ai_analysis_no_commits(tmp_path):
     
     assert not os.path.exists(ai_path)
     assert not os.path.exists(chunk_dir)
+
+
+# ── v19.4.0: cherry-pick execution script generation ─────────────────────────────────────────────
+
+def _seed_cherry_db(cache_dir_root, rev_old, results):
+    """Seed a CherryDB for rev_old with sha -> {'ok': bool} results."""
+    from lib.cherrypick_db import load_or_create_db
+    db = load_or_create_db(cache_dir_root, rev_old)
+    for sha, res in results.items():
+        db.add_result(sha, res)
+    db.save()
+
+
+def test_cherry_pick_scripts_not_written_when_test_disabled(tmp_path):
+    """collect.cherry_pick_test is falsy (default) -- no scripts should appear,
+    even if a CherryDB happens to exist."""
+    sha = 'abc123def4567890'
+    cache, outdir, cfg = _setup(tmp_path, scored=[_commit(sha=sha)])
+    cfg['kernel'] = {'source_dir': str(tmp_path / 'src'), 'rev_old': 'v6.1', 'rev_new': 'v6.6'}
+    cp_cache_dir = str(tmp_path / 'cpcache')
+    cfg['collect'] = {'cherry_pick_cache_dir': cp_cache_dir}
+    _seed_cherry_db(cp_cache_dir, 'v6.1', {sha: {'ok': True}})
+
+    stats = run(cfg, cache, outdir)
+
+    assert not os.path.exists(os.path.join(outdir, 'cherry_pick_relevant.sh'))
+    assert not os.path.exists(os.path.join(outdir, 'cherry_pick_prefiltered.sh'))
+    assert not any('cherry_pick_' in f for f in stats['generated_files'])
+
+
+def test_cherry_pick_scripts_not_written_when_rev_old_missing(tmp_path):
+    """cherry_pick_test enabled but kernel.rev_old absent -- still gated off."""
+    sha = 'abc123def4567890'
+    cache, outdir, cfg = _setup(tmp_path, scored=[_commit(sha=sha)])
+    cfg['kernel'] = {'source_dir': str(tmp_path / 'src')}
+    cfg['collect'] = {'cherry_pick_test': True,
+                      'cherry_pick_cache_dir': str(tmp_path / 'cpcache')}
+
+    stats = run(cfg, cache, outdir)
+
+    assert not os.path.exists(os.path.join(outdir, 'cherry_pick_relevant.sh'))
+    assert not any('cherry_pick_' in f for f in stats['generated_files'])
+
+
+def test_cherry_pick_relevant_script_written_when_enabled_and_ok(tmp_path):
+    from unittest.mock import patch
+    sha = 'abc123def4567890'
+    cache, outdir, cfg = _setup(tmp_path, scored=[_commit(sha=sha)])
+    cfg['kernel'] = {'source_dir': str(tmp_path / 'src'), 'rev_old': 'v6.1', 'rev_new': 'v6.6'}
+    cp_cache_dir = str(tmp_path / 'cpcache')
+    cfg['collect'] = {'cherry_pick_test': True, 'cherry_pick_cache_dir': cp_cache_dir}
+    _seed_cherry_db(cp_cache_dir, 'v6.1', {sha: {'ok': True}})
+
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=[sha]):
+        stats = run(cfg, cache, outdir)
+
+    rel_path = os.path.join(outdir, 'cherry_pick_relevant.sh')
+    assert os.path.exists(rel_path)
+    with open(rel_path) as f:
+        content = f.read()
+    assert 'git cherry-pick %s' % sha in content
+    assert any('cherry_pick_relevant.sh' in f for f in stats['generated_files'])
+
+
+def test_cherry_pick_prefiltered_script_uses_prefilter_kept_cache(tmp_path):
+    from unittest.mock import patch
+    from lib.manifest import CACHE_FILES
+    sha_relevant = 'a1' * 20
+    sha_extra     = 'b2' * 20
+    cache, outdir, cfg = _setup(tmp_path, scored=[_commit(sha=sha_relevant)])
+    _write_json(os.path.join(cache, CACHE_FILES['prefilter_kept']),
+               [{'commit': sha_relevant, 'subject': 'x'}, {'commit': sha_extra, 'subject': 'y'}])
+    cfg['kernel'] = {'source_dir': str(tmp_path / 'src'), 'rev_old': 'v6.1', 'rev_new': 'v6.6'}
+    cp_cache_dir = str(tmp_path / 'cpcache')
+    cfg['collect'] = {'cherry_pick_test': True, 'cherry_pick_cache_dir': cp_cache_dir}
+    _seed_cherry_db(cp_cache_dir, 'v6.1', {sha_relevant: {'ok': True}, sha_extra: {'ok': True}})
+
+    with patch('lib.cherrypick_script_gen.list_rev_commits',
+              return_value=[sha_extra, sha_relevant]):
+        stats = run(cfg, cache, outdir)
+
+    pf_path = os.path.join(outdir, 'cherry_pick_prefiltered.sh')
+    rel_path = os.path.join(outdir, 'cherry_pick_relevant.sh')
+    assert os.path.exists(pf_path)
+    assert os.path.exists(rel_path)
+    pf_content = open(pf_path).read()
+    rel_content = open(rel_path).read()
+    assert sha_extra in pf_content       # prefiltered set includes the extra commit
+    assert sha_extra not in rel_content  # relevant set does not
+
+
+def test_cherry_pick_script_generation_failure_is_non_fatal(tmp_path):
+    """Even if script generation raises, the report stage must still succeed."""
+    from unittest.mock import patch
+    sha = 'abc123def4567890'
+    cache, outdir, cfg = _setup(tmp_path, scored=[_commit(sha=sha)])
+    cfg['kernel'] = {'source_dir': str(tmp_path / 'src'), 'rev_old': 'v6.1', 'rev_new': 'v6.6'}
+    cp_cache_dir = str(tmp_path / 'cpcache')
+    cfg['collect'] = {'cherry_pick_test': True, 'cherry_pick_cache_dir': cp_cache_dir}
+    _seed_cherry_db(cp_cache_dir, 'v6.1', {sha: {'ok': True}})
+
+    with patch('lib.cherrypick_script_gen.write_cherry_pick_script',
+              side_effect=RuntimeError('boom')):
+        stats = run(cfg, cache, outdir)  # must not raise
+
+    assert 'total_scored_commits' in stats
+    assert not os.path.exists(os.path.join(outdir, 'cherry_pick_relevant.sh'))
+
+
+def test_cherry_pick_relevant_script_completes_quickly_for_large_set(tmp_path):
+    """v19.4.1 regression guard at the stage-integration level: report_commits
+    must not appear to hang when cherry_pick_test is enabled and the relevant
+    set is large.  Exercises the real _write_cherry_pick_scripts() path
+    end-to-end (not just the unit-level cherrypick_script_gen tests)."""
+    import time
+    from unittest.mock import patch
+    n = 500
+    many = [_commit(sha='s%04d' % i, rank=i + 1) for i in range(n)]
+    cache, outdir, cfg = _setup(tmp_path, scored=many)
+    cfg['kernel'] = {'source_dir': str(tmp_path / 'src'), 'rev_old': 'v6.1', 'rev_new': 'v6.6'}
+    cp_cache_dir = str(tmp_path / 'cpcache')
+    cfg['collect'] = {'cherry_pick_test': True, 'cherry_pick_cache_dir': cp_cache_dir}
+    _seed_cherry_db(cp_cache_dir, 'v6.1', {c['commit']: {'ok': True} for c in many})
+
+    with patch('lib.cherrypick_script_gen.list_rev_commits',
+              return_value=[c['commit'] for c in many]):
+        t0 = time.time()
+        stats = run(cfg, cache, outdir)
+        elapsed = time.time() - t0
+
+    assert os.path.exists(os.path.join(outdir, 'cherry_pick_relevant.sh'))
+    assert elapsed < 10.0, (
+        'st07_report.run() took %.2fs with cherry_pick_test enabled for %d '
+        'relevant commits -- possible regression of the O(N^2) file-read bug '
+        'in lib/cherrypick_script_gen.py' % (elapsed, n)
+    )

@@ -203,6 +203,43 @@ higher-worse for Complexity), Pick priority is heat-coloured (higher-better),
 and raw Score (raw) is shown uncolored.
 
 
+## Cherry-pick execution scripts
+
+When `collect.cherry_pick_test` is enabled and `kernel.rev_old` is configured,
+stage 07 also generates two ready-to-run shell scripts via
+`lib/cherrypick_script_gen.py`:
+
+| File | Commit set |
+|------|------------|
+| `output/cherry_pick_prefiltered.sh` | Every commit that passed the prefilter phase (`cache/prefilter_kept_commits.json`, stage 04) — the larger "positively tested" set. |
+| `output/cherry_pick_relevant.sh`    | The final, score-thresholded set (`cache/relevant_commits.json`, stage 06). |
+
+Both scripts list **only** commits with a cached cherry-pick test result of
+`ok=True` in the SQLite `CherryDB` for `kernel.rev_old` — the same database
+filled by stage 05's cherry-pick enrichment, or refreshed on demand with the
+`cp-check` subcommand. Untested and conflicting commits are omitted from the
+script body but counted in a header comment (e.g. "480 cherry-pickable / 512
+tested / 530 total in set") so staleness is visible.
+
+Commits are ordered by **git history** (oldest → newest), independent of the
+score/rank ordering used in the reports themselves — `relevant_commits.json`
+is sorted by `pick_priority`/score, not chronological order. The order is
+re-derived directly from `git rev-list --reverse` at generation time.
+
+```bash
+# Apply every cherry-pickable relevant commit, oldest first
+./output/cherry_pick_relevant.sh
+
+# On conflict, git cherry-pick stops; resolve then:
+git cherry-pick --continue
+# or abandon the whole sequence:
+git cherry-pick --abort
+```
+
+Generation is best-effort and non-fatal: if it fails for any reason, the
+report stage still completes and a warning is logged.
+
+
 ### Profile colour legend
 
 Each scoring profile is assigned a deterministic colour (hashed from its name,
@@ -272,6 +309,8 @@ full format.
 | `output/rule_trace.csv`          | Per-commit × per-rule match trace (CSV; written when CSV output is enabled) |
 | `output/prefilter_debug.json`    | Per-dropped-commit debug detail from stage 04 (copied from cache when present) |
 | `output/report_stats.json`       | Pipeline run statistics and generated file list |
+| `output/cherry_pick_prefiltered.sh` | Cherry-pick script for the prefiltered commit set (only when `collect.cherry_pick_test` is enabled) |
+| `output/cherry_pick_relevant.sh`  | Cherry-pick script for the relevant commit set (only when `collect.cherry_pick_test` is enabled) |
 
 Optional XLSX/ODS: enable with `"reports": { "outputs": ["xlsx", "ods"] }`.
 Each enabled format produces both `relevant_commits.*` and `filtered_commits.*`
