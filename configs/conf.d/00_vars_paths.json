@@ -1,13 +1,24 @@
 {
+  // ── Variables and Paths ────────────────────────────────────────────────────────
+  // vars: user-defined shorthand variables expanded before any other processing.
+  // paths: working directories for the pipeline.
+
   "vars": {
+    // Import environment variables used in this file.
+    // export WORKSPACE=/path/to/ws  TOOLDIR=/path/to/kcommit  CONFIGDIR=...
     "WORKSPACE": "${WORKSPACE}",
-    "TOOLDIR": "${TOOLDIR}",
+    "TOOLDIR":   "${TOOLDIR}",
     "CONFIGDIR": "${CONFIGDIR}",
+    // User-defined shorthand variables for readability.
     "kernel_src": "${WORKSPACE}/linux",
-    "build_dir": "${WORKSPACE}/build",
-    "logs_dir": "${WORKSPACE}/logs"
+    "build_dir":  "${WORKSPACE}/build",
+    "logs_dir":   "${WORKSPACE}/logs"
   },
+
   "paths": {
-    "work_dir": "${WORKSPACE}/work"
+    "work_dir": "${WORKSPACE}/work",
+    "output_dir": "${WORKSPACE}/work/output",
+    "assets_dir": "${CONFIGDIR}/assets",
+    "cache_dir": "${WORKSPACE}/work/cache"
   }
 }

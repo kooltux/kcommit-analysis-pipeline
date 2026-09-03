@@ -2,10 +2,16 @@ from pathlib import Path
 
 
 def test_example_config_uses_profile_language():
-    txt = Path('configs/example-arm-embedded-full.json').read_text()
-    assert 'profiles' in txt
-    assert 'active' in txt
-    assert 'networking' in txt or 'performance' in txt or 'security_fixes' in txt
+    """Example config demonstrates include mechanism; check conf.d fragments."""
+    # Main config uses includes
+    main_txt = Path('configs/example-arm-embedded-full.json').read_text()
+    assert '"include"' in main_txt
+    
+    # Profile language is defined in conf.d/02_profiles.json
+    profiles_txt = Path('configs/conf.d/02_profiles.json').read_text()
+    assert 'profiles' in profiles_txt
+    assert 'active' in profiles_txt
+    assert 'networking' in profiles_txt or 'performance' in profiles_txt or 'security_fixes' in profiles_txt
 
 
 def test_readme_mentions_rule_trace_json_not_csv_trace_column():

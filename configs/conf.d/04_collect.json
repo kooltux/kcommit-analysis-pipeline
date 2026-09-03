@@ -1,15 +1,52 @@
 {
+  // ── Commit collection (stage 01) ───────────────────────────────────────────────
   "collect": {
-    "use_numstat": true,
-    "count_hunks": false,
+    // use_numstat: attach per-file change stats (insertions/deletions).
+    "use_numstat":       true,
+    // count_hunks: inspect patches of the *relevant* (post-filter) commits to
+    // count unified-diff hunks per commit (stats.hunks).  Feeds the
+    // backport_complexity indicator.  Opt-in because it reads patch text via
+    // git; only the small kept set is inspected, never the full range.
+    "count_hunks":       true,
+    // cherry_pick_test: test if each relevant commit can be cherry-picked
+    // cleanly onto kernel.rev_old. Adds cherry_pickable indicator.
+    // Opt-in because it requires git worktree manipulation (checkout target,
+    // attempt cherry-pick, clean up) for each commit — expensive for large sets.
+    // When enabled, stage 07 also copies a cherry_pick.sh execution script
+    // from paths.assets_dir into output/ (see the "paths" section above).
     "cherry_pick_test": true,
+    // cherry_pick_cache_dir: directory for SQLite cache of cherry-pick test results.
+    // REQUIRED when cherry_pick_test is enabled. Cache is organized per target revision:
+    //   <cache_dir>/v6.1/cherry.db    # SQLite DB for v6.1 target
+    //   <cache_dir>/v5.15/cherry.db   # SQLite DB for v5.15 target
+    // Only new commits are tested; cached results are reused for efficiency.
+    // For released kernels (immutable history), this means one-time testing per target.
+    // Typical speedup: 10-100x for incremental runs.
     "cherry_pick_cache_dir": "${WORKSPACE}/work/cherry-cache",
+    // cherry_pick_workers: parallel workers for cherry-pick testing (v19.2.0).
+    // 0 = auto-detect via os.cpu_count(); a positive integer pins the worker count.
+    // Mirrors score_workers semantics. Cherry-pick tests run in parallel via a
+    // ProcessPoolExecutor, with the target revision checked out exactly once in
+    // the parent process; workers only read (git show + git apply --check), which
+    // is safe to parallelize against a shared, unchanging working tree.
     "cherry_pick_workers": 0,
-    "no_merges": true,
-    "first_parent": false,
-    "max_commits": 0,
-    "score_workers": 0,
-    "jsonl": false,
-    "include_parents": false
+    // use_no_merges: pass --no-merges to git log (recommended).
+    "no_merges":     true,
+    // use_first_parent: pass --first-parent to git log.
+    "first_parent":  false,
+    // max_commits: cap on commits collected (0 = no limit).
+    "max_commits":       0,
+    // score_workers: parallel workers for scoring (0 = auto-detect).
+    "score_workers":     0,
+    // git_binary: override the git executable path (default: "git").
+    // "git_binary":       "git",
+    // use_name_only: pass --name-only to git log instead of --name-status.
+    // "use_name_only":    false,
+    // extra_git_log_args: raw extra args appended to git log (advanced).
+    // "extra_git_log_args": [],
+    // jsonl: also write commits.jsonl for streaming consumers.
+    "jsonl":             false,
+    // include_parents: attach parent SHA list to each commit dict.
+    "include_parents":   false
   }
 }

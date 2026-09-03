@@ -67,6 +67,7 @@ def test_cycle_detection(tmp_path: Path):
         load_config(str(a))
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning")
 def test_shared_fragment_via_separate_branches_allowed(tmp_path: Path):
     _write_json(tmp_path, "shared.json", {"value": 42})
     _write_json(tmp_path, "left.json", {"include": ["shared.json"], "side": "left"})

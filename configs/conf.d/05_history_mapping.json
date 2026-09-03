@@ -1,8 +1,17 @@
 {
+  // ── History mapping (stage 03) ────────────────────────────────────────────
+  // Controls how the config-symbol → source-file history map is built.
   "history_mapping": {
-    "mode": "range",
-    "sample_step": 500,
+    // mode: range | sampled | full | disabled
+    //   range    – walk commits between rev_old..rev_new (recommended)
+    //   sampled  – sample every sample_step commits
+    //   full     – walk the entire git log (slow)
+    //   disabled – skip history mapping entirely
+    "mode":                  "range",
+    // sample_step: used when mode = "sampled"
+    "sample_step":           500,
     "max_commits_per_probe": 3,
-    "max_failure_rate": 0.05
+    // max_failure_rate: abort stage if git-show failure rate exceeds this fraction.
+    "max_failure_rate":      0.05
   }
 }

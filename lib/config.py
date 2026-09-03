@@ -235,9 +235,9 @@ def load_config(path, inherited_vars=None, seen=None):
     variables.setdefault('TOOLDIR', os.environ.get('TOOLDIR', os.path.abspath(os.path.join(config_dir, '..'))))
     variables.setdefault('CONFIGDIR', config_dir)
     variables.setdefault('CWD', os.getcwd())
-    variables.update(cfg.get('vars', {}) or {})
-    for key in list(variables):
-        variables[key] = _expand_string(str(variables[key]), variables)
+    user_vars = cfg.get('vars', {}) or {}
+    for key, value in user_vars.items():
+        variables[key] = _expand_string(str(value), variables)
     cfg['vars'] = variables
     expanded = _resolve_known_paths(_expand_node(cfg, variables), config_dir)
     paths = expanded.setdefault('paths', {})

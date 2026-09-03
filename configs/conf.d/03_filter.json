@@ -1,8 +1,26 @@
 {
+  // Commits that cannot possibly receive a non-zero score are dropped before
   "filter": {
+    // enabled: enable/disable path and product filtering.
+    // Accepted: true | false. Default: true
+    // Note: SHA-based commit_blacklist is always active regardless of this flag.
     "enabled": true,
+
+    // path_blacklist_global: drop commits where EVERY touched file is blacklisted.
+    // Accepted: true | false. Default: true
+    // When true: a commit touching only Documentation/ is dropped if that path is blacklisted.
     "path_blacklist_global": true,
+
+    // require_kconfig_coverage: drop commits where no touched file maps to an enabled CONFIG_*.
+    // Accepted: null | true | false. Default: null
+    //   null  = auto (active when kbuild_static_map is available)
+    //   true  = always enforce (error if kbuild_static_map is missing)
+    //   false = disabled
     "require_kconfig_coverage": null,
+
+    // min_score: commits with a total score STRICTLY LOWER THAN this value
+    // are dropped by stage 06 (postfilter_commits) before reports are produced.
+    // Accepted: integer >= 0. Default: 0 (keep all scored commits).
     "min_score": 0
   }
 }

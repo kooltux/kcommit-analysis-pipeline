@@ -1,6 +1,21 @@
 {
+  // ── AI Analysis (v19.3.0) ───────────────────────────────────────────────────────
+  // Controls AI-powered commit triage for backporting recommendations.
+  // When enabled, stage 07 writes AI analysis input files and prompt template.
   "ai": {
+    // prompt_path: path to the AI analysis prompt template (Markdown file).
+    // The prompt is read at runtime and copied to output for reference.
+    // Default: ${CONFIGDIR}/ai/ai_analysis_prompt.md
     "prompt_path": "${CONFIGDIR}/ai/ai_analysis_prompt.md",
+
+    // chunk_size: number of commits per chunk file (0 = single file).
+    // When > 0, creates ai_analysis_input/ directory with numbered chunk files:
+    //   ai_analysis_input/001.json  (commits 0-99)
+    //   ai_analysis_input/002.json  (commits 100-199)
+    //   ...
+    // Each chunk includes chunk_info metadata for reconstruction.
+    // Recommended: 50-200 commits per chunk for LLM token limits.
+    // Default: 0 (single ai_analysis_input.json file)
     "chunk_size": 100
   }
 }
