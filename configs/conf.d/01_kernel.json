@@ -1,0 +1,12 @@
+{
+  "kernel": {
+    "source_dir": "${kernel_src}",
+    "rev_old": "v4.14.206",
+    "rev_new": "v4.14.336",
+    "kernel_config": "${build_dir}/.config",
+    "build_dir": "${build_dir}",
+    "kernel_build_log": "${logs_dir}/kernel_build.log",
+    "yocto_build_log": "${logs_dir}/yocto_build.log",
+    "dts_roots": ["${kernel_src}/arch/arm/boot/dts"]
+  }
+}

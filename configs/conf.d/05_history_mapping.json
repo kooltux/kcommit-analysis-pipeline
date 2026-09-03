@@ -1,0 +1,8 @@
+{
+  "history_mapping": {
+    "mode": "range",
+    "sample_step": 500,
+    "max_commits_per_probe": 3,
+    "max_failure_rate": 0.05
+  }
+}

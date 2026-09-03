@@ -1,0 +1,7 @@
+{
+  "reports": {
+    "title": "ARM Embedded Analysis",
+    "outputs": ["html", "csv", "xlsx"],
+    "top_n": 500
+  }
+}

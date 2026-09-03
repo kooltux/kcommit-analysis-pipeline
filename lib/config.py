@@ -1,185 +1,105 @@
-"""Load JSON config files with ${var} expansion, relative includes, and comment stripping."""
+"""Load JSON/JSONC configurations, including optional ordered fragments."""
+from __future__ import annotations
+
 import copy
 import json
 import os
 import re
+import warnings
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
-
-# ── Lightweight config schema ──────────────────────────────────────────────────────────────────
-#
-# Each entry describes one key that may appear anywhere in the config tree.
-# "path"  → string (or list of strings) resolved relative to config_dir.
-# "bool"  → must be True/False (not 0/1).
-# "int"   → must be an integer.
-# "float" → must be a number.
-# "str"   → must be a string.
-# "list"  → must be a list.
-# "dict"  → must be a dict.
-#
-# Path resolution is the only behaviour driven by this schema at load time.
-# Type validation is consumed by lib/validation.py.
+INLINE_COMMENT_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
 
 CONFIG_SCHEMA = {
-    # kernel section
-    'kernel': {
-        '__type__': 'dict',
-        'source_dir':       {'type': 'path',   'required': True},
-        'rev_old':          {'type': 'str',    'required': True},
-        'rev_new':          {'type': 'str',    'required': True},
-        'kernel_config':    {'type': 'path'},
-        'build_dir':        {'type': 'path'},
-        'kernel_build_log': {'type': 'path'},
-        'yocto_build_log':  {'type': 'path'},
-        'dts_roots':        {'type': 'path',   'list': True},
-    },
-    # paths section — populated by load_config() from user config + derived values.
-    # User may set work_dir (and optionally cache_dir/output_dir) directly;
-    # cache_dir and output_dir default to <work_dir>/cache and <work_dir>/output.
-    # assets_dir may be set directly too (default: pipeline's own configs/assets/).
-    # profiles_dirs/rules_dirs/scoring_dir/templates_dir/css_override are
-    # resolved from their source sections and written here for uniform access.
-    'paths': {
-        '__type__': 'dict',
-        'work_dir':      {'type': 'path'},
-        'cache_dir':     {'type': 'path'},
-        'output_dir':    {'type': 'path'},
-        'assets_dir':    {'type': 'path'},
-    },
-    # profiles section
-    'profiles': {
-        '__type__': 'dict',
-        'active':        {'type': 'dict'},
-        'profiles_dirs': {'type': 'path', 'list': True},
-    },
-    # rules section
-    'rules': {
-        '__type__': 'dict',
-        'rules_dirs': {'type': 'path', 'list': True},
-    },
-    # filter section
-    'filter': {
-        '__type__': 'dict',
-        'enabled':                  {'type': 'bool'},
-        'min_score':                {'type': 'float'},
-        'path_blacklist_global':    {'type': 'bool'},
-        'require_kconfig_coverage': {'type': 'bool'},
-    },
-    # collect section
-    'collect': {
-        '__type__': 'dict',
-        'use_numstat':           {'type': 'bool'},
-        'count_hunks':           {'type': 'bool'},
-        'cherry_pick_test':      {'type': 'bool'},
-        'cherry_pick_cache_dir': {'type': 'path'},
-        'cherry_pick_workers':   {'type': 'int'},
-        'no_merges':             {'type': 'bool'},
-        'first_parent':          {'type': 'bool'},
-        'score_workers':         {'type': 'int'},
-        'max_commits':           {'type': 'int'},
-        'git_binary':            {'type': 'str'},
-        'use_name_only':         {'type': 'bool'},
-        'extra_git_log_args':    {'type': 'list'},
-        'jsonl':                 {'type': 'bool'},
-        'include_parents':       {'type': 'bool'},
-    },
-    # scoring section
-    'scoring': {
-        '__type__': 'dict',
-        'scoring_dir': {'type': 'path'},
-    },
-    # reports section
-    'reports': {
-        '__type__': 'dict',
-        'outputs':       {'type': 'list'},
-        'title':         {'type': 'str'},
-        'top_n':         {'type': 'int'},
-        'templates_dir': {'type': 'path'},
-        'css_override':  {'type': 'path'},
-    },
-    # history_mapping section
-    'history_mapping': {
-        '__type__': 'dict',
-        'mode':                   {'type': 'str'},
-        'sample_step':            {'type': 'int'},
-        'max_commits_per_probe':  {'type': 'int'},
-        'max_failure_rate':       {'type': 'float'},
-        'history_workers':        {'type': 'int'},
-    },
-    # ai section (v19.3.0)
-    'ai': {
-        '__type__': 'dict',
-        'prompt_path': {'type': 'path'},
-        'chunk_size':  {'type': 'int'},
-    },
+    'kernel': {'__type__': 'dict', 'source_dir': {'type': 'path', 'required': True}, 'rev_old': {'type': 'str', 'required': True}, 'rev_new': {'type': 'str', 'required': True}, 'kernel_config': {'type': 'path'}, 'build_dir': {'type': 'path'}, 'kernel_build_log': {'type': 'path'}, 'yocto_build_log': {'type': 'path'}, 'dts_roots': {'type': 'path', 'list': True}},
+    'paths': {'__type__': 'dict', 'work_dir': {'type': 'path'}, 'cache_dir': {'type': 'path'}, 'output_dir': {'type': 'path'}, 'assets_dir': {'type': 'path'}, 'profiles_dirs': {'type': 'path', 'list': True}, 'rules_dirs': {'type': 'path', 'list': True}, 'scoring_dir': {'type': 'path'}, 'templates_dir': {'type': 'path'}},
+    'profiles': {'__type__': 'dict', 'active': {'type': 'dict'}, 'profiles_dirs': {'type': 'path', 'list': True}, 'profiles_dir': {'type': 'path'}},
+    'rules': {'__type__': 'dict', 'rules_dirs': {'type': 'path', 'list': True}, 'rules_dir': {'type': 'path'}},
+    'filter': {'__type__': 'dict', 'enabled': {'type': 'bool'}, 'min_score': {'type': 'float'}, 'path_blacklist_global': {'type': 'bool'}, 'require_kconfig_coverage': {'type': 'bool'}},
+    'collect': {'__type__': 'dict', 'use_numstat': {'type': 'bool'}, 'count_hunks': {'type': 'bool'}, 'cherry_pick_test': {'type': 'bool'}, 'cherry_pick_cache_dir': {'type': 'path'}, 'cherry_pick_workers': {'type': 'int'}, 'no_merges': {'type': 'bool'}, 'first_parent': {'type': 'bool'}, 'score_workers': {'type': 'int'}, 'max_commits': {'type': 'int'}, 'git_binary': {'type': 'str'}, 'use_name_only': {'type': 'bool'}, 'extra_git_log_args': {'type': 'list'}, 'jsonl': {'type': 'bool'}, 'include_parents': {'type': 'bool'}},
+    'scoring': {'__type__': 'dict', 'scoring_dir': {'type': 'path'}},
+    'reports': {'__type__': 'dict', 'outputs': {'type': 'list'}, 'title': {'type': 'str'}, 'top_n': {'type': 'int'}, 'templates_dir': {'type': 'path'}, 'css_override': {'type': 'path'}},
+    'history_mapping': {'__type__': 'dict', 'mode': {'type': 'str'}, 'sample_step': {'type': 'int'}, 'max_commits_per_probe': {'type': 'int'}, 'max_failure_rate': {'type': 'float'}, 'history_workers': {'type': 'int'}},
+    'ai': {'__type__': 'dict', 'prompt_path': {'type': 'path'}, 'chunk_size': {'type': 'int'}},
 }
-
-# Flat set of all keys that are path-typed, derived from the schema.
-# Used by _resolve_known_paths() — single source of truth.
-_PATH_KEYS = frozenset(
-    key
-    for section in CONFIG_SCHEMA.values()
-    for key, spec in section.items()
-    if key != '__type__' and spec.get('type') == 'path'
-)
+_ALLOWED_TOP_LEVEL = frozenset(CONFIG_SCHEMA.keys()) | {'vars', 'include'}
+_PATH_KEYS = frozenset(key for section in CONFIG_SCHEMA.values() for key, spec in section.items() if key != '__type__' and spec.get('type') == 'path')
 
 
-# ── JSON helpers ────────────────────────────────
+def _strip_json_comments(text: str) -> str:
+    out, in_string, escaped, i = [], False, False, 0
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == '\\':
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            i += 1
+        elif ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+        elif ch == '/' and i + 1 < len(text) and text[i + 1] == '/':
+            end = text.find('\n', i)
+            if end < 0:
+                break
+            out.append('\n')
+            i = end + 1
+        elif ch == '/' and i + 1 < len(text) and text[i + 1] == '*':
+            end = text.find('*/', i + 2)
+            if end < 0:
+                break
+            out.extend('\n' if c == '\n' else ' ' for c in text[i:end + 2])
+            i = end + 2
+        elif ch == '#':
+            end = text.find('\n', i)
+            if end < 0:
+                break
+            out.append('\n')
+            i = end + 1
+        else:
+            out.append(ch)
+            i += 1
+    return ''.join(out)
+
 
 def load_json(path, default=None):
-    """Return parsed JSON from *path*, or *default* when the file is absent."""
     if not os.path.exists(path):
         return default
     with open(path, encoding='utf-8') as f:
-        return json.load(f)
+        return json.loads(_strip_json_comments(f.read()))
+
+
+def _load_json(path, default=None):
+    return load_json(path, default=default)
 
 
 def save_json(path, data):
-    """Persist *data* as indented JSON at *path*, creating parent dirs."""
-    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    os.makedirs(os.path.dirname(str(path)) or '.', exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, sort_keys=True)
         f.write('\n')
 
 
-# ── Deep merge ────────────────────────────────
-
-def deep_merge(base, patch):
-    """Recursively merge *patch* dict into *base* in-place. Returns base."""
-    if not isinstance(base, dict) or not isinstance(patch, dict):
-        return patch
-    for k, v in patch.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            deep_merge(base[k], v)
-        else:
-            base[k] = v
-    return base
-
-
-# ── Variable expansion ─────────────────────────────────────────
-
 def _expand_string(text, variables, stack=None):
-    if stack is None:
-        stack = []
-
+    stack = [] if stack is None else stack
     def repl(match):
         name = match.group(1)
         if name in stack:
-            raise ValueError('cyclic variable reference: {}'.format(
-                ' -> '.join(stack + [name])))
+            raise ValueError('cyclic variable reference: ' + ' -> '.join(stack + [name]))
         if name not in variables:
-            raise KeyError('undefined variable: {}'.format(name))
-        value = variables[name]
-        if not isinstance(value, str):
-            value = str(value)
-        return _expand_string(value, variables, stack + [name])
-
-    prev = None
-    cur = text
-    while prev != cur:
-        prev = cur
-        cur = VAR_RE.sub(repl, cur)
-    return cur
+            raise KeyError('undefined variable: ' + name)
+        return _expand_string(str(variables[name]), variables, stack + [name])
+    previous = None
+    while previous != text:
+        previous, text = text, VAR_RE.sub(repl, text)
+    return text
 
 
 def _expand_node(node, variables):
@@ -187,221 +107,163 @@ def _expand_node(node, variables):
         return {k: _expand_node(v, variables) for k, v in node.items()}
     if isinstance(node, list):
         return [_expand_node(v, variables) for v in node]
-    if isinstance(node, str):
-        return _expand_string(node, variables)
-    return node
+    return _expand_string(node, variables) if isinstance(node, str) else node
 
-
-# ── Comment stripping ─────────────────────────────────────────
-
-INLINE_COMMENT_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
-_INLINE_SLASH_RE  = re.compile(r'(^|(?<=\s))//.*$', re.MULTILINE)
-
-
-def _blank_comment(m):
-    leading     = m.group(1)
-    comment_len = len(m.group(0)) - len(leading)
-    return leading + ' ' * comment_len
-
-
-def _strip_json_comments(text):
-    """Remove /* */, // and # comments from JSON-like text, preserving positions."""
-    def _blank_block(m):
-        return re.sub(r'[^\n]', ' ', m.group(0))
-
-    text = re.sub(r'/\*.*?\*/', _blank_block, text, flags=re.S)
-
-    cleaned_lines = []
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith('//'):
-            cleaned_lines.append(' ' * len(line))
-        else:
-            line = _INLINE_SLASH_RE.sub(_blank_comment, line)
-            line = INLINE_COMMENT_RE.sub(_blank_comment, line)
-            cleaned_lines.append(line)
-    return '\n'.join(cleaned_lines)
-
-
-def _load_json(path):
-    with open(path, encoding='utf-8') as fd:
-        raw = fd.read()
-    raw = _strip_json_comments(raw)
-    return json.loads(raw)
-
-
-# ── Path resolution (schema-driven) ────────────────────────────────────
 
 def _resolve_path(value, base_dir):
-    """Resolve *value* as a path relative to *base_dir*.
-
-    Absolute paths, URLs, ${VAR} references, and empty strings are returned
-    unchanged. Called only for keys whose schema entry has type='path'.
-    """
-    if not isinstance(value, str):
-        return value
-    if not value or '://' in value or value.startswith('${') \
-            or value.startswith('/') or value.startswith('~'):
+    if not isinstance(value, str) or not value or '://' in value or value.startswith(('/', '~', '${')):
         return value
     return os.path.normpath(os.path.join(base_dir, value))
 
 
 def _resolve_known_paths(node, base_dir):
-    """Walk a config dict and resolve path-typed keys (driven by _PATH_KEYS).
-
-    _PATH_KEYS is derived from CONFIG_SCHEMA, so adding a new path-typed key
-    to the schema automatically enables resolution here — no separate edit needed.
-    """
     if isinstance(node, dict):
-        out = {}
-        for k, v in node.items():
-            if k in _PATH_KEYS:
-                out[k] = ([_resolve_path(i, base_dir) for i in v]
-                          if isinstance(v, list)
-                          else _resolve_path(v, base_dir))
-            else:
-                out[k] = _resolve_known_paths(v, base_dir)
-        return out
+        return {k: ([_resolve_path(v, base_dir) for v in value] if k in _PATH_KEYS and isinstance(value, list) else _resolve_path(value, base_dir) if k in _PATH_KEYS else _resolve_known_paths(value, base_dir)) for k, value in node.items()}
     if isinstance(node, list):
         return [_resolve_known_paths(v, base_dir) for v in node]
     return node
 
 
-# ── Config loader ────────────────────────────────
+def deep_merge(base, patch, source=None, events=None, path_prefix=''):
+    """Recursively merge patch into base in-place and return base."""
+    if events is None:
+        events = []
+    if not isinstance(base, dict) or not isinstance(patch, dict):
+        return patch
+    for key, value in patch.items():
+        dotted = f"{path_prefix}.{key}" if path_prefix else key
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            deep_merge(base[key], value, source, events, dotted)
+        elif isinstance(value, list) and isinstance(base.get(key), list):
+            seen = {json.dumps(v, sort_keys=True, separators=(',', ':')) for v in base[key]}
+            for item in value:
+                marker = json.dumps(item, sort_keys=True, separators=(',', ':'))
+                if marker not in seen:
+                    base[key].append(copy.deepcopy(item))
+                    seen.add(marker)
+        else:
+            if source is not None and key in base and base[key] != value:
+                events.append({"path": dotted, "event": "scalar_replaced", "source": source, "old_value": base[key], "new_value": value})
+                warnings.warn(f"Repeated assignment at '{dotted}' from {source}")
+            base[key] = copy.deepcopy(value)
+    return base
 
-_ALLOWED_TOP_LEVEL = frozenset(CONFIG_SCHEMA.keys())
-
-
-def _reject_unknown_keys(cfg):
-    unknown = sorted(set(cfg) - _ALLOWED_TOP_LEVEL - {'vars'})
-    if unknown:
-        raise ValueError('unknown top-level keys: {}'.format(', '.join(unknown)))
-
-
-def load_config(path, inherited_vars=None, seen=None):
-    path = os.path.abspath(path)
-    if seen is None:
-        seen = set()
-    if path in seen:
-        raise ValueError('cyclic include detected: {}'.format(path))
-    seen.add(path)
-
-    cfg = _load_json(path)
-    _reject_unknown_keys(cfg)
-    config_dir = os.path.dirname(path)
-
-    merged = {}
-    for inc in cfg.get('include_configs', []) or []:
-        inc_path = inc if os.path.isabs(inc) else os.path.join(config_dir, inc)
-        inc_cfg = load_config(inc_path, inherited_vars=inherited_vars, seen=seen)
-        deep_merge(merged, inc_cfg)
-
-    local = copy.deepcopy(cfg)
-    local.pop('include_configs', None)
-    deep_merge(merged, local)
-
-    vars_map = {}
-    if inherited_vars:
-        vars_map.update(inherited_vars)
-    vars_map.setdefault('WORKSPACE', os.environ.get('WORKSPACE', vars_map.get('WORKSPACE', '')))
-    vars_map.setdefault('TOOLDIR', os.environ.get('TOOLDIR',
-        os.path.abspath(os.path.join(config_dir, '..'))))
-    vars_map.setdefault('CONFIGDIR', config_dir)
-    vars_map.setdefault('CWD', os.getcwd())
-
-    for k, v in (merged.get('vars', {}) or {}).items():
-        vars_map[k] = _expand_string(v, vars_map)
-    merged['vars'] = vars_map
-
-    # Validate critical variables — they must be non-empty to avoid silent path corruption
-    _critical_vars = ['WORKSPACE', 'TOOLDIR', 'CONFIGDIR', 'CWD']
-    for var in _critical_vars:
-        if not vars_map.get(var):
-            raise SystemExit(
-                'Config error: required variable {} is not set. '
-                'Set the {} environment variable or define it in the config "vars" section.'.format(
-                    var, var))
-
-    expanded = _expand_node(merged, vars_map)
-    expanded = _resolve_known_paths(expanded, config_dir)
-
-    # ── Canonical paths namespace ────────────────────────────
-    work_raw = (expanded.get('paths', {}) or {}).get('work_dir', './work')
-    work = (os.path.normpath(os.path.join(config_dir, work_raw))
-            if not os.path.isabs(work_raw) else work_raw)
-
-    _scoring_cfg = expanded.get('scoring', {}) or {}
-    _scoring_raw = _scoring_cfg.get('scoring_dir')
-    if _scoring_raw and not os.path.isabs(_scoring_raw):
-        _scoring_raw = os.path.normpath(os.path.join(config_dir, _scoring_raw))
-    scoring_dir  = _scoring_raw if _scoring_raw else os.path.join(config_dir, 'scoring')
-    # templates_dir: from reports.templates_dir in config, else pipeline's own configs/html/
-    _reports_cfg  = expanded.get('reports', {}) or {}
-    _tool_dir     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _default_tpl  = os.path.join(_tool_dir, 'configs', 'html')
-    _custom_tpl   = _reports_cfg.get('templates_dir')
-    if _custom_tpl and not os.path.isabs(_custom_tpl):
-        _custom_tpl = os.path.normpath(os.path.join(config_dir, _custom_tpl))
-    templates_dir = _custom_tpl if _custom_tpl else _default_tpl
-
-    # assets_dir: from paths.assets_dir in config, else pipeline's own configs/assets/
-    # (static files, e.g. cherry_pick.sh, copied verbatim into output/ by generators).
-    _paths_cfg    = expanded.get('paths', {}) or {}
-    _default_assets = os.path.join(_tool_dir, 'configs', 'assets')
-    _custom_assets  = _paths_cfg.get('assets_dir')
-    if _custom_assets and not os.path.isabs(_custom_assets):
-        _custom_assets = os.path.normpath(os.path.join(config_dir, _custom_assets))
-    assets_dir = _custom_assets if _custom_assets else _default_assets
-
-    _profiles_cfg = expanded.get('profiles', {}) or {}
-    _rules_cfg    = expanded.get('rules', {}) or {}
-
-    def _resolve_dir_list(cfg_section, key_plural, key_singular, default_dir):
-        raw = cfg_section.get(key_plural)
-        if raw in (None, [], ''):
-            raw = cfg_section.get(key_singular)
-        if raw not in (None, [], ''):
-            entries = raw if isinstance(raw, list) else [raw]
-            return [r if os.path.isabs(r) else os.path.normpath(os.path.join(config_dir, r))
-                    for r in entries]
-        return [default_dir]
-
-    profiles_dirs = _resolve_dir_list(_profiles_cfg, 'profiles_dirs', 'profiles_dir',
-                                      os.path.join(config_dir, 'profiles'))
-    rules_dirs    = _resolve_dir_list(_rules_cfg, 'rules_dirs', 'rules_dir',
-                                      os.path.join(config_dir, 'rules'))
-
-    expanded['paths'] = {
-        'work_dir':      work,
-        'cache_dir':     os.path.join(work, 'cache'),
-        'output_dir':    os.path.join(work, 'output'),
-        'assets_dir':    assets_dir,
-        'profiles_dirs': profiles_dirs,
-        'rules_dirs':    rules_dirs,
-        'scoring_dir':   scoring_dir,
-        'templates_dir': templates_dir,
-    }
-
-    expanded['_meta'] = {
-        'config_path': path,
-        'config_dir':  config_dir,
-        'vars':        vars_map,
-    }
-    expanded['config_dir'] = config_dir
-    return expanded
-
-
-# ── Override helper ────────────────────────────────
 
 def apply_override(cfg, override_json):
-    """Parse *override_json* string and deep-merge into *cfg*.
-
-    Raises SystemExit on parse error or non-object input.
-    """
     try:
         patch = json.loads(override_json)
     except json.JSONDecodeError as exc:
         raise SystemExit('--override invalid JSON: {}'.format(exc))
     if not isinstance(patch, dict):
         raise SystemExit('--override top-level value must be an object')
-    return deep_merge(cfg, patch)
+    deep_merge(cfg, patch)
+    return cfg
+
+
+def _merge_includes(path, active, is_root=True):
+    path = os.path.abspath(path)
+    if path in active:
+        raise ValueError('cyclic include detected: {}'.format(path))
+    raw = load_json(path)
+    if not isinstance(raw, dict):
+        raise ValueError('configuration must be an object: {}'.format(path))
+    if 'include_configs' in raw:
+        raise ValueError("unknown top-level key 'include_configs'; use 'include'")
+    if is_root and set(raw) - _ALLOWED_TOP_LEVEL:
+        raise ValueError('unknown top-level keys: {}'.format(', '.join(sorted(set(raw) - _ALLOWED_TOP_LEVEL))))
+    includes = raw.get('include', [])
+    if not isinstance(includes, list) or not all(isinstance(v, str) for v in includes):
+        raise ValueError("'include' must be an array of strings")
+    merged = {}
+    events = []
+    for include in includes:
+        child_path = include if os.path.isabs(include) else os.path.join(os.path.dirname(path), include)
+        child, child_events = _merge_includes(child_path, active + (path,), is_root=False)
+        for key, value in child.items():
+            if key not in merged:
+                merged[key] = copy.deepcopy(value)
+            elif isinstance(value, dict) and isinstance(merged[key], dict):
+                deep_merge(merged[key], value, source=child_path, events=events, path_prefix=key)
+            elif isinstance(value, list) and isinstance(merged[key], list):
+                seen = {json.dumps(v, sort_keys=True, separators=(',', ':')) for v in merged[key]}
+                added = []
+                for item in value:
+                    marker = json.dumps(item, sort_keys=True, separators=(',', ':'))
+                    if marker not in seen:
+                        seen.add(marker)
+                        added.append(copy.deepcopy(item))
+                if added:
+                    merged[key].extend(added)
+                    events.append({"path": key, "event": "array_contribution", "source": child_path, "added": added})
+                    warnings.warn(f"Array contribution at '{key}' from {child_path}")
+            else:
+                events.append({"path": key, "event": "scalar_replaced", "source": child_path, "old_value": merged[key], "new_value": value})
+                warnings.warn(f"Repeated assignment at '{key}' from {child_path}")
+                merged[key] = copy.deepcopy(value)
+    own = copy.deepcopy(raw)
+    own.pop('include', None)
+    for key, value in own.items():
+        if key not in merged:
+            merged[key] = copy.deepcopy(value)
+        elif isinstance(value, dict) and isinstance(merged[key], dict):
+            deep_merge(merged[key], value, source=path, events=events, path_prefix=key)
+        elif isinstance(value, list) and isinstance(merged[key], list):
+            seen = {json.dumps(v, sort_keys=True, separators=(',', ':')) for v in merged[key]}
+            added = []
+            for item in value:
+                marker = json.dumps(item, sort_keys=True, separators=(',', ':'))
+                if marker not in seen:
+                    seen.add(marker)
+                    added.append(copy.deepcopy(item))
+            if added:
+                merged[key].extend(added)
+                events.append({"path": key, "event": "array_contribution", "source": path, "added": added})
+                warnings.warn(f"Array contribution at '{key}' from {path}")
+        else:
+            events.append({"path": key, "event": "scalar_replaced", "source": path, "old_value": merged[key], "new_value": value})
+            warnings.warn(f"Repeated assignment at '{key}' from {path}")
+            merged[key] = copy.deepcopy(value)
+    return merged, events
+
+
+def load_config(path, inherited_vars=None, seen=None):
+    path = os.path.abspath(path)
+    cfg, _events = _merge_includes(path, tuple(seen or ()), is_root=True)
+    config_dir = os.path.dirname(path)
+    variables = dict(inherited_vars or {})
+    variables.setdefault('WORKSPACE', os.environ.get('WORKSPACE', ''))
+    variables.setdefault('TOOLDIR', os.environ.get('TOOLDIR', os.path.abspath(os.path.join(config_dir, '..'))))
+    variables.setdefault('CONFIGDIR', config_dir)
+    variables.setdefault('CWD', os.getcwd())
+    variables.update(cfg.get('vars', {}) or {})
+    for key in list(variables):
+        variables[key] = _expand_string(str(variables[key]), variables)
+    cfg['vars'] = variables
+    expanded = _resolve_known_paths(_expand_node(cfg, variables), config_dir)
+    paths = expanded.setdefault('paths', {})
+    work = paths.get('work_dir', os.path.join(config_dir, 'work'))
+    if not os.path.isabs(work):
+        work = os.path.normpath(os.path.join(config_dir, work))
+    tool_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    scoring = (expanded.get('scoring') or {}).get('scoring_dir') or os.path.join(config_dir, 'scoring')
+    templates = (expanded.get('reports') or {}).get('templates_dir') or os.path.join(tool_dir, 'configs', 'html')
+    assets = paths.get('assets_dir') or os.path.join(tool_dir, 'configs', 'assets')
+    profiles = (expanded.get('profiles') or {})
+    rules = (expanded.get('rules') or {})
+    def dirs(section, plural, singular, default):
+        raw = section.get(plural, section.get(singular))
+        vals = raw if isinstance(raw, list) else [raw] if raw else [default]
+        return [v if os.path.isabs(v) else os.path.normpath(os.path.join(config_dir, v)) for v in vals]
+    expanded['paths'] = {
+        'work_dir': work,
+        'cache_dir': paths.get('cache_dir') or os.path.join(work, 'cache'),
+        'output_dir': paths.get('output_dir') or os.path.join(work, 'output'),
+        'assets_dir': assets,
+        'profiles_dirs': dirs(profiles, 'profiles_dirs', 'profiles_dir', os.path.join(config_dir, 'profiles')),
+        'rules_dirs': dirs(rules, 'rules_dirs', 'rules_dir', os.path.join(config_dir, 'rules')),
+        'scoring_dir': scoring,
+        'templates_dir': templates,
+    }
+    expanded['_meta'] = {'config_path': path, 'config_dir': config_dir, 'vars': variables, 'include_events': _events}
+    expanded['config_dir'] = config_dir
+    return expanded

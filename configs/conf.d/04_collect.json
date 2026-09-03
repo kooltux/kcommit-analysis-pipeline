@@ -1,0 +1,15 @@
+{
+  "collect": {
+    "use_numstat": true,
+    "count_hunks": false,
+    "cherry_pick_test": true,
+    "cherry_pick_cache_dir": "${WORKSPACE}/work/cherry-cache",
+    "cherry_pick_workers": 0,
+    "no_merges": true,
+    "first_parent": false,
+    "max_commits": 0,
+    "score_workers": 0,
+    "jsonl": false,
+    "include_parents": false
+  }
+}

@@ -22,24 +22,22 @@
     "logs_dir":   "${WORKSPACE}/logs"
   },
 
+  "include": [
+    "conf.d/00_vars_paths.json",
+    "conf.d/01_kernel.json",
+    "conf.d/02_profiles.json",
+    "conf.d/03_filter.json",
+    "conf.d/04_collect.json",
+    "conf.d/05_history_mapping.json",
+    "conf.d/06_reports.json",
+    "conf.d/07_ai.json"
+  ],
+
   "paths": {
-    "work_dir": "${WORKSPACE}/work"
-    // Optional: override cache/output locations individually.
-    // "cache_dir":  "${WORKSPACE}/work/cache",
-    // "output_dir": "${WORKSPACE}/work/output",
-    // Optional: override profile/rule search paths.
-    // Profiles and rules are searched in order; names must be unique across all listed directories.
-    // "profiles_dirs": ["${CONFIGDIR}/profiles", "/shared/team/profiles"],
-    // "rules_dirs":    ["${CONFIGDIR}/rules", "/shared/team/rules"],
-    // Optional: override HTML template directory.
-    // "templates_dir": "${CONFIGDIR}/html"
-    // Optional: override the directory of static files copied verbatim into
-    // output/ (currently just cherry_pick.sh, used below when
-    // collect.cherry_pick_test is enabled). Default: the pipeline's own
-    // configs/assets/. Uncomment and point at your own directory (e.g. a
-    // copy of cherry_pick.sh with extra pre/post hooks) to ship a
-    // customized script without forking the pipeline.
-    // "assets_dir": "${CONFIGDIR}/assets"
+    "work_dir": "${WORKSPACE}/work",
+    "output_dir": "${WORKSPACE}/work/output",
+    "assets_dir": "${CONFIGDIR}/assets",
+    "cache_dir": "${WORKSPACE}/work/cache"
   },
 
   // ── Kernel source and build inputs ──────────────────────────────────────
@@ -79,7 +77,8 @@
       "performance":        70,
       "security_fixes":    100,
       "security_features":  90
-    }  },
+    }
+  },
 
   // ── Rules ────────────────────────────────────────────────────────────────────────
   // Rule directories are configured via paths.rules_dirs.

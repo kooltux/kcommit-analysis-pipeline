@@ -37,7 +37,7 @@ import logging
 import os
 import re
 
-from lib.config import _load_json as _load_json_config, INLINE_COMMENT_RE as _PATTERN_COMMENT_RE
+from lib.config import load_json, INLINE_COMMENT_RE
 
 
 def _read_patterns(path):
@@ -55,7 +55,7 @@ def _read_patterns(path):
     sources  = []
     with open(path, encoding='utf-8', errors='replace') as f:
         for lineno, line in enumerate(f, 1):
-            stripped = _PATTERN_COMMENT_RE.sub('', line).strip()
+            stripped = INLINE_COMMENT_RE.sub('', line).strip()
             if stripped:
                 patterns.append(stripped)
                 sources.append((path, lineno))
@@ -231,7 +231,7 @@ def compile_rules_for_config(cfg, cache_dir=None):
             raise RuntimeError(
                 'profile %r not found in any profiles directory (%s)' % (name, searched))
 
-        pdata = _load_json_config(prof_path)
+        pdata = load_json(prof_path)
         if not pdata:
             raise RuntimeError('profile %r not found or empty at %s' % (name, prof_path))
 

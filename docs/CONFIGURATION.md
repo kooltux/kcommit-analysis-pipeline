@@ -266,6 +266,146 @@ my-product/
         └── keywords_whitelist.txt
 ```
 
+## Configuration includes
+
+Configurations can be split into ordered fragments using the top-level `include` key.
+
+### Overview
+
+- Top-level key: `"include"` (array of relative JSON file paths, strings).
+- Only `"include"` is accepted at the top level; `"include_configs"` is invalid and rejected.
+- Each fragment may define its own `"include"` and local `"vars"`.
+- Paths are resolved relative to the fragment that declares them.
+- `${CONFIGDIR}` is supported in fragment-local `vars` and in path fields.
+- Recursive includes are allowed; cycles are detected using the active include chain.
+  A valid shared fragment can be included through separate branches.
+- JSON files may contain `//` line comments and trailing inline comments; these are stripped before parsing. Comments are preserved in source files.
+
+### Merge semantics
+
+- Objects: recursive union.
+- Arrays: ordered union; duplicates removed by stable canonical-JSON representation.
+- Scalars/type conflicts: later source wins.
+- Every repeated scalar assignment and every array contribution emits a warning
+  and is recorded in `_meta.include_events`.
+
+### Syntax
+
+#### Root configuration
+
+```json
+{
+  "include": ["conf.d/base.json", "conf.d/extras.json"],
+  "paths": {
+    "work_dir": "${WORKSPACE}/work"
+  }
+}
+```
+
+Place fragments under `configs/conf.d/` and use `configs/example-arm-embedded-full.json` as the canonical root example.
+
+#### Fragment with local variables
+
+```json
+{
+  "vars": {
+    "OUT": "${CONFIGDIR}/out",
+    "ASSETS": "${CONFIGDIR}/assets",
+    "CACHE": "${CONFIGDIR}/cache"
+  },
+  "paths": {
+    "work_dir": "${OUT}",
+    "cache_dir": "${CACHE}",
+    "output_dir": "${OUT}",
+    "assets_dir": "${ASSETS}"
+  }
+}
+```
+
+- `${CONFIGDIR}` resolves to the directory of the fragment file.
+- Local `vars` are resolved before merging the fragment's payload.
+
+### Merge examples
+
+#### Scalar replacement (later wins)
+
+- `base.json`: `{ "model": { "name": "base" } }`
+- `frag.json`: `{ "model": { "name": "frag" } }`
+- Result: `{ "model": { "name": "frag" } }`
+
+A warning is emitted and recorded in `_meta.include_events` as `scalar_replaced`.
+
+#### Array ordered union with deduplication
+
+- `base.json`: `{ "tags": ["a", "b"] }`
+- `frag.json`: `{ "tags": ["b", "c"] }`
+- Result: `{ "tags": ["a", "b", "c"] }`
+
+Duplicates (by canonical JSON) are removed; warnings and events record array contributions.
+
+### Cycle detection
+
+Cycles are detected using the active include chain. For example:
+
+- `a.json` includes `b.json`
+- `b.json` includes `a.json`
+
+This raises `ValueError: cyclic include detected`.
+
+A shared fragment included via separate branches is allowed (no false-positive cycle).
+
+### Diagnostics
+
+The composed configuration includes:
+
+```json
+{
+  "_meta": {
+    "include_events": [
+      {
+        "path": "model.name",
+        "event": "scalar_replaced",
+        "old_value": "base",
+        "new_value": "frag",
+        "source": "/path/to/frag.json"
+      }
+    ]
+  }
+}
+```
+
+Events include:
+- `scalar_replaced`: a scalar was overwritten.
+- `array_contribution`: new elements were added to an array.
+
+### Validation and finalization
+
+After composition:
+- `paths` is normalized and derived fields are populated (`cache_dir`, `output_dir`, `assets_dir`, `profiles_dirs`, `rules_dirs`, `scoring_dir`, `templates_dir`).
+- Path fields are resolved (including `${CONFIGDIR}` at the root) and canonicalized to absolute paths.
+
+### Example configuration
+
+The repository includes a canonical example under `configs/`:
+
+- `configs/example-arm-embedded-full.json` includes fragments in `configs/conf.d/`.
+- Fragments: `00_vars_paths.json`, `01_kernel.json`, `02_profiles.json`, `03_filter.json`, `04_collect.json`, `05_history_mapping.json`, `06_reports.json`, `07_ai.json`.
+
+Run:
+
+```bash
+python -c "from lib.config import load_config; import json; cfg = load_config('configs/example-arm-embedded-full.json'); print(json.dumps(cfg, indent=2))"
+```
+
+### Running tests
+
+From the repository root:
+
+```bash
+python -m pytest tests/test_config_includes.py -v
+```
+
+This exercises ordered includes, merge semantics, cycle detection, strict syntax, and diagnostics.
 
 ## Cache files
 

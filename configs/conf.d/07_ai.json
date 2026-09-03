@@ -1,0 +1,6 @@
+{
+  "ai": {
+    "prompt_path": "${CONFIGDIR}/ai/ai_analysis_prompt.md",
+    "chunk_size": 100
+  }
+}

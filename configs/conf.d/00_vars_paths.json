@@ -1,0 +1,13 @@
+{
+  "vars": {
+    "WORKSPACE": "${WORKSPACE}",
+    "TOOLDIR": "${TOOLDIR}",
+    "CONFIGDIR": "${CONFIGDIR}",
+    "kernel_src": "${WORKSPACE}/linux",
+    "build_dir": "${WORKSPACE}/build",
+    "logs_dir": "${WORKSPACE}/logs"
+  },
+  "paths": {
+    "work_dir": "${WORKSPACE}/work"
+  }
+}

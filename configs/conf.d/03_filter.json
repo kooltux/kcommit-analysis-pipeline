@@ -1,0 +1,8 @@
+{
+  "filter": {
+    "enabled": true,
+    "path_blacklist_global": true,
+    "require_kconfig_coverage": null,
+    "min_score": 0
+  }
+}
