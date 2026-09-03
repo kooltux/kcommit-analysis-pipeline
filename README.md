@@ -206,20 +206,40 @@ and raw Score (raw) is shown uncolored.
 ## Cherry-pick execution scripts
 
 When `collect.cherry_pick_test` is enabled and `kernel.rev_old` is configured,
-stage 07 also generates two ready-to-run shell scripts via
-`lib/cherrypick_script_gen.py`:
+stage 07 generates cherry-pick execution files via `lib/cherrypick_script_gen.py`:
 
-| File | Commit set |
-|------|------------|
-| `output/cherry_pick_prefiltered.sh` | Every commit that passed the prefilter phase (`cache/prefilter_kept_commits.json`, stage 04) — the larger "positively tested" set. |
-| `output/cherry_pick_relevant.sh`    | The final, score-thresholded set (`cache/relevant_commits.json`, stage 06). |
+| File | Origin | Description |
+|------|--------|-------------|
+| `output/cherry_pick.sh` | Copied verbatim from `paths.assets_dir` (default: `configs/assets/cherry_pick.sh`) | Static, generic executable script; takes `--set=prefiltered\|relevant` |
+| `output/cherry_pick_data.json` | Generated | Run-specific data: `target_rev`, `rev_new`, and the ordered commit list with `relevant` flags |
 
-Both scripts list **only** commits with a cached cherry-pick test result of
-`ok=True` in the SQLite `CherryDB` for `kernel.rev_old` — the same database
-filled by stage 05's cherry-pick enrichment, or refreshed on demand with the
-`cp-check` subcommand. Untested and conflicting commits are omitted from the
-script body but counted in a header comment (e.g. "480 cherry-pickable / 512
-tested / 530 total in set") so staleness is visible.
+`cherry_pick.sh` is a **static asset**, never assembled from generated
+strings. It is copied byte-for-byte from `paths.assets_dir` into the output
+directory (then made executable), so it can be reviewed, diffed, and
+shellchecked directly like any other shell script in the repo. `paths.assets_dir`
+defaults to the pipeline's own `configs/assets/`, but can be overridden in
+your product config (e.g. `"paths": {"assets_dir": "${CONFIGDIR}/assets"}`)
+to ship a customized script — for example with extra pre/post hooks —
+without forking the pipeline. See `docs/CONFIGURATION.md` for details.
+
+All run-specific values (commit counts, target/new revisions, subjects) are
+read at runtime from `cherry_pick_data.json`, which sits next to the script.
+The script's `usage()` help text always reports commit counts computed live
+from that data file — nothing is hardcoded.
+
+Internally, the script embeds small Python snippets via
+`python3 - <<'PYEOF' ... PYEOF` heredocs with a **quoted** delimiter, so bash
+never expands or reinterprets anything inside them; the JSON path and any
+other values are passed in as real `sys.argv` entries instead of being
+interpolated into the Python source text. This keeps Python fully usable
+inside the script without any bash/Python nested-quoting issues (verified
+with commit subjects containing parentheses and both quote styles).
+
+Only commits with a cached cherry-pick test result of `ok=True` in the
+SQLite `CherryDB` for `kernel.rev_old` are included in the data file — the
+same database filled by stage 05's cherry-pick enrichment, or refreshed on
+demand with the `cp-check` subcommand. Untested and conflicting commits are
+omitted from the commit list entirely.
 
 Commits are ordered by **git history** (oldest → newest), independent of the
 score/rank ordering used in the reports themselves — `relevant_commits.json`
@@ -227,8 +247,17 @@ is sorted by `pick_priority`/score, not chronological order. The order is
 re-derived directly from `git rev-list --reverse` at generation time.
 
 ```bash
+# Show help (commit counts computed live from cherry_pick_data.json)
+./output/cherry_pick.sh --help
+
 # Apply every cherry-pickable relevant commit, oldest first
-./output/cherry_pick_relevant.sh
+./output/cherry_pick.sh --set=relevant
+
+# Apply all cherry-pickable prefiltered commits
+./output/cherry_pick.sh --set=prefiltered
+
+# Target a git repo other than the current directory
+./output/cherry_pick.sh --set=relevant --git-dir /path/to/kernel
 
 # On conflict, git cherry-pick stops; resolve then:
 git cherry-pick --continue
@@ -309,8 +338,8 @@ full format.
 | `output/rule_trace.csv`          | Per-commit × per-rule match trace (CSV; written when CSV output is enabled) |
 | `output/prefilter_debug.json`    | Per-dropped-commit debug detail from stage 04 (copied from cache when present) |
 | `output/report_stats.json`       | Pipeline run statistics and generated file list |
-| `output/cherry_pick_prefiltered.sh` | Cherry-pick script for the prefiltered commit set (only when `collect.cherry_pick_test` is enabled) |
-| `output/cherry_pick_relevant.sh`  | Cherry-pick script for the relevant commit set (only when `collect.cherry_pick_test` is enabled) |
+| `output/cherry_pick.sh` | Cherry-pick script, copied from `paths.assets_dir` (only when `collect.cherry_pick_test` is enabled) |
+| `output/cherry_pick_data.json` | Cherry-pick data file with commits and `relevant` flags (only when `collect.cherry_pick_test` is enabled) |
 
 Optional XLSX/ODS: enable with `"reports": { "outputs": ["xlsx", "ods"] }`.
 Each enabled format produces both `relevant_commits.*` and `filtered_commits.*`
@@ -349,12 +378,69 @@ A realistic small command-flow regression test lives in `tests/test_full_pipelin
 - `tests/test_full_pipeline_with_mini_inputs.py` uses miniature files stored under `tests/mini-sample/mini-kernel`, `tests/mini-sample/profiles`, and `tests/mini-sample/rules`, plus a dedicated `tests/mini-sample/configs/test-mini.json` config, to exercise early stages and command/report flow with test-local assets.
 
 
-## Validation
+## Testing
 
-Run the full test suite with:
+### Running the test suite
+
+The project includes a comprehensive test suite covering all pipeline stages,
+utilities, and integration scenarios.
+
+**Using the `run_tests` script (recommended):**
 
 ```bash
-python -m pytest tests/ -v --tb=short
+# From the project root directory
+./run_tests
 ```
+
+The `run_tests` script automatically sets the `WORKSPACE` environment variable
+to the current directory and invokes `python3 -m pytest` with the correct paths.
+
+**Manual invocation:**
+
+```bash
+# Set WORKSPACE and run all tests
+export WORKSPACE=$(pwd)
+python3 -m pytest tests/ -v --tb=short
+
+# Run a specific test file
+python3 -m pytest tests/test_st07_report.py -v
+
+# Run tests matching a pattern
+python3 -m pytest tests/ -k "cherry" -v
+
+# Run with coverage (requires pytest-cov)
+python3 -m pytest tests/ --cov=lib --cov-report=term-missing
+```
+
+### Test structure
+
+| Test file | Coverage |
+|-----------|----------|
+| `tests/test_st00_prepare.py` | Stage 00: config validation, profile/rule compilation |
+| `tests/test_st01_collect_run.py` | Stage 01: commit collection, numstat parsing |
+| `tests/test_st02_build_context.py` | Stage 02: Kconfig parsing, build artifact collection |
+| `tests/test_st03_product_map.py` | Stage 03: Kconfig → source path mapping |
+| `tests/test_st04_prefilter_run.py` | Stage 04: whitelist/blacklist filtering logic |
+| `tests/test_st05_score_run.py` | Stage 05: scoring engine, profile weights |
+| `tests/test_st06_postfilter.py` | Stage 06: threshold filtering, backport indicators |
+| `tests/test_st07_report.py` | Stage 07: report generation, cherry-pick scripts |
+| `tests/test_cherrypick_script_gen.py` | Cherry-pick asset copy + data generation (v19.5.0), incl. `paths.assets_dir` override and end-to-end script execution |
+| `tests/test_config.py` | Config loading, path resolution (incl. `paths.assets_dir` default/override) |
+| `tests/test_full_pipeline_commands.py` | End-to-end command handlers |
+| `tests/test_full_pipeline_with_mini_inputs.py` | Integration tests with mini fixtures |
+| `tests/test_*.py` (other files) | Utilities, schema validation, scoring extras |
+
+### Test fixtures
+
+The test suite uses several fixture directories:
+
+- `tests/mini-sample/` — minimal kernel tree and config for integration tests
+- `tests/sample-cache/` — pre-generated cache files for stage tests
+- `tests/fixtures/` — shared test data and helper utilities
+
+### Continuous integration
+
+All tests must pass before committing. The test count is tracked in the
+changelog.
 
 See `CHANGELOG.md` for version history and per-release test counts.

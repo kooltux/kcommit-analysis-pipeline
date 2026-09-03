@@ -6,7 +6,7 @@ import re
 
 VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 
-# ── Lightweight config schema ─────────────────────────────────────────────────────
+# ── Lightweight config schema ──────────────────────────────────────────────────────────────────
 #
 # Each entry describes one key that may appear anywhere in the config tree.
 # "path"  → string (or list of strings) resolved relative to config_dir.
@@ -36,6 +36,7 @@ CONFIG_SCHEMA = {
     # paths section — populated by load_config() from user config + derived values.
     # User may set work_dir (and optionally cache_dir/output_dir) directly;
     # cache_dir and output_dir default to <work_dir>/cache and <work_dir>/output.
+    # assets_dir may be set directly too (default: pipeline's own configs/assets/).
     # profiles_dirs/rules_dirs/scoring_dir/templates_dir/css_override are
     # resolved from their source sections and written here for uniform access.
     'paths': {
@@ -43,6 +44,7 @@ CONFIG_SCHEMA = {
         'work_dir':      {'type': 'path'},
         'cache_dir':     {'type': 'path'},
         'output_dir':    {'type': 'path'},
+        'assets_dir':    {'type': 'path'},
     },
     # profiles section
     'profiles': {
@@ -122,7 +124,7 @@ _PATH_KEYS = frozenset(
 )
 
 
-# ── JSON helpers ────────────────────────────────────────────────────
+# ── JSON helpers ────────────────────────────────
 
 def load_json(path, default=None):
     """Return parsed JSON from *path*, or *default* when the file is absent."""
@@ -140,7 +142,7 @@ def save_json(path, data):
         f.write('\n')
 
 
-# ── Deep merge ────────────────────────────────────────────────────
+# ── Deep merge ────────────────────────────────
 
 def deep_merge(base, patch):
     """Recursively merge *patch* dict into *base* in-place. Returns base."""
@@ -154,7 +156,7 @@ def deep_merge(base, patch):
     return base
 
 
-# ── Variable expansion ─────────────────────────────────────────────────
+# ── Variable expansion ─────────────────────────────────────────
 
 def _expand_string(text, variables, stack=None):
     if stack is None:
@@ -190,7 +192,7 @@ def _expand_node(node, variables):
     return node
 
 
-# ── Comment stripping ─────────────────────────────────────────────────
+# ── Comment stripping ─────────────────────────────────────────
 
 INLINE_COMMENT_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
 _INLINE_SLASH_RE  = re.compile(r'(^|(?<=\s))//.*$', re.MULTILINE)
@@ -228,7 +230,7 @@ def _load_json(path):
     return json.loads(raw)
 
 
-# ── Path resolution (schema-driven) ───────────────────────────────────
+# ── Path resolution (schema-driven) ────────────────────────────────────
 
 def _resolve_path(value, base_dir):
     """Resolve *value* as a path relative to *base_dir*.
@@ -265,7 +267,7 @@ def _resolve_known_paths(node, base_dir):
     return node
 
 
-# ── Config loader ──────────────────────────────────────────────────
+# ── Config loader ────────────────────────────────
 
 _ALLOWED_TOP_LEVEL = frozenset(CONFIG_SCHEMA.keys())
 
@@ -323,7 +325,7 @@ def load_config(path, inherited_vars=None, seen=None):
     expanded = _expand_node(merged, vars_map)
     expanded = _resolve_known_paths(expanded, config_dir)
 
-    # ── Canonical paths namespace ───────────────────────────────────
+    # ── Canonical paths namespace ────────────────────────────
     work_raw = (expanded.get('paths', {}) or {}).get('work_dir', './work')
     work = (os.path.normpath(os.path.join(config_dir, work_raw))
             if not os.path.isabs(work_raw) else work_raw)
@@ -341,6 +343,16 @@ def load_config(path, inherited_vars=None, seen=None):
     if _custom_tpl and not os.path.isabs(_custom_tpl):
         _custom_tpl = os.path.normpath(os.path.join(config_dir, _custom_tpl))
     templates_dir = _custom_tpl if _custom_tpl else _default_tpl
+
+    # assets_dir: from paths.assets_dir in config, else pipeline's own configs/assets/
+    # (static files, e.g. cherry_pick.sh, copied verbatim into output/ by generators).
+    _paths_cfg    = expanded.get('paths', {}) or {}
+    _default_assets = os.path.join(_tool_dir, 'configs', 'assets')
+    _custom_assets  = _paths_cfg.get('assets_dir')
+    if _custom_assets and not os.path.isabs(_custom_assets):
+        _custom_assets = os.path.normpath(os.path.join(config_dir, _custom_assets))
+    assets_dir = _custom_assets if _custom_assets else _default_assets
+
     _profiles_cfg = expanded.get('profiles', {}) or {}
     _rules_cfg    = expanded.get('rules', {}) or {}
 
@@ -363,6 +375,7 @@ def load_config(path, inherited_vars=None, seen=None):
         'work_dir':      work,
         'cache_dir':     os.path.join(work, 'cache'),
         'output_dir':    os.path.join(work, 'output'),
+        'assets_dir':    assets_dir,
         'profiles_dirs': profiles_dirs,
         'rules_dirs':    rules_dirs,
         'scoring_dir':   scoring_dir,
@@ -378,7 +391,7 @@ def load_config(path, inherited_vars=None, seen=None):
     return expanded
 
 
-# ── Override helper ───────────────────────────────────────────────
+# ── Override helper ────────────────────────────────
 
 def apply_override(cfg, override_json):
     """Parse *override_json* string and deep-merge into *cfg*.

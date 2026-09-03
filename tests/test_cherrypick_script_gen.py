@@ -1,14 +1,18 @@
-"""Tests for lib.cherrypick_script_gen -- cherry-pick execution script generation."""
+"""Tests for lib.cherrypick_script_gen -- v19.5.0: static script asset copy
++ JSON data generation."""
 import os
+import json
 import stat
 import subprocess
+import filecmp
 from unittest.mock import patch
 
 import pytest
 
 from lib.cherrypick_script_gen import (
-    build_cherry_pick_script, write_cherry_pick_script,
+    write_cherry_pick_files,
     _load_commits, _index_shas_and_subjects,
+    _ASSET_SCRIPT_PATH,
 )
 from lib.cherrypick_db import load_or_create_db
 from lib.manifest import CACHE_FILES
@@ -45,7 +49,7 @@ def _seed_db(cfg, results):
     db.save()
 
 
-# ── _index_shas_and_subjects (v19.4.1) ───────────────────────────
+# ── _index_shas_and_subjects ──────────────────────────────────
 
 def test_index_shas_and_subjects_dedup_preserves_first_order():
     commits = [
@@ -56,7 +60,7 @@ def test_index_shas_and_subjects_dedup_preserves_first_order():
     ]
     shas, subjects = _index_shas_and_subjects(commits)
     assert shas == ['aaa', 'bbb', 'ccc']
-    assert subjects['aaa'] == 's1'  # first occurrence wins
+    assert subjects['aaa'] == 's1'
     assert subjects['ccc'] == 's3'
 
 
@@ -66,351 +70,202 @@ def test_index_shas_and_subjects_skips_entries_without_sha():
     assert shas == ['a']
 
 
-def test_load_commits_reads_file_exactly_once(tmp_path):
-    """v19.4.1 regression: the O(N^2) bug came from re-opening the cache file
-    once per commit.  build_cherry_pick_script() must call the file-loading
-    path exactly once per invocation, not once per SHA."""
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    many = [_commit('sha%03d' % i) for i in range(50)]
-    _write_cache(cache, 'relevant', many)
-    _seed_db(cfg, {c['commit']: {'ok': True} for c in many})
+# ── static asset: existence and shape ─────────────────────────────────
 
-    with patch('lib.cherrypick_script_gen.list_rev_commits',
-              return_value=[c['commit'] for c in many]), \
-         patch('lib.cherrypick_script_gen.load_json',
-              wraps=__import__('lib.config', fromlist=['load_json']).load_json) as spy:
-        text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
-
-    assert text is not None
-    assert stats['cherry_pickable'] == 50
-    # Exactly one call should target the relevant_commits.json cache file
-    # (the CherryDB itself uses sqlite, not load_json, so no extra calls
-    # from that path).
-    cache_file_calls = [c for c in spy.call_args_list
-                        if CACHE_FILES['relevant'] in (c.args[0] if c.args else c.kwargs.get('path', ''))]
-    assert len(cache_file_calls) == 1, (
-        'Expected exactly 1 load_json() call for the cache file, got %d '
-        '-- possible regression of the O(N^2) file-read bug'
-        % len(cache_file_calls)
+def test_static_asset_script_exists():
+    """v19.5.0: cherry_pick.sh is a static asset shipped under configs/assets/."""
+    assert os.path.exists(_ASSET_SCRIPT_PATH), (
+        'Static asset not found: %s' % _ASSET_SCRIPT_PATH
     )
 
 
-# ── build_cherry_pick_script: ordering ────────────────────────────
+def test_static_asset_script_is_valid_bash():
+    """The static asset must be syntactically valid bash (bash -n)."""
+    result = subprocess.run(
+        ['bash', '-n', _ASSET_SCRIPT_PATH],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
 
-def test_script_orders_by_git_history_not_by_cache_order(tmp_path):
-    """Cache lists commits in reverse-of-history order; script must still
-    emit them in git-history (oldest -> newest) order."""
-    cache = str(tmp_path / 'cache')
+
+def test_static_asset_script_has_no_run_specific_placeholders():
+    """The static asset must be fully generic: no template placeholders,
+    no hardcoded commit counts or revisions."""
+    with open(_ASSET_SCRIPT_PATH) as f:
+        content = f.read()
+    assert 'usage()' in content
+    assert 'getopt' in content
+    assert '--set' in content
+
+
+# ── write_cherry_pick_files: basic functionality ──────────────────────────
+
+def test_write_copies_static_script_and_writes_data_file(tmp_path):
+    cache  = str(tmp_path / 'cache')
+    outdir = str(tmp_path / 'output')
     os.makedirs(cache)
     cfg = _cfg(tmp_path)
-    # Cache order is newest-first (opposite of git history) to prove the
-    # generator does not trust the cache's own ordering.
-    _write_cache(cache, 'relevant', [_commit('c3'), _commit('c2'), _commit('c1')])
+    _write_cache(cache, 'relevant', [_commit('a')])
+    _seed_db(cfg, {'a': {'ok': True}})
+
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
+        script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
+
+    assert script_path is not None
+    assert data_path is not None
+    assert os.path.exists(script_path)
+    assert os.path.exists(data_path)
+
+    # v19.5.0: script is copied byte-for-byte from the static asset
+    assert filecmp.cmp(script_path, _ASSET_SCRIPT_PATH, shallow=False), (
+        'cherry_pick.sh must be an exact copy of the static asset'
+    )
+
+    # Check script is executable
+    mode = os.stat(script_path).st_mode
+    assert mode & stat.S_IXUSR
+
+    # Check data file structure
+    with open(data_path) as f:
+        data = json.load(f)
+    assert 'commits' in data
+    assert len(data['commits']) == 1
+    assert data['commits'][0]['sha'] == 'a'
+    assert data['commits'][0]['relevant'] == True
+    # v19.5.0: target_rev/rev_new embedded so script is self-contained
+    assert data['target_rev'] == 'v6.1'
+    assert data['rev_new'] == 'v6.6'
+
+
+def test_write_returns_none_when_nothing_cherry_pickable(tmp_path):
+    cache  = str(tmp_path / 'cache')
+    outdir = str(tmp_path / 'output')
+    os.makedirs(cache)
+    cfg = _cfg(tmp_path)
+    _write_cache(cache, 'relevant', [])
+
+    script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
+
+    assert script_path is None
+    assert data_path is None
+    assert stats['cherry_pickable'] == 0
+    # No files should be written to outdir at all
+    assert not os.path.exists(os.path.join(outdir, 'cherry_pick.sh'))
+    assert not os.path.exists(os.path.join(outdir, 'cherry_pick_data.json'))
+
+
+# ── write_cherry_pick_files: relevant flag ─────────────────────────────
+
+def test_write_marks_relevant_commits_correctly(tmp_path):
+    cache  = str(tmp_path / 'cache')
+    outdir = str(tmp_path / 'output')
+    os.makedirs(cache)
+    cfg = _cfg(tmp_path)
+
+    _write_cache(cache, 'prefilter_kept', [
+        _commit('a', 'commit a'),
+        _commit('b', 'commit b'),
+        _commit('c', 'commit c'),
+    ])
+    _write_cache(cache, 'relevant', [
+        _commit('a', 'commit a'),
+        _commit('c', 'commit c'),
+    ])
+
+    _seed_db(cfg, {'a': {'ok': True}, 'b': {'ok': True}, 'c': {'ok': True}})
+
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a', 'b', 'c']):
+        script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
+
+    assert script_path is not None
+    assert data_path is not None
+
+    with open(data_path) as f:
+        data = json.load(f)
+
+    commits_by_sha = {c['sha']: c for c in data['commits']}
+    assert commits_by_sha['a']['relevant'] == True
+    assert commits_by_sha['b']['relevant'] == False
+    assert commits_by_sha['c']['relevant'] == True
+
+    assert stats['relevant_count'] == 2
+    assert stats['prefiltered_count'] == 1
+
+
+# ── write_cherry_pick_files: git-history order ─────────────────────────────
+
+def test_write_orders_by_git_history_not_cache_order(tmp_path):
+    """Commits must be in git-history order, not cache file order."""
+    cache  = str(tmp_path / 'cache')
+    outdir = str(tmp_path / 'output')
+    os.makedirs(cache)
+    cfg = _cfg(tmp_path)
+
+    _write_cache(cache, 'relevant', [
+        _commit('c3'),
+        _commit('c2'),
+        _commit('c1'),
+    ])
     _seed_db(cfg, {'c1': {'ok': True}, 'c2': {'ok': True}, 'c3': {'ok': True}})
 
     with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['c1', 'c2', 'c3']):
-        text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
+        script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
 
-    assert text is not None
-    # v19.4.2: now uses cp_one() wrapper, not raw git cherry-pick
-    idx_c1 = text.index('cp_one "c1"')
-    idx_c2 = text.index('cp_one "c2"')
-    idx_c3 = text.index('cp_one "c3"')
-    assert idx_c1 < idx_c2 < idx_c3
-    assert stats['cherry_pickable'] == 3
+    assert data_path is not None
+    with open(data_path) as f:
+        data = json.load(f)
+
+    shas = [c['sha'] for c in data['commits']]
+    assert shas == ['c1', 'c2', 'c3']
 
 
-def test_script_ignores_date_or_score_rank_and_uses_history_order(tmp_path):
-    """Even if cache entries carry misleading rank/date-like fields, only
-    git-history order (from list_rev_commits) determines emission order."""
-    cache = str(tmp_path / 'cache')
+# ── write_cherry_pick_files: filtering ─────────────────────────────────
+
+def test_write_only_includes_ok_true_commits(tmp_path):
+    cache  = str(tmp_path / 'cache')
+    outdir = str(tmp_path / 'output')
     os.makedirs(cache)
     cfg = _cfg(tmp_path)
     _write_cache(cache, 'relevant', [
-        {'commit': 'newest', '_rank': 1, 'author_time': 999},
-        {'commit': 'oldest', '_rank': 2, 'author_time': 1},
-        {'commit': 'middle', '_rank': 3, 'author_time': 500},
+        _commit('good'),
+        _commit('bad'),
+        _commit('untested'),
     ])
-    _seed_db(cfg, {'oldest': {'ok': True}, 'middle': {'ok': True}, 'newest': {'ok': True}})
-
-    with patch('lib.cherrypick_script_gen.list_rev_commits',
-              return_value=['oldest', 'middle', 'newest']):
-        text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
-
-    order = [text.index('cp_one "%s"' % s) for s in ('oldest', 'middle', 'newest')]
-    assert order == sorted(order)
-
-
-# ── build_cherry_pick_script: filtering ──────────────────────────
-
-def test_only_ok_true_commits_included(tmp_path):
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [_commit('good'), _commit('bad'), _commit('untested')])
     _seed_db(cfg, {'good': {'ok': True}, 'bad': {'ok': False}})
 
-    with patch('lib.cherrypick_script_gen.list_rev_commits',
-              return_value=['good', 'bad', 'untested']):
-        text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['good', 'bad', 'untested']):
+        script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
 
-    # v19.4.2: only ok=True commits get a cp_one() call
-    assert 'cp_one "good"' in text
-    assert 'cp_one "bad"' not in text
-    assert 'cp_one "untested"' not in text
-    assert stats['total_in_set'] == 3
-    assert stats['tested'] == 2
+    assert data_path is not None
+    with open(data_path) as f:
+        data = json.load(f)
+
+    shas = [c['sha'] for c in data['commits']]
+    assert shas == ['good']
     assert stats['cherry_pickable'] == 1
+    assert stats['tested'] == 2
     assert stats['skipped_conflict'] == 1
     assert stats['skipped_untested'] == 1
 
 
-def test_prefiltered_vs_relevant_use_different_cache_keys(tmp_path):
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'prefilter_kept', [_commit('p1'), _commit('p2')])
-    _write_cache(cache, 'relevant', [_commit('p1')])
-    _seed_db(cfg, {'p1': {'ok': True}, 'p2': {'ok': True}})
+# ── write_cherry_pick_files: edge cases ────────────────────────────────
 
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['p1', 'p2']):
-        text_pf, stats_pf = build_cherry_pick_script(cfg, cache, 'prefilter_kept')
-        text_rel, stats_rel = build_cherry_pick_script(cfg, cache, 'relevant')
-
-    assert stats_pf['total_in_set'] == 2
-    assert stats_rel['total_in_set'] == 1
-    assert 'cp_one "p2"' in text_pf
-    assert 'cp_one "p2"' not in text_rel
-
-
-# ── build_cherry_pick_script: edge cases ─────────────────────────
-
-def test_empty_commit_set_returns_none(tmp_path):
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [])
-    text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
-    assert text is None
-    assert stats['total_in_set'] == 0
-
-
-def test_missing_cherry_pick_cache_dir_returns_none(tmp_path):
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    cfg['collect'].pop('cherry_pick_cache_dir')
-    _write_cache(cache, 'relevant', [_commit('a')])
-    text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
-    assert text is None
-    assert stats['skipped_untested'] == 1
-
-
-def test_missing_rev_old_returns_none(tmp_path):
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    cfg['kernel'].pop('rev_old')
-    _write_cache(cache, 'relevant', [_commit('a')])
-    text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
-    assert text is None
-
-
-def test_no_cherry_db_yet_returns_none(tmp_path):
-    """CherryDB has never been created for this rev_old -- treat as untested."""
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [_commit('a')])
-    text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
-    assert text is None
-    assert stats['skipped_untested'] == 1
-
-
-def test_all_tested_but_none_ok_returns_none(tmp_path):
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [_commit('a'), _commit('b')])
-    _seed_db(cfg, {'a': {'ok': False}, 'b': {'ok': False}})
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a', 'b']):
-        text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
-    assert text is None
-    assert stats['cherry_pickable'] == 0
-    assert stats['skipped_conflict'] == 2
-
-
-def test_history_order_missing_sha_still_included_at_end(tmp_path):
-    """If list_rev_commits() (e.g. due to no_merges) omits an ok=True SHA,
-    it must still appear in the script rather than being silently dropped."""
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [_commit('a'), _commit('merge_commit')])
-    _seed_db(cfg, {'a': {'ok': True}, 'merge_commit': {'ok': True}})
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
-        text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
-    assert 'cp_one "a"' in text
-    assert 'cp_one "merge_commit"' in text
-    assert stats['cherry_pickable'] == 2
-
-
-# ── script content (v19.4.2 + v19.4.3 enhancements) ─────────────────────────────────
-
-def test_script_has_shebang_strict_mode_and_colors(tmp_path):
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [_commit('a')])
-    _seed_db(cfg, {'a': {'ok': True}})
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
-        text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
-    assert text.startswith('#!/usr/bin/env bash\n')
-    assert 'set -euo pipefail' in text
-    # v19.4.2: color codes and cp_one wrapper
-    assert 'GREEN=' in text
-    assert 'RED=' in text
-    assert 'NC=' in text
-    assert 'cp_one()' in text
-
-
-def test_script_has_logfile_and_branch_prompt(tmp_path):
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path, rev_new='v6.6')
-    _write_cache(cache, 'relevant', [_commit('a')])
-    _seed_db(cfg, {'a': {'ok': True}})
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
-        text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
-    # v19.4.2: log file for failures
-    assert 'LOGFILE="cherry_pick_relevant.log"' in text
-    assert 'rm -f "$LOGFILE"' in text
-    # v19.4.2: branch creation prompt
-    assert 'BRANCH_NAME="cherrypicking_from_v6.6"' in text
-    assert 'read -p' in text
-    assert 'git checkout -b "$BRANCH_NAME"' in text
-
-
-def test_script_checkouts_rev_old_before_branch_prompt(tmp_path):
-    """v19.4.3: script must checkout kernel.rev_old before prompting for branch."""
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path, rev_old='v6.1', rev_new='v6.6')
-    _write_cache(cache, 'relevant', [_commit('a')])
-    _seed_db(cfg, {'a': {'ok': True}})
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
-        text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
-    # v19.4.3: checkout destination rev before branch prompt
-    assert 'git checkout "v6.1"' in text
-    # Ensure checkout happens before the branch prompt
-    checkout_idx = text.index('git checkout "v6.1"')
-    branch_idx = text.index('BRANCH_NAME="cherrypicking_from_v6.6"')
-    assert checkout_idx < branch_idx
-
-
-def test_script_uses_tempfile_for_cherry_pick_output(tmp_path):
-    """v19.4.3: cp_one() uses a temp file to capture output, avoiding double cherry-pick."""
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [_commit('a')])
-    _seed_db(cfg, {'a': {'ok': True}})
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
-        text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
-    # v19.4.3: temp file setup and cleanup
-    assert 'CP_TMPFILE=$(mktemp)' in text
-    assert 'trap "rm -f \"$CP_TMPFILE\"" EXIT INT QUIT STOP' in text
-    # v19.4.3: cp_one uses temp file for output capture
-    assert '>"$CP_TMPFILE"' in text
-    assert 'cat "$CP_TMPFILE"' in text
-
-
-def test_script_header_reports_counts(tmp_path):
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [_commit('a'), _commit('b'), _commit('c')])
-    _seed_db(cfg, {'a': {'ok': True}, 'b': {'ok': False}})
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a', 'b', 'c']):
-        text, stats = build_cherry_pick_script(cfg, cache, 'relevant')
-    assert '3 commit(s) in set' in text
-    assert '2 tested' in text
-    assert '1 cherry-pickable' in text
-    assert '1 untested' in text
-    assert '1 with conflicts' in text
-
-
-def test_script_cp_one_uses_subject(tmp_path):
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [_commit('a', subject='net: fix leak')])
-    _seed_db(cfg, {'a': {'ok': True}})
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
-        text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
-    # v19.4.2: subject passed to cp_one for logging
-    assert "cp_one \"a\" \"1\" \"1\" 'net: fix leak'" in text
-
-
-def test_script_cp_one_progress_format(tmp_path):
-    """v19.4.2: cp_one prints 'Commit <SHA> <n>/<max> - OK/FAIL' with colors."""
-    cache = str(tmp_path / 'cache')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [_commit('a')])
-    _seed_db(cfg, {'a': {'ok': True}})
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
-        text, _ = build_cherry_pick_script(cfg, cache, 'relevant')
-    # v19.4.2: check for the key components of the progress output
-    # (the exact format string may vary slightly due to escaping)
-    assert 'printf "${GREEN}Commit %s' in text
-    assert 'OK${NC}\\n"' in text
-    assert 'printf "${RED}Commit %s' in text
-    assert 'FAIL${NC}\\n"' in text
-
-
-# ── write_cherry_pick_script: filesystem side effects ─────────────────
-
-def test_write_creates_executable_file(tmp_path):
+def test_write_handles_missing_cherry_db(tmp_path):
     cache  = str(tmp_path / 'cache')
     outdir = str(tmp_path / 'output')
     os.makedirs(cache)
     cfg = _cfg(tmp_path)
     _write_cache(cache, 'relevant', [_commit('a')])
-    _seed_db(cfg, {'a': {'ok': True}})
-    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
-        path, stats = write_cherry_pick_script(cfg, cache, outdir, 'relevant', 'cherry_pick_relevant.sh')
-    assert path is not None
-    assert os.path.exists(path)
-    mode = os.stat(path).st_mode
-    assert mode & stat.S_IXUSR
-    with open(path) as f:
-        content = f.read()
-    # v19.4.2: uses cp_one wrapper
-    assert 'cp_one "a"' in content
-    assert 'LOGFILE="cherry_pick_relevant.log"' in content
-    # v19.4.3: temp file usage
-    assert 'CP_TMPFILE=$(mktemp)' in content
-    assert 'trap' in content
 
+    script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
 
-def test_write_returns_none_path_when_nothing_cherry_pickable(tmp_path):
-    cache  = str(tmp_path / 'cache')
-    outdir = str(tmp_path / 'output')
-    os.makedirs(cache)
-    cfg = _cfg(tmp_path)
-    _write_cache(cache, 'relevant', [])
-    path, stats = write_cherry_pick_script(cfg, cache, outdir, 'relevant', 'cherry_pick_relevant.sh')
-    assert path is None
-    assert not os.path.exists(os.path.join(outdir, 'cherry_pick_relevant.sh'))
+    assert script_path is None
+    assert data_path is None
+    assert stats['skipped_untested'] == 1
 
 
 def test_write_scales_to_large_commit_set_quickly(tmp_path):
-    """v19.4.1 regression guard: this must complete quickly even for a large
-    commit set.  Before the fix this degenerated into O(N^2) file I/O and
-    could look hung under strace for realistic prefilter_kept sizes."""
+    """v19.4.1 regression guard: must complete quickly for large commit sets."""
     import time
     cache  = str(tmp_path / 'cache')
     outdir = str(tmp_path / 'output')
@@ -424,13 +279,183 @@ def test_write_scales_to_large_commit_set_quickly(tmp_path):
     with patch('lib.cherrypick_script_gen.list_rev_commits',
               return_value=[c['commit'] for c in many]):
         t0 = time.time()
-        path, stats = write_cherry_pick_script(
-            cfg, cache, outdir, 'prefilter_kept', 'cherry_pick_prefiltered.sh')
+        script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
         elapsed = time.time() - t0
 
-    assert path is not None
+    assert script_path is not None
+    assert data_path is not None
     assert stats['cherry_pickable'] == n
     assert elapsed < 5.0, (
-        'write_cherry_pick_script() took %.2fs for %d commits -- '
+        'write_cherry_pick_files() took %.2fs for %d commits -- '
         'possible regression of the O(N^2) file-read bug' % (elapsed, n)
+    )
+
+
+# ── end-to-end: real script execution against real data ─────────────────────
+
+def test_copied_script_help_reports_dynamic_counts(tmp_path):
+    """v19.5.0: --help / usage() must compute counts from cherry_pick_data.json
+    dynamically, never hardcode them."""
+    cache  = str(tmp_path / 'cache')
+    outdir = str(tmp_path / 'output')
+    os.makedirs(cache)
+    cfg = _cfg(tmp_path)
+    _write_cache(cache, 'prefilter_kept', [_commit('a'), _commit('b')])
+    _write_cache(cache, 'relevant', [_commit('a')])
+    _seed_db(cfg, {'a': {'ok': True}, 'b': {'ok': True}})
+
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a', 'b']):
+        script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
+
+    result = subprocess.run(
+        [script_path, '--help'],
+        capture_output=True, text=True, timeout=15, cwd=outdir,
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'Total commits:    2' in result.stdout
+    assert 'Relevant:         1' in result.stdout
+
+
+def test_copied_script_no_args_shows_usage_and_error(tmp_path):
+    cache  = str(tmp_path / 'cache')
+    outdir = str(tmp_path / 'output')
+    os.makedirs(cache)
+    cfg = _cfg(tmp_path)
+    _write_cache(cache, 'relevant', [_commit('a')])
+    _seed_db(cfg, {'a': {'ok': True}})
+
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
+        script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
+
+    result = subprocess.run(
+        [script_path],
+        capture_output=True, text=True, timeout=15, cwd=outdir,
+    )
+    assert '--set argument is required' in result.stderr
+    assert 'Usage: cherry_pick.sh' in result.stdout
+
+
+def test_copied_script_invalid_set_shows_usage(tmp_path):
+    cache  = str(tmp_path / 'cache')
+    outdir = str(tmp_path / 'output')
+    os.makedirs(cache)
+    cfg = _cfg(tmp_path)
+    _write_cache(cache, 'relevant', [_commit('a')])
+    _seed_db(cfg, {'a': {'ok': True}})
+
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
+        script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
+
+    result = subprocess.run(
+        [script_path, '--set=bogus'],
+        capture_output=True, text=True, timeout=15, cwd=outdir,
+    )
+    assert '--set must be' in result.stderr
+
+
+def test_copied_script_full_cherry_pick_run_with_special_characters(tmp_path):
+    """v19.5.0 regression guard: subjects containing quotes/parens must
+    survive the JSON -> heredoc -> Python round trip unharmed, and the
+    real git cherry-pick must succeed end to end."""
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    subprocess.run(['git', 'init', '-q'], cwd=repo, check=True)
+    subprocess.run(['git', 'config', 'user.email', 'a@b.c'], cwd=repo, check=True)
+    subprocess.run(['git', 'config', 'user.name', 'Test'], cwd=repo, check=True)
+
+    (repo / 'f.txt').write_text('base\n')
+    subprocess.run(['git', 'add', '.'], cwd=repo, check=True)
+    subprocess.run(['git', 'commit', '-q', '-m', 'base'], cwd=repo, check=True)
+    base_rev = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo,
+                              capture_output=True, text=True).stdout.strip()
+
+    subprocess.run(['git', 'checkout', '-q', '-b', 'feature'], cwd=repo, check=True)
+    tricky_subject = 'fix: something (with) "quotes" and \'ticks\''
+    (repo / 'a.txt').write_text('a\n')
+    subprocess.run(['git', 'add', '.'], cwd=repo, check=True)
+    subprocess.run(['git', 'commit', '-q', '-m', tricky_subject], cwd=repo, check=True)
+    sha1 = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo,
+                          capture_output=True, text=True).stdout.strip()
+    subprocess.run(['git', 'checkout', '-q', base_rev], cwd=repo, check=True)
+
+    outdir = tmp_path / 'output'
+    outdir.mkdir()
+    import shutil
+    shutil.copyfile(_ASSET_SCRIPT_PATH, outdir / 'cherry_pick.sh')
+    os.chmod(outdir / 'cherry_pick.sh', 0o755)
+    with open(outdir / 'cherry_pick_data.json', 'w') as f:
+        json.dump({
+            'target_rev': base_rev,
+            'rev_new': sha1,
+            'commits': [{'sha': sha1, 'subject': tricky_subject, 'relevant': True}],
+        }, f)
+
+    result = subprocess.run(
+        [str(outdir / 'cherry_pick.sh'), '--set=relevant', '--git-dir', str(repo)],
+        capture_output=True, text=True, timeout=20, input='n\n', cwd=outdir,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '1 commits to cherry-pick' in result.stdout
+    assert 'OK' in result.stdout
+
+    head_sha = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=repo,
+                              capture_output=True, text=True).stdout.strip()
+    log = subprocess.run(['git', 'log', '-1', '--format=%s'], cwd=repo,
+                         capture_output=True, text=True).stdout.strip()
+    assert log == tricky_subject
+    assert head_sha != base_rev
+
+
+# ── paths.assets_dir override (v19.5.0) ────────────────────────────
+
+def test_asset_script_path_defaults_to_shipped_configs_assets(tmp_path):
+    """When cfg has no 'paths' key (or no assets_dir), the shipped default
+    configs/assets/cherry_pick.sh is used."""
+    from lib.cherrypick_script_gen import _resolve_asset_script_path
+    cfg = _cfg(tmp_path)
+    assert _resolve_asset_script_path(cfg) == _ASSET_SCRIPT_PATH
+
+
+def test_asset_script_path_honors_paths_assets_dir_override(tmp_path):
+    """A cfg with paths.assets_dir set (as populated by lib.config.load_config()
+    from a product config's "paths": {"assets_dir": ...}) must use that
+    directory's cherry_pick.sh instead of the shipped default."""
+    from lib.cherrypick_script_gen import _resolve_asset_script_path
+    custom_dir = tmp_path / 'custom_assets'
+    custom_dir.mkdir()
+    (custom_dir / 'cherry_pick.sh').write_text('#!/usr/bin/env bash\necho custom\n')
+
+    cfg = _cfg(tmp_path)
+    cfg['paths'] = {'assets_dir': str(custom_dir)}
+
+    resolved = _resolve_asset_script_path(cfg)
+    assert resolved == str(custom_dir / 'cherry_pick.sh')
+
+
+def test_write_copies_custom_asset_when_paths_assets_dir_overridden(tmp_path):
+    """v19.5.0 end-to-end: write_cherry_pick_files() copies the product
+    config's own cherry_pick.sh (via paths.assets_dir), not the shipped one."""
+    cache  = str(tmp_path / 'cache')
+    outdir = str(tmp_path / 'output')
+    os.makedirs(cache)
+
+    custom_dir = tmp_path / 'custom_assets'
+    custom_dir.mkdir()
+    custom_script = custom_dir / 'cherry_pick.sh'
+    custom_script.write_text('#!/usr/bin/env bash\necho "this is the custom script"\n')
+
+    cfg = _cfg(tmp_path)
+    cfg['paths'] = {'assets_dir': str(custom_dir)}
+    _write_cache(cache, 'relevant', [_commit('a')])
+    _seed_db(cfg, {'a': {'ok': True}})
+
+    with patch('lib.cherrypick_script_gen.list_rev_commits', return_value=['a']):
+        script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
+
+    assert script_path is not None
+    assert filecmp.cmp(script_path, str(custom_script), shallow=False), (
+        'cherry_pick.sh must be copied from the overridden paths.assets_dir'
+    )
+    assert not filecmp.cmp(script_path, _ASSET_SCRIPT_PATH, shallow=False), (
+        'copied script should NOT match the shipped default once overridden'
     )

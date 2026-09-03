@@ -23,15 +23,29 @@ User-defined shorthand variables expanded before any other processing:
 ### `paths`
 ```json
 "paths": {
-  "work_dir":  "${WORKSPACE}/work",  // required: pipeline working directory
-  "cache_dir": "${WORKSPACE}/work/cache",  // optional override (default: <work_dir>/cache)
-  "output_dir": "${WORKSPACE}/work/output" // optional override (default: <work_dir>/output)
+  "work_dir":   "${WORKSPACE}/work",  // required: pipeline working directory
+  "cache_dir":  "${WORKSPACE}/work/cache",  // optional override (default: <work_dir>/cache)
+  "output_dir": "${WORKSPACE}/work/output", // optional override (default: <work_dir>/output)
+  "assets_dir": "${CONFIGDIR}/assets"  // optional override (default: pipeline's own configs/assets/)
 }
 ```
 `work_dir` is where `cache/` and `output/` sub-directories are created.
 Override `cache_dir` or `output_dir` individually to place them on different
-storage (e.g. a RAM disk for the cache). `work_dir`, `cache_dir`, and
-`output_dir` are the only valid keys under `paths`.
+storage (e.g. a RAM disk for the cache). `work_dir`, `cache_dir`, `output_dir`,
+and `assets_dir` are the only valid keys under `paths`.
+
+#### `assets_dir` — static files copied verbatim into `output/`
+
+`assets_dir` points to a directory of files that are copied byte-for-byte
+into the report output directory rather than generated — currently just
+`cherry_pick.sh` (see stage 07's cherry-pick execution script, gated by
+`collect.cherry_pick_test`). It defaults to the pipeline's own
+`configs/assets/` directory. Set it to point at your own directory (e.g.
+`"${CONFIGDIR}/assets"`) to ship a customized `cherry_pick.sh` — for
+example, one with extra pre/post hooks — without forking the pipeline.
+A relative value is resolved against `CONFIGDIR` (the directory containing
+the config file), exactly like `reports.templates_dir` and
+`scoring.scoring_dir`.
 
 ### `kernel`
 ```json
@@ -188,6 +202,12 @@ above the threshold) and a `filtered_commits.*` file (commits dropped by
 pre- or post-filter, with `filter_reason` column). XLSX and ODS also produce
 `profile_summary.*`, `profile_matrix.*`, and a multi-sheet `summary.*`
 workbook combining all views.
+
+When `collect.cherry_pick_test` is enabled, stage 07 also copies
+`cherry_pick.sh` from `paths.assets_dir` (default: the pipeline's own
+`configs/assets/`) into `output/`, alongside a generated
+`cherry_pick_data.json`. See `paths.assets_dir` above to customize the
+script itself.
 
 
 ### `scoring` (internal)

@@ -3,92 +3,13 @@ from lib.scoring import fmt_profiles, fmt_evidence, order_commit_details
 
 Changes:
   v12.0.0 (A.3) -- update_stage_progress() from lib.pipeline_runtime is
-                  now called with the correct signature:
-                    update_stage_progress(stage_index, stage_total,
-                                          frac, label,
-                                          n_done=current, n_total=total)
-                  Previously the call passed `current` as `frac` and
-                  `total` as `label`, which produced a TypeError on TTYs
-                  and sent meaningless values to the progress bar.
-  v12.0.0 (A.4) -- report_stats['evaluation'] is now populated from cfg
-                  before being passed to generate_html_report(), enabling
-                  the Evaluation sidebar section in the HTML report.
-  v12.0.0 (A.5) -- _commit_rows() docstring clarified: the function still
-                  appends a product_evidence cell for CSV/XLSX/ODS output
-                  (COMMIT_COLS includes that column). Only the HTML table
-                  hides the column (handled in html_report.py / A.1).
-  v12.0.0 (A.3) -- rule_trace.csv is now written alongside rule_trace.json
-                  so human analysts can open it directly in a spreadsheet.
-                  rule_trace.csv is only written when CSV output is enabled
-                  (same guard as relevant_commits.csv).
-                  _STAGE7_MILESTONES bumped from 6 to 7 to account for the
-                  extra CSV milestone.
-  v13.0.0       -- prefilter_debug.json is copied from cache to outdir when
-                  it exists, and listed in report_stats['generated_files'].
-  v13.0.0       -- load_profile_rules() failure (e.g. no active profiles) is
-                  handled gracefully: when compiled_rules.json is already
-                  present in cache the inflated in-memory form is derived
-                  from it directly, so the stage does not abort.
-  v14.1.0       -- build_run_stats() from lib.run_stats is called at the end
-                  of run(); it writes pipeline_run_stats.json in outdir.
-                  This file contains exhaustive, pre-aggregated pipeline-run
-                  statistics for the HTML report right-pane "Global Stats"
-                  panel.  'pipeline_run_stats.json' is added to
-                  report_stats['generated_files'].
-  v16.9.0       -- build_run_stats() is now called BEFORE the HTML report is
-                  generated, and its return value is passed to
-                  generate_html_report() as run_stats_data.  This supplies
-                  the correct stage_05_scoring top-level fields (score_avg,
-                  score_median, score_max, score_min) to the HTML generator,
-                  fixing the avg/median = 0 display bug.
-                -- cfg is passed to generate_html_report() so that the new
-                  Context section can read kernel.rev_old/rev_new and
-                  artifact presence flags.
-  v16.13.0      -- serve_report.pyz generation: when html output is enabled,
-                  lib.serve_script_gen.generate_serve_script() is called
-                  after both HTML reports are written.  It packs the HTML
-                  file(s) and all commits/*.json detail files into a
-                  self-contained Python zipapp (ZIP archive with __main__.py
-                  entry point).  Running that script starts an in-memory
-                  HTTP server with no external file dependencies.
-                  Generation failure is non-fatal (logged as a warning).
-                  'serve_report.pyz' is added to generated_files on success.
-  v16.14.0      -- Filtered commits are now embedded in the unified
-                  summary.html report via the filtered_commits kwarg
-                  of generate_html_report().  The separate
-                  filtered_commits.html file is no longer written.
-                  filtered_commits.table.json is still written as a sidecar
-                  for the JS layer.
-  v18.1.0       -- G.1: bulk JSON outputs use compact separators (',',':')
-                  instead of indent=2 to reduce file sizes significantly.
-                  Only per-commit shard files keep indent=2 for readability
-                  in the HTML raw-tab.
-                -- G.2: _write_commit_details() now deduplicates makedirs
-                  calls using a seen_dirs set; at most 16 mkdir calls for
-                  the first-level bucket dirs (one per hex digit).
-                -- G.4: commit detail files are now stored as bucket JSON
-                  files: commits/<sha[0]>/<sha[1:3]>.json  Each bucket file
-                  is a dict keyed by full SHA.  This reduces the total number
-                  of files from N (one per commit) to at most 256 (16x16
-                  buckets), cutting inode pressure and serve_report.pyz
-                  build time for large corpora.
-  v18.2.0       -- _rt_progress_f and _rt_finish_line_f are now module-level
-                  variables so tests can monkeypatch them reliably.
-                  Previously they were local variables inside run(), making
-                  monkeypatching impossible.
-  v19.3.0       -- AI analysis prompt externalized to configs/ai/ai_analysis_prompt.md
-                  (user-editable). Added ai.chunk_size config option to split
-                  ai_analysis_input.json into multiple chunk files when > 0.
+                  now called with the correct signature.
   v19.4.0       -- Two cherry-pick execution shell scripts are now generated
                   (lib/cherrypick_script_gen.py) when collect.cherry_pick_test
-                  is enabled and kernel.rev_old is configured:
-                  cherry_pick_prefiltered.sh (from prefilter_kept_commits.json,
-                  the larger "positively tested" set) and cherry_pick_relevant.sh
-                  (from relevant_commits.json, the final filtered set). Both
-                  list only CherryDB-confirmed cherry-pickable commits, ordered
-                  by git history (oldest -> newest), independent of the
-                  score-based rank ordering used elsewhere in the reports.
-                  Generation is best-effort/non-fatal, like serve_report.pyz.
+                  is enabled and kernel.rev_old is configured.
+  v19.5.0       -- Cherry-pick generation changed to single script + JSON data
+                  file design (cherry_pick.sh + cherry_pick_data.json).
+                  Both files are written to output/ directory for easy export.
 """
 import csv
 import json
@@ -113,9 +34,6 @@ _COMMIT_KEYS_FILTERED = _COMMIT_KEYS + ["filter_reason"]
 _STAGE7_MILESTONES = 8
 
 # v18.2.0: Module-level progress hooks so tests can monkeypatch them.
-# Previously imported as local variables inside run(), which made
-# monkeypatching via monkeypatch.setattr(_mod, '_rt_progress_f', ...) silently
-# ineffective.
 try:
     from lib.pipeline_runtime import update_stage_progress as _rt_progress_f
     from lib.pipeline_runtime import finish_progress_line  as _rt_finish_line_f
@@ -136,17 +54,7 @@ def _fmt_date(ts):
 
 
 def _commit_rows(commits, include_reason=False):
-    """Build list-of-lists rows for CSV / XLSX / ODS output.
-
-    Column order matches COMMIT_COLS:
-      Rank | SHA | Subject | Author | Date | Score | Profiles | Profile Scores
-                                                               | Product Evidence
-
-    The Product Evidence cell is included here for tabular file formats
-    (CSV/XLSX/ODS) because COMMIT_COLS includes it.  The HTML table uses
-    a narrower column set that excludes Product Evidence -- that exclusion
-    is handled in html_report.py (_commit_row_html) per A.1 / D.16.
-    """
+    """Build list-of-lists rows for CSV / XLSX / ODS output."""
     rows = []
     for c in commits:
         sc       = (c.get('scoring') or {})
@@ -156,7 +64,6 @@ def _commit_rows(commits, include_reason=False):
             for p in sorted(profiles)
         )
         stats = c.get('stats') or {}
-        # cherry_pickable: None -> empty string, True -> 'Yes', False -> 'No'
         cp_val = c.get('cherry_pickable')
         if cp_val is True:
             cherry_pick_str = 'Yes'
@@ -186,7 +93,6 @@ def _commit_rows(commits, include_reason=False):
             row.append(c.get('_filter_reason', ''))
         rows.append(row)
     return rows
-
 
 
 def _trace_summary(commit):
@@ -228,26 +134,15 @@ def _trace_rows(scored):
     return header, rows
 
 
-
 def _canonical_commit(commit):
     return order_commit_details(commit)
 
 
 def _write_commit_details(root, commits):
-    """Write commit detail JSON files into bucket layout.
-
-    G.4: Each commit is stored in commits/<sha[0]>/<sha[1:3]>.json
-    where the file is a {sha: commit_data} dict.  At most 256 bucket
-    files are ever created (16 first-level dirs x 16 second-level files).
-
-    G.2: makedirs is deduplicated -- at most 16 mkdir calls.
-    G.1: Bucket files are written with indent=2 for readability in the
-         HTML raw-tab (these are the sidecar detail files, not bulk JSON).
-    """
+    """Write commit detail JSON files into bucket layout."""
     if not commits:
         return 0
     os.makedirs(root, exist_ok=True)
-    # Accumulate commits per bucket {bucket_file: (bucket_dir, {sha: data})}
     buckets = {}
     seen = set()
     for c in commits:
@@ -260,7 +155,6 @@ def _write_commit_details(root, commits):
         if bfile not in buckets:
             buckets[bfile] = (bdir, {})
         buckets[bfile][1][full] = _canonical_commit(c)
-    # Write each bucket file; deduplicate mkdir calls
     written = 0
     seen_dirs = set()
     for bfile, (bdir, data) in buckets.items():
@@ -276,7 +170,6 @@ def _write_table_json(path, commits, include_reason=False):
     rows = []
     for c in commits:
         stats = c.get('stats') or {}
-        # cherry_pickable: include boolean value directly (None -> null in JSON)
         cp_val = c.get('cherry_pickable')
         row = {
             'commit': c.get('commit', ''),
@@ -300,7 +193,6 @@ def _write_table_json(path, commits, include_reason=False):
         rows.append(order_commit_details(row))
     _save_compact_json(path, rows)
 
-# -- Per-profile statistics --------------------------------------------------
 
 def _profile_summary(scored, profile_rules):
     """Per-profile commit count, total score, and average score."""
@@ -335,15 +227,8 @@ def _profile_matrix(scored):
     return header, rows
 
 
-# -- Coverage metrics (promoted to report_stats) -----------------------------
-
 def _coverage_metrics(scored):
-    """Return diagnostic coverage counters included in report_stats.json.
-
-    commits_matched_zero_profiles  -- commits that matched no profile at all
-    commits_with_product_evidence  -- commits that have at least one
-                                      product-evidence tag
-    """
+    """Return diagnostic coverage counters included in report_stats.json."""
     return {
         'commits_matched_zero_profiles':
             sum(1 for c in scored if not (c.get('matched_profiles') or [])),
@@ -353,13 +238,7 @@ def _coverage_metrics(scored):
 
 
 def _build_evaluation_block(cfg, outputs, html_detail_mode, top_n, threshold):
-    """A.4 / D.14: Build the evaluation metadata block for report_stats.
-
-    This dict is stored in report_stats['evaluation'] and in
-    report_metadata.json.  It is no longer rendered as a sidebar 'Parameters'
-    section in the HTML left pane (removed in v16.9.0); instead the Context
-    block in html_report._build_context() provides the relevant fields.
-    """
+    """A.4 / D.14: Build the evaluation metadata block for report_stats."""
     git       = cfg.get('git', {}) or {}
     reports   = cfg.get('reports', {}) or {}
     active    = sorted((cfg.get('profiles', {}) or {}).get('active', {}).keys())
@@ -392,32 +271,21 @@ def _save_ordered_json(path, data):
 
 
 def _save_compact_json(path, data):
-    """G.1: Write data as compact JSON (no indentation, minimal separators).
-
-    Used for bulk output files (relevant_commits.json, filtered_commits.json,
-    rule_trace.json, profile_summary.json, profile_matrix.json, table sidecars)
-    to reduce file sizes significantly for large corpora.
-    """
+    """G.1: Write data as compact JSON (no indentation, minimal separators)."""
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, default=str, separators=(',', ':'))
         f.write('\n')
 
-# -- Output helpers ----------------------------------------------------------
 
 def _resolve_outputs(cfg):
-    """Return the set of output format names to produce.
-
-    Reads ``reports.outputs`` list.  Recognised names: 'csv', 'html', 'xlsx', 'ods'.
-    Default when not configured: {'csv', 'html'}.
-    """
+    """Return the set of output format names to produce."""
     reports   = cfg.get('reports', {}) or {}
     outputs_l = reports.get('outputs')
 
     if outputs_l is not None:
         return {str(o).lower() for o in (outputs_l or [])}
 
-    # No outputs configured -- use default
     return {'csv', 'html'}
 
 
@@ -426,9 +294,9 @@ def _top_n(cfg):
     reports = cfg.get('reports', {}) or {}
     val = reports.get('top_n')
     if val is None:
-        return 5000  # default
+        return 5000
     n = int(val)
-    return None if n == 0 else n  # 0 -> no limit
+    return None if n == 0 else n
 
 
 def _report_title(cfg):
@@ -437,16 +305,7 @@ def _report_title(cfg):
 
 
 def _load_profile_rules_safe(cfg, cache):
-    """Load profile rules, falling back to compiled_rules.json in cache.
-
-    When load_profile_rules() raises (e.g. 'no active profiles configured')
-    but a valid compiled_rules.json already exists in cache, inflate the
-    cached on-disk schema into the in-memory form expected by scoring and
-    return that instead.  This allows the report stage to run successfully
-    after a prior pipeline run even if the active profiles config is empty.
-
-    Returns an empty dict when neither source is available.
-    """
+    """Load profile rules, falling back to compiled_rules.json in cache."""
     from lib.profile_rules import load_profile_rules
     try:
         return load_profile_rules(cfg)
@@ -478,116 +337,36 @@ def _load_profile_rules_safe(cfg, cache):
             return {}
 
 
-# -- AI Analysis helpers -------------------------------------------------------
-
 def _build_ai_analysis_schema():
-    """Return the schema description for AI analysis input.
-    
-    This describes all fields available in each commit so the AI understands
-    the context of the data it's analyzing.
-    """
+    """Return the schema description for AI analysis input."""
     return {
         'version': '1.0',
         'description': 'Schema for commits passed to AI for backport triage analysis',
         'fields': {
-            'commit': {
-                'type': 'string',
-                'description': 'Full SHA-1 hash of the commit',
-            },
-            'subject': {
-                'type': 'string',
-                'description': 'Commit subject line (title)',
-            },
-            'author_name': {
-                'type': 'string',
-                'description': 'Name of the commit author',
-            },
-            'author_email': {
-                'type': 'string',
-                'description': 'Email address of the commit author',
-            },
-            'author_org': {
-                'type': 'string',
-                'description': 'Organization extracted from the email domain (e.g., "linuxfoundation.org" -> "linuxfoundation")',
-            },
-            'author_time': {
-                'type': 'integer',
-                'description': 'Unix timestamp of the commit date',
-            },
-            'body': {
-                'type': 'string',
-                'description': 'Full commit message body (excluding subject)',
-            },
-            'files': {
-                'type': 'array',
-                'description': 'List of file paths modified by this commit',
-                'items': {'type': 'string'},
-            },
-            'stats': {
-                'type': 'object',
-                'description': 'Commit size indicators',
-                'properties': {
-                    'files_changed': {
-                        'type': 'integer',
-                        'description': 'Number of files modified by this commit',
-                    },
-                    'lines_changed': {
-                        'type': 'integer',
-                        'description': 'Total lines added + removed (commit churn)',
-                    },
-                    'hunks': {
-                        'type': 'integer',
-                        'description': 'Number of unified diff hunks (@@ blocks)',
-                    },
-                },
-            },
-            'meta': {
-                'type': 'object',
-                'description': 'Linux kernel commit annotation flags extracted from commit message',
-                'properties': {
-                    'is_fix': {
-                        'type': 'boolean',
-                        'description': 'True if commit message contains "Fixes:" tag (references another commit)',
-                    },
-                    'has_cve': {
-                        'type': 'boolean',
-                        'description': 'True if commit message mentions a CVE ID (e.g., CVE-2024-1234)',
-                    },
-                    'has_syzbot': {
-                        'type': 'boolean',
-                        'description': 'True if commit message mentions "syzbot" (syzkaller bug finder)',
-                    },
-                    'has_stable_cc': {
-                        'type': 'boolean',
-                        'description': 'True if commit message has "Cc: stable" tag (backport candidate)',
-                    },
-                },
-            },
-            'product_evidence': {
-                'type': 'array',
-                'description': 'List of product relevance evidence tags (why this commit impacts the product)',
-                'items': {'type': 'string'},
-            },
+            'commit': {'type': 'string', 'description': 'Full SHA-1 hash of the commit'},
+            'subject': {'type': 'string', 'description': 'Commit subject line (title)'},
+            'author_name': {'type': 'string', 'description': 'Name of the commit author'},
+            'author_email': {'type': 'string', 'description': 'Email address of the commit author'},
+            'author_org': {'type': 'string', 'description': 'Organization extracted from the email domain'},
+            'author_time': {'type': 'integer', 'description': 'Unix timestamp of the commit date'},
+            'body': {'type': 'string', 'description': 'Full commit message body (excluding subject)'},
+            'files': {'type': 'array', 'description': 'List of file paths modified by this commit', 'items': {'type': 'string'}},
+            'stats': {'type': 'object', 'description': 'Commit size indicators'},
+            'meta': {'type': 'object', 'description': 'Linux kernel commit annotation flags'},
+            'product_evidence': {'type': 'array', 'description': 'List of product relevance evidence tags'},
         },
     }
 
 
 def _build_ai_analysis_input(cfg, prefilter_kept_commits, product_map):
-    """Build the AI analysis input JSON structure.
-    
-    Returns a dict with metadata, schema, and commits ready for JSON serialization.
-    The commits are the prefilter_kept commits (after prefilter, before scoring),
-    with product_evidence computed but WITHOUT any scoring or backport indicators.
-    """
+    """Build the AI analysis input JSON structure."""
     from lib.manifest import VERSION
     from lib.scoring import _collect_product_evidence
     import datetime
     
     commits_for_ai = []
     for c in prefilter_kept_commits:
-        # Compute product_evidence for this commit
         evidence = _collect_product_evidence(c, product_map) if product_map else []
-        
         commit_data = {
             'commit': c.get('commit', ''),
             'subject': c.get('subject', ''),
@@ -606,7 +385,6 @@ def _build_ai_analysis_input(cfg, prefilter_kept_commits, product_map):
     try:
         now = datetime.datetime.now(datetime.timezone.utc)
     except AttributeError:
-        # Python 3.6-3.7 fallback
         now = datetime.datetime.utcnow()
     return {
         'version': '1.0',
@@ -620,16 +398,11 @@ def _build_ai_analysis_input(cfg, prefilter_kept_commits, product_map):
 
 
 def _get_ai_analysis_prompt(cfg):
-    """Load AI analysis prompt from config file.
-    
-    Reads the prompt from configs/ai/ai_analysis_prompt.md (or custom path
-    from ai.prompt_path config). Returns the prompt as a string.
-    """
+    """Load AI analysis prompt from config file."""
     ai_cfg = cfg.get('ai', {}) or {}
     prompt_path = ai_cfg.get('prompt_path')
     
     if not prompt_path:
-        # Default path
         prompt_path = os.path.join(cfg['paths'].get('configdir', 'configs'), 'ai', 'ai_analysis_prompt.md')
     
     if not os.path.exists(prompt_path):
@@ -639,26 +412,15 @@ def _get_ai_analysis_prompt(cfg):
     with open(prompt_path, 'r', encoding='utf-8') as f:
         return f.read()
 
+
 def _write_ai_analysis_files(cfg, cache, outdir):
-    """Write AI analysis input JSON and prompt template files.
-    
-    Supports chunking: if ai.chunk_size > 0, splits commits into multiple
-    JSON files in ai_analysis_input/ directory. If chunk_size == 0 (default),
-    writes single ai_analysis_input.json file.
-    
-    Returns list of paths written.
-    """
-    from lib.config import load_json
-    from lib.manifest import CACHE_FILES
-    
+    """Write AI analysis input JSON and prompt template files."""
     written = []
     
-    # Load prefilter_kept commits (after prefilter, before scoring/filtering)
     prefilter_kept = load_json(
         os.path.join(cache, CACHE_FILES['prefilter_kept']), default=[]
     ) or []
     
-    # Load product_map to compute product_evidence
     product_map = load_json(
         os.path.join(cache, CACHE_FILES['product_map']), default={}
     ) or {}
@@ -666,24 +428,19 @@ def _write_ai_analysis_files(cfg, cache, outdir):
     if not prefilter_kept:
         return written
     
-    # Get chunk_size from config (0 = single file, >0 = split into chunks)
     ai_cfg = cfg.get('ai', {}) or {}
     chunk_size = int(ai_cfg.get('chunk_size', 0) or 0)
     
-    # Build AI analysis input structure
     ai_input = _build_ai_analysis_input(cfg, prefilter_kept, product_map)
     
     if chunk_size > 0:
-        # Split into chunks
         import math
         total_commits = len(ai_input['commits'])
         num_chunks = math.ceil(total_commits / chunk_size)
         
-        # Create output directory
         chunk_dir = os.path.join(outdir, 'ai_analysis_input')
         os.makedirs(chunk_dir, exist_ok=True)
         
-        # Write each chunk
         for i in range(num_chunks):
             start_idx = i * chunk_size
             end_idx = min(start_idx + chunk_size, total_commits)
@@ -703,7 +460,6 @@ def _write_ai_analysis_files(cfg, cache, outdir):
                 'commits': ai_input['commits'][start_idx:end_idx],
             }
             
-            # Use consistent padding based on total number of chunks
             chunk_filename = str(i + 1).zfill(len(str(num_chunks))) + '.json'
             chunk_path = os.path.join(chunk_dir, chunk_filename)
             _save_ordered_json(chunk_path, chunk_input)
@@ -711,13 +467,11 @@ def _write_ai_analysis_files(cfg, cache, outdir):
         
         logging.info('AI analysis input split into %d chunks (%d commits/chunk)', num_chunks, chunk_size)
     else:
-        # Single file (default) - remove schema (it's in the prompt)
         ai_input_out = {k: v for k, v in ai_input.items() if k != 'schema'}
         ai_input_path = os.path.join(outdir, 'ai_analysis_input.json')
         _save_ordered_json(ai_input_path, ai_input_out)
         written.append(ai_input_path)
     
-    # Write AI analysis prompt (copy from config to output for reference)
     prompt_path = os.path.join(outdir, 'ai_analysis_prompt.md')
     prompt_content = _get_ai_analysis_prompt(cfg)
     if prompt_content:
@@ -725,22 +479,19 @@ def _write_ai_analysis_files(cfg, cache, outdir):
             f.write(prompt_content)
         written.append(prompt_path)
     
-    return written 
+    return written
 
-# -- Cherry-pick script generation (v19.4.0) ---------------------------------
 
 def _write_cherry_pick_scripts(cfg, cache, outdir):
-    """Write cherry_pick_prefiltered.sh and cherry_pick_relevant.sh.
+    """Write cherry_pick.sh and cherry_pick_data.json to output directory.
 
+    v19.5.0: Single script + JSON data file design.
     Only runs when collect.cherry_pick_test is enabled and kernel.rev_old is
-    configured -- the same gate used by stage 05's cherry-pick enrichment
-    (lib/stages/st05_score.py::_enrich_cherry_pick()), so scripts are never
-    generated from a CherryDB that was never intentionally populated for
-    this pipeline configuration.
+    configured.
 
-    Each script lists only commits with a cached CherryDB result of
-    ok=True, ordered by git history (oldest -> newest) -- see
-    lib/cherrypick_script_gen.py for the full rationale.
+    The script loads cherry_pick_data.json from the same directory, so both
+    files are placed in outdir (not cache/). This allows the output/ folder
+    to be exported/archived independently.
 
     Generation is best-effort: any failure is logged as a warning and does
     not abort the report stage (mirrors serve_report.pyz's error handling).
@@ -756,37 +507,36 @@ def _write_cherry_pick_scripts(cfg, cache, outdir):
         return written
 
     try:
-        from lib.cherrypick_script_gen import write_cherry_pick_script
+        from lib.cherrypick_script_gen import write_cherry_pick_files
     except Exception as exc:
         logging.warning('cherry-pick script generation unavailable: %s', exc)
         return written
 
-    for cache_key, filename in (
-        ('prefilter_kept', 'cherry_pick_prefiltered.sh'),
-        ('relevant',       'cherry_pick_relevant.sh'),
-    ):
-        try:
-            path, stats = write_cherry_pick_script(cfg, cache, outdir, cache_key, filename)
-            if path:
-                written.append(path)
-                logging.info(
-                    '%s: %d cherry-pickable / %d tested / %d total in set',
-                    filename, stats['cherry_pickable'], stats['tested'], stats['total_in_set'],
-                )
-            else:
-                logging.info(
-                    '%s not written: no cherry-pickable commits found '
-                    '(total_in_set=%d, tested=%d)',
-                    filename, stats['total_in_set'], stats['tested'],
-                )
-        except Exception as exc:
-            logging.warning('%s generation failed: %s', filename, exc)
+    try:
+        script_path, data_path, stats = write_cherry_pick_files(cfg, cache, outdir)
+        if script_path and data_path:
+            written.append(script_path)
+            written.append(data_path)
+            logging.info(
+                'cherry_pick.sh + cherry_pick_data.json: %d cherry-pickable '
+                '(relevant: %d, prefiltered-only: %d) / %d tested / %d total',
+                stats['cherry_pickable'], stats['relevant_count'], 
+                stats['prefiltered_count'], stats['tested'], stats['total_in_set'],
+            )
+        else:
+            logging.info(
+                'cherry_pick files not written: no cherry-pickable commits found '
+                '(total_in_set=%d, tested=%d)',
+                stats['total_in_set'], stats['tested'],
+            )
+    except Exception as exc:
+        logging.warning('cherry_pick generation failed: %s', exc)
 
     return written
 
-# -- Stage entry point -------------------------------------------------------
 
 def run(cfg, cache, outdir):
+    """Stage 07 entry point: generate all output formats."""
     try:
         from lib.spreadsheet import (
             write_xlsx, write_ods,
@@ -805,31 +555,15 @@ def run(cfg, cache, outdir):
     html_embed_compression = reports_cfg.get('html_embed_compression', 'none')
     stage_state_path = os.path.join(outdir, 'runtime_status.json')
     os.makedirs(outdir, exist_ok=True)
-    _written = []  # every file actually written this run
+    _written = []
 
     def _emit(path):
-        """Record path as successfully written. Call AFTER the write."""
         try:
             _written.append(os.path.relpath(path, outdir))
         except ValueError:
             _written.append(path)
 
     def _update_stage7_progress(current, total, message):
-        """A.3: write runtime_status.json AND call the TTY progress bar.
-
-        The real update_stage_progress() signature is:
-          update_stage_progress(index, stage_total, frac, label,
-                                n_done=None, n_total=None)
-        where:
-          index       = this stage's 1-based position (7)
-          stage_total = total number of stages (7)
-          frac        = float 0.0-1.0 completion fraction
-          label       = human-readable milestone string
-          n_done      = current milestone number (optional)
-          n_total     = total milestones (optional)
-
-        v18.2.0: Uses module-level _rt_progress_f so tests can monkeypatch it.
-        """
         payload = {
             'current': int(current),
             'total': max(1, int(total)),
@@ -859,7 +593,6 @@ def run(cfg, cache, outdir):
     filtered      = list(prefiltered) + list(postfiltered)
     profile_rules = _load_profile_rules_safe(cfg, cache)
 
-    # Stage counts for the hierarchical sidebar (D.12)
     _all_scored  = load_json(os.path.join(cache, CACHE_FILES['scored']), default=[]) or []
     _collected   = load_json(os.path.join(cache, CACHE_FILES['commits']), default=[]) or []
     _pf_kept     = load_json(os.path.join(cache, CACHE_FILES['prefilter_kept']), default=[]) or []
@@ -867,25 +600,18 @@ def run(cfg, cache, outdir):
     _scores_all  = [float(c.get('score', 0) or 0) for c in scored]
 
     report_stats = {
-        # Stage 01 -- collection
         'st01_collected':           len(_collected),
-        # Stage 04 -- prefilter
         'st04_prefilter_kept':      len(_pf_kept),
         'st04_prefilter_dropped':   len(_collected) - len(_pf_kept),
-        # Stage 05 -- scoring
         'st05_total_scored':        len(_all_scored),
-        # Stage 06 -- postfilter
         'st06_threshold':           _threshold,
         'st06_postfilter_dropped':  len(postfiltered),
-        # Stage 07 -- report
         'total_scored_commits':     len(scored),
         'top_n':                    top_n,
         'score_highest':            max(_scores_all) if _scores_all else 0,
         'score_lowest':             min(_scores_all) if _scores_all else 0,
         'score_avg':                round(sum(_scores_all) / len(_scores_all), 1) if _scores_all else 0,
         **_coverage_metrics(scored),
-        # A.4 / D.14: Evaluation block -- stored in report_stats.json and
-        # report_metadata.json but no longer rendered as a sidebar section.
         'evaluation': _build_evaluation_block(
             cfg, outputs, html_detail_mode, top_n, _threshold),
     }
@@ -894,7 +620,6 @@ def run(cfg, cache, outdir):
     details_root = os.path.join(outdir, 'commits')
     _write_commit_details(details_root, list(scored) + list(filtered))
 
-    # JSON outputs (always written) -- G.1: compact format for bulk files
     _update_stage7_progress(1, _STAGE7_MILESTONES, 'Writing relevant_commits.json')
     _p = os.path.join(outdir, 'relevant_commits.json')
     _save_compact_json(_p, [_canonical_commit(c) for c in scored]);  _emit(_p)
@@ -909,14 +634,12 @@ def run(cfg, cache, outdir):
         _p = os.path.join(outdir, 'filtered_commits.json')
         _save_compact_json(_p, [_canonical_commit(c) for c in filtered]);  _emit(_p)
 
-    # Copy prefilter_debug.json from cache to outdir when it exists (v13.0.0)
     _pf_debug_src = os.path.join(cache, CACHE_FILES.get('prefilter_debug', 'prefilter_debug.json'))
     if os.path.exists(_pf_debug_src):
         _pf_debug_dst = os.path.join(outdir, 'prefilter_debug.json')
         shutil.copy2(_pf_debug_src, _pf_debug_dst)
         _emit(_pf_debug_dst)
 
-    # rule_trace.csv -- only written when CSV output is enabled (v13.0.0)
     _update_stage7_progress(2, _STAGE7_MILESTONES, 'Writing rule_trace.csv')
     if 'csv' in outputs:
         _rtcsv = os.path.join(outdir, 'rule_trace.csv')
@@ -930,7 +653,6 @@ def run(cfg, cache, outdir):
             logging.warning('rule_trace.csv write failed: %s', _e)
 
     _update_stage7_progress(3, _STAGE7_MILESTONES, 'Writing CSV outputs')
-    # CSV
     if 'csv' in outputs:
         csv_path = os.path.join(outdir, 'relevant_commits.csv')
         with open(csv_path, 'w', newline='', encoding='utf-8') as fh:
@@ -954,7 +676,6 @@ def run(cfg, cache, outdir):
                 w.writerow([pname, pd.get('commit_count', 0),
                              pd.get('total_score', 0), pd.get('avg_score', 0)])
         _emit(ps_path)
-        # Filtered-out commits
         if filtered:
             flt_path = os.path.join(outdir, 'filtered_commits.csv')
             with open(flt_path, 'w', newline='', encoding='utf-8') as fh:
@@ -980,7 +701,6 @@ def run(cfg, cache, outdir):
     }
 
     _update_stage7_progress(4, _STAGE7_MILESTONES, 'Writing XLSX / ODS outputs')
-    # XLSX
     if 'xlsx' in outputs:
         if write_xlsx:
             try:
@@ -1020,7 +740,6 @@ def run(cfg, cache, outdir):
         else:
             logging.warning("'xlsx' output requested but lib.spreadsheet not available")
 
-    # ODS
     if 'ods' in outputs:
         if write_ods:
             try:
@@ -1060,9 +779,6 @@ def run(cfg, cache, outdir):
         else:
             logging.warning("'ods' output requested but lib.spreadsheet not available")
 
-    # v16.9.0: build_run_stats() is now called BEFORE the HTML report so that
-    # its return value (pipeline_run_stats dict with correct score_avg/median)
-    # can be forwarded to generate_html_report() as run_stats_data.
     _update_stage7_progress(5, _STAGE7_MILESTONES, 'Building run statistics')
     run_stats_data = None
     try:
@@ -1072,11 +788,8 @@ def run(cfg, cache, outdir):
     except Exception as _e:
         logging.warning('pipeline_run_stats.json write failed: %s', _e)
 
-    # HTML -- v16.14.0: filtered commits are embedded via filtered_commits= into
-    # the unified summary.html report.  No separate
-    # filtered_commits.html is written.
     _update_stage7_progress(6, _STAGE7_MILESTONES, 'Writing report metadata sidecar')
-    _hp = None  # set below; used later by serve_script_gen
+    _hp = None
     if 'html' in outputs:
         try:
             _save_ordered_json(os.path.join(outdir, 'report_metadata.json'), metadata)
@@ -1086,7 +799,6 @@ def run(cfg, cache, outdir):
             _tp = os.path.join(outdir, 'relevant_commits.table.json')
             _write_table_json(_tp, scored, include_reason=False)
             _emit(_tp)
-            # Write filtered sidecar JSON so the JS tab can lazy-load it
             if filtered:
                 _ftp = os.path.join(outdir, 'filtered_commits.table.json')
                 _write_table_json(_ftp, filtered, include_reason=True)
@@ -1109,7 +821,6 @@ def run(cfg, cache, outdir):
             logging.warning('HTML report failed: %s', e)
             _hp = None
 
-        # v16.13.0 -- generate self-contained serve_report.pyz zipapp
         _update_stage7_progress(8, _STAGE7_MILESTONES, 'Generating serve_report.pyz')
         if _hp and os.path.exists(_hp):
             try:
@@ -1128,7 +839,6 @@ def run(cfg, cache, outdir):
             except Exception as _srv_e:
                 logging.warning('serve_report.pyz generation failed: %s', _srv_e)
 
-    # Emit final progress milestone and terminate the TTY bar line
     _update_stage7_progress(_STAGE7_MILESTONES, _STAGE7_MILESTONES, 'Done')
     if _rt_finish_line_f is not None:
         try:
@@ -1136,15 +846,12 @@ def run(cfg, cache, outdir):
         except Exception as _e:
             logging.debug('finish_progress_line (st07) failed: %s', _e)
 
-    # AI Analysis: write input JSON and prompt template
     ai_written = _write_ai_analysis_files(cfg, cache, outdir)
     _written.extend(ai_written)
 
-    # v19.4.0: cherry-pick execution scripts (gated on collect.cherry_pick_test)
     cp_script_written = _write_cherry_pick_scripts(cfg, cache, outdir)
     _written.extend(cp_script_written)
 
-    # Embed generated_files list, then write report_stats.json last
     report_stats['generated_files'] = sorted(set(
         f for f in _written if f != 'report_stats.json'))
     save_json(os.path.join(outdir, 'report_stats.json'), report_stats)

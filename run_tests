@@ -1,7 +1,10 @@
 #!/bin/bash
 
 # we must be in top dir...
-cd $(dirname $0) 
+cd $(dirname $0)
+
+# Set WORKSPACE to current directory
+export WORKSPACE=$(pwd)
 
 # to run pytest correctly . path matters :)
 python3 -m pytest 

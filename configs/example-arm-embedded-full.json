@@ -1,5 +1,5 @@
 {
-  // ─────────────────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────
   // kcommit-analysis-pipeline — ARM embedded full example config
   //
   // Variable expansion: ${VAR} is expanded in all string values.
@@ -8,7 +8,7 @@
   //   TOOLDIR    – pipeline repository root (auto-set by the loader)
   //   CONFIGDIR  – directory containing this config file (auto-set)
   //   CWD        – current working directory
-  // ─────────────────────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────
 
   "vars": {
     // Import environment variables used in this file.
@@ -33,9 +33,16 @@
     // "rules_dirs":    ["${CONFIGDIR}/rules", "/shared/team/rules"],
     // Optional: override HTML template directory.
     // "templates_dir": "${CONFIGDIR}/html"
+    // Optional: override the directory of static files copied verbatim into
+    // output/ (currently just cherry_pick.sh, used below when
+    // collect.cherry_pick_test is enabled). Default: the pipeline's own
+    // configs/assets/. Uncomment and point at your own directory (e.g. a
+    // copy of cherry_pick.sh with extra pre/post hooks) to ship a
+    // customized script without forking the pipeline.
+    // "assets_dir": "${CONFIGDIR}/assets"
   },
 
-  // ── Kernel source and build inputs ────────────────────────────────────────
+  // ── Kernel source and build inputs ──────────────────────────────────────
   "kernel": {
     // Mandatory: path to the Linux kernel git repository.
     "source_dir": "${kernel_src}",
@@ -61,7 +68,7 @@
     "dts_roots": ["${kernel_src}/arch/arm/boot/dts"]
   },
 
-  // ── Profiles ──────────────────────────────────────────────────────────────
+  // ── Profiles ─────────────────────────────────────────────────────────────────
   // profiles.active: map of profile-name → weight (0–100).
   // The weight scales the profile's rule contributions:
   //   100 = full contribution (multiplier 1.0)
@@ -74,7 +81,7 @@
       "security_features":  90
     }  },
 
-  // ── Rules ─────────────────────────────────────────────────────────────────
+  // ── Rules ────────────────────────────────────────────────────────────────────────
   // Rule directories are configured via paths.rules_dirs.
   // Each sub-directory of a rules directory is one rule set; every rule set
   // may contain: keywords_whitelist.txt, keywords_blacklist.txt,
@@ -107,7 +114,7 @@
     "min_score": 0
   },
 
-  // ── Commit collection (stage 01) ──────────────────────────────────────────
+  // ── Commit collection (stage 01) ───────────────────────────────────────────────
   "collect": {
     // use_numstat: attach per-file change stats (insertions/deletions).
     "use_numstat":       true,
@@ -120,6 +127,8 @@
     // cleanly onto kernel.rev_old. Adds cherry_pickable indicator.
     // Opt-in because it requires git worktree manipulation (checkout target,
     // attempt cherry-pick, clean up) for each commit — expensive for large sets.
+    // When enabled, stage 07 also copies a cherry_pick.sh execution script
+    // from paths.assets_dir into output/ (see the "paths" section above).
     "cherry_pick_test": true,
     // cherry_pick_cache_dir: directory for SQLite cache of cherry-pick test results.
     // REQUIRED when cherry_pick_test is enabled. Cache is organized per target revision:
@@ -172,12 +181,12 @@
     "max_failure_rate":      0.05
   },
 
-  // ── Scoring ───────────────────────────────────────────────────────────────
+  // ── Scoring ──────────────────────────────────────────────────────────────────
   // Optional: override the scoring data directory.
   // Default: ${CONFIGDIR}/scoring
   // "scoring": { "scoring_dir": "${CONFIGDIR}/scoring" },
 
-  // ── HTML report and output options ────────────────────────────────────────
+  // ── HTML report and output options ───────────────────────────────────────────
   "reports": {
     // title: heading shown at the top of the HTML report.
     // Accepted: any string. Default: "kcommit Analysis Report"
@@ -199,7 +208,7 @@
     // override the built-in HTML template directory.
   },
 
-  // ── AI Analysis (v19.3.0) ─────────────────────────────────────────────────
+  // ── AI Analysis (v19.3.0) ───────────────────────────────────────────────────────
   // Controls AI-powered commit triage for backporting recommendations.
   // When enabled, stage 07 writes AI analysis input files and prompt template.
   "ai": {

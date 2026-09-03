@@ -64,6 +64,7 @@ def test_load_config_minimal(tmp_path):
     assert paths['output_dir']
     assert paths['scoring_dir']
     assert paths['templates_dir']
+    assert paths['assets_dir']
     assert isinstance(paths['profiles_dirs'], list)
     assert isinstance(paths['rules_dirs'], list)
 
@@ -94,6 +95,50 @@ def test_load_config_templates_dir_override(tmp_path):
     assert cfg['paths']['templates_dir'] == custom_tpl
 
 
+def test_load_config_assets_dir_defaults_to_shipped_configs_assets(tmp_path):
+    """v19.5.0: paths.assets_dir defaults to the pipeline's own
+    configs/assets/ directory when not overridden."""
+    minimal = {
+        'paths':  {'work_dir': str(tmp_path)},
+        'kernel': {'source_dir': '/linux', 'rev_old': 'v6.8', 'rev_new': 'HEAD'},
+    }
+    p = tmp_path / 'cfg.json'
+    p.write_text(json.dumps(minimal))
+    cfg = load_config(str(p))
+    assets_dir = cfg['paths']['assets_dir']
+    assert os.path.isabs(assets_dir)
+    assert assets_dir.endswith(os.path.join('configs', 'assets'))
+    assert os.path.exists(os.path.join(assets_dir, 'cherry_pick.sh'))
+
+
+def test_load_config_assets_dir_override_absolute(tmp_path):
+    """v19.5.0: paths.assets_dir accepts an absolute override, same
+    convention as reports.templates_dir / scoring.scoring_dir."""
+    custom_assets = str(tmp_path / 'my_assets')
+    minimal = {
+        'paths':  {'work_dir': str(tmp_path), 'assets_dir': custom_assets},
+        'kernel': {'source_dir': '/linux', 'rev_old': 'v6.8', 'rev_new': 'HEAD'},
+    }
+    p = tmp_path / 'cfg.json'
+    p.write_text(json.dumps(minimal))
+    cfg = load_config(str(p))
+    assert cfg['paths']['assets_dir'] == custom_assets
+
+
+def test_load_config_assets_dir_override_relative_resolves_to_configdir(tmp_path):
+    """v19.5.0: a relative paths.assets_dir is resolved against CONFIGDIR
+    (the directory containing the config file), not the CWD."""
+    minimal = {
+        'paths':  {'work_dir': str(tmp_path), 'assets_dir': 'my_assets'},
+        'kernel': {'source_dir': '/linux', 'rev_old': 'v6.8', 'rev_new': 'HEAD'},
+    }
+    p = tmp_path / 'cfg.json'
+    p.write_text(json.dumps(minimal))
+    cfg = load_config(str(p))
+    expected = os.path.normpath(os.path.join(str(tmp_path), 'my_assets'))
+    assert cfg['paths']['assets_dir'] == expected
+
+
 def test_apply_override_filter_min_score():
     """filter.min_score is the canonical threshold key (E.1c / D.1)."""
     cfg = {'filter': {'min_score': 0}}
@@ -101,7 +146,7 @@ def test_apply_override_filter_min_score():
     assert cfg['filter']['min_score'] == 42
 
 
-# ── ${VAR} / ${CONFIGDIR} expansion ──────────────────────────────────────────
+# ── ${VAR} / ${CONFIGDIR} expansion ────────────────────────────────────────
 def test_load_config_configdir_expansion(tmp_path):
     """${CONFIGDIR} in scoring.scoring_dir is expanded to the config file directory."""
     minimal = {
