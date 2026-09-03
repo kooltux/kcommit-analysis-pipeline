@@ -10,6 +10,8 @@ Changes:
   v19.5.0       -- Cherry-pick generation changed to single script + JSON data
                   file design (cherry_pick.sh + cherry_pick_data.json).
                   Both files are written to output/ directory for easy export.
+  v19.6.0       -- Merged config dump (pipeline_config.json) written to output/
+                  as a manifest for reproducibility.
 """
 import csv
 import json
@@ -535,6 +537,24 @@ def _write_cherry_pick_scripts(cfg, cache, outdir):
     return written
 
 
+def _dump_merged_config(cfg, outdir):
+    """Dump the merged in-memory config to output/ as a manifest for reproducibility.
+    
+    This captures the final config state after variable expansion and include merging,
+    so users can reproduce the exact pipeline execution later.
+    Comments are lost (JSON doesn't support them), but all config keys are preserved.
+    
+    Returns the path written, or None on error.
+    """
+    try:
+        config_path = os.path.join(outdir, 'pipeline_config.json')
+        _save_ordered_json(config_path, cfg)
+        return config_path
+    except Exception as exc:
+        logging.warning('pipeline_config.json write failed: %s', exc)
+        return None
+
+
 def run(cfg, cache, outdir):
     """Stage 07 entry point: generate all output formats."""
     try:
@@ -555,7 +575,13 @@ def run(cfg, cache, outdir):
     html_embed_compression = reports_cfg.get('html_embed_compression', 'none')
     stage_state_path = os.path.join(outdir, 'runtime_status.json')
     os.makedirs(outdir, exist_ok=True)
+    
+    # Dump merged config as manifest for reproducibility
+    config_dump_path = _dump_merged_config(cfg, outdir)
+    
     _written = []
+    if config_dump_path:
+        _written.append(os.path.relpath(config_dump_path, outdir))
 
     def _emit(path):
         try:
