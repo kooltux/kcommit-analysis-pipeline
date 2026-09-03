@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.6.1 — fix: filter internal metadata from pipeline_config.json manifest (2026-09-03)
+
+### Fixed
+
+- **lib/stages/st07_report.py** — `_dump_merged_config()` now filters out internal metadata before writing:
+  - `_meta` section (internal diagnostics: config_path, config_dir, vars, include_events)
+  - Standalone `config_dir` key (redundant; already in `paths` and `_meta`)
+  - Only user-facing configuration keys are written to `output/pipeline_config.json`
+
+### Changed
+
+- **lib/stages/st07_report.py** — updated docstring to document the filtering behavior
+
+### Tests
+
+All 896 tests pass.
+
+---
+
 ## v19.6.0 — feat: public configuration include mechanism with JSONC support (2026-09-03)
 
 ### Added

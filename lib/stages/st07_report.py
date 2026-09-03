@@ -544,11 +544,16 @@ def _dump_merged_config(cfg, outdir):
     so users can reproduce the exact pipeline execution later.
     Comments are lost (JSON doesn't support them), but all config keys are preserved.
     
+    Internal metadata (_meta, standalone config_dir) are filtered out to keep the
+    manifest clean and focused on user-facing configuration.
+    
     Returns the path written, or None on error.
     """
     try:
+        # Filter out internal metadata before dumping
+        dump_cfg = {k: v for k, v in cfg.items() if k not in ('_meta', 'config_dir')}
         config_path = os.path.join(outdir, 'pipeline_config.json')
-        _save_ordered_json(config_path, cfg)
+        _save_ordered_json(config_path, dump_cfg)
         return config_path
     except Exception as exc:
         logging.warning('pipeline_config.json write failed: %s', exc)
