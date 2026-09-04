@@ -27,6 +27,9 @@ CONFIG_SCHEMA = {
 _ALLOWED_TOP_LEVEL = frozenset(CONFIG_SCHEMA.keys()) | {'vars', 'include'}
 _PATH_KEYS = frozenset(key for section in CONFIG_SCHEMA.values() for key, spec in section.items() if key != '__type__' and spec.get('type') == 'path')
 
+# Environment variables that must be expanded for the pipeline to run
+_ENV_VARS = frozenset(['WORKSPACE', 'TOOLDIR', 'CONFIGDIR', 'CWD'])
+
 
 def _strip_json_comments(text: str) -> str:
     out, in_string, escaped, i = [], False, False, 0
@@ -102,12 +105,40 @@ def _expand_string(text, variables, stack=None):
     return text
 
 
+def _expand_string_partial(text, variables, stack=None):
+    """Expand only environment variables, leaving intermediate vars unexpanded."""
+    stack = [] if stack is None else stack
+    def repl(match):
+        name = match.group(1)
+        if name in stack:
+            raise ValueError('cyclic variable reference: ' + ' -> '.join(stack + [name]))
+        # Only expand if it's an environment variable
+        if name not in _ENV_VARS:
+            return match.group(0)  # Keep unexpanded
+        if name not in variables:
+            return match.group(0)  # Keep as-is if not defined
+        return _expand_string_partial(str(variables[name]), variables, stack + [name])
+    previous = None
+    while previous != text:
+        previous, text = text, VAR_RE.sub(repl, text)
+    return text
+
+
 def _expand_node(node, variables):
     if isinstance(node, dict):
         return {k: _expand_node(v, variables) for k, v in node.items()}
     if isinstance(node, list):
         return [_expand_node(v, variables) for v in node]
     return _expand_string(node, variables) if isinstance(node, str) else node
+
+
+def _expand_node_partial(node, variables):
+    """Expand only environment variables in the config."""
+    if isinstance(node, dict):
+        return {k: _expand_node_partial(v, variables) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_expand_node_partial(v, variables) for v in node]
+    return _expand_string_partial(node, variables) if isinstance(node, str) else node
 
 
 def _resolve_path(value, base_dir):
@@ -246,6 +277,51 @@ def _build_raw_merged_config(path):
     return cfg
 
 
+def _build_partial_expanded_config(path):
+    """Build merged config with only environment variables expanded.
+    
+    This expands WORKSPACE, TOOLDIR, CONFIGDIR, CWD but leaves intermediate
+    user-defined variables unexpanded (e.g., ${OUT} stays as ${OUT} even if
+    OUT=${WORKSPACE}/output).
+    
+    Returns the merged config dict with:
+    - Includes merged
+    - Environment variables expanded in vars section
+    - Intermediate variables kept unexpanded
+    - Paths resolved only where they don't contain unexpanded vars
+    - No _meta section added
+    """
+    path = os.path.abspath(path)
+    cfg, _events = _merge_includes(path, tuple(), is_root=True)
+    config_dir = os.path.dirname(path)
+    
+    # Build environment-only variables
+    env_vars = {
+        'WORKSPACE': os.environ.get('WORKSPACE', ''),
+        'TOOLDIR': os.environ.get('TOOLDIR', os.path.abspath(os.path.join(config_dir, '..'))),
+        'CONFIGDIR': config_dir,
+        'CWD': os.getcwd(),
+    }
+    
+    # Expand only env vars in user-defined vars
+    user_vars = cfg.get('vars', {}) or {}
+    expanded_user_vars = {}
+    for key, value in user_vars.items():
+        expanded_user_vars[key] = _expand_string_partial(str(value), env_vars)
+    
+    # Keep the vars section with partial expansion
+    cfg['vars'] = expanded_user_vars
+    
+    # Expand only env vars in the rest of the config
+    partial = _expand_node_partial(cfg, env_vars)
+    
+    # Try to resolve paths where possible (skip if contains unexpanded vars)
+    partial = _resolve_known_paths(partial, config_dir)
+    
+    # Do NOT add _meta or config_dir
+    return partial
+
+
 def load_config(path, inherited_vars=None, seen=None):
     path = os.path.abspath(path)
     cfg, _events = _merge_includes(path, tuple(seen or ()), is_root=True)
@@ -290,14 +366,14 @@ def load_config(path, inherited_vars=None, seen=None):
 
 
 def load_config_with_raw(path, inherited_vars=None, seen=None):
-    """Load config and return both expanded and raw (non-expanded) versions.
+    """Load config and return both expanded and manifest-ready versions.
     
     Returns:
-        tuple: (expanded_cfg, raw_cfg) where:
+        tuple: (expanded_cfg, manifest_cfg) where:
             - expanded_cfg: Fully processed config (current load_config behavior)
-            - raw_cfg: Merged config with original variable references preserved,
-                       suitable for pipeline_config.json manifest
+            - manifest_cfg: Config with env vars expanded but intermediate vars preserved,
+                           suitable for pipeline_config.json manifest
     """
     expanded = load_config(path, inherited_vars=inherited_vars, seen=seen)
-    raw = _build_raw_merged_config(path)
-    return expanded, raw
+    manifest = _build_partial_expanded_config(path)
+    return expanded, manifest
