@@ -14,6 +14,8 @@ Changes:
                   as a manifest for reproducibility.
   v19.7.0       -- pipeline_config.json now preserves non-expanded variable
                   references (e.g., ${WORKSPACE}/work) for better reproducibility.
+  v19.8.0       -- Helper scripts (json_query.sh, archive_output.sh) copied to
+                  output/ for portable archive creation.
 """
 import csv
 import json
@@ -539,6 +541,38 @@ def _write_cherry_pick_scripts(cfg, cache, outdir):
     return written
 
 
+def _copy_helper_scripts(cfg, outdir):
+    """Copy helper scripts (json_query.sh, archive_output.sh) to output/.
+    
+    These scripts are self-contained and portable - they determine their own
+    location and work correctly when invoked from any directory.
+    
+    Returns list of paths copied.
+    """
+    written = []
+    
+    # Get assets directory from config
+    tool_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    assets_dir = cfg['paths'].get('assets_dir') or os.path.join(tool_dir, 'configs', 'assets')
+    
+    # Scripts to copy
+    scripts = ['json_query.sh', 'archive_output.sh']
+    
+    for script in scripts:
+        src_path = os.path.join(assets_dir, script)
+        if os.path.exists(src_path):
+            dst_path = os.path.join(outdir, script)
+            shutil.copy2(src_path, dst_path)
+            # Make executable
+            os.chmod(dst_path, 0o755)
+            written.append(dst_path)
+            logging.info('Copied helper script: %s', script)
+        else:
+            logging.warning('Helper script not found: %s', src_path)
+    
+    return written
+
+
 def _dump_merged_config(cfg, raw_cfg, outdir):
     """Dump the merged config to output/ as a manifest for reproducibility.
     
@@ -895,6 +929,10 @@ def run(cfg, cache, outdir):
 
     cp_script_written = _write_cherry_pick_scripts(cfg, cache, outdir)
     _written.extend(cp_script_written)
+    
+    # Copy helper scripts (json_query.sh, archive_output.sh)
+    helper_written = _copy_helper_scripts(cfg, outdir)
+    _written.extend(helper_written)
 
     report_stats['generated_files'] = sorted(set(
         f for f in _written if f != 'report_stats.json'))
