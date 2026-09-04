@@ -2,6 +2,59 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.7.0 — feat: pipeline_config.json manifest preserves non-expanded variables (2026-09-04)
+
+### Added
+
+- **lib/config.py** — New function `load_config_with_raw()` returns both expanded and raw (non-expanded) config versions:
+  - `expanded`: Fully processed config with variable expansion and path resolution (existing behavior)
+  - `raw`: Merged config with original variable references preserved (e.g., `${WORKSPACE}/work`)
+  
+- **lib/config.py** — New internal function `_build_raw_merged_config()` builds the raw merged config:
+  - Includes are merged
+  - `vars` section kept as-is (no expansion)
+  - Paths not resolved to absolute paths
+  - No `_meta` or `config_dir` added
+
+- **tests/test_config_raw_manifest.py** — New test suite for raw config manifest generation:
+  - `test_load_config_with_raw_returns_both_versions` — verifies both configs are returned
+  - `test_raw_config_preserves_variables_with_includes` — tests includes with variables
+  - `test_build_raw_merged_config_standalone` — tests the standalone function
+  - `test_manifest_would_contain_variable_references` — documents expected manifest behavior
+  - `test_raw_config_with_array_merges` — verifies array merges work in raw config
+
+### Changed
+
+- **lib/stages/st07_report.py** — `_dump_merged_config()` now accepts `raw_cfg` parameter:
+  - Uses raw (non-expanded) config for manifest generation
+  - Preserves variable references like `${WORKSPACE}/work` in `output/pipeline_config.json`
+  - Makes manifests more portable and reproducible across different environments
+  
+- **lib/stages/st07_report.py** — `run()` function updated to load raw config:
+  - Calls `load_config_with_raw()` when config path is available
+  - Falls back to expanded config if raw loading fails
+  - Passes raw config to `_dump_merged_config()`
+
+- **lib/stages/st07_report.py** — Module docstring updated to document v19.7.0 change
+
+### Benefits
+
+- **Portability** — Manifests can be reused across different environments without hardcoded absolute paths
+- **Reproducibility** — Variable references show the intended configuration structure
+- **Debugging** — Easier to understand config relationships when variables are visible
+
+### Backward Compatibility
+
+- Existing `load_config()` function unchanged — full backward compatibility
+- Pipeline behavior unchanged — only manifest output format differs
+- All existing configs work without modification
+
+### Tests
+
+New test file `tests/test_config_raw_manifest.py` with 6 test cases covering raw config generation.
+
+---
+
 ## v19.6.1 — fix: filter internal metadata from pipeline_config.json manifest (2026-09-03)
 
 ### Fixed

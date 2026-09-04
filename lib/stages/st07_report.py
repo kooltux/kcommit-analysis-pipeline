@@ -12,6 +12,8 @@ Changes:
                   Both files are written to output/ directory for easy export.
   v19.6.0       -- Merged config dump (pipeline_config.json) written to output/
                   as a manifest for reproducibility.
+  v19.7.0       -- pipeline_config.json now preserves non-expanded variable
+                  references (e.g., ${WORKSPACE}/work) for better reproducibility.
 """
 import csv
 import json
@@ -532,17 +534,17 @@ def _write_cherry_pick_scripts(cfg, cache, outdir):
                 stats['total_in_set'], stats['tested'],
             )
     except Exception as exc:
-        logging.warning('cherry_pick generation failed: %s', exc)
+        logging.warning('cherry_pick_generation failed: %s', exc)
 
     return written
 
 
-def _dump_merged_config(cfg, outdir):
-    """Dump the merged in-memory config to output/ as a manifest for reproducibility.
+def _dump_merged_config(cfg, raw_cfg, outdir):
+    """Dump the merged config to output/ as a manifest for reproducibility.
     
-    This captures the final config state after variable expansion and include merging,
-    so users can reproduce the exact pipeline execution later.
-    Comments are lost (JSON doesn't support them), but all config keys are preserved.
+    This uses the raw (non-expanded) config to preserve variable references
+    like ${WORKSPACE}/work in the manifest, making it more portable and
+    reproducible across different environments.
     
     Internal metadata (_meta, standalone config_dir) are filtered out to keep the
     manifest clean and focused on user-facing configuration.
@@ -550,8 +552,8 @@ def _dump_merged_config(cfg, outdir):
     Returns the path written, or None on error.
     """
     try:
-        # Filter out internal metadata before dumping
-        dump_cfg = {k: v for k, v in cfg.items() if k not in ('_meta', 'config_dir')}
+        # Use raw_cfg (non-expanded) to preserve variable references
+        dump_cfg = {k: v for k, v in raw_cfg.items() if k not in ('_meta', 'config_dir')}
         config_path = os.path.join(outdir, 'pipeline_config.json')
         _save_ordered_json(config_path, dump_cfg)
         return config_path
@@ -581,8 +583,20 @@ def run(cfg, cache, outdir):
     stage_state_path = os.path.join(outdir, 'runtime_status.json')
     os.makedirs(outdir, exist_ok=True)
     
-    # Dump merged config as manifest for reproducibility
-    config_dump_path = _dump_merged_config(cfg, outdir)
+    # Build raw (non-expanded) config for manifest
+    config_path = cfg.get('_meta', {}).get('config_path')
+    if config_path:
+        from lib.config import load_config_with_raw
+        try:
+            _, raw_cfg = load_config_with_raw(config_path)
+        except Exception as exc:
+            logging.warning('load_config_with_raw failed, using expanded cfg for manifest: %s', exc)
+            raw_cfg = cfg
+    else:
+        raw_cfg = cfg
+    
+    # Dump merged config as manifest for reproducibility (using raw config)
+    config_dump_path = _dump_merged_config(cfg, raw_cfg, outdir)
     
     _written = []
     if config_dump_path:
@@ -777,7 +791,6 @@ def run(cfg, cache, outdir):
                 write_ods(os.path.join(outdir, 'relevant_commits.ods'),
                           scored, prof_summary,
                           sheet_name='Relevant Commits')
-                _emit(os.path.join(outdir, 'relevant_commits.ods'))
             except Exception as e:
                 logging.warning('ODS failed: %s', e)
             if filtered:

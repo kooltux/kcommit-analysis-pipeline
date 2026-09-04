@@ -226,6 +226,26 @@ def _merge_includes(path, active, is_root=True):
     return merged, events
 
 
+def _build_raw_merged_config(path):
+    """Build the merged config without variable expansion or path resolution.
+    
+    This is used for generating pipeline_config.json manifest that preserves
+    the original variable references (e.g., ${WORKSPACE}/work) for reproducibility.
+    
+    Returns the merged config dict with minimal processing:
+    - Includes are merged
+    - vars section is kept as-is (not expanded)
+    - paths are not resolved
+    - No _meta section added
+    """
+    path = os.path.abspath(path)
+    cfg, _events = _merge_includes(path, tuple(), is_root=True)
+    # Keep vars as-is without expansion
+    # Do not resolve paths
+    # Do not add _meta or config_dir
+    return cfg
+
+
 def load_config(path, inherited_vars=None, seen=None):
     path = os.path.abspath(path)
     cfg, _events = _merge_includes(path, tuple(seen or ()), is_root=True)
@@ -267,3 +287,17 @@ def load_config(path, inherited_vars=None, seen=None):
     expanded['_meta'] = {'config_path': path, 'config_dir': config_dir, 'vars': variables, 'include_events': _events}
     expanded['config_dir'] = config_dir
     return expanded
+
+
+def load_config_with_raw(path, inherited_vars=None, seen=None):
+    """Load config and return both expanded and raw (non-expanded) versions.
+    
+    Returns:
+        tuple: (expanded_cfg, raw_cfg) where:
+            - expanded_cfg: Fully processed config (current load_config behavior)
+            - raw_cfg: Merged config with original variable references preserved,
+                       suitable for pipeline_config.json manifest
+    """
+    expanded = load_config(path, inherited_vars=inherited_vars, seen=seen)
+    raw = _build_raw_merged_config(path)
+    return expanded, raw
