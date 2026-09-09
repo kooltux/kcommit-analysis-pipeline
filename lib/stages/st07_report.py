@@ -15,7 +15,7 @@ Changes:
   v19.7.0       -- pipeline_config.json now preserves non-expanded variable
                   references (e.g., ${WORKSPACE}/work) for better reproducibility.
   v19.8.0       -- Helper scripts (json_query.sh, archive_output.sh) copied to
-                  output/ for portable archive creation.
+                  output/scripts/ for portable archive creation.
 """
 import csv
 import json
@@ -542,34 +542,48 @@ def _write_cherry_pick_scripts(cfg, cache, outdir):
 
 
 def _copy_helper_scripts(cfg, outdir):
-    """Copy helper scripts (json_query.sh, archive_output.sh) to output/.
-    
+    """Copy helper scripts (json_query.sh, archive_output.sh) to output/scripts/.
+
     These scripts are self-contained and portable - they determine their own
-    location and work correctly when invoked from any directory.
-    
-    Returns list of paths copied.
+    location and work correctly when invoked from any directory. They are
+    placed in a scripts/ subdirectory of outdir so the output/ root stays
+    focused on data/report files; the scripts locate pipeline_config.json
+    in their parent directory (outdir).
+
+    Returns the list of copied script paths, expressed relative to outdir
+    (e.g. 'scripts/json_query.sh'), consistent with every other entry of
+    report_stats['generated_files'].
     """
     written = []
-    
-    # Get assets directory from config
-    tool_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # Get assets directory from config.
+    # __file__ is lib/stages/st07_report.py, so three dirname() calls are
+    # needed to reach the repository root (stages -> lib -> repo root).
+    tool_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     assets_dir = cfg['paths'].get('assets_dir') or os.path.join(tool_dir, 'configs', 'assets')
-    
+
+    # Scripts directory inside output/
+    scripts_dir = os.path.join(outdir, 'scripts')
+
     # Scripts to copy
     scripts = ['json_query.sh', 'archive_output.sh']
-    
+
     for script in scripts:
         src_path = os.path.join(assets_dir, script)
         if os.path.exists(src_path):
-            dst_path = os.path.join(outdir, script)
+            os.makedirs(scripts_dir, exist_ok=True)
+            dst_path = os.path.join(scripts_dir, script)
             shutil.copy2(src_path, dst_path)
             # Make executable
             os.chmod(dst_path, 0o755)
-            written.append(dst_path)
-            logging.info('Copied helper script: %s', script)
+            # Record the path relative to outdir: generated_files must never
+            # contain absolute paths (they leak the environment and break
+            # substring checks on the output directory name).
+            written.append(os.path.join('scripts', script))
+            logging.info('Copied helper script to scripts/: %s', script)
         else:
             logging.warning('Helper script not found: %s', src_path)
-    
+
     return written
 
 

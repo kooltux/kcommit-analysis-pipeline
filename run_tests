@@ -7,4 +7,4 @@ cd $(dirname $0)
 export WORKSPACE=$(pwd)
 
 # to run pytest correctly . path matters :)
-python3 -m pytest 
+python3 -m pytest $@
