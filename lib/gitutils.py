@@ -30,6 +30,25 @@ v19.2.3:
   This enables ``batch_can_cherry_pick_cached()`` to insert results into
   the SQLite cache immediately, making them visible to external queries
   during the analysis instead of only at the end.
+
+batch_count_hunks() ARG_MAX guard:
+  batch_count_hunks() splits its SHA list into chunks (default 2000,
+  configurable via collect.hunk_count_chunk_size) instead of passing every
+  SHA to a single ``git show`` invocation.  Large commit ranges (tens to
+  hundreds of thousands of commits) previously overflowed the OS ARG_MAX
+  limit, causing ``OSError: [Errno 7] Argument list too long``.
+
+run_git() decoding robustness:
+  run_git() now decodes subprocess output as UTF-8 with errors='replace'
+  instead of strict decoding. Kernel history spans decades of commits from
+  many authors/locales; a single non-UTF-8 byte anywhere in a commit
+  message, author name, or diff body (legacy-encoded source files, odd
+  binary-ish patch fragments, etc.) previously raised UnicodeDecodeError
+  and aborted the entire subprocess call -- catastrophic for batched
+  multi-commit calls like batch_count_hunks(), where one bad byte deep in
+  a 2000-commit chunk discarded hunk counts for the whole chunk. This
+  mirrors the binary-safety approach already used by
+  batch_show_paths()/_run_batch_pipe() (.decode('utf-8', errors='replace')).
 """
 import os
 import subprocess
@@ -45,17 +64,32 @@ FS = u'\x1f'   # ASCII Unit Separator    — head/tail delimiter within a record
 
 
 def run_git(cfg, args, check=True):
+    """Run a git subcommand and return its decoded stdout.
+
+    Output is decoded as UTF-8 with errors='replace' rather than strict
+    decoding. Kernel history spans decades and many authors/locales; a
+    single non-UTF-8 byte anywhere in a commit message, author name, or
+    diff content (e.g. legacy Latin-1 source files, binary-ish patch
+    fragments) would otherwise raise UnicodeDecodeError and abort the
+    entire subprocess call -- catastrophic for batched multi-commit calls
+    like batch_count_hunks(), where one bad byte in a 2000-commit chunk
+    would previously discard hunk counts for the whole chunk. This
+    mirrors the binary-safety approach already used by
+    batch_show_paths()/_run_batch_pipe() (.decode('utf-8', errors='replace')).
+    """
     collect = cfg.get('collect', {}) or {}
     git_bin = collect.get('git_binary', 'git')
     src     = cfg['kernel']['source_dir']
     cmd     = [git_bin, '-C', src] + args
 
     if _PY37:
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True,
+                                encoding='utf-8', errors='replace')
         out, err, rc = result.stdout, result.stderr, result.returncode
     else:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             universal_newlines=True)
+                             universal_newlines=True,
+                             encoding='utf-8', errors='replace')
         out, err = p.communicate()
         rc = p.returncode
 
@@ -253,13 +287,33 @@ def count_hunks_in_patch(patch_text):
     return n
 
 
-def batch_count_hunks(cfg, shas, progress_callback=None):
-    """Return {sha: hunk_count} for *shas* using a single batched ``git show``.
+# Default number of SHAs passed to a single ``git show`` invocation in
+# batch_count_hunks().  Each SHA contributes ~41 bytes (40 hex chars + a
+# separating space) to the process argv, so 2000 SHAs is ~82 KB -- far
+# below the ARG_MAX ceiling (typically ~2 MB on Linux, ~256 KB on some
+# constrained/older systems), leaving generous headroom for source_dir,
+# other flags, and the environment block that also counts against the
+# same OS limit.  Overridable via collect.hunk_count_chunk_size for
+# unusually constrained environments or to tune throughput.
+_HUNK_CHUNK_SIZE = 2000
 
-    All commits are diffed in one ``git show --unified=0`` invocation with a
-    per-commit format marker so we can split the combined output back into
-    per-commit patch sections and count ``@@`` headers in each.  This avoids
-    one subprocess per commit.
+
+def batch_count_hunks(cfg, shas, progress_callback=None):
+    """Return {sha: hunk_count} for *shas* using batched ``git show`` calls.
+
+    Commits are diffed via ``git show --unified=0`` with a per-commit format
+    marker so each invocation's combined output can be split back into
+    per-commit patch sections and the ``@@`` headers in each counted.  This
+    avoids one subprocess per commit.
+
+    The SHA list is split into chunks of at most
+    ``collect.hunk_count_chunk_size`` (default 2000) SHAs per ``git show``
+    invocation.  Passing the full SHA list as a single command line is not
+    safe: on large commit ranges (tens to hundreds of thousands of commits)
+    the combined argv length exceeds the OS ``ARG_MAX`` limit, causing
+    ``OSError: [Errno 7] Argument list too long``.  Chunking keeps every
+    invocation's argv small regardless of how many commits are in the
+    overall range.
 
     Renames are disabled (``--no-renames``) and context is zero
     (``--unified=0``) so the hunk count reflects the number of distinct change
@@ -267,36 +321,55 @@ def batch_count_hunks(cfg, shas, progress_callback=None):
     ``--first-parent`` so they yield a normal single-parent diff rather than a
     combined diff (which prints no ``@@`` headers).
 
+    *shas* is deduplicated (first occurrence wins, order preserved) before
+    chunking, so a caller-supplied duplicate never inflates the reported
+    total or gets double-counted in the progress callback.
+
     Returns an empty dict when *shas* is empty.  SHAs with no textual diff
-    (e.g. pure binary or empty commits) map to 0.
+    (e.g. pure binary or empty commits) map to 0.  The progress callback (if
+    given) reports cumulative done/total counts across all chunks, not
+    per-chunk, so callers see smooth global progress.
     """
-    shas = [s for s in (shas or []) if s]
+    seen = set()
+    unique_shas = []
+    for s in (shas or []):
+        if s and s not in seen:
+            seen.add(s)
+            unique_shas.append(s)
+    shas = unique_shas
     if not shas:
         return {}
 
-    args = ['show', '--no-renames', '--first-parent', '--unified=0',
-            '--format=' + _HUNK_MARK]
-    args.extend(shas)
-    output = run_git(cfg, args, check=False)
+    collect    = cfg.get('collect', {}) or {}
+    chunk_size = int(collect.get('hunk_count_chunk_size', 0) or 0) or _HUNK_CHUNK_SIZE
+    chunk_size = max(1, chunk_size)
 
     counts = {s: 0 for s in shas}
-    # Split the combined stream on the RS-prefixed marker; each chunk begins
-    # with '<sha>' + FS + <patch...> for one commit.
-    sections = output.split(RS)
-    done = 0
-    total = len(shas)
-    for sec in sections:
-        if FS not in sec:
-            continue
-        head, _, body = sec.partition(FS)
-        if not head.startswith('kchunk='):
-            continue
-        sha = head[len('kchunk='):].strip()
-        if sha in counts:
-            counts[sha] = count_hunks_in_patch(body)
-            done += 1
-            if progress_callback and (done % 500 == 0 or done == total):
-                progress_callback(done, total)
+    total  = len(shas)
+    done   = 0
+
+    for start in range(0, total, chunk_size):
+        chunk = shas[start:start + chunk_size]
+        args = ['show', '--no-renames', '--first-parent', '--unified=0',
+                '--format=' + _HUNK_MARK]
+        args.extend(chunk)
+        output = run_git(cfg, args, check=False)
+
+        # Split the combined stream on the RS-prefixed marker; each section
+        # begins with '<sha>' + FS + <patch...> for one commit.
+        for sec in output.split(RS):
+            if FS not in sec:
+                continue
+            head, _, body = sec.partition(FS)
+            if not head.startswith('kchunk='):
+                continue
+            sha = head[len('kchunk='):].strip()
+            if sha in counts:
+                counts[sha] = count_hunks_in_patch(body)
+                done += 1
+                if progress_callback and (done % 500 == 0 or done == total):
+                    progress_callback(done, total)
+
     if progress_callback and done != total:
         progress_callback(total, total)
     return counts

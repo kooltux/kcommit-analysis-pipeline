@@ -40,6 +40,12 @@ import time
 from datetime import datetime, timezone
 
 
+# Traditional SQLite builds permit at most 999 bound variables per statement.
+# Keep a small margin below that limit for compatibility with older or custom
+# SQLite builds. get_results() chunks large SHA lookups to this size.
+_RESULT_LOOKUP_CHUNK_SIZE = 900
+
+
 class CherryDB:
     """SQLite database for cherry-pick test results.
     
@@ -158,30 +164,44 @@ class CherryDB:
             self._pending_results = {}
     
     def get_results(self, shas):
-        """Get cherry-pick results for specified SHAs.
-        
+        """Get cached cherry-pick results for specified SHAs.
+
+        Inputs are stably deduplicated and queried in chunks of at most
+        _RESULT_LOOKUP_CHUNK_SIZE values. Chunking is mandatory for large
+        scored commit sets: SQLite commonly limits a statement to 999 bound
+        variables, while a pipeline stage can query tens of thousands of SHAs.
+
         Args:
             shas: list of commit SHAs to look up
-        
+
         Returns:
             dict mapping sha -> {'ok': bool, 'conflicts': list, 'error': str or None}
             Only includes SHAs that exist in the database.
         """
-        if not shas:
+        seen = set()
+        unique_shas = []
+        for sha in shas or []:
+            if sha and sha not in seen:
+                seen.add(sha)
+                unique_shas.append(sha)
+        if not unique_shas:
             return {}
-        
+
         cursor = self.conn.cursor()
-        placeholders = ','.join('?' * len(shas))
-        cursor.execute(f'SELECT sha, ok, conflicts, error FROM commits WHERE sha IN ({placeholders})', shas)
-        
         results = {}
-        for row in cursor.fetchall():
-            results[row['sha']] = {
-                'ok': bool(row['ok']),
-                'conflicts': json.loads(row['conflicts']),
-                'error': row['error'],
-            }
-        
+        for start in range(0, len(unique_shas), _RESULT_LOOKUP_CHUNK_SIZE):
+            chunk = unique_shas[start:start + _RESULT_LOOKUP_CHUNK_SIZE]
+            placeholders = ','.join('?' * len(chunk))
+            cursor.execute(
+                f'SELECT sha, ok, conflicts, error FROM commits WHERE sha IN ({placeholders})',
+                chunk,
+            )
+            for row in cursor.fetchall():
+                results[row['sha']] = {
+                    'ok': bool(row['ok']),
+                    'conflicts': json.loads(row['conflicts']),
+                    'error': row['error'],
+                }
         return results
     
     def get_all_shas(self):

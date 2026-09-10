@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.8.1 — fix: support very large commit ranges in hunk and cherry-pick processing (2026-09-10)
+
+### Fixed
+
+- **Stage 01 hunk counting** — `batch_count_hunks()` now splits commit SHAs into bounded `git show` batches (default: 2,000 SHAs) instead of passing an entire range in one argv. This prevents `OSError: [Errno 7] Argument list too long` on large ranges.
+- **Git output decoding** — `run_git()` now uses UTF-8 with replacement decoding for stdout and stderr. A malformed byte in historical commit metadata or patch content can no longer abort a large `git show` batch with `UnicodeDecodeError`.
+- **Stage 05 cherry-pick cache lookup** — `CherryDB.get_results()` now splits SHA `IN (...)` lookups into internal chunks of 900 values, below SQLite’s traditional 999-variable ceiling. This prevents `too many SQL variables` when many commits are scored.
+
+### Added
+
+- **`collect.hunk_count_chunk_size`** — optional hunk-count batch-size tuning key; default `2000`. It is documented in `docs/CONFIGURATION.md` and normally should not need changing.
+- **Regression coverage** — tests for hunk chunking, configured batch size, cross-chunk progress, stable SHA deduplication, and CherryDB cross-chunk result lookup/duplicate handling.
+
+### Compatibility
+
+- No breaking API or configuration changes.
+- Existing configurations retain their behavior; large ranges now execute safely in bounded Git and SQLite batches.
+
+### Tests
+
+- Full test suite passed before release preparation.
+
+---
+
 ## v19.8.0 — feat: portable helper scripts for output archives (2026-09-04)
 
 ### Added
@@ -85,7 +109,7 @@ cd output/
 
 ### Changed
 
-- **lib/stages/st07_report.py** — `_dump_merged_config()` now accepts `raw_cfg` parameter:
+- **lib/stages/st07_report.py** — `_dump_merged_config() now accepts `raw_cfg` parameter:
   - Uses raw (non-expanded) config for manifest generation
   - Preserves variable references like `${WORKSPACE}/work` in `output/pipeline_config.json`
   - Makes manifests more portable and reproducible across different environments

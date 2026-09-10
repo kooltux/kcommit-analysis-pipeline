@@ -26,7 +26,7 @@ from lib.gitutils import (
 )
 
 
-# ── count_hunks_in_patch ─────────────────────────────────────────────────────
+# ── count_hunks_in_patch ────────────────────────────────────────────────────
 def test_count_hunks_in_patch_multiple():
     patch = (
         'diff --git a/x.c b/x.c\n'
@@ -68,6 +68,132 @@ def test_batch_count_hunks_parses_marked_stream():
     with patch('lib.gitutils.run_git', return_value=stream):
         counts = batch_count_hunks(_cfg(), [sha1, sha2])
     assert counts[sha1] == 2
+    assert counts[sha2] == 1
+
+
+# ── batch_count_hunks chunking (ARG_MAX overflow guard) ────────────────────────
+
+def test_batch_count_hunks_splits_into_chunks():
+    """More SHAs than chunk_size triggers multiple run_git calls."""
+    shas = ['%040x' % i for i in range(25)]
+    cfg = _cfg()
+    cfg['collect']['hunk_count_chunk_size'] = 10
+
+    def _fake_run_git(cfg, args, check=False):
+        # args tail (after the fixed flags) is this chunk's SHA list.
+        chunk_shas = args[5:]
+        out = ''
+        for sha in chunk_shas:
+            out += RS + 'kchunk=' + sha + FS + '\n@@ -1 +1 @@\n-a\n+b\n'
+        return out
+
+    with patch('lib.gitutils.run_git', side_effect=_fake_run_git) as m:
+        counts = batch_count_hunks(cfg, shas)
+
+    # 25 SHAs / chunk_size 10 -> 3 calls (10, 10, 5)
+    assert m.call_count == 3
+    assert len(counts) == 25
+    assert all(v == 1 for v in counts.values())
+
+
+def test_batch_count_hunks_default_chunk_size_single_call():
+    """Fewer SHAs than the default chunk size makes exactly one run_git call."""
+    shas = ['a' * 40, 'b' * 40]
+    stream = (
+        RS + 'kchunk=' + shas[0] + FS + '\n@@ -1 +1 @@\n-x\n+y\n'
+        + RS + 'kchunk=' + shas[1] + FS + '\n@@ -1 +1 @@\n-p\n+q\n'
+    )
+    with patch('lib.gitutils.run_git', return_value=stream) as m:
+        counts = batch_count_hunks(_cfg(), shas)
+    assert m.call_count == 1
+    assert counts[shas[0]] == 1
+    assert counts[shas[1]] == 1
+
+
+def test_batch_count_hunks_respects_configured_chunk_size():
+    """collect.hunk_count_chunk_size overrides the default chunk size."""
+    shas = ['%040x' % i for i in range(7)]
+    cfg = _cfg()
+    cfg['collect']['hunk_count_chunk_size'] = 3
+
+    call_sizes = []
+
+    def _fake_run_git(cfg, args, check=False):
+        chunk_shas = args[5:]
+        call_sizes.append(len(chunk_shas))
+        out = ''
+        for sha in chunk_shas:
+            out += RS + 'kchunk=' + sha + FS + '\n@@ -1 +1 @@\n-a\n+b\n'
+        return out
+
+    with patch('lib.gitutils.run_git', side_effect=_fake_run_git):
+        counts = batch_count_hunks(cfg, shas)
+
+    # 7 SHAs / chunk_size 3 -> chunks of 3, 3, 1
+    assert call_sizes == [3, 3, 1]
+    assert len(counts) == 7
+
+
+def test_batch_count_hunks_progress_callback_across_chunks():
+    """Progress callback reports cumulative done/total across chunk boundaries."""
+    shas = ['%040x' % i for i in range(5)]
+    cfg = _cfg()
+    cfg['collect']['hunk_count_chunk_size'] = 2
+
+    def _fake_run_git(cfg, args, check=False):
+        chunk_shas = args[5:]
+        out = ''
+        for sha in chunk_shas:
+            out += RS + 'kchunk=' + sha + FS + '\n@@ -1 +1 @@\n-a\n+b\n'
+        return out
+
+    calls = []
+    with patch('lib.gitutils.run_git', side_effect=_fake_run_git):
+        counts = batch_count_hunks(cfg, shas,
+                                   progress_callback=lambda d, t: calls.append((d, t)))
+
+    assert len(counts) == 5
+    # Final call must report completion (5/5), regardless of the 500-item
+    # throttling interval used for the "every 500" progress ticks.
+    assert calls[-1] == (5, 5)
+
+
+def test_batch_count_hunks_zero_chunk_size_falls_back_to_default():
+    """A configured chunk size of 0 (or negative) falls back to the default."""
+    shas = ['a' * 40]
+    stream = RS + 'kchunk=' + shas[0] + FS + '\n@@ -1 +1 @@\n-x\n+y\n'
+    cfg = _cfg()
+    cfg['collect']['hunk_count_chunk_size'] = 0
+    with patch('lib.gitutils.run_git', return_value=stream) as m:
+        counts = batch_count_hunks(cfg, shas)
+    assert m.call_count == 1
+    assert counts[shas[0]] == 1
+
+
+def test_batch_count_hunks_deduplicates_stable_order():
+    """Duplicate SHAs in the input are counted once; order is preserved so
+    the first chunk boundary is deterministic."""
+    sha1 = 'a' * 40
+    sha2 = 'b' * 40
+    shas = [sha1, sha2, sha1]  # sha1 appears twice
+    cfg = _cfg()
+    cfg['collect']['hunk_count_chunk_size'] = 10
+
+    def _fake_run_git(cfg, args, check=False):
+        chunk_shas = args[5:]
+        # Only unique SHAs should ever reach run_git.
+        assert len(chunk_shas) == len(set(chunk_shas))
+        out = ''
+        for sha in chunk_shas:
+            out += RS + 'kchunk=' + sha + FS + '\n@@ -1 +1 @@\n-a\n+b\n'
+        return out
+
+    with patch('lib.gitutils.run_git', side_effect=_fake_run_git) as m:
+        counts = batch_count_hunks(cfg, shas)
+
+    assert m.call_count == 1
+    assert len(counts) == 2
+    assert counts[sha1] == 1
     assert counts[sha2] == 1
 
 
@@ -168,7 +294,7 @@ def _fail(stderr='error', rc=128):
     return r
 
 
-# ── parse_pretty_block ─────────────────────────────────────────────────────────
+# ── parse_pretty_block ─────────────────────────────────────────────────────
 def test_parse_pretty_block_basic():
     block = (
         'commit=abc123\n'
@@ -211,7 +337,7 @@ def test_parse_pretty_block_author_time_empty():
     assert r['author_time'] == 0
 
 
-# ── parse_tail_block ────────────────────────────────────────────────────────────
+# ── parse_tail_block ────────────────────────────────────────────────────
 def test_parse_tail_block_numstat():
     tail = '10\t2\tdrivers/net/core.c\n5\t0\tinclude/net/skbuff.h\n'
     files, numstat = parse_tail_block(tail)
@@ -246,7 +372,7 @@ def test_parse_tail_block_deduped():
     assert len(files) == 1
 
 
-# ── run_git ───────────────────────────────────────────────────────────────────
+# ── run_git ────────────────────────────────────────────────────────
 def test_run_git_returns_stdout():
     with patch('subprocess.run', return_value=_ok('v6.6-rc1\n')) as m:
         out = run_git(_cfg(), ['describe', '--tags'])
@@ -279,7 +405,7 @@ def test_run_git_uses_source_dir():
     assert '/my/kernel' in called_cmd
 
 
-# ── list_rev_commits ────────────────────────────────────────────────────────────
+# ── list_rev_commits ──────────────────────────────────────────────────
 def test_list_rev_commits_basic():
     output = 'abc123\ndef456\n'
     with patch('subprocess.run', return_value=_ok(output)):
@@ -307,7 +433,7 @@ def test_list_rev_commits_first_parent_flag():
     assert '--first-parent' in args
 
 
-# ── iter_git_log_records ──────────────────────────────────────────────────────────
+# ── iter_git_log_records ─────────────────────────────────────────────────────
 def _make_log_output(sha='abc123', subject='net: fix', body='Details.',
                      files='10\t2\tdrivers/net/core.c'):
     head = (
@@ -356,7 +482,7 @@ def test_iter_git_log_no_numstat_flag():
     assert '--name-only' in args
 
 
-# ── show_commit_patch / show_path_history ────────────────────────────────────────
+# ── show_commit_patch / show_path_history ────────────────────────────────
 def test_show_commit_patch():
     with patch('subprocess.run', return_value=_ok('diff --git ...\n')):
         out = show_commit_patch(_cfg(), 'abc123')
@@ -375,7 +501,7 @@ def test_show_path_history_missing_path():
     assert out == ''
 
 
-# ── F: batch_show_paths ─────────────────────────────────────────────────────────────
+# ── F: batch_show_paths ─────────────────────────────────────────────────────
 
 def _make_catfile_proc(responses):
     """Build a mock Popen process whose stdout returns *responses* bytes.
@@ -521,7 +647,7 @@ def test_batch_show_paths_stdin_receives_all_queries():
     assert b'v6.6:net/Makefile\n' in combined
 
 
-# ── Cherry-pick test (fast: git apply --check) ────────────────────────────────
+# ── Cherry-pick test (fast: git apply --check) ──────────────────────────────
 
 from lib.gitutils import can_cherry_pick, batch_can_cherry_pick
 
