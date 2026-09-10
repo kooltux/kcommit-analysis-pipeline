@@ -1,7 +1,7 @@
-"""Tests for SQLite variable-limit handling in CherryDB lookups."""
+"""Tests for CherryDB SQLite result storage and chunked lookups."""
 
-import lib.cherrypick_db as cherrypick_db
 from lib.cherrypick_db import CherryDB
+import lib.cherrypick_db as cherrypick_db
 
 
 def _result(ok=True, conflicts=None, error=None):
@@ -10,6 +10,18 @@ def _result(ok=True, conflicts=None, error=None):
         'conflicts': conflicts or [],
         'error': error,
     }
+
+
+def test_add_and_get_single_result(tmp_path):
+    """A single stored result round-trips through get_results()."""
+    db = CherryDB(str(tmp_path / 'cherry.db'))
+    try:
+        db.add_result('a' * 40, _result(ok=True, conflicts=['x.c']))
+        results = db.get_results(['a' * 40])
+        assert results['a' * 40]['ok'] is True
+        assert results['a' * 40]['conflicts'] == ['x.c']
+    finally:
+        db.save()
 
 
 def test_get_results_chunks_large_lookup(tmp_path, monkeypatch):
@@ -55,3 +67,34 @@ def test_get_results_ignores_unknown_and_duplicate_shas(tmp_path, monkeypatch):
         assert results[sha2]['error'] == 'conflict'
     finally:
         db.save()
+
+
+def test_get_results_empty_input_returns_empty_dict(tmp_path):
+    """get_results() short-circuits on empty/None input without querying."""
+    db = CherryDB(str(tmp_path / 'cherry.db'))
+    try:
+        assert db.get_results([]) == {}
+        assert db.get_results(None) == {}
+    finally:
+        db.save()
+
+
+def test_count_and_get_all_shas(tmp_path):
+    """count() and get_all_shas() reflect stored rows."""
+    db = CherryDB(str(tmp_path / 'cherry.db'))
+    try:
+        db.add_results({'a' * 40: _result(), 'b' * 40: _result(ok=False)})
+        assert db.count() == 2
+        assert db.get_all_shas() == {'a' * 40, 'b' * 40}
+    finally:
+        db.save()
+
+
+def test_cherrydb_reexports_path_helpers_for_backward_compatibility(tmp_path):
+    """lib.cherrypick_db still exposes the path helpers after the v19.9.0 split."""
+    cache_dir = tmp_path / 'cache'
+    db = cherrypick_db.load_or_create_db(str(cache_dir), 'v6.1')
+    db.save()
+
+    assert cherrypick_db.get_cherry_db_path(str(cache_dir), 'v6.1') == str(cache_dir / 'v6.1')
+    assert cherrypick_db.delete_db(str(cache_dir), 'v6.1') is True

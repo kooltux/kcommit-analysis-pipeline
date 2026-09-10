@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.9.0 — feat: direct per-revision cherry-pick cache files (2026-09-10)
+
+### Changed
+
+- **Cherry-pick cache layout** — the SQLite cache for `collect.cherry_pick_test` now stores one direct file per target revision (`<cherry_pick_cache_dir>/<safe-rev_old>`, e.g. `<dir>/v6.1.1`) instead of a per-revision subdirectory containing a generic `cherry.db` file (previously `<dir>/<rev_old>/cherry.db`). Revision names are filesystem-normalized: `/` and `\` are both replaced with `_`, so refs like `origin/stable/linux-6.1.y` map to a single safe filename instead of creating nested directories.
+- **lib/cherrypick_paths.py** (new) — path/cache-layout helpers extracted from `lib/cherrypick_db.py`: `_safe_revision_filename()`, `get_cherry_db_path()`, `ensure_cache_dir()`, `load_or_create_db()`, `delete_db()`. `ensure_cache_dir()` now only creates the shared `cache_dir` — no per-revision subdirectory is created.
+- **lib/cherrypick_db.py** — re-exports all five path helpers from `lib.cherrypick_paths` for backward compatibility; existing `from lib.cherrypick_db import ...` call sites are unaffected.
+
+### Added
+
+- **tests/test_cherrypick_paths.py** — new test module covering direct-file path construction, `/` and `\` normalization, base-directory-only creation, and `delete_db()` against the new layout.
+- **tests/test_cherrypick_db.py** — expanded with a backward-compatibility test verifying `lib.cherrypick_db` still exposes the path helpers after the split, plus additional CherryDB coverage (single-result round trip, empty-input short-circuit, `count()`/`get_all_shas()`).
+
+### Compatibility
+
+- Backward compatible at the Python API level: all five path helpers remain importable from `lib.cherrypick_db`.
+- **Not** backward compatible on disk: existing `<cherry_pick_cache_dir>/<rev_old>/cherry.db` caches from prior versions are not read by v19.9.0. Cherry-pick results will be re-tested and written to the new direct-file location on first run after upgrading. This is expected — cached results are a pure performance optimization (10-100x speedup on reruns), not a correctness requirement.
+
+### Tests
+
+- Full test suite passed before release preparation.
+
+---
+
 ## v19.8.1 — fix: support very large commit ranges in hunk and cherry-pick processing (2026-09-10)
 
 ### Fixed

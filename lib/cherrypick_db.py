@@ -32,12 +32,40 @@ v19.2.3:
     each INSERT, ensuring external queries see results as soon as they're
     added. The auto-save timer and batch threshold are kept as safety
     mechanisms but are no longer the primary flush trigger.
+
+v19.8.1:
+  - get_results() chunks large SHA `IN (...)` lookups to at most 900 values
+    per query (below SQLite's traditional 999-variable ceiling), preventing
+    "too many SQL variables" when many commits are scored at once.
+
+v19.9.0:
+  - Path/cache-layout helpers (get_cherry_db_path, ensure_cache_dir,
+    load_or_create_db, delete_db) moved to lib/cherrypick_paths.py and are
+    re-exported here for backward compatibility. The on-disk layout changed
+    from a per-revision subdirectory (<cache_dir>/<rev_old>/cherry.db) to a
+    single direct file named after the (slash/backslash-normalized) target
+    revision (<cache_dir>/<safe-rev_old>). See lib/cherrypick_paths.py for
+    details.
 """
-import os
 import sqlite3
 import json
 import time
 from datetime import datetime, timezone
+
+from lib.cherrypick_paths import (
+    get_cherry_db_path,
+    ensure_cache_dir,
+    load_or_create_db,
+    delete_db,
+)
+
+__all__ = [
+    'CherryDB',
+    'get_cherry_db_path',
+    'ensure_cache_dir',
+    'load_or_create_db',
+    'delete_db',
+]
 
 
 # Traditional SQLite builds permit at most 999 bound variables per statement.
@@ -53,41 +81,28 @@ class CherryDB:
       commits (sha TEXT PRIMARY KEY, ok INTEGER, conflicts TEXT, error TEXT, tested_at TEXT)
     
     Usage:
-      db = CherryDB('/path/to/cache/v6.1/cherry.db')
+      db = CherryDB('/path/to/cache/v6.1.1')
       db.add_results({'abc123': {'ok': True, 'conflicts': [], 'error': None}})
       db.save()
       results = db.get_results(['abc123', 'def456'])
     """
     
-    # Auto-save interval in seconds (safety mechanism, not primary flush trigger)
     AUTO_SAVE_INTERVAL = 5.0
-
-    # Auto-save batch size (v19.2.0): flush after this many pending results
-    # even if AUTO_SAVE_INTERVAL has not elapsed yet.  Whichever threshold
-    # (count or time) is reached first triggers a flush.
-    # (v19.2.3: kept as safety mechanism, but add_result() now flushes immediately)
     BATCH_SIZE = 20
     
     def __init__(self, db_path):
         """Initialize or open existing database."""
         self.db_path = db_path
-        # Use autocommit mode for explicit transaction control
-        # isolation_level=None enables autocommit
         self.conn = sqlite3.connect(db_path, isolation_level=None, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        # Disable WAL mode to ensure writes are immediately visible
-        # WAL mode requires checkpoint to make writes visible to other connections
-        # Must be done before any writes, and we checkpoint first if WAL exists
         self._disable_wal_mode()
         self._create_schema()
-        self._pending_results = {}  # Buffer for auto-save (safety mechanism)
+        self._pending_results = {}
         self._last_save_time = time.time()
     
     def _disable_wal_mode(self):
         """Disable WAL mode and checkpoint existing WAL file if present."""
-        # First, checkpoint any existing WAL file to merge it into the main DB
         self.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-        # Then disable WAL mode
         self.conn.execute('PRAGMA journal_mode=DELETE')
     
     def _create_schema(self):
@@ -105,41 +120,17 @@ class CherryDB:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ok ON commits(ok)')
     
     def add_result(self, sha, result):
-        """Add or update a single cherry-pick result with immediate flush.
-        
-        This method now flushes immediately after each result to ensure
-        external queries can see the data. The auto-save buffering is kept
-        as a backup safety mechanism, but the primary behavior is immediate
-        visibility.
-        
-        Args:
-            sha: commit SHA
-            result: dict {'ok': bool, 'conflicts': list, 'error': str or None}
-        """
-        # Add to pending buffer (safety mechanism)
+        """Add or update a single cherry-pick result with immediate flush."""
         self._pending_results[sha] = result
-        
-        # Flush immediately for visibility
         self.flush()
         self._last_save_time = time.time()
-        
-        # Also check auto-save thresholds as backup safety mechanism
         now = time.time()
         if (len(self._pending_results) >= self.BATCH_SIZE
                 or now - self._last_save_time >= self.AUTO_SAVE_INTERVAL):
-            # Buffer is already flushed, just reset timer
             self._last_save_time = now
     
     def add_results(self, results):
-        """Add or update multiple cherry-pick results.
-        
-        Each row is inserted in its own transaction and committed immediately.
-        In autocommit mode (isolation_level=None), each INSERT OR REPLACE is
-        automatically committed, making it visible to external queries.
-        
-        Args:
-            results: dict mapping sha -> {'ok': bool, 'conflicts': list, 'error': str or None}
-        """
+        """Add or update multiple cherry-pick results."""
         cursor = self.conn.cursor()
         tested_at = datetime.now(timezone.utc).isoformat()
         
@@ -157,27 +148,13 @@ class CherryDB:
             ))
     
     def flush(self):
-        """Flush pending results to database (called automatically after each
-        add_result() in v19.2.3, or by auto-save thresholds as backup)."""
+        """Flush pending results to database."""
         if self._pending_results:
             self.add_results(self._pending_results)
             self._pending_results = {}
     
     def get_results(self, shas):
-        """Get cached cherry-pick results for specified SHAs.
-
-        Inputs are stably deduplicated and queried in chunks of at most
-        _RESULT_LOOKUP_CHUNK_SIZE values. Chunking is mandatory for large
-        scored commit sets: SQLite commonly limits a statement to 999 bound
-        variables, while a pipeline stage can query tens of thousands of SHAs.
-
-        Args:
-            shas: list of commit SHAs to look up
-
-        Returns:
-            dict mapping sha -> {'ok': bool, 'conflicts': list, 'error': str or None}
-            Only includes SHAs that exist in the database.
-        """
+        """Get cached cherry-pick results for specified SHAs (chunked lookup)."""
         seen = set()
         unique_shas = []
         for sha in shas or []:
@@ -205,11 +182,7 @@ class CherryDB:
         return results
     
     def get_all_shas(self):
-        """Get all SHAs in the database.
-        
-        Returns:
-            set of all commit SHAs that have been tested
-        """
+        """Get all SHAs in the database."""
         cursor = self.conn.cursor()
         cursor.execute('SELECT sha FROM commits')
         return {row['sha'] for row in cursor.fetchall()}
@@ -230,67 +203,3 @@ class CherryDB:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.save()
-
-
-def get_cherry_db_path(cache_dir, rev_old):
-    """Get path to cherry-pick database for a target revision.
-    
-    Args:
-        cache_dir: base cache directory (e.g., '/path/to/cherry-cache')
-        rev_old: target revision (e.g., 'v6.1')
-    
-    Returns:
-        full path to cherry.db file
-    """
-    return os.path.join(cache_dir, rev_old, 'cherry.db')
-
-
-def ensure_cache_dir(cache_dir, rev_old):
-    """Ensure cache directory exists for a target revision.
-    
-    Args:
-        cache_dir: base cache directory
-        rev_old: target revision
-    
-    Returns:
-        path to the revision-specific cache directory
-    """
-    rev_dir = os.path.join(cache_dir, rev_old)
-    os.makedirs(rev_dir, exist_ok=True)
-    return rev_dir
-
-
-def load_or_create_db(cache_dir, rev_old):
-    """Load existing database or create new one.
-    
-    Args:
-        cache_dir: base cache directory
-        rev_old: target revision
-    
-    Returns:
-        CherryDB instance
-    """
-    db_path = get_cherry_db_path(cache_dir, rev_old)
-    ensure_cache_dir(cache_dir, rev_old)
-    return CherryDB(db_path)
-
-
-def delete_db(cache_dir, rev_old):
-    """Delete the cherry-pick database for a target revision, if present.
-
-    Used by the ``cp-check --force`` command to clear cached results and
-    restart testing from scratch.  Silently no-ops if the file does not
-    exist.
-
-    Args:
-        cache_dir: base cache directory
-        rev_old: target revision
-
-    Returns:
-        True if a database file was removed, False if none existed.
-    """
-    db_path = get_cherry_db_path(cache_dir, rev_old)
-    if os.path.exists(db_path):
-        os.remove(db_path)
-        return True
-    return False
