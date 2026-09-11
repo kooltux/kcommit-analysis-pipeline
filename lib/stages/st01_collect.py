@@ -2,6 +2,16 @@
 
 E.4 (v13.0.0): moved docstring to top of file (was after the first import,
 rendering it a dead string literal).
+
+v19.9.1:
+  Hunk counting now reports real progress via update_stage_progress(),
+  matching the pattern already used by the main collect loop and by
+  stage 04/05's progress-wired loops. Previously batch_count_hunks() was
+  called with no progress_callback at all, so on large commit ranges
+  (tens to hundreds of thousands of commits) the pipeline showed only two
+  static print() lines with nothing in between -- silent for minutes on
+  real-world runs. The total (len(shas)) is already known before the call,
+  so a real determinate progress bar (not a spinner) is shown throughout.
 """
 import json
 import os
@@ -72,11 +82,28 @@ def run(cfg, cache):
     finish_progress_line()
 
     # Compute actual hunk counts for all commits (replaces placeholder hunks=0)
+    #
+    # v19.9.1: the total (len(shas)) is known before this call starts, so we
+    # wire a real progress_callback into batch_count_hunks() instead of
+    # leaving the user staring at two static print() lines with nothing in
+    # between for however long the git show batches take. This mirrors the
+    # step = max(1, total // 80) throttling pattern used by
+    # st04_prefilter.py / st05_score.py so update frequency is consistent
+    # across stages regardless of commit-range size.
     if commits:
         shas = [c['commit'] for c in commits if c.get('commit')]
         if shas:
-            print('  counting hunks for %d commits...' % len(shas))
-            hunk_counts = batch_count_hunks(cfg, shas)
+            total = len(shas)
+            step = max(1, total // 80)
+
+            def _hunk_progress(done, total_n):
+                if done % step == 0 or done == total_n:
+                    update_stage_progress(1, NSTAGES, done / max(total_n, 1),
+                                          'counting hunks', n_done=done, n_total=total_n)
+
+            print('  counting hunks for %d commits...' % total)
+            hunk_counts = batch_count_hunks(cfg, shas, progress_callback=_hunk_progress)
+            finish_progress_line()
             for c in commits:
                 sha = c.get('commit')
                 if sha and sha in hunk_counts:

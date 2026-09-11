@@ -7,7 +7,7 @@ v9.12 changes:
   - start_stage(), finish_stage(), fail_stage(), print_stage_input() and
     print_stage_output() also write to stderr so they never pollute stdout.
 
-E.4: StageResult dataclass added — structured return value for stage
+E.4: StageResult dataclass added -- structured return value for stage
      run() functions (count, dropped, reasons, extra). Stages may return
      a StageResult or a legacy tuple/dict; _stage_extra() in
      lib/commands/base.py handles both.
@@ -26,6 +26,39 @@ v18.2.1: MANIFEST.json 'outputs' for report_commits now enumerates all
          conditional output files (csv, xlsx, ods variants, etc.) so
          wipe_downstream() deletes them correctly without any directory
          glob logic.
+
+v19.9.1:
+  - update_stage_progress() bar width standardized to 25 characters, each
+    representing exactly 4% of progress (was 16 characters at ~6.25%/char).
+    finish_stage()'s _bar() helper matches this width so every rendered bar
+    across the pipeline uses one consistent visual scale.
+  - New indeterminate/spinner mode, corrected in a second pass after live
+    testing surfaced a regression in the first implementation. The original
+    rule ("spinner whenever n_total is None") incorrectly downgraded
+    st02_build_context.py's and st03_product_map.py's known milestone
+    fractions (0.10, 0.25, ..., 0.90 -- real, hand-computed progress values
+    that never carry n_done/n_total counts) to a spinner, even though they
+    have perfectly good positional information to show as a bar.
+
+    The corrected three-way rule, chosen so that every existing call site
+    needs no changes:
+      1. n_done is None (caller has no count of any kind, e.g. st02/st03's
+         milestone calls) -> render the determinate bar directly from frac.
+         No counts are shown since none were given.
+      2. n_done is given but n_total is None (e.g. st01_collect.py's
+         unbounded git-log collect loop, where the total commit count is
+         genuinely unknowable until the loop finishes) -> spinner + the raw
+         n_done count. frac is ignored here since callers in this state
+         pass a placeholder (typically 0.0) rather than a meaningful value.
+      3. Both n_done and n_total are given -> the full determinate bar with
+         counts, rate, and ETA (unchanged from before this version).
+    This distinguishes "I know my fractional position but not a raw count"
+    (case 1) from "I have a raw count but genuinely no total yet" (case 2)
+    -- both are legitimate, different states that were being conflated.
+  - batch_can_cherry_pick_cached() (lib/gitutils.py) and st01_collect.py's
+    hunk counting now report progress through this same renderer instead of
+    a standalone block-character bar or silent print()s -- see those
+    modules' own v19.9.1 changelog notes.
 """
 import json
 import os
@@ -53,8 +86,11 @@ class StageResult:
 
 _PROGRESS_REFRESH = 0.5
 _LINE_WIDTH       = 100
+_BAR_WIDTH        = 25   # v19.9.1: 25 chars, each representing 4% -- fixed across all bars
+_SPINNER_FRAMES   = ['|', '/', '-', '\\']  # rotates once per refresh tick
 _stage_t0 = {}   # (index, total) -> monotonic start time
 _last_upd  = {}   # (index, total) -> monotonic last update time
+_spinner_i = {}   # (index, total) -> current spinner frame index
 
 # Evaluate once at import time; stages inherit the same stderr fd as the
 # parent process so this correctly tracks redirection done before exec.
@@ -85,7 +121,7 @@ def _write(path, state):
         f.write('\n')
 
 
-def _bar(done, total, width=20):
+def _bar(done, total, width=_BAR_WIDTH):
     n = int(width * done / max(total, 1))
     return '[%s%s] %d/%d' % ('#' * n, '-' * (width - n), done, total)
 
@@ -111,11 +147,30 @@ def is_stage_done(path, key):
 
 def update_stage_progress(index, total, frac, label,
                            n_done=None, n_total=None):
-    """Render an in-place progress bar on stderr.
+    """Render an in-place progress bar (or spinner) on stderr.
 
     Suppressed entirely when stderr is not a TTY so that redirected log
     files and --progress-json stdout streams are never polluted with bar
     characters.
+
+    Three display modes (v19.9.1, corrected after live testing):
+
+    1. n_done is None (no count of any kind -- e.g. a caller reporting a
+       hand-computed milestone fraction like 0.10, 0.25, ..., 0.90 without
+       ever tracking a raw item count): render the fixed 25-character bar
+       directly from *frac*. No counts, rate, or ETA are shown since none
+       were provided.
+
+    2. n_done is given but n_total is None (a caller has a raw count but the
+       total is genuinely unknowable yet, e.g. collecting commits from an
+       unbounded `git log` before the range is fully known): render a
+       rotating spinner with elapsed time and the raw n_done count. No fake
+       percentage, rate, or ETA is shown -- none would be meaningful without
+       a real total.
+
+    3. Both n_done and n_total are given: the full determinate bar with
+       done/total counts, elapsed time, rate, and ETA -- unchanged from
+       prior versions.
     """
     if not _STDERR_IS_TTY:
         return
@@ -129,11 +184,36 @@ def update_stage_progress(index, total, frac, label,
         _stage_t0[key] = now
     el = now - _stage_t0[key]
 
-    w  = 16
+    if n_done is None:
+        # Mode 1: caller has a real fraction but no count of any kind.
+        w  = _BAR_WIDTH
+        f  = int(w * max(0.0, min(1.0, frac)))
+        b  = '[%s%s] %d/%d  %-24s' % ('#' * f, '-' * (w - f), index, total, label)
+        line = '\r%s  %s' % (b, _fmt_hms(el))
+        if len(line) < _LINE_WIDTH:
+            line += ' ' * (_LINE_WIDTH - len(line))
+        sys.stderr.write(line)
+        sys.stderr.flush()
+        return
+
+    if n_total is None:
+        # Mode 2: a raw count exists but the total is genuinely unknown yet.
+        si = _spinner_i.get(key, 0)
+        _spinner_i[key] = (si + 1) % len(_SPINNER_FRAMES)
+        spin = _SPINNER_FRAMES[si]
+        b = '[%s] %d/%d  %-24s' % (spin, index, total, label)
+        line = '\r%s  %d  %s' % (b, n_done, _fmt_hms(el))
+        if len(line) < _LINE_WIDTH:
+            line += ' ' * (_LINE_WIDTH - len(line))
+        sys.stderr.write(line)
+        sys.stderr.flush()
+        return
+
+    # Mode 3: full determinate bar with counts, rate, and ETA.
+    w  = _BAR_WIDTH
     f  = int(w * max(0.0, min(1.0, frac)))
     b  = '[%s%s] %d/%d  %-24s' % ('#' * f, '-' * (w - f), index, total, label)
-    counts = ('  %d/%d' % (n_done, n_total) if n_done is not None and n_total is not None
-              else ('  %d' % n_done) if n_done is not None else '')
+    counts = '  %d/%d' % (n_done, n_total)
     rate = ('  %.1f/s' % (n_done / el)) if n_done and el > 0.5 else ''
     eta  = ('  ETA %s' % _fmt_hms((el / n_done) * (n_total - n_done))
             if n_done and n_total and frac > 0.01 else '')
@@ -156,6 +236,7 @@ def start_stage(path, key, index, total):
     sk = (index, total)
     _stage_t0[sk] = time.monotonic()
     _last_upd[sk] = 0.0
+    _spinner_i[sk] = 0
     return started
 
 

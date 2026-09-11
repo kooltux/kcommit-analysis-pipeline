@@ -2,6 +2,35 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.9.1 — fix: progress-bar visibility and consistency across all stages (2026-09-11)
+
+### Fixed
+
+- **Stage 01 hunk counting** — `batch_count_hunks()` is now called with a real `progress_callback`, replacing two static `print()` lines that bracketed the call with total silence for however long the underlying `git show` batches took (minutes on large commit ranges — confirmed on a 183,716-commit real-world run). The total (`len(shas)`) is known before the call starts, so a determinate bar is shown throughout, not a spinner.
+- **Cherry-pick progress bar unified** — `batch_can_cherry_pick_cached()` (`lib/gitutils.py`) now renders progress through the shared `lib.pipeline_runtime.update_stage_progress()` bar instead of a standalone block-character (`█`/`░`) bar written directly to stdout. `lib/stages/st05_score.py`'s `_enrich_cherry_pick()` passes `stage_index=5, stage_total=NSTAGES` so the cherry-pick bar now looks identical to every other stage's bar instead of a visually distinct style. The now-unused `_progress_bar()`/`_format_eta()` helpers in `lib/gitutils.py` are removed.
+- **Progress bar width standardized** — `update_stage_progress()`'s bar is now a fixed 25 characters, each representing exactly 4% of progress (previously 16 characters at ~6.25%/char). `finish_stage()`'s `_bar()` helper uses the same 25-character width, so every rendered bar across the pipeline — outer stage bars, inner sub-stage bars, hunk counting, cherry-pick testing — now uses one consistent visual scale.
+
+### Added
+
+- **Indeterminate/spinner progress mode** — `update_stage_progress()` now supports three display modes instead of the original always-a-bar behavior:
+  1. **No count at all** (`n_done` is `None`) — e.g. `st02_build_context.py`'s and `st03_product_map.py`'s hand-computed milestone fractions (0.10, 0.25, ..., 0.90), which never track a raw item count. Renders the fixed 25-character bar directly from the caller's fraction.
+  2. **A count but no total** (`n_done` given, `n_total` is `None`) — e.g. `st01_collect.py`'s unbounded `git log` collection loop, where the total commit count is genuinely unknowable until the loop finishes. Renders a rotating spinner with elapsed time and the raw count, instead of a frozen, misleading `0/0` bar that looked hung.
+  3. **Both count and total known** — the full determinate bar with counts, rate, and ETA (unchanged from prior versions).
+
+  This three-way rule was corrected after live testing surfaced a regression in an earlier draft of this fix: an initial "spinner whenever `n_total` is missing" rule incorrectly downgraded stage 02/03's milestone bars to spinners, since those calls never pass `n_done`/`n_total` at all. No caller-side changes were needed in any stage to support the corrected rule.
+- **Test coverage**: `tests/test_pipeline_runtime_extra.py` gains 10 new tests for the fixed bar width and all three display modes (milestone-fraction bar, count-without-total spinner, full determinate bar, and the transitions between them). `tests/test_gitutils_cherry_progress.py` (new file) covers the unified cherry-pick progress rendering, caller-supplied `progress_callback` forwarding, and cached-result reuse. `tests/test_st01_collect_run.py` gains 4 new tests for the hunk-counting progress callback wiring.
+
+### Compatibility
+
+- No breaking API changes. `batch_can_cherry_pick_cached()` gains optional `stage_index`/`stage_total`/`label` keyword arguments (all default to disabling shared-renderer output, preserving prior behavior for any caller that omits them).
+- Visual output only: no config, cache, or on-disk format changes.
+
+### Tests
+
+- Full test suite passed before release preparation.
+
+---
+
 ## v19.9.0 — feat: direct per-revision cherry-pick cache files (2026-09-10)
 
 ### Changed

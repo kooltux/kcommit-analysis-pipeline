@@ -49,6 +49,18 @@ run_git() decoding robustness:
   a 2000-commit chunk discarded hunk counts for the whole chunk. This
   mirrors the binary-safety approach already used by
   batch_show_paths()/_run_batch_pipe() (.decode('utf-8', errors='replace')).
+
+v19.9.1:
+  batch_can_cherry_pick_cached() now reports progress through the shared
+  lib.pipeline_runtime.update_stage_progress() renderer instead of a
+  standalone block-character (`█`/`░`) progress bar written directly to
+  stdout. This unifies the visual style of the cherry-pick progress display
+  with every other pipeline stage (git-log collection, hunk counting,
+  history mapping, prefiltering, scoring). Callers pass optional
+  stage_index/stage_total/label so the shared renderer can correctly
+  attribute the bar to the right pipeline stage; st05_score.py's
+  _enrich_cherry_pick() passes stage 5's index/total. The standalone
+  _progress_bar()/_format_eta() helpers are removed as dead code.
 """
 import os
 import subprocess
@@ -255,7 +267,7 @@ def show_commit_patch(cfg, sha, unified=0):
     return run_git(cfg, args)
 
 
-# ── Hunk counting (backport-complexity input) ─────────────────────────────
+# ── Hunk counting (backport-complexity input) ────────────────────────────────
 #
 # A "hunk" is a contiguous block of changed lines in a unified diff, marked by
 # a ``@@ -a,b +c,d @@`` header.  The total hunk count across all files in a
@@ -568,7 +580,7 @@ def _serial_fallback(cfg, tasks, progress_callback):
     return results
 
 
-# ── Cherry-pick test (fast: git apply --check) ─────────────────────────────
+# ── Cherry-pick test (fast: git apply --check) ────────────────────────
 
 # Minimum commit count before parallel cherry-pick testing is worth the
 # ProcessPoolExecutor startup overhead (mirrors st05_score.py's threshold).
@@ -662,7 +674,7 @@ def can_cherry_pick(cfg, commit_sha, target_rev):
         return {'ok': False, 'conflicts': [], 'error': str(exc)}
 
 
-# ── v19.2.0: parallel worker state for cherry-pick testing ─────────────
+# ── v19.2.0: parallel worker state for cherry-pick testing ───────────
 # Mirrors the pattern used by lib/stages/st05_score.py: a small set of
 # module-level globals initialised once per worker process by
 # _cp_worker_init(), so pickling per-task is cheap (only the SHA string is
@@ -850,32 +862,11 @@ def batch_can_cherry_pick(cfg, commit_shas, target_rev, progress_callback=None, 
                 pass
 
 
-# ── Cherry-pick cache (SQLite-based, per-target) ────────────────────────
+# ── Cherry-pick cache (SQLite-based, per-target) ────────────────────
 
-def _format_eta(seconds):
-    """Format ETA in human-readable format."""
-    if seconds < 60:
-        return '%ds' % int(seconds)
-    elif seconds < 3600:
-        mins = int(seconds // 60)
-        secs = int(seconds % 60)
-        return '%dm %ds' % (mins, secs)
-    else:
-        hours = int(seconds // 3600)
-        mins = int((seconds % 3600) // 60)
-        return '%dh %dm' % (hours, mins)
-
-
-def _progress_bar(current, total, eta_seconds, width=40):
-    """Generate a progress bar string with ETA."""
-    percent = current / float(total)
-    filled = int(width * percent)
-    bar = '█' * filled + '░' * (width - filled)
-    eta_str = _format_eta(eta_seconds)
-    return '[%s] %d/%d (%.1f%%) ETA: %s' % (bar, current, total, percent * 100, eta_str)
-
-
-def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback=None):
+def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback=None,
+                                  stage_index=None, stage_total=None,
+                                  label='cherry-pick test'):
     """Test commits for cherry-pick feasibility with SQLite caching.
     
     Uses CherryDB to cache results per target_rev. Only tests new commits,
@@ -888,12 +879,30 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
     Testing itself runs in parallel worker processes when
     collect.cherry_pick_workers > 1 and there are enough new commits
     (v19.2.0; see batch_can_cherry_pick()).
+
+    v19.9.1: progress is now reported through the shared
+    lib.pipeline_runtime.update_stage_progress() renderer instead of a
+    standalone block-character progress bar written directly to stdout.
+    Callers running inside a numbered pipeline stage pass stage_index,
+    stage_total, and label so the shared renderer attributes the bar to
+    the correct stage (see lib/stages/st05_score.py's _enrich_cherry_pick(),
+    which passes stage 5's index/total). When stage_index/stage_total are
+    omitted, progress is still computed internally and forwarded to the
+    caller-supplied progress_callback (if any) but not rendered through
+    the shared bar -- this preserves backward compatibility for any future
+    caller with no pipeline-stage context.
     
     Args:
         cfg: pipeline config dict (MUST contain collect.cherry_pick_cache_dir)
         commit_shas: list of commit SHAs to test
         target_rev: revision to cherry-pick onto (e.g., config.kernel.rev_old)
-        progress_callback: optional callable(current, total, eta_seconds)
+        progress_callback: optional callable(current, total, eta_seconds),
+            invoked in addition to the shared renderer when both are active
+        stage_index: pipeline stage index (1-based) for the shared progress
+            renderer; omit to disable shared-renderer output
+        stage_total: total pipeline stage count (NSTAGES) for the shared
+            progress renderer
+        label: label shown in the shared progress bar (default: 'cherry-pick test')
     
     Returns:
         dict mapping sha -> {'ok': bool, 'conflicts': list, 'error': str or None}
@@ -902,6 +911,7 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
         RuntimeError: if collect.cherry_pick_cache_dir is not configured
     """
     from lib.cherrypick_db import load_or_create_db
+    from lib.pipeline_runtime import update_stage_progress, finish_progress_line
     
     shas = [s for s in (commit_shas or []) if s]
     if not shas:
@@ -941,21 +951,17 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
         print('  Testing %d new commits for cherry-pick onto %s...' % (
             len(new_shas), target_rev))
         
-        # Progress wrapper with ETA display
         start_time = time.time()
-        last_progress_display = -1
-        
-        def _progress_with_eta(done, total, eta_seconds):
-            """Display progress bar with ETA, updating every 5% or at completion."""
-            nonlocal last_progress_display
-            percent = int(done / float(total) * 100)
-            
-            # Only update display every 5% or at completion
-            if percent % 5 == 0 and percent != last_progress_display or done == total:
-                last_progress_display = percent
-                bar = _progress_bar(done, total, eta_seconds)
-                sys.stdout.write('\r  %s' % bar)
-                sys.stdout.flush()
+
+        def _progress_unified(done, total, eta_seconds=None):
+            """Report progress through the shared renderer and (if given)
+            the caller-supplied progress_callback."""
+            if stage_index is not None and stage_total is not None:
+                update_stage_progress(
+                    stage_index, stage_total, done / max(total, 1), label,
+                    n_done=done, n_total=total)
+            if progress_callback:
+                progress_callback(done, total, eta_seconds)
         
         # Result callback: stream each result to database immediately
         def _save_result(sha, result):
@@ -965,13 +971,13 @@ def batch_can_cherry_pick_cached(cfg, commit_shas, target_rev, progress_callback
         # Test new commits with streaming results, parallel when workers > 1
         # and enough new commits (v19.2.0)
         new_results = batch_can_cherry_pick(cfg, new_shas, target_rev,
-                                           progress_callback=_progress_with_eta,
+                                           progress_callback=_progress_unified,
                                            workers=workers,
                                            result_callback=_save_result)
         
-        # Clear progress line
-        sys.stdout.write('\n')
-        sys.stdout.flush()
+        # Terminate the in-place progress line
+        if stage_index is not None and stage_total is not None:
+            finish_progress_line()
         
         # Final flush to ensure all results are saved
         db.flush()

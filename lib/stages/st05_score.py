@@ -13,6 +13,17 @@ v19.2.0:
     product-touching commits through scoring, even if they score low due to
     incomplete patterns. Stage 06 can then use both score and cherry_pickable
     as signals for thresholding/ranking.
+
+v19.9.1:
+  - _enrich_cherry_pick() now passes stage_index=5, stage_total=NSTAGES, and
+    label='cherry-pick test' directly into batch_can_cherry_pick_cached(),
+    which renders progress through the shared
+    lib.pipeline_runtime.update_stage_progress() bar. This replaces the
+    standalone block-character bar that lib.gitutils previously drew
+    directly to stdout, unifying the visual style of cherry-pick progress
+    with every other pipeline stage. The local _progress() wrapper that
+    duplicated the step-throttling logic is removed since
+    batch_can_cherry_pick_cached() now handles progress reporting natively.
 """
 import os
 import sys
@@ -25,7 +36,7 @@ from lib.manifest import CACHE_FILES, NSTAGES
 from lib.schema import validate_commit_list, validate_scored_commit_list
 from lib.gitutils import batch_can_cherry_pick_cached
 
-# ── Process-pool worker state ─────────────────────────────────────────────────
+# ── Process-pool worker state ───────────────────────────────────────────────────────────
 # These globals are initialised once per worker process by _worker_init().
 
 _g_product_map   = None
@@ -45,7 +56,7 @@ def _score_one_global(commit):
     return score_commit(commit, _g_product_map, _g_profile_rules, _g_cfg)
 
 
-# ── Serial path ───────────────────────────────────────────────────────────────
+# ── Serial path ────────────────────────────────────────────────────────────────
 
 def _score_serial(commits, product_map, profile_rules, cfg, label='scoring'):
     precompile_rules(profile_rules)
@@ -60,7 +71,7 @@ def _score_serial(commits, product_map, profile_rules, cfg, label='scoring'):
     return results
 
 
-# ── Parallel path ─────────────────────────────────────────────────────────────
+# ── Parallel path ──────────────────────────────────────────────────────────────
 
 def _score_parallel(commits, product_map, profile_rules, cfg, workers):
     """Score commits using ProcessPoolExecutor.
@@ -94,7 +105,7 @@ def _score_parallel(commits, product_map, profile_rules, cfg, workers):
     return results
 
 
-# ── Public entry point ────────────────────────────────────────────────────────
+# ── Public entry point ──────────────────────────────────────────────────────────────────────
 
 def score_all(commits, product_map, profile_rules, cfg):
     collect    = cfg.get('collect', {}) or {}
@@ -147,19 +158,14 @@ def _enrich_cherry_pick(cfg, scored):
     
     target_rev = kernel['rev_old']
     
-    # Progress callback for cherry-pick test using standard mechanism
-    total = len(shas)
-    step = max(1, total // 80)
-    
-    def _progress(done, total, eta_seconds=None):
-        """Update stage progress (eta_seconds is ignored for pipeline progress)."""
-        if done % step == 0 or done == total:
-            update_stage_progress(5, NSTAGES, done / max(total, 1),
-                                  'cherry-pick test', n_done=done, n_total=total)
-    
     try:
-        # Use cached version - only tests new commits, shows progress bar with ETA
-        cp_results = batch_can_cherry_pick_cached(cfg, shas, target_rev, progress_callback=_progress)
+        # Use cached version - only tests new commits. Progress is rendered
+        # through the shared update_stage_progress() bar (v19.9.1) by passing
+        # this stage's index/total/label, unifying the visual style with
+        # every other pipeline stage instead of a standalone block-character bar.
+        cp_results = batch_can_cherry_pick_cached(
+            cfg, shas, target_rev,
+            stage_index=5, stage_total=NSTAGES, label='cherry-pick test')
     except Exception as exc:
         _eprint(f'\nWARNING: cherry-pick test failed ({exc}); skipping')
         cp_results = {}
