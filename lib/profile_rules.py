@@ -25,6 +25,11 @@ v13.0.0 changes:
     external profiles_dirs / rules_dirs entries, not the CWD-default fallback
     path (which is irrelevant when the built-in configs/ tree covers the profiles).
 
+v19.11.0 changes:
+  - Removed the product-specific rule-name alias (_rule_name_candidates): rule
+    names are now looked up exactly as written in the profile, first in the
+    configured rules_dirs, then in the built-in configs/rules/ tree.
+
 Pattern source tracking:
   _read_patterns() now returns (patterns, sources) where sources is a list of
   (filepath, lineno) tuples parallel to patterns.  Rule bodies store
@@ -123,15 +128,6 @@ def _find_preferred(name, primary_dirs, fallback_dirs, suffix=''):
     if primary is not None:
         return primary
     return _find_unique(name, fallback_dirs, suffix=suffix) if fallback_dirs else None
-
-
-def _rule_name_candidates(name):
-    candidates = [name]
-    if name.startswith('artemis_'):
-        stripped = name[len('artemis_'):]
-        if stripped and stripped not in candidates:
-            candidates.append(stripped)
-    return candidates
 
 
 def _merged_patterns(pdata):
@@ -267,11 +263,7 @@ def compile_rules_for_config(cfg, cache_dir=None):
                 extras = {}
 
             if rname not in rule_bodies:
-                rdir = None
-                for candidate_name in _rule_name_candidates(rname):
-                    rdir = _find_preferred(candidate_name, rules_dirs, builtin_rules_dirs)
-                    if rdir is not None:
-                        break
+                rdir = _find_preferred(rname, rules_dirs, builtin_rules_dirs)
                 if rdir is None:
                     searched = ', '.join(rules_dirs)
                     raise RuntimeError(
@@ -432,11 +424,7 @@ def load_profile_rules(cfg):
     builtin_rules_dirs = [os.path.join(_tool_root, 'configs', 'rules')]
 
     for rname, rbody in rule_bodies.items():
-        rdir = None
-        for candidate_name in _rule_name_candidates(rname):
-            rdir = _find_preferred(candidate_name, rules_dirs, builtin_rules_dirs)
-            if rdir is not None:
-                break
+        rdir = _find_preferred(rname, rules_dirs, builtin_rules_dirs)
         for key, fname in RULE_SCHEMA.items():
             src_key = '_sources_' + key
             if rdir:

@@ -54,12 +54,10 @@ A **rule** is a named directory containing pattern files. Rules live under
 `paths.rules_dirs` (default: `<CONFIGDIR>/rules/`). The singular alias
 `rules_dir` is also accepted in the configuration and in the derived `paths`
 mapping, and is normalized to the same internal list form. The directory name is the rule key referenced in
-profile files. If a rule directory is not found in the configured external
+profile files, and it is looked up exactly as written. If a rule directory is not found in the configured external
 paths, the pipeline also falls back to the built-in shipped rule directories
 under the tool's own `configs/rules/`. This also covers externally overridden
-profiles that still reference shipped built-in rule folders. Legacy external
-rule names such as `artemis_generic` also fall back to shipped built-in
-equivalents when present.
+profiles that still reference shipped built-in rule folders.
 
 ### Rule directory structure
 

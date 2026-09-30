@@ -6,6 +6,11 @@ v13.0.0 (E.2, E.8):
          (stale cache based on content hash, not timestamp).
   E.8 -- added test: _compute_schema_hash() only hashes the loaded rule files,
          not the entire rules directory tree.
+
+v19.11.0:
+  The product-specific rule-name alias was removed; rule names are resolved
+  exactly as written. Tests cover multi-directory lookup and the absence of
+  any prefix-based fallback.
 """
 import json
 import os
@@ -256,13 +261,13 @@ def test_compile_rules_prefers_external_rule_dir_before_builtin(tmp_path):
     pd = tmp_path / 'profiles'; pd.mkdir()
     rd = tmp_path / 'rules';    rd.mkdir()
     (tmp_path / 'cache').mkdir()
-    _write_rule(rd, 'generic', ['artemis-only-keyword'])
+    _write_rule(rd, 'generic', ['external-only-keyword'])
     _write_profile(pd, 'performance', ['generic'])
     cfg = _cfg(tmp_path, {'performance': 100}, pd, rd)
     result = compile_rules_for_config(cfg, str(tmp_path))
     kw = result['performance']['merged'].get('keywords_whitelist', [])
     kw_strs = [p if isinstance(p, str) else p.pattern for p in kw]
-    assert any('artemis-only-keyword' in k for k in kw_strs)
+    assert any('external-only-keyword' in k for k in kw_strs)
 
 
 def test_compile_rules_accepts_singular_paths_rules_dir_alias(tmp_path):
@@ -338,11 +343,13 @@ def test_compile_rules_external_profile_can_use_builtin_rule_fallback(tmp_path):
     assert 'performance_general' in out['performance']['rules']
 
 
-def test_compile_rules_builtin_rule_alias_artemis_generic_falls_back_to_generic(tmp_path):
+# -- exact rule-name resolution (no prefix alias) ------------------------------
+def test_compile_rules_resolves_custom_prefixed_rule_from_external_dir(tmp_path):
     profiles = tmp_path / 'profiles'
     rules = tmp_path / 'rules'
     profiles.mkdir(); rules.mkdir()
-    _write_profile(profiles, 'performance', {'artemis_generic': 10})
+    _write_profile(profiles, 'performance', {'custom_generic': 10})
+    _write_rule(rules, 'custom_generic', ['external-custom-keyword'])
     cfg = {
         'profiles': {'active': {'performance': 100}},
         'paths': {
@@ -352,17 +359,18 @@ def test_compile_rules_builtin_rule_alias_artemis_generic_falls_back_to_generic(
         '_meta': {'config_dir': str(tmp_path)},
     }
     out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
-    assert 'performance' in out
-    assert 'artemis_generic' in out['performance']['rules']
-    assert out['performance']['rules']['artemis_generic']['weight'] == 10
+    assert 'custom_generic' in out['performance']['rules']
+    pats = out['performance']['rules']['custom_generic'].get('keywords_whitelist', [])
+    assert any('external-custom-keyword' in p for p in pats)
 
 
-def test_compile_rules_prefers_external_artemis_rule_over_builtin_alias(tmp_path):
+def test_compile_rules_prefixed_name_has_no_builtin_alias(tmp_path):
+    """A prefixed rule name must NOT fall back to the unprefixed built-in rule."""
+    import pytest
     profiles = tmp_path / 'profiles'
     rules = tmp_path / 'rules'
     profiles.mkdir(); rules.mkdir()
-    _write_profile(profiles, 'performance', {'artemis_generic': 10})
-    _write_rule(rules, 'artemis_generic', ['external-artemis-keyword'])
+    _write_profile(profiles, 'performance', {'foo_project_generic': 10})
     cfg = {
         'profiles': {'active': {'performance': 100}},
         'paths': {
@@ -371,7 +379,28 @@ def test_compile_rules_prefers_external_artemis_rule_over_builtin_alias(tmp_path
         },
         '_meta': {'config_dir': str(tmp_path)},
     }
+    with pytest.raises(RuntimeError, match='rule folder'):
+        compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
+
+
+def test_compile_rules_searches_all_configured_rules_dirs(tmp_path):
+    """Rules may be spread over several rules_dirs entries."""
+    profiles = tmp_path / 'profiles'
+    rules_a = tmp_path / 'rules'
+    rules_b = tmp_path / 'extra_rules'
+    profiles.mkdir(); rules_a.mkdir(); rules_b.mkdir()
+    _write_rule(rules_a, 'rule_a', ['alpha-keyword'])
+    _write_rule(rules_b, 'rule_b', ['beta-keyword'])
+    _write_profile(profiles, 'multi', ['rule_a', 'rule_b'])
+    cfg = {
+        'profiles': {'active': {'multi': 100}},
+        'paths': {
+            'profiles_dirs': [str(profiles)],
+            'rules_dirs': [str(rules_a), str(rules_b)],
+        },
+        '_meta': {'config_dir': str(tmp_path)},
+    }
     out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
-    assert 'artemis_generic' in out['performance']['rules']
-    pats = out['performance']['rules']['artemis_generic'].get('keywords_whitelist', [])
-    assert any('external-artemis-keyword' in p for p in pats)
+    kw = out['multi']['merged']['keywords_whitelist']
+    assert any('alpha-keyword' in k for k in kw)
+    assert any('beta-keyword' in k for k in kw)

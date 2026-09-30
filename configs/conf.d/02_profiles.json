@@ -23,7 +23,7 @@
   // "rules": {
   //   "rules_dirs": [
   //     "${CONFIGDIR}/rules",
-  //     "${CONFIGDIR}/artemis_rules"
+  //     "${CONFIGDIR}/foo_project_rules"
   //   ]
   // }
 }

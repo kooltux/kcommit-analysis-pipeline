@@ -113,7 +113,7 @@ rule contributions: 100 = full, 0 = disabled. Profiles are loaded from
   "rules_dirs": ["${CONFIGDIR}/rules"]
 }
 ```
-Rule-set directories to search (defaults to `<CONFIGDIR>/rules/`). The singular alias `rules_dir` is also accepted for compatibility and is normalized to the same internal list form. If a requested rule folder is not found there, built-in fallback rules from the tool's own `configs/rules/` are searched automatically, including when an external profile overrides a shipped profile but still relies on shipped rule folders. Legacy external names such as `artemis_generic` also fall back to shipped built-in equivalents when present.
+Rule-set directories to search (defaults to `<CONFIGDIR>/rules/`). Several directories may be listed; a rule name must be unique across them. The singular alias `rules_dir` is also accepted for compatibility and is normalized to the same internal list form. Rule names are looked up exactly as written in the profile. If a requested rule folder is not found there, built-in fallback rules from the tool's own `configs/rules/` are searched automatically, including when an external profile overrides a shipped profile but still relies on shipped rule folders.
 
 ### `filter`
 Controls pre-score filtering (stage 04) and post-score filtering (stage 06).
