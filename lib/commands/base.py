@@ -39,26 +39,17 @@ def load_state(state_path):
 
 
 def stage_needs_run(key, work, state, base_dirs=None):
-    """Return True if *key* has not completed successfully or its outputs are missing.
-
-    base_dirs -- optional dict mapping path prefixes ('cache', 'output') to
-                 their real absolute directories, exactly as passed to
-                 wipe_downstream().  When provided, output entries such as
-                 'cache/commits.json' are resolved against base_dirs['cache']
-                 rather than work.  Falls back to os.path.join(work, rel)
-                 for entries whose prefix is not found in base_dirs or when
-                 base_dirs is None.
-    """
+    """Return True when a stage is not OK or any declared output is missing."""
     s = state.get(key, {})
     if s.get('status') != 'ok':
         return True
     for rel in (STAGE_OUTPUTS.get(key) or []):
         if base_dirs:
-            parts  = rel.split('/', 1)
+            parts = rel.split('/', 1)
             prefix = parts[0] if len(parts) == 2 else None
-            rest   = parts[1] if len(parts) == 2 else rel
-            base   = base_dirs.get(prefix, work)
-            full   = os.path.join(base, rest)
+            rest = parts[1] if len(parts) == 2 else rel
+            base = base_dirs.get(prefix, work)
+            full = os.path.join(base, rest)
         else:
             full = os.path.join(work, rel)
         if not os.path.exists(full):
@@ -89,7 +80,7 @@ def stage_extra(key, result, elapsed):
     if key == 'collect_build_context':
         ctx, smap = result
         return {'enabled_config_count': len(ctx.get('kernel_config', [])),
-                'kbuild_file_count':    len(ctx.get('kbuild_files', [])),
+                'kbuild_file_count': len(ctx.get('kbuild_files', [])),
                 'static_config_map_symbols': len(smap)}
     if key == 'build_product_map':
         return {'config_symbol_count': len((result or {}).get('config_to_paths', {}))}
@@ -110,6 +101,9 @@ def stage_extra(key, result, elapsed):
                 'min_score': threshold}
     if key == 'report_commits':
         return {'total_scored_commits': (result or {}).get('total_scored_commits', 0)}
+    if key == 'prepare_ai_analysis':
+        return {'chunk_count': result['chunk_count'],
+                'total_commits': result['total_commits'], 'run_id': result['run_id']}
     return {}
 
 
@@ -121,20 +115,17 @@ def run_stage(idx, key, fn, cfg, cache, work, state_path, args):
         else:
             print(f'[stage {idx}] {key} already OK – skipping')
         return
-
     if args.progress_json:
         emit_progress(idx, key, 'running')
     else:
         print(f'\n[stage {idx}] {key} …')
-
-    t0     = time.time()
-    t      = start_stage(state_path, key, idx, NSTAGES)
+    t0 = time.time()
+    t = start_stage(state_path, key, idx, NSTAGES)
     outdir = cfg.get('paths', {}).get('output_dir') or os.path.join(work, 'output')
-
     try:
-        result  = fn(cfg, cache, outdir) if key == 'report_commits' else fn(cfg, cache)
+        result = fn(cfg, cache, outdir) if key in ('report_commits', 'prepare_ai_analysis') else fn(cfg, cache)
         elapsed = time.time() - t0
-        extra   = stage_extra(key, result, elapsed)
+        extra = stage_extra(key, result, elapsed)
         finish_stage(state_path, key, t, status='ok', extra=extra or None)
         if args.progress_json:
             emit_progress(idx, key, 'ok', extra={'elapsed_sec': round(elapsed, 1)})

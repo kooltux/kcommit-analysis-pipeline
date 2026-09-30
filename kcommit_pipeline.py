@@ -1,49 +1,21 @@
 #!/usr/bin/env python3
 """kcommit-analysis-pipeline — top-level CLI entry point.
 
-All subcommand logic lives in lib/commands/cmd_*.py.
-
-Subcommands
-───────────
-  run       Run the full pipeline (or a subset of stages)
-  status    Show stage completion status for a work directory
-  validate  Validate config without running anything
-  report    Re-generate output reports from cached scored data
-  dropped   Inspect commits dropped by pre/post filter
-  diagnose  Full JSON diagnosis of one commit across all pipeline stages
-  cp-check  Test cherry-pick feasibility for the prefilter commit set
-
-Usage examples
-────────────
-  kcommit_pipeline.py run      --config cfg.json
-  kcommit_pipeline.py run      --config cfg.json --from 4
-  kcommit_pipeline.py run      --config cfg.json --stage 5
-  kcommit_pipeline.py run      --config cfg.json --resume
-  kcommit_pipeline.py run      --config cfg.json --override '{"filter":{"min_score":20}}'
-  kcommit_pipeline.py run      --config cfg.json --progress-json
-  kcommit_pipeline.py status   --config cfg.json
-  kcommit_pipeline.py validate --config cfg.json
-  kcommit_pipeline.py report   --config cfg.json [--format html] [--format xlsx]
-  kcommit_pipeline.py dropped  --config cfg.json [--reason all|prefilter|low-score]
-  kcommit_pipeline.py diagnose --cache-dir work/cache --sha <SHA_PREFIX>
-  kcommit_pipeline.py diagnose --cache-dir work/cache --sha <SHA_PREFIX> --out report.json
-  kcommit_pipeline.py cp-check --config cfg.json
-  kcommit_pipeline.py cp-check --config cfg.json --update
-  kcommit_pipeline.py cp-check --config cfg.json --force
-  kcommit_pipeline.py cp-check --config cfg.json --json
+Run stages 00–07 normally, or request optional AI preparation with run --ai.
+Subcommands: run, status, validate, report, dropped, diagnose, cp-check, ai-import.
 """
 import argparse
-import sys
 
 from lib.logsetup import setup_logging
 from lib.manifest import VERSION
-from lib.commands.cmd_run      import cmd_run
-from lib.commands.cmd_status   import cmd_status
+from lib.commands.cmd_run import cmd_run
+from lib.commands.cmd_status import cmd_status
 from lib.commands.cmd_validate import cmd_validate
-from lib.commands.cmd_report   import cmd_report
-from lib.commands.cmd_dropped  import cmd_dropped
+from lib.commands.cmd_report import cmd_report
+from lib.commands.cmd_dropped import cmd_dropped
 from lib.commands.cmd_diagnose import cmd_diagnose
 from lib.commands.cmd_cp_check import cmd_cp_check
+from lib.commands.cmd_ai_import import cmd_ai_import
 
 def main():
     ap = argparse.ArgumentParser(
@@ -56,105 +28,74 @@ def main():
     sub.required = True
 
     p_run = sub.add_parser('run', help='Run pipeline stages')
-    p_run.add_argument('--config',   required=True)
+    p_run.add_argument('--config', required=True)
     p_run.add_argument('--override', default=None, metavar='JSON')
-    p_run.add_argument('--stage',    default=None)
-    p_run.add_argument('--from',     dest='from_', default=None)
-    p_run.add_argument('--resume',   action='store_true')
-    p_run.add_argument('--force',    action='store_true')
+    p_run.add_argument('--stage', default=None)
+    p_run.add_argument('--from', dest='from_', default=None)
+    p_run.add_argument('--resume', action='store_true')
+    p_run.add_argument('--force', action='store_true')
     p_run.add_argument('--progress-json', action='store_true')
+    p_run.add_argument('--ai', action='store_true',
+                       help='Prepare AI chunks and portable serve_ai.pyz in optional stage 08')
 
     p_st = sub.add_parser('status', help='Show stage completion status')
-    p_st.add_argument('--config',   required=True)
+    p_st.add_argument('--config', required=True)
     p_st.add_argument('--override', default=None, metavar='JSON')
 
     p_val = sub.add_parser('validate', help='Validate config without running')
-    p_val.add_argument('--config',   required=True)
+    p_val.add_argument('--config', required=True)
     p_val.add_argument('--override', default=None, metavar='JSON')
 
     p_rep = sub.add_parser('report', help='Re-generate reports from cached data')
-    p_rep.add_argument('--config',   required=True)
+    p_rep.add_argument('--config', required=True)
     p_rep.add_argument('--override', default=None, metavar='JSON')
-    p_rep.add_argument('--format', action='append', dest='format',
-                       metavar='FMT',
-                       help='Output format(s): html,csv,xlsx,ods — '
-                            'comma-separated or repeated (e.g. --format html,ods)')
+    p_rep.add_argument('--format', action='append', dest='format', metavar='FMT',
+                       help='Output formats html,csv,xlsx,ods (comma-separated or repeated)')
+
+    p_import = sub.add_parser('ai-import', help='Validate and import AI analysis results')
+    p_import.add_argument('--config', required=True)
+    p_import.add_argument('--override', default=None, metavar='JSON')
+    p_import.add_argument('--results-bundle', required=True, metavar='ZIP')
 
     p_dr = sub.add_parser('dropped', help='Inspect filtered-out commits')
-    p_dr.add_argument('--config',   required=True)
+    p_dr.add_argument('--config', required=True)
     p_dr.add_argument('--override', default=None, metavar='JSON')
-    p_dr.add_argument('--reason',   default='all',
+    p_dr.add_argument('--reason', default='all',
                       choices=['all', 'prefilter', 'low-score'])
-    p_dr.add_argument('--json',     action='store_true')
+    p_dr.add_argument('--json', action='store_true')
 
     p_diag = sub.add_parser(
-        'diagnose',
-        help='Full JSON diagnosis of one commit across all pipeline stages',
+        'diagnose', help='Full JSON diagnosis of one commit across all pipeline stages',
         description=(
-            'Post-run diagnostic tool. Traces a single commit through every '
-            'pipeline stage and emits a self-contained JSON report.\n\n'
-            'Requires only the cache directory -- no config file needed.\n\n'
-            'Report sections:\n'
-            '  commit             -- all raw commit fields (sha, subject, author,\n'
-            '                        files, stats, body)\n'
-            '  kernel_annotations -- is_fix, has_cve, has_syzbot, has_stable_cc\n'
-            '  cache_presence     -- all cache files: exists + size_bytes\n'
-            '  pipeline_stages:\n'
-            '    stage_01_collect    -- was the commit collected?\n'
-            '    stage_04_prefilter  -- outcome, reason, full layer decision trace\n'
-            '    stage_05_scoring    -- score, per-profile full rule trace\n'
-            '    stage_06_postfilter -- outcome, threshold, rank\n'
-            '  final              -- stage_reached, rank, score, human summary\n'
-            '  warnings           -- data quality / consistency notes'
-        ),
+            'Post-run diagnostic tool. Requires only the cache directory.\n'
+            'Traces a commit through collection, prefilter, scoring, and postfilter;\n'
+            'reports source metadata, cache presence, final rank and warnings.'),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_diag.add_argument('--cache-dir', dest='cache_dir', required=True,
-                        metavar='DIR',
-                        help='Path to the pipeline cache directory (e.g. work/cache)')
-    p_diag.add_argument('--sha',  required=True,
-                        help='Full or partial SHA to look up (min 7 chars)')
-    p_diag.add_argument('--out',  default=None, metavar='FILE',
-                        help='Write JSON report to FILE instead of stdout')
+    p_diag.add_argument('--cache-dir', dest='cache_dir', required=True, metavar='DIR')
+    p_diag.add_argument('--sha', required=True, help='Full or partial SHA (min 7 chars)')
+    p_diag.add_argument('--out', default=None, metavar='FILE')
 
     p_cp = sub.add_parser(
-        'cp-check',
-        help='Test cherry-pick feasibility for the prefilter commit set',
-        description=(
-            'Standalone cherry-pick feasibility checker (v19.2.0). Runs the same\n'
-            'lib.gitutils cherry-pick logic used by stage 06, directly against the\n'
-            'commits that passed the prefilter (prefilter_kept_commits.json) -- the\n'
-            'largest "product-touching" commit set before scoring/thresholding.\n\n'
-            'Requires collect.cherry_pick_cache_dir and kernel.rev_old in the config,\n'
-            'and that the pipeline has already been run through stage 04 so that\n'
-            'prefilter_kept_commits.json exists.\n\n'
-            'By default (or with --update), only commits missing from the SQLite\n'
-            'cache are tested; --force clears the cache for the target revision\n'
-            'first and retests every commit from scratch. Testing runs in parallel\n'
-            'worker processes when collect.cherry_pick_workers > 1.'
-        ),
+        'cp-check', help='Test cherry-pick feasibility for the prefilter commit set',
+        description=('Standalone cherry-pick feasibility checker. Requires stage 04 '
+                     'cache and a target revision. --force resets target cache; '
+                     '--update tests untested commits only.'),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_cp.add_argument('--config',   required=True)
+    p_cp.add_argument('--config', required=True)
     p_cp.add_argument('--override', default=None, metavar='JSON')
     p_cp_mode = p_cp.add_mutually_exclusive_group()
-    p_cp_mode.add_argument('--force',  action='store_true',
-                           help='Clear the cherry-pick cache for this target revision '
-                                'and retest every commit from scratch')
-    p_cp_mode.add_argument('--update', action='store_true',
-                           help='Test only commits missing from the cache (default behaviour)')
-    p_cp.add_argument('--json',    action='store_true', help='Machine-readable JSON output')
+    p_cp_mode.add_argument('--force', action='store_true')
+    p_cp_mode.add_argument('--update', action='store_true')
+    p_cp.add_argument('--json', action='store_true')
 
     args = ap.parse_args()
     setup_logging(args.verbose)
     dispatch = {
-        'run':      cmd_run,
-        'status':   cmd_status,
-        'validate': cmd_validate,
-        'report':   cmd_report,
-        'dropped':  cmd_dropped,
-        'diagnose': cmd_diagnose,
-        'cp-check': cmd_cp_check,
+        'run': cmd_run, 'status': cmd_status, 'validate': cmd_validate,
+        'report': cmd_report, 'ai-import': cmd_ai_import,
+        'dropped': cmd_dropped, 'diagnose': cmd_diagnose, 'cp-check': cmd_cp_check,
     }
     dispatch[args.cmd](args)
 

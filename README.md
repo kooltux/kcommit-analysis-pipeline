@@ -10,7 +10,8 @@ The pipeline compares two kernel revisions, collects the commit history,
 gathers product-specific build context (Kconfig, build logs, DTS), maps
 enabled Kconfig symbols to source paths, pre-filters irrelevant commits, scores
 the remainder through profiles and rules, and generates HTML, CSV, XLSX, and
-ODS reports for manual review.
+ODS reports for manual review. An optional advisory AI workflow analyzes
+prefilter-kept commits separately without changing pipeline scores.
 
 ## Pipeline stages
 
@@ -24,14 +25,16 @@ ODS reports for manual review.
 | 5 | `score_commits`         | `lib/stages/st05_score.py`         | Score commits via active profiles and rules |
 | 6 | `postfilter_commits`    | `lib/stages/st06_postfilter.py`    | Drop commits below score threshold |
 | 7 | `report_commits`        | `lib/stages/st07_report.py`        | Generate CSV / JSON / HTML / XLSX / ODS reports |
+| 8 | `prepare_ai_analysis`  | `lib/stages/st08_prepare_ai.py`    | Optional: package prefilter-kept commits for advisory AI assessment |
 
 Intermediate data is stored in `<work_dir>/cache/` and each stage can be
-restarted independently.
+restarted independently. The ordinary run stops at stage 07 unless `--ai` is
+selected; stage 08 can also be run explicitly.
 
 ## Running the pipeline
 
 ```bash
-# Run all stages
+# Run all ordinary stages
 python3 kcommit_pipeline.py run --config /path/to/cfg.json
 
 # Run a single stage
@@ -62,6 +65,27 @@ python3 kcommit_pipeline.py run --config /path/to/cfg.json \
 # Machine-readable progress events (one JSON line per stage)
 python3 kcommit_pipeline.py run --config /path/to/cfg.json --progress-json
 ```
+
+## Optional AI assessment
+
+Stage 08 packages stage 04 prefilter-kept commits for independent assessment.
+It is opt-in and advisory: AI output does not change rule/profile scoring,
+rankings, or cherry-pick test results. Run the normal pipeline first, then
+prepare and import results using the commands below. Alternatively, add `--ai`
+to the full `run` command to include stage 08.
+
+```bash
+python3 kcommit_pipeline.py run --config /path/to/cfg.json --stage 8
+# After remote assessment and export:
+python3 kcommit_pipeline.py ai-import --config /path/to/cfg.json --results-bundle results.zip
+```
+
+Stage 08 writes JSON chunks, input/output schemas, a prompt, a checksummed
+manifest, and `output/serve_ai.pyz`. Transfer the server bundle to the
+analysis machine, collect schema-conforming results, and bring the exported
+ZIP back for import. Review AI findings before deciding on a backport;
+missing results are not negative findings. See `docs/AI_ANALYSIS.md` for the
+server endpoints, network safety, settings, and import contract.
 
 ## Scoring model
 
@@ -340,6 +364,9 @@ full format.
 | `output/report_stats.json`       | Pipeline run statistics and generated file list |
 | `output/cherry_pick.sh` | Cherry-pick script, copied from `paths.assets_dir` (only when `collect.cherry_pick_test` is enabled) |
 | `output/cherry_pick_data.json` | Cherry-pick data file with commits and `relevant` flags (only when `collect.cherry_pick_test` is enabled) |
+| `output/ai_analysis_input/` | Optional Stage 08 JSON chunks for prefilter-kept commits |
+| `output/ai_analysis_prompt.md`, `output/ai_analysis_input_schema.json`, `output/ai_analysis_result_schema.json` | Optional AI assessment instructions and schemas |
+| `output/ai_analysis_bundle_manifest.json`, `output/serve_ai.pyz` | Optional checksummed manifest and portable result server |
 
 Optional XLSX/ODS: enable with `"reports": { "outputs": ["xlsx", "ods"] }`.
 Each enabled format produces both `relevant_commits.*` and `filtered_commits.*`
@@ -366,7 +393,8 @@ Stage 05 scores only `prefilter_kept_commits.json` and writes `scored_commits.js
 Stage 06 writes `relevant_commits.json`, `postfilter_dropped_commits.json`, and
 `postfilter_debug.json` (score distribution and threshold-drop summary).
 Stage 07 reads the stage caches and merges dropped lists only when generating
-filtered report outputs.
+filtered report outputs. Stage 08 reads the stage 04 kept cache independently;
+imported AI assessments decorate report copies only.
 
 Configuration rejects unknown top-level sections and validates known section keys/types.
 
@@ -424,6 +452,10 @@ python3 -m pytest tests/ --cov=lib --cov-report=term-missing
 | `tests/test_st05_score_run.py` | Stage 05: scoring engine, profile weights |
 | `tests/test_st06_postfilter.py` | Stage 06: threshold filtering, backport indicators |
 | `tests/test_st07_report.py` | Stage 07: report generation, cherry-pick scripts |
+| `tests/test_st08_prepare_ai.py` | Optional Stage 08 package generation and cache behavior |
+| `tests/test_ai_contract.py`, `tests/test_ai_result_invariants.py` | AI result validation and invariants |
+| `tests/test_ai_report.py`, `tests/test_st07_ai_report.py` | Advisory report integration |
+| `tests/test_ai_stage_dispatch.py` | Opt-in AI stage dispatch |
 | `tests/test_cherrypick_script_gen.py` | Cherry-pick asset copy + data generation (v19.5.0), incl. `paths.assets_dir` override and end-to-end script execution |
 | `tests/test_config.py` | Config loading, path resolution (incl. `paths.assets_dir` default/override) |
 | `tests/test_full_pipeline_commands.py` | End-to-end command handlers |

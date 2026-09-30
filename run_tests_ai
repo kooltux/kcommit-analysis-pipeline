@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Smoke-test a generated serve_ai.pyz over loopback with curl."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
+
+
+def check(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def color_enabled(stream=None, environ=None):
+    stream = sys.stdout if stream is None else stream
+    environ = os.environ if environ is None else environ
+    return 'NO_COLOR' not in environ and bool(stream.isatty())
+
+
+def paint(text, code, *, enabled=None):
+    if enabled is None:
+        enabled = color_enabled()
+    return f'\033[{code}m{text}\033[0m' if enabled else text
+
+
+def preview(data, limit=160):
+    """Bound single-line output while showing readable request/response bytes."""
+    text = data.decode('utf-8', errors='replace').replace('\r', '\\r').replace('\n', '\\n')
+    return text[:limit] + ('...' if len(text) > limit else '')
+
+
+def format_exchange(method, path, actual, expected, body, *, data=None, binary=False,
+                    reason=None, enabled=None):
+    request = f'> {method} {path}'
+    if data is not None:
+        request += f' | JSON {preview(data)}'
+    matched = actual == expected
+    label = 'EXPECTED' if matched and expected >= 400 else 'OK' if matched else 'FAIL'
+    status = f'< {label} HTTP {actual} (expected {expected})'
+    if reason:
+        status += f' — {reason}'
+    if binary:
+        detail = f'{len(body)} bytes (ZIP; contents checked below)'
+    elif expected >= 400 and matched:
+        detail = f'{len(body)} bytes (expected rejection; HTML body omitted)'
+    else:
+        detail = f'{len(body)} bytes | {preview(body)}'
+    return paint(request, '36', enabled=enabled), paint(f'{status} | {detail}',
+        '33' if matched and expected >= 400 else '32' if matched else '31', enabled=enabled)
+
+
+def curl(base, path, *, method='GET', data=None):
+    command = ['curl', '--silent', '--show-error', '--noproxy', '*', '--max-time', '5',
+               '--output', '-', '--write-out', '\n%{http_code}', '-X', method]
+    if data is not None:
+        command += ['-H', 'Content-Type: application/json', '--data-binary', '@-']
+    command.append(base + path)
+    result = subprocess.run(command, input=data, capture_output=True, timeout=8)
+    check(result.returncode == 0, f'curl {method} {path}: {result.stderr.decode(errors="replace")}')
+    body, status = result.stdout.rsplit(b'\n', 1)
+    return int(status), body
+
+
+def expect(base, path, status=200, *, method='GET', data=None, binary=False, reason=None):
+    code, body = curl(base, path, method=method, data=data)
+    request, response = format_exchange(method, path, code, status, body,
+        data=data, binary=binary, reason=reason)
+    print(request, flush=True)
+    print(response, flush=True)
+    check(code == status, f'{method} {path}: expected {status}, got {code}: {body[:300]!r}')
+    return body
+
+
+def free_port():
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        return sock.getsockname()[1]
+
+
+def smoke(app):
+    check(app.is_file(), f'Not a file: {app}')
+    with app.open('rb') as stream:
+        check(stream.readline() == b'#!/usr/bin/env python3\n', 'Missing zipapp shebang')
+    check(zipfile.is_zipfile(app), 'Not a readable zipapp')
+    check(shutil.which('curl') is not None, 'curl is required')
+    with tempfile.TemporaryDirectory(prefix='kcap-ai-smoke-') as temp:
+        copy = Path(temp) / 'serve_ai.pyz'
+        shutil.copy2(app, copy)
+        copy.chmod(copy.stat().st_mode | 0o111)
+        port = free_port()
+        base = f'http://127.0.0.1:{port}'
+        print(f'Starting temporary serve_ai.pyz at {base}', flush=True)
+        with open(Path(temp) / 'server.log', 'wb') as log:
+            proc = subprocess.Popen([str(copy), str(port), '127.0.0.1'],
+                                    cwd=temp, stdout=log, stderr=subprocess.STDOUT)
+            try:
+                deadline = time.monotonic() + 10
+                while True:
+                    if proc.poll() is not None:
+                        raise RuntimeError(f'Server exited before readiness: {proc.returncode}')
+                    try:
+                        code, _ = curl(base, '/chunks')
+                        if code == 200:
+                            break
+                    except (AssertionError, subprocess.TimeoutExpired):
+                        pass
+                    check(time.monotonic() < deadline, 'Server readiness timed out')
+                    time.sleep(0.1)
+                print('Server ready; starting HTTP checks', flush=True)
+
+                prompt = expect(base, '/prompt')
+                check(bool(prompt.strip()), 'Empty prompt')
+                input_schema = expect(base, '/schema/input')
+                output_schema = expect(base, '/schema/output')
+                check(json.loads(input_schema)['type'] == 'object', 'Invalid input schema')
+                check(json.loads(output_schema)['type'] == 'object', 'Invalid output schema')
+                listing = json.loads(expect(base, '/chunks'))
+                paths = listing['chunks']
+                check(isinstance(paths, list) and paths, 'No chunks listed')
+                check(all(re.fullmatch(r'/chunk/[0-9]+[.]json', path) for path in paths),
+                      'Invalid chunk paths')
+                name = paths[0].removeprefix('/chunk/')
+                source = expect(base, paths[0])
+                chunk = json.loads(source)
+                check(chunk['run_id'] == listing['run_id'], 'Run ID mismatch')
+                check(chunk['source_chunk'] == name, 'Chunk name mismatch')
+                check(chunk['total_commits'] == len(chunk['commits']), 'Chunk count mismatch')
+                check(chunk['input_schema_checksum'] == hashlib.sha256(input_schema).hexdigest(),
+                      'Input schema checksum mismatch')
+                check(chunk['output_schema_checksum'] == hashlib.sha256(output_schema).hexdigest(),
+                      'Output schema checksum mismatch')
+                expect(base, '/chunk/999999999999999999999999.json', 404,
+                       reason='unknown chunk is rejected')
+                expect(base, '/result/' + name, 404,
+                       reason='result is absent before upload')
+                expect(base, '/result/' + name, 400, method='PUT', data=b'{}',
+                       reason='invalid result is rejected')
+                expect(base, '/result/' + name, 404,
+                       reason='rejected upload saved nothing')
+                result = {
+                    'schema_version': '1.0', 'run_id': listing['run_id'],
+                    'source_chunk': name, 'input_checksum': hashlib.sha256(source).hexdigest(),
+                    'input_schema_checksum': chunk['input_schema_checksum'],
+                    'output_schema_checksum': chunk['output_schema_checksum'],
+                    'analysis_status': 'partial' if chunk['commits'] else 'complete',
+                    'total_commits': len(chunk['commits']), 'analyzed_commits': 0, 'results': {},
+                }
+                payload = json.dumps(result, sort_keys=True).encode()
+                reply = json.loads(expect(base, '/result/' + name, method='PUT', data=payload))
+                check(reply == {'status': 'ok'}, 'Unexpected PUT response')
+                check(expect(base, '/result/' + name) == payload, 'Result round trip differs')
+                archive = expect(base, '/export', binary=True)
+                archive_file = Path(temp) / 'export.zip'
+                archive_file.write_bytes(archive)
+                with zipfile.ZipFile(archive_file) as exported:
+                    check(exported.testzip() is None, 'Corrupt export')
+                    manifest = json.loads(exported.read('ai_analysis_bundle_manifest.json'))
+                    check(manifest['run_id'] == listing['run_id'], 'Export run ID mismatch')
+                    check(set(manifest['chunks']) == {path.rsplit('/', 1)[1] for path in paths},
+                          'Export chunk listing differs')
+                    for path in paths:
+                        part = exported.read('ai_analysis_input/' + path.rsplit('/', 1)[1])
+                        check(hashlib.sha256(part).hexdigest() ==
+                              manifest['chunks'][path.rsplit('/', 1)[1]],
+                              'Export source checksum mismatch')
+                    check(exported.read('results/' + name) == payload,
+                          'Export result differs')
+                    print('Verified export members: ' + ', '.join(exported.namelist()), flush=True)
+                print(paint(f'PASS: {len(paths)} chunks; endpoints, rejection, upload, export', '32'))
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                print('Stopped temporary server', flush=True)
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(f'Usage: {Path(sys.argv[0]).name} /path/to/serve_ai.pyz', file=sys.stderr)
+        return 2
+    try:
+        smoke(Path(sys.argv[1]).expanduser().resolve())
+    except (AssertionError, RuntimeError, OSError, ValueError, KeyError,
+            zipfile.BadZipFile, subprocess.TimeoutExpired) as exc:
+        print(paint(f'FAIL: {exc}', '31', enabled=color_enabled(sys.stderr)), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

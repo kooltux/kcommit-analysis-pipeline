@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.10.0 — feat: optional advisory AI analysis (2026-09-29)
+
+### Added
+
+- Opt-in Stage 08 packages prefilter-kept commits into checksummed chunks with schemas, a prompt, and a portable result server.
+- `ai-import` validates returned results and adds advisory assessments to report copies without changing scores, rankings, or cherry-pick results.
+- README and `docs/AI_ANALYSIS.md` document the workflow; new tests cover the contract, stage dispatch, import invariants, and reports.
+
+### Compatibility
+
+- Ordinary runs still stop at Stage 07; AI preparation requires `--ai` or an explicit Stage 08 run.
+
+### Tests
+
+- 971 tests passed before the version and changelog edits; rerun required on the final tree.
+
+---
+
 ## v19.9.1 — fix: progress-bar visibility and consistency across all stages (2026-09-11)
 
 ### Fixed

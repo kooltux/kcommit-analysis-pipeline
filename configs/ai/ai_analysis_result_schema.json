@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Linux kernel AI analysis result",
+  "description": "One result document per source chunk, with SHA-keyed analyses.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "source_chunk", "input_checksum", "input_schema_checksum", "output_schema_checksum", "analysis_status", "total_commits", "analyzed_commits", "results"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0", "description": "AI exchange contract version."},
+    "run_id": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Run identity copied from the input chunk."},
+    "source_chunk": {"type": "string", "pattern": "^[0-9]+[.]json$", "description": "Exact input chunk filename."},
+    "input_checksum": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the exact source chunk bytes."},
+    "input_schema_checksum": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the served input schema bytes."},
+    "output_schema_checksum": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of this served output schema's exact bytes."},
+    "analysis_status": {"type": "string", "enum": ["complete", "partial"], "description": "Complete requires every source commit; partial permits a subset."},
+    "total_commits": {"type": "integer", "minimum": 0, "description": "Number of commits in the input chunk."},
+    "analyzed_commits": {"type": "integer", "minimum": 0, "description": "Number of SHA-keyed result entries."},
+    "results": {
+      "type": "object", "description": "Analyses keyed by full 40-character source commit SHA.",
+      "propertyNames": {"pattern": "^[0-9a-f]{40}$"},
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false,
+        "required": ["ai_is_security_fix", "ai_is_bug_fix", "ai_is_performance_enhancement", "ai_is_new_feature", "ai_is_new_security_feature", "ai_categorisation_rationale", "ai_risks_if_not_backported", "ai_impact_on_product", "ai_impact_description", "ai_backport_effort", "ai_backport_effort_reason", "ai_cve_ids", "ai_cve_probabilities", "ai_backport_recommendation", "ai_summary"],
+        "properties": {
+          "ai_is_security_fix": {"type": "boolean", "description": "Commit fixes a security vulnerability according to available evidence."},
+          "ai_is_bug_fix": {"type": "boolean", "description": "Commit fixes a functional bug; may also be a security fix."},
+          "ai_is_performance_enhancement": {"type": "boolean", "description": "Commit primarily improves performance."},
+          "ai_is_new_feature": {"type": "boolean", "description": "Commit adds a new feature."},
+          "ai_is_new_security_feature": {"type": "boolean", "description": "Commit adds a security capability rather than repairing a vulnerability."},
+          "ai_categorisation_rationale": {"type": "string", "description": "Short evidence-based rationale for the classifications."},
+          "ai_risks_if_not_backported": {"type": "array", "uniqueItems": true, "description": "Product risks of omitting this backport; none must be used alone.", "items": {"type": "string", "enum": ["security_vulnerability", "system_stability", "data_corruption", "performance_degradation", "missing_feature", "compliance_violation", "none"]}},
+          "ai_impact_on_product": {"type": "string", "enum": ["critical", "high", "medium", "low", "none"], "description": "Expected impact on this product, not general upstream severity."},
+          "ai_impact_description": {"type": "string", "description": "Evidence-based product impact assessment."},
+          "ai_backport_effort": {"type": "string", "enum": ["very_easy", "easy", "moderate", "hard", "very_hard"], "description": "Estimated engineering effort; not a cherry-pick test result."},
+          "ai_backport_effort_reason": {"type": "string", "description": "Brief reason for the effort estimate including known dependencies."},
+          "ai_cve_ids": {"type": "array", "description": "CVE IDs explicitly supported by the input; no inferred or invented identifiers.", "items": {"type": "string", "pattern": "^CVE-[0-9]{4}-[0-9]{4,}$"}},
+          "ai_cve_probabilities": {"type": "array", "description": "Estimated relevance percentages corresponding positionally to ai_cve_ids; empty if no CVEs.", "items": {"type": "integer", "minimum": 0, "maximum": 100}},
+          "ai_backport_recommendation": {"type": "string", "enum": ["strong_yes", "yes", "maybe", "no", "strong_no"], "description": "Advisory recommendation for human review."},
+          "ai_summary": {"type": "string", "description": "Concise evidence and rationale for the recommendation."}
+        }
+      }
+    }
+  }
+}
