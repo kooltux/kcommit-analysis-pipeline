@@ -793,6 +793,8 @@ def run(cfg, cache, outdir):
         'profile_summary': prof_summary,
     }
 
+    # v19.11.1: every spreadsheet file that was written is recorded in
+    # report_stats['generated_files'] (via _emit), like every other output.
     _update_stage7_progress(4, _STAGE7_MILESTONES, 'Writing XLSX / ODS outputs')
     if 'xlsx' in outputs:
         if write_xlsx:
@@ -815,11 +817,13 @@ def run(cfg, cache, outdir):
             try:
                 write_profile_summary_xlsx(
                     os.path.join(outdir, 'profile_summary.xlsx'), prof_summary)
+                _emit(os.path.join(outdir, 'profile_summary.xlsx'))
             except Exception as e:
                 logging.warning('XLSX profile_summary failed: %s', e)
             try:
                 write_profile_matrix_xlsx(
                     os.path.join(outdir, 'profile_matrix.xlsx'), scored)
+                _emit(os.path.join(outdir, 'profile_matrix.xlsx'))
             except Exception as e:
                 logging.warning('XLSX profile_matrix failed: %s', e)
             try:
@@ -839,6 +843,7 @@ def run(cfg, cache, outdir):
                 write_ods(os.path.join(outdir, 'relevant_commits.ods'),
                           scored, prof_summary,
                           sheet_name='Relevant Commits')
+                _emit(os.path.join(outdir, 'relevant_commits.ods'))
             except Exception as e:
                 logging.warning('ODS failed: %s', e)
             if filtered:
@@ -853,11 +858,13 @@ def run(cfg, cache, outdir):
             try:
                 write_profile_summary_ods(
                     os.path.join(outdir, 'profile_summary.ods'), prof_summary)
+                _emit(os.path.join(outdir, 'profile_summary.ods'))
             except Exception as e:
                 logging.warning('ODS profile_summary failed: %s', e)
             try:
                 write_profile_matrix_ods(
                     os.path.join(outdir, 'profile_matrix.ods'), scored)
+                _emit(os.path.join(outdir, 'profile_matrix.ods'))
             except Exception as e:
                 logging.warning('ODS profile_matrix failed: %s', e)
             try:
