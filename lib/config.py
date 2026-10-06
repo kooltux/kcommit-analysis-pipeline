@@ -5,6 +5,10 @@ v19.11.1:
     include mechanism: ordered union with stable deduplication) or 'replace'.
   - apply_override() (--override) now merges dicts recursively but REPLACES
     lists, as documented in docs/CONFIGURATION.md.
+  - load_config() fails with a clear error when a built-in variable
+    (WORKSPACE, TOOLDIR, CONFIGDIR, CWD) is empty AND referenced by the
+    configuration, instead of silently expanding to '' (e.g. '/work').
+    Configurations that never use the variable are unaffected.
 """
 from __future__ import annotations
 
@@ -36,6 +40,9 @@ _PATH_KEYS = frozenset(key for section in CONFIG_SCHEMA.values() for key, spec i
 
 # Environment variables that must be expanded for the pipeline to run
 _ENV_VARS = frozenset(['WORKSPACE', 'TOOLDIR', 'CONFIGDIR', 'CWD'])
+
+# Built-in variables that must be non-empty whenever the configuration uses them.
+_REQUIRED_VARS = ('WORKSPACE', 'TOOLDIR', 'CONFIGDIR', 'CWD')
 
 
 def _strip_json_comments(text: str) -> str:
@@ -338,6 +345,22 @@ def _build_partial_expanded_config(path):
     return partial
 
 
+def _check_required_variables(cfg, variables):
+    """Raise SystemExit when a built-in variable is empty but used by *cfg*.
+
+    An empty WORKSPACE would otherwise expand ``${WORKSPACE}/work`` to
+    ``/work`` and silently read or write the wrong place.  Variables that the
+    configuration never references are not required.
+    """
+    text = json.dumps(cfg)
+    for name in _REQUIRED_VARS:
+        if not variables.get(name) and ('${%s}' % name) in text:
+            raise SystemExit(
+                'Config error: required variable {0} is not set. '
+                'Set the {0} environment variable or define it in the config '
+                '"vars" section.'.format(name))
+
+
 def load_config(path, inherited_vars=None, seen=None):
     path = os.path.abspath(path)
     cfg, _events = _merge_includes(path, tuple(seen or ()), is_root=True)
@@ -350,6 +373,7 @@ def load_config(path, inherited_vars=None, seen=None):
     user_vars = cfg.get('vars', {}) or {}
     for key, value in user_vars.items():
         variables[key] = _expand_string(str(value), variables)
+    _check_required_variables(cfg, variables)
     cfg['vars'] = variables
     expanded = _resolve_known_paths(_expand_node(cfg, variables), config_dir)
     paths = expanded.setdefault('paths', {})
