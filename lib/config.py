@@ -1,4 +1,11 @@
-"""Load JSON/JSONC configurations, including optional ordered fragments."""
+"""Load JSON/JSONC configurations, including optional ordered fragments.
+
+v19.11.1:
+  - deep_merge() gains a ``lists`` keyword: 'union' (default, used by the
+    include mechanism: ordered union with stable deduplication) or 'replace'.
+  - apply_override() (--override) now merges dicts recursively but REPLACES
+    lists, as documented in docs/CONFIGURATION.md.
+"""
 from __future__ import annotations
 
 import copy
@@ -155,8 +162,16 @@ def _resolve_known_paths(node, base_dir):
     return node
 
 
-def deep_merge(base, patch, source=None, events=None, path_prefix=''):
-    """Recursively merge patch into base in-place and return base."""
+def deep_merge(base, patch, source=None, events=None, path_prefix='', lists='union'):
+    """Recursively merge patch into base in-place and return base.
+
+    lists -- how two lists under the same key are combined:
+      'union'   (default) ordered union with stable canonical-JSON
+                deduplication; used by the include mechanism.
+      'replace' the patch list overwrites the base list; used by --override.
+    """
+    if lists not in ('union', 'replace'):
+        raise ValueError("lists must be 'union' or 'replace', got %r" % (lists,))
     if events is None:
         events = []
     if not isinstance(base, dict) or not isinstance(patch, dict):
@@ -164,8 +179,8 @@ def deep_merge(base, patch, source=None, events=None, path_prefix=''):
     for key, value in patch.items():
         dotted = f"{path_prefix}.{key}" if path_prefix else key
         if isinstance(value, dict) and isinstance(base.get(key), dict):
-            deep_merge(base[key], value, source, events, dotted)
-        elif isinstance(value, list) and isinstance(base.get(key), list):
+            deep_merge(base[key], value, source, events, dotted, lists)
+        elif lists == 'union' and isinstance(value, list) and isinstance(base.get(key), list):
             seen = {json.dumps(v, sort_keys=True, separators=(',', ':')) for v in base[key]}
             for item in value:
                 marker = json.dumps(item, sort_keys=True, separators=(',', ':'))
@@ -181,13 +196,14 @@ def deep_merge(base, patch, source=None, events=None, path_prefix=''):
 
 
 def apply_override(cfg, override_json):
+    """Deep-merge a JSON object into cfg: dicts merge, scalars and lists are replaced."""
     try:
         patch = json.loads(override_json)
     except json.JSONDecodeError as exc:
         raise SystemExit('--override invalid JSON: {}'.format(exc))
     if not isinstance(patch, dict):
         raise SystemExit('--override top-level value must be an object')
-    deep_merge(cfg, patch)
+    deep_merge(cfg, patch, lists='replace')
     return cfg
 
 

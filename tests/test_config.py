@@ -146,7 +146,66 @@ def test_apply_override_filter_min_score():
     assert cfg['filter']['min_score'] == 42
 
 
-# ── ${VAR} / ${CONFIGDIR} expansion ────────────────────────────────────────
+# ── v19.11.1: --override replaces lists, deep_merge() default still unions ────
+def test_apply_override_replaces_nested_list():
+    cfg = {'reports': {'outputs': ['html', 'csv', 'xlsx'], 'title': 'T'}}
+    apply_override(cfg, '{"reports": {"outputs": ["csv"]}}')
+    assert cfg['reports']['outputs'] == ['csv']
+    assert cfg['reports']['title'] == 'T'
+
+
+def test_apply_override_replaces_top_level_list():
+    cfg = {'tags': ['a', 'b']}
+    apply_override(cfg, '{"tags": ["c"]}')
+    assert cfg['tags'] == ['c']
+
+
+def test_apply_override_can_clear_list():
+    cfg = {'collect': {'extra_git_log_args': ['--no-renames', '--first-parent']}}
+    apply_override(cfg, '{"collect": {"extra_git_log_args": []}}')
+    assert cfg['collect']['extra_git_log_args'] == []
+
+
+def test_apply_override_list_order_follows_patch():
+    cfg = {'x': [1, 2, 3]}
+    apply_override(cfg, '{"x": [3, 1]}')
+    assert cfg['x'] == [3, 1]
+
+
+def test_apply_override_still_merges_dicts_recursively():
+    cfg = {'profiles': {'active': {'a': 100, 'b': 70}}}
+    apply_override(cfg, '{"profiles": {"active": {"b": 50}}}')
+    assert cfg['profiles']['active'] == {'a': 100, 'b': 50}
+
+
+def test_apply_override_list_replaced_by_scalar_and_back():
+    cfg = {'a': [1, 2], 'b': 5}
+    apply_override(cfg, '{"a": 7, "b": [9]}')
+    assert cfg['a'] == 7
+    assert cfg['b'] == [9]
+
+
+def test_apply_override_does_not_alias_patch_lists():
+    cfg = {'x': [1]}
+    patch = {'x': [2, 3]}
+    deep_merge(cfg, patch, lists='replace')
+    cfg['x'].append(4)
+    assert patch['x'] == [2, 3]
+
+
+def test_deep_merge_default_unions_lists_with_dedup():
+    base = {'tags': ['a', 'b']}
+    deep_merge(base, {'tags': ['b', 'c']})
+    assert base['tags'] == ['a', 'b', 'c']
+
+
+def test_deep_merge_rejects_unknown_lists_mode():
+    import pytest
+    with pytest.raises(ValueError):
+        deep_merge({}, {}, lists='append')
+
+
+# ── ${VAR} / ${CONFIGDIR} expansion ────────────────────────────────────────────────
 def test_load_config_configdir_expansion(tmp_path):
     """${CONFIGDIR} in scoring.scoring_dir is expanded to the config file directory."""
     minimal = {
