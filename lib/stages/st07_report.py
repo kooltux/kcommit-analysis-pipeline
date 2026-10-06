@@ -18,7 +18,9 @@ Changes:
   v19.11.1      -- Every written spreadsheet file is recorded in
                   report_stats['generated_files']; the module docstring is
                   the first statement again (a stray import above it had
-                  turned it into a dead string literal).
+                  turned it into a dead string literal); progress is reported
+                  as stage 7 of NSTAGES like every other stage (it was
+                  hard-coded to 7/7), also in runtime_status.json.
 """
 import csv
 import json
@@ -27,7 +29,7 @@ import os
 import shutil
 from lib.config import load_json, save_json
 from lib.html_report import generate_html_report
-from lib.manifest import CACHE_FILES
+from lib.manifest import CACHE_FILES, NSTAGES
 from lib.run_stats import build_run_stats
 from lib.scoring import fmt_profiles, fmt_evidence, order_commit_details
 
@@ -42,6 +44,9 @@ _COMMIT_KEYS_FILTERED = _COMMIT_KEYS + ["filter_reason"]
 # Total number of progress milestones emitted by run().
 # Used both in _update_stage7_progress() and in the final finish call.
 _STAGE7_MILESTONES = 8
+
+# Index of this stage in the pipeline (MANIFEST.json pipeline_stages).
+_STAGE_INDEX = 7
 
 # v18.2.0: Module-level progress hooks so tests can monkeypatch them.
 try:
@@ -668,15 +673,15 @@ def run(cfg, cache, outdir):
         }
         save_json(stage_state_path, {
             'stage': 'report_commits',
-            'stage_number': 7,
-            'stage_total': 7,
+            'stage_number': _STAGE_INDEX,
+            'stage_total': NSTAGES,
             'progress': payload,
         })
         if _rt_progress_f is not None:
             try:
                 frac = float(current) / max(1, float(total))
                 _rt_progress_f(
-                    7, 7, frac, message,
+                    _STAGE_INDEX, NSTAGES, frac, message,
                     n_done=int(current), n_total=int(total),
                 )
             except Exception as _e:

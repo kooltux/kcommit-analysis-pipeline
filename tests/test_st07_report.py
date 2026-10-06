@@ -3,7 +3,7 @@ import csv, json, os
 import pytest
 
 from lib.stages.st07_report import run
-from lib.manifest import CACHE_FILES
+from lib.manifest import CACHE_FILES, NSTAGES
 
 
 def _commit(sha='abc123', score=50, rank=1, reason=None):
@@ -229,12 +229,12 @@ def test_update_stage7_progress_calls_rt_progress_with_correct_signature(tmp_pat
     update_stage_progress() with the correct positional and keyword args.
 
     Expected call shape for milestone (current=3, total=6, message='foo'):
-        args   = (7, 7, 0.5, 'foo')
+        args   = (7, NSTAGES, 0.5, 'foo')
         kwargs = {'n_done': 3, 'n_total': 6}
 
     Verifies:
       B.1  index     == 7            (this stage's position)
-      B.2  stage_total == 7          (total number of stages)
+      B.2  stage_total == NSTAGES    (total number of manifest stages)
       B.3  frac is float in [0.0, 1.0]
       B.4  label is a str
       B.5  n_done  == current (int)
@@ -255,8 +255,8 @@ def test_update_stage7_progress_calls_rt_progress_with_correct_signature(tmp_pat
         kwargs = call['kwargs']
         # B.1 index == 7
         assert args[0] == 7,                  f'B.1 stage index: expected 7, got {args[0]}'
-        # B.2 stage_total == 7
-        assert args[1] == 7,                  f'B.2 stage_total: expected 7, got {args[1]}'
+        # B.2 stage_total is derived from MANIFEST.json.
+        assert args[1] == NSTAGES,            f'B.2 stage total: expected {NSTAGES}, got {args[1]}'
         # B.3 frac in [0.0, 1.0]
         assert isinstance(args[2], float),    f'B.3 frac not a float: {type(args[2])}'
         assert 0.0 <= args[2] <= 1.0,         f'B.3 frac out of range: {args[2]}'
