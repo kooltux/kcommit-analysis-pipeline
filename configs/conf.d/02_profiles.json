@@ -11,7 +11,7 @@
       "security_fixes":    100,
       "security_features":  90
     }
-  },
+  }
 
   // ── Rules ─────────────────────────────────────────────────────────────────
   // Rule directories are configured via rules.rules_dirs.
@@ -20,6 +20,8 @@
   //              path_whitelist.txt, path_blacklist.txt,
   //              commit_whitelist.txt, commit_blacklist.txt
   // Default search path when rules.rules_dirs is omitted: ${CONFIGDIR}/rules
+  // To add directories, append a "rules" section after "profiles" (do not
+  // forget the comma after the closing brace of "profiles"):
   // "rules": {
   //   "rules_dirs": [
   //     "${CONFIGDIR}/rules",
