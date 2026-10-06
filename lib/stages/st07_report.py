@@ -1,4 +1,3 @@
-from lib.scoring import fmt_profiles, fmt_evidence, order_commit_details
 """Stage 07 logic: generate all output formats.
 
 Changes:
@@ -16,6 +15,10 @@ Changes:
                   references (e.g., ${WORKSPACE}/work) for better reproducibility.
   v19.8.0       -- Helper scripts (json_query.sh, archive_output.sh) copied to
                   output/scripts/ for portable archive creation.
+  v19.11.1      -- Every written spreadsheet file is recorded in
+                  report_stats['generated_files']; the module docstring is
+                  the first statement again (a stray import above it had
+                  turned it into a dead string literal).
 """
 import csv
 import json
@@ -26,6 +29,7 @@ from lib.config import load_json, save_json
 from lib.html_report import generate_html_report
 from lib.manifest import CACHE_FILES
 from lib.run_stats import build_run_stats
+from lib.scoring import fmt_profiles, fmt_evidence, order_commit_details
 
 
 # Column definitions imported from manifest (single source of truth)
