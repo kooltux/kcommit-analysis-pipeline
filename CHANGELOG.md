@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Changed
+
+- Generated `serve_ai.pyz` starts in the background on `0.0.0.0:8000` by default;
+  `-d`, `--debug`, and `--no-daemon` are aliases for foreground operation.
+- Access logs append to `/var/log/kcommit-analyze-ai-server.log`, configurable
+  with `--log-file`; each response emits one compact line, including errors.
+- Optional `--auth USER:PASSWORD` gates all endpoints with HTTP Basic authentication.
+  Plain HTTP remains unencrypted; omitting authentication produces a warning.
+- Startup checks log access and socket binding before detachment, reports the
+  daemon PID, and supports clean signal shutdown. The AI smoke-test runner uses
+  explicit foreground operation and a temporary access log.
+- Added server regression coverage and updated usage/security documentation.
+
+### Compatibility
+
+- Default listener and process behavior have changed. Explicit positional port
+  and host remain supported; regenerate existing zipapps to receive updates.
+- Release version remains unchanged pending QA and version approval.
+
 ## v19.11.1 — fix: configuration and Stage 07 consistency (2026-10-07)
 
 ### Fixed

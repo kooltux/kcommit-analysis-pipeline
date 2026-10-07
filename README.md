@@ -87,6 +87,15 @@ ZIP back for import. Review AI findings before deciding on a backport;
 missing results are not negative findings. See `docs/AI_ANALYSIS.md` for the
 server endpoints, network safety, settings, and import contract.
 
+The generated server starts in the background on `0.0.0.0:8000` by default.
+Use `-d`, `--debug`, or `--no-daemon` (aliases) for foreground operation.
+Access logs append to `/var/log/kcommit-analyze-ai-server.log`; use
+`--log-file PATH` if that location is not writable. Enable the shared access
+password with `--auth 'user:password'`. Basic authentication does not encrypt
+traffic: use a trusted network or TLS termination. Without `--auth`, the server
+warns that all endpoints are unauthenticated. Existing generated zipapps must
+be regenerated through Stage 08 to receive these changes.
+
 ## Scoring model
 
 Scoring is **exclusively through profiles and rules**. Kernel annotation

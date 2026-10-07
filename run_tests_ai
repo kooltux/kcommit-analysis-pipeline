@@ -99,7 +99,8 @@ def smoke(app):
         base = f'http://127.0.0.1:{port}'
         print(f'Starting temporary serve_ai.pyz at {base}', flush=True)
         with open(Path(temp) / 'server.log', 'wb') as log:
-            proc = subprocess.Popen([str(copy), str(port), '127.0.0.1'],
+            proc = subprocess.Popen([str(copy), '--no-daemon', '--log-file',
+                                     str(Path(temp) / 'access.log'), str(port), '127.0.0.1'],
                                     cwd=temp, stdout=log, stderr=subprocess.STDOUT)
             try:
                 deadline = time.monotonic() + 10

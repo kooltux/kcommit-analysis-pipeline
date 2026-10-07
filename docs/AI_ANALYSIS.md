@@ -27,12 +27,55 @@ together until importing the returned results.
 Copy `serve_ai.pyz` to the analysis machine and start it with Python 3:
 
 ```sh
-python3 serve_ai.pyz 8001 127.0.0.1
+python3 serve_ai.pyz --auth 'user:password'
 ```
 
-The default listener is loopback-only. Exposing this service on a network
-requires your own access control: the server has no authentication and accepts
-result uploads. Use `GET /prompt`, `GET /schema/input`, `GET /schema/output`,
+By default, the server detaches into the background and listens on all IPv4
+interfaces (`0.0.0.0:8000`). It prints its PID, actual listening address, and log
+location. Stop it with `kill PID` using that printed PID. SIGTERM and SIGINT
+close the server cleanly. Positional `port host` arguments remain supported;
+port 0 selects an available port. The old default was `127.0.0.1:8001` in the
+foreground. Regenerate existing bundles with Stage 08 to receive the new code.
+
+`-d`, `--debug`, and `--no-daemon` are aliases for one foreground option;
+`--debug` does not add verbose logging. Background mode requires Unix.
+For loopback-only foreground operation with a writable log:
+
+```sh
+python3 serve_ai.pyz -d --log-file "$HOME/kcommit-analyze-ai-server.log" \
+  --auth 'user:password' 8000 127.0.0.1
+curl --user 'user:password' http://localhost:8000/chunks
+```
+
+Logs append to `/var/log/kcommit-analyze-ai-server.log` by default. If this
+cannot be opened, startup fails with a request to choose `--log-file PATH`;
+do not run as root merely to use the default. Provision a writable log file
+for the service account or select another path. New log files use mode 0600.
+Foreground mode also emits logs to stderr. Startup and shutdown lines are
+marked `SERVER`; each HTTP response emits one compact access line, including
+rejections, with a UTC timestamp, client address, JSON-escaped method/path,
+and response status. Query strings, request bodies, and credentials are omitted:
+
+```text
+2026-10-07T18:55:12Z 192.168.1.20 "GET" "/chunks" 200
+2026-10-07T18:55:15Z 192.168.1.20 "PUT" "/result/1.json" 401
+```
+
+`--auth USER:PASSWORD` protects all endpoints using HTTP Basic authentication.
+Both parts must be nonempty; passwords may contain colons. Missing, malformed,
+or incorrect credentials receive a 401 challenge before endpoint processing.
+Clients that support URL credentials may use `http://user:password@host:8000/`;
+prefer an explicit client authentication option, and use the browser's login
+prompt rather than relying on credential-bearing URLs. Special URL characters
+require percent-encoding. Command-line credentials can appear in shell history
+and process listings. Basic authentication is not encryption: plain HTTP exposes
+credentials and data to interception. Use only on a trusted network or behind
+TLS termination. Omitting `--auth` leaves all endpoints unauthenticated and
+produces a startup warning. This is minimal shared-password access control,
+not a production-hardened public web service. Connections have a 10-second
+socket timeout; the server processes requests serially.
+
+Use `GET /prompt`, `GET /schema/input`, `GET /schema/output`,
 `GET /chunks`, and `GET /chunk/<name>` to inspect the work. Return one schema-
 conforming result document per chunk using `PUT /result/<name>`. Results may
 be partial; a complete result must cover every source SHA. `GET /result/<name>`
