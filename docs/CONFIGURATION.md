@@ -9,6 +9,14 @@ Built-in variables (always available):
 - `${CONFIGDIR}` — directory of this config file
 - `${CWD}` — current working directory
 
+A built-in variable is required only when the configuration references it. If a referenced built-in variable is empty, configuration loading stops with an error before paths are resolved. This prevents an unset `${WORKSPACE}` from silently turning `${WORKSPACE}/work` into `/work`. A non-empty value supplied through the environment, configuration `vars`, or inherited variables satisfies this check.
+
+For `--override`, objects merge recursively, but every list is replaced in full rather than appended or unioned. For example, the following selects only CSV, removing any other configured report formats:
+
+```bash
+--override '{"reports":{"outputs":["csv"]}}'
+```
+
 ## Top-level sections
 
 ### `vars`

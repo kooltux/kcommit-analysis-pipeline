@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## v19.11.1 — fix: configuration and Stage 07 consistency (2026-10-07)
+
+### Fixed
+
+- `--override` recursively merges objects while replacing all lists, restoring the documented override semantics.
+- Referenced, empty built-in variables (`WORKSPACE`, `TOOLDIR`, `CONFIGDIR`, `CWD`) now cause a clear configuration error instead of silently producing paths such as `/work`. Variables not referenced by the configuration remain optional.
+- Removed the trailing comma in `configs/conf.d/02_profiles.json` that prevented the shipped example configuration from loading.
+- Stage 07 records all successfully written spreadsheets in `report_stats.generated_files`, including ODS and profile-summary/profile-matrix outputs.
+- Restored the Stage 07 module docstring and replaced the hardcoded progress total with the manifest-derived `NSTAGES` in terminal progress and `runtime_status.json`.
+
+### Tests
+
+- Added regression coverage for override semantics, built-in variable requirements, shipped configuration parsing, spreadsheet output tracking, and stage module docstrings; updated the Stage 07 progress assertion.
+- User reported that all tests passed before release preparation. Final release-tree QA remains required.
+
+### Compatibility
+
+- Override lists replace instead of accumulating; callers relying on the accidental list-union behavior must supply the complete desired list.
+- No cache or on-disk format changes.
+
+---
+
 ## v19.11.0 — refactor: remove product-specific rule-name alias (2026-10-01)
 
 ### Removed
