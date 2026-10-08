@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Changed
+
+- AI server defaults to `127.0.0.1:8000`. Explicit `-l PATH`/`--log-file PATH`
+  is mandatory in daemon mode, with no default log-file path.
+- Foreground mode logs only to stderr when no file is selected. An explicit
+  file is the sole log destination in either mode; startup fails if unwritable.
+- Updated logging-mode regression tests and startup documentation.
+- Added stdout startup summaries with the connection URL and request-completion
+  logs with duration and safe failure reasons, including malformed requests,
+  timeouts, disconnects, and internal errors. Added corresponding regression tests.
+
 ## v19.12.0 — feat: configurable AI server front page and operation (2026-10-08)
 
 ### Added

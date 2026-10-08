@@ -97,9 +97,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         # Suppress default messages, including duplicate error logging.
-        pass
+        if fmt.startswith('Request timed out:'):
+            self._reason = 'timeout'
+
+    def handle_one_request(self):
+        self._handling = True
+        self._started = time.perf_counter()
+        self._status = None
+        self._reason = None
+        self.raw_requestline = b''
+        self.command = None
+        self.path = ''
+        self.request_version = 'HTTP/1.0'
+        try:
+            super().handle_one_request()
+        except ConnectionError:
+            self._reason = 'client_disconnected'
+            self.close_connection = True
+        except Exception:
+            self._reason = 'internal_error'
+            self.close_connection = True
+            if self._status is None:
+                try:
+                    self.send_error(500, 'Internal server error')
+                except OSError:
+                    pass
+        finally:
+            self._handling = False
+            if self.raw_requestline or self._reason:
+                self.log_request(self._status if self._status is not None else '-')
 
     def log_request(self, code='-', size='-'):
+        self._status = code
+        if getattr(self, '_handling', False):
+            return
         path = getattr(self, 'path', '').split('?', 1)[0]
         if path.startswith(('http://', 'https://')):
             try:
@@ -107,9 +138,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except ValueError:
                 path = '<invalid-target>'
         method = getattr(self, 'command', None) or '-'
-        self.server.access_logger.info('%s %s %s %s',
+        reasons = {400: 'invalid_result' if method == 'PUT' else 'malformed_request',
+                   401: 'authentication_failed', 404: 'not_found', 408: 'timeout',
+                   414: 'request_line_too_long', 431: 'headers_too_large',
+                   500: 'internal_error', 501: 'unsupported_method'}
+        reason = getattr(self, '_reason', None) or reasons.get(code, 'ok')
+        now = time.perf_counter()
+        duration = max(0, round((now - getattr(self, '_started', now)) * 1000))
+        self.server.access_logger.info(
+            'client=%s method=%s path=%s status=%s duration_ms=%s reason=%s',
             self.client_address[0], json.dumps(method, ensure_ascii=True),
-            json.dumps(path, ensure_ascii=True), code)
+            json.dumps(path, ensure_ascii=True), code, duration, reason)
 
     def parse_request(self):
         if not super().parse_request():
@@ -216,13 +255,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             self.send_error(400, str(exc))
 
+def connection_url(host, port):
+    connect_host = '127.0.0.1' if host == '0.0.0.0' else host
+    return 'http://%s:%s/' % (connect_host, port)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description='Serve portable AI commit analysis work package')
     parser.add_argument('port', type=int, nargs='?', default=8000)
-    parser.add_argument('host', nargs='?', default='0.0.0.0')
+    parser.add_argument('host', nargs='?', default='127.0.0.1')
     parser.add_argument('-d', '--debug', '--no-daemon', dest='no_daemon',
                         action='store_true', help='Run in foreground without detaching')
-    parser.add_argument('--log-file', default='/var/log/kcommit-analyze-ai-server.log')
+    parser.add_argument('-l', '--log-file', metavar='PATH',
+                        help='Log only to this file; required in daemon mode')
     parser.add_argument('--auth', metavar='USER:PASSWORD', help='Require HTTP Basic authentication')
     return parser
 
@@ -281,29 +326,30 @@ def main(argv=None):
     credentials = auth_credentials(parser, args.auth)
     if not 0 <= args.port <= 65535:
         parser.error('port must be in 0..65535 (0 selects an available port)')
+    if not args.no_daemon and not args.log_file:
+        parser.error('Daemon mode requires -l/--log-file PATH; use -d for stderr logging')
+    if args.log_file is not None and not args.log_file.strip():
+        parser.error('-l/--log-file PATH must not be empty')
     if not args.no_daemon and not hasattr(os, 'fork'):
         parser.error('Background operation requires Unix; use --no-daemon')
-    log_path = os.path.abspath(args.log_file)
+    log_path = os.path.abspath(args.log_file) if args.log_file is not None else None
     logger = logging.getLogger('kcommit-ai-server')
     logger.setLevel(logging.INFO)
     logger.propagate = False
     server = stream = None
     handlers = []
     try:
-        try:
-            fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-            stream = os.fdopen(fd, 'a', encoding='utf-8', buffering=1)
-        except OSError:
-            parser.error('Cannot open log file; choose a writable location with --log-file')
-        handler = logging.StreamHandler(stream)
+        if log_path is not None:
+            try:
+                fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                stream = os.fdopen(fd, 'a', encoding='utf-8', buffering=1)
+            except OSError:
+                parser.error('Cannot open log file; choose a writable location with --log-file')
+        handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
         formatter = logging.Formatter('%(asctime)sZ %(message)s', '%Y-%m-%dT%H:%M:%S')
         formatter.converter = time.gmtime
         handler.setFormatter(formatter)
         handlers.append(handler)
-        if args.no_daemon:
-            console = logging.StreamHandler(sys.stderr)
-            console.setFormatter(formatter)
-            handlers.append(console)
         for handler in handlers:
             logger.addHandler(handler)
         server = http.server.HTTPServer((args.host, args.port), Handler)
@@ -312,17 +358,20 @@ def main(argv=None):
         signal.signal(signal.SIGTERM, stop_server)
         signal.signal(signal.SIGINT, stop_server)
         host, port = server.server_address[:2]
+        url = connection_url(host, port)
         if credentials is None:
-            print('WARNING: authentication disabled; all endpoints allow unauthenticated access',
-                  file=sys.stderr, flush=True)
+            logger.warning('SERVER WARNING: authentication disabled; all endpoints allow unauthenticated access')
         if not args.no_daemon:
             daemon_pid = detach()
             if daemon_pid is not None:
-                print('Background server PID=%s address=%s:%s log=%s' %
-                      (daemon_pid, host, port, log_path), flush=True)
+                print('Background server PID=%s address=%s:%s log=%s url=%s' %
+                      (daemon_pid, host, port, log_path, url), flush=True)
                 return 0
-        logger.info('SERVER start pid=%s address=%s:%s auth=%s',
-                    os.getpid(), host, port, 'enabled' if credentials else 'disabled')
+        else:
+            print('AI server started in foreground (debug mode) | PID=%s | bind=%s:%s | logs=%s | URL=%s' %
+                  (os.getpid(), host, port, log_path or 'stderr', url), flush=True)
+        logger.info('SERVER start pid=%s address=%s:%s auth=%s url=%s',
+                    os.getpid(), host, port, 'enabled' if credentials else 'disabled', url)
         try:
             server.serve_forever(poll_interval=0.2)
         finally:

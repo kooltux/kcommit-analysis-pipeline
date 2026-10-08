@@ -43,11 +43,12 @@ The guide is presentation-only and does not change analysis run identities.
 Copy `serve_ai.pyz` to the analysis machine and start it with Python 3:
 
 ```sh
-python3 serve_ai.pyz --auth 'user:password'
+python3 serve_ai.pyz -l ./ai-server.log --auth 'user:password'
 ```
 
-By default, the server detaches into the background and listens on all IPv4
-interfaces (`0.0.0.0:8000`). It prints its PID, actual listening address, and log
+By default, the server detaches into the background and listens on loopback
+(`127.0.0.1:8000`). Daemon mode requires explicit `-l PATH` or `--log-file PATH`.
+It prints its PID, actual listening address, and log
 location. Stop it with `kill PID` using that printed PID. SIGTERM and SIGINT
 close the server cleanly. Positional `port host` arguments remain supported;
 port 0 selects an available port. The old default was `127.0.0.1:8001` in the
@@ -55,7 +56,8 @@ foreground. Regenerate existing bundles with Stage 08 to receive the new code.
 
 `-d`, `--debug`, and `--no-daemon` are aliases for one foreground option;
 `--debug` does not add verbose logging. Background mode requires Unix.
-For loopback-only foreground operation with a writable log:
+For foreground operation without a log file, run `./serve_ai.pyz -d`; all logs
+go to stderr. To select file-only logging instead:
 
 ```sh
 python3 serve_ai.pyz -d --log-file "$HOME/kcommit-analyze-ai-server.log" \
@@ -63,18 +65,29 @@ python3 serve_ai.pyz -d --log-file "$HOME/kcommit-analyze-ai-server.log" \
 curl --user 'user:password' http://localhost:8000/chunks
 ```
 
-Logs append to `/var/log/kcommit-analyze-ai-server.log` by default. If this
-cannot be opened, startup fails with a request to choose `--log-file PATH`;
-do not run as root merely to use the default. Provision a writable log file
-for the service account or select another path. New log files use mode 0600.
-Foreground mode also emits logs to stderr. Startup and shutdown lines are
-marked `SERVER`; each HTTP response emits one compact access line, including
-rejections, with a UTC timestamp, client address, JSON-escaped method/path,
-and response status. Query strings, request bodies, and credentials are omitted:
+There is no default log-file path. `-l PATH` and `--log-file PATH` are aliases:
+when supplied, logs append only to that file, regardless of foreground or daemon
+mode. An unwritable file causes startup failure with no fallback to stderr.
+Without this option, foreground mode logs only to stderr; daemon mode rejects
+the invocation before detaching. New log files use mode 0600. Startup diagnostics
+may still appear on stderr when startup fails. Startup and shutdown lines are
+marked `SERVER`. Foreground startup also prints one flushed summary to stdout,
+independent of log selection, showing debug mode, PID, bind address, log location
+(or stderr), and the connection URL. The daemon's startup summary includes its URL.
+The actual bound port is used; for `0.0.0.0`, the URL uses local `127.0.0.1` while
+retaining the wildcard bind address. No credentials appear in these summaries.
+Each request emits one completion line with UTC time, client, escaped method/path,
+status, duration in milliseconds, and a safe reason. Authentication failures,
+invalid uploads, unknown paths, unsupported methods, and internal errors are
+logged without duplicate default messages. Timeouts and disconnects are logged
+once; status is `-` if no response was started, otherwise the attempted status.
+Idle connections closed without a request do not produce access lines. Query
+strings, request bodies, credentials, and exception text are omitted. HTTP only;
+no TLS or proxy handling is added:
 
 ```text
-2026-10-07T18:55:12Z 192.168.1.20 "GET" "/chunks" 200
-2026-10-07T18:55:15Z 192.168.1.20 "PUT" "/result/1.json" 401
+2026-10-09T00:10:03Z client=127.0.0.1 method="GET" path="/chunks" status=200 duration_ms=2 reason=ok
+2026-10-09T00:10:05Z client=127.0.0.1 method="PUT" path="/result/1.json" status=400 duration_ms=1 reason=invalid_result
 ```
 
 `--auth USER:PASSWORD` protects all endpoints using HTTP Basic authentication.

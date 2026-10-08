@@ -61,26 +61,29 @@ def wait_until(predicate, timeout=5):
 
 
 @contextmanager
-def running(app, flag='--no-daemon', auth=None, daemon=False):
-    log = app.parent / 'access.log'
+def running(app, flag='--no-daemon', auth=None, daemon=False, file_logging=True):
     stderr = app.parent / 'stderr.log'
-    args = [sys.executable, str(app), '--log-file', str(log), '0', '127.0.0.1']
+    log = app.parent / 'access.log' if file_logging else stderr
+    args = [sys.executable, str(app), '0', '127.0.0.1']
+    if file_logging:
+        args += ['-l', str(log)]
     if not daemon:
         args.append(flag)
     if auth is not None:
         args += ['--auth', auth]
     proc = None
     pid = None
-    with stderr.open('wb') as errors:
+    with stderr.open('wb') as errors, (app.parent / 'stdout.log').open('wb') as output:
         try:
             if daemon:
                 result = subprocess.run(args, stdout=subprocess.PIPE, stderr=errors, timeout=5)
                 assert result.returncode == 0
+                assert b'url=http://127.0.0.1:' in result.stdout
                 match = re.search(rb'PID=(\d+) address=127[.]0[.]0[.]1:(\d+)', result.stdout)
                 assert match, result.stdout
                 pid = int(match[1])
             else:
-                proc = subprocess.Popen(args, stdout=errors, stderr=errors)
+                proc = subprocess.Popen(args, stdout=output, stderr=errors)
             wait_until(lambda: log.exists() and 'SERVER start ' in log.read_text())
             match = re.findall(r'SERVER start pid=\d+ address=127[.]0[.]0[.]1:(\d+)', log.read_text())
             assert match
@@ -121,8 +124,8 @@ def access_lines(log):
 
 def test_defaults(namespace):
     args = namespace['build_parser']().parse_args([])
-    assert (args.host, args.port, args.no_daemon) == ('0.0.0.0', 8000, False)
-    assert args.log_file == '/var/log/kcommit-analyze-ai-server.log'
+    assert (args.host, args.port, args.no_daemon) == ('127.0.0.1', 8000, False)
+    assert args.log_file is None
     assert args.auth is None
 
 
@@ -132,8 +135,8 @@ def test_foreground_aliases(app, namespace, flag):
     with running(app, flag=flag) as (port, log, stderr):
         assert request(port, '/chunks')[0] == 200
         assert len(access_lines(log)) == 1
-        assert 'WARNING: authentication disabled' in stderr.read_text()
-        assert '"GET" "/chunks" 200' in stderr.read_text()
+        assert 'WARNING: authentication disabled' in log.read_text()
+        assert stderr.read_text() == ''
     assert 'SERVER stop' in log.read_text()
 
 
@@ -254,3 +257,120 @@ def test_front_page_routes(app, auth):
             assert headers['Content-Type'] == 'text/markdown; charset=utf-8'
             assert body == b'# Server purpose\n'
         assert len(access_lines(log)) == (4 if auth else 2)
+
+
+@pytest.mark.parametrize('flag', ['-d', '--debug', '--no-daemon'])
+def test_foreground_without_file_uses_only_stderr(app, flag):
+    with running(app, flag=flag, file_logging=False) as (port, log, stderr):
+        assert request(port, '/chunks')[0] == 200
+        assert log == stderr
+        assert len(access_lines(log)) == 1
+        assert 'WARNING: authentication disabled' in stderr.read_text()
+        assert not (app.parent / 'access.log').exists()
+
+
+def test_daemon_requires_explicit_log_file(app):
+    result = subprocess.run([sys.executable, str(app)], capture_output=True, timeout=5)
+    assert result.returncode == 2
+    assert b'Daemon mode requires -l/--log-file PATH' in result.stderr
+    assert b'Background server PID=' not in result.stdout
+
+
+@pytest.mark.parametrize('option', ['-l', '--log-file'])
+def test_log_option_aliases(namespace, option):
+    args = namespace['build_parser']().parse_args(['-d', option, 'server.log'])
+    assert args.log_file == 'server.log'
+
+
+def test_foreground_bad_log_fails_without_fallback(app):
+    result = subprocess.run([sys.executable, str(app), '-d', '-l',
+                             str(app.parent / 'missing' / 'server.log')],
+                            capture_output=True, timeout=5)
+    assert result.returncode == 2
+    assert b'Cannot open log file' in result.stderr
+    assert b'SERVER start' not in result.stderr
+    assert b'AI server started' not in result.stdout
+
+
+@pytest.mark.parametrize('file_logging', [False, True])
+def test_foreground_stdout_summary(app, file_logging):
+    with running(app, file_logging=file_logging, auth='user:secret') as (port, log, stderr):
+        summary = (app.parent / 'stdout.log').read_text()
+        assert 'started in foreground (debug mode)' in summary
+        assert f'URL=http://127.0.0.1:{port}/' in summary
+        assert ('logs=' + (str(log) if file_logging else 'stderr')) in summary
+        assert 'user:secret' not in summary
+        if file_logging:
+            assert stderr.read_text() == ''
+
+
+def test_wildcard_connection_url(namespace):
+    assert namespace['connection_url']('0.0.0.0', 12345) == 'http://127.0.0.1:12345/'
+
+
+def test_request_completion_logs(app):
+    with running(app, auth='user:secret') as (port, log, stderr):
+        token = basic('user:secret')
+        assert request(port, '/chunks?secret=hidden', authorization=token)[0] == 200
+        assert request(port, '/chunks')[0] == 401
+        assert request(port, '/missing', authorization=token)[0] == 404
+        assert request(port, '/chunks', method='POST', authorization=token)[0] == 501
+        assert request(port, '/result/1.json', method='PUT', body=b'{}', authorization=token)[0] == 400
+        wait_until(lambda: len(access_lines(log)) == 5)
+        lines = access_lines(log)
+        for status, reason, line in zip([200, 401, 404, 501, 400],
+                ['ok', 'authentication_failed', 'not_found', 'unsupported_method', 'invalid_result'], lines):
+            assert f'status={status}' in line
+            assert f'reason={reason}' in line
+            assert re.search(r'duration_ms=[0-9]+', line)
+        assert 'hidden' not in log.read_text()
+        assert 'user:secret' not in log.read_text()
+
+
+@pytest.mark.parametrize('failure, reason', [('timeout', 'timeout'),
+    ('disconnect', 'client_disconnected'), ('internal', 'internal_error')])
+def test_exception_logs_once(namespace, monkeypatch, failure, reason):
+    records = []
+    class Logger:
+        def info(self, fmt, *args):
+            records.append(fmt % args)
+    handler = object.__new__(namespace['Handler'])
+    handler.client_address = ('127.0.0.1', 1234)
+    handler.server = type('Server', (), {'access_logger': Logger()})()
+    def perform(self):
+        self.raw_requestline = b'GET /chunks HTTP/1.0'
+        self.command = 'GET'
+        self.path = '/chunks'
+        if failure == 'timeout':
+            self.log_message('Request timed out: %r', TimeoutError())
+        elif failure == 'disconnect':
+            raise BrokenPipeError()
+        else:
+            raise RuntimeError('sensitive exception text')
+    monkeypatch.setattr(namespace['http'].server.BaseHTTPRequestHandler, 'handle_one_request', perform)
+    handler.send_error = lambda code, message: handler.log_request(code)
+    handler.handle_one_request()
+    assert len(records) == 1
+    assert 'reason=' + reason in records[0]
+    assert 'sensitive' not in records[0]
+
+
+def test_internal_error_returns_500_and_logs_once(app):
+    results = Path(str(app) + '.results')
+    results.mkdir()
+    (results / '1.json').write_text('invalid JSON')
+    with running(app) as (port, log, stderr):
+        assert request(port, '/export')[0] == 500
+        wait_until(lambda: len(access_lines(log)) == 1)
+        assert 'reason=internal_error' in access_lines(log)[0]
+
+
+def test_malformed_request_logged_once(app):
+    with running(app) as (port, log, stderr):
+        with socket.create_connection(('127.0.0.1', port), timeout=3) as sock:
+            sock.sendall(b'GET / HTTP/not-a-version\r\n\r\n')
+            while sock.recv(4096):
+                pass
+        wait_until(lambda: len(access_lines(log)) == 1)
+        assert 'status=400' in access_lines(log)[0]
+        assert 'reason=malformed_request' in access_lines(log)[0]
