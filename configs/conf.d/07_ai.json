@@ -8,6 +8,9 @@
     // Default: ${CONFIGDIR}/ai/ai_analysis_prompt.md
     "prompt_path": "${CONFIGDIR}/ai/ai_analysis_prompt.md",
 
+    // front_page_path: external Markdown packaged by Stage 08 for / and /README.md.
+    "front_page_path": "${CONFIGDIR}/ai/ai_server_front_page.md",
+
     // chunk_size: number of commits per chunk file (0 = single file).
     // When > 0, creates ai_analysis_input/ directory with numbered chunk files:
     //   ai_analysis_input/001.json  (commits 0-99)

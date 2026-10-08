@@ -117,6 +117,9 @@ def smoke(app):
                     time.sleep(0.1)
                 print('Server ready; starting HTTP checks', flush=True)
 
+                front_page = expect(base, '/')
+                check(bool(front_page.strip()), 'Empty server front page')
+                check(expect(base, '/README.md') == front_page, 'Front page aliases differ')
                 prompt = expect(base, '/prompt')
                 check(bool(prompt.strip()), 'Empty prompt')
                 input_schema = expect(base, '/schema/input')

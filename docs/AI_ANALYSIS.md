@@ -22,6 +22,22 @@ checksummed bundle manifest, and `serve_ai.pyz` to the configured output
 directory. An empty prefilter set produces an empty chunk. Keep these files
 together until importing the returned results.
 
+## Server front page
+
+Set `ai.front_page_path` in `configs/conf.d/07_ai.json` to an external UTF-8
+Markdown file. The shipped value is `${CONFIGDIR}/ai/ai_server_front_page.md`.
+Stage 08 validates the file, copies it to `output/ai_server_front_page.md`,
+and embeds it in `serve_ai.pyz`; missing, empty, or invalid UTF-8 files fail
+preparation before outputs are modified. The portable bundle needs no access
+to the original config directory. Regenerate it after editing the Markdown.
+
+`GET /` and `GET /README.md` serve identical raw Markdown with
+`Content-Type: text/markdown; charset=utf-8`. They use the same authentication
+and access logging as other endpoints. Rendering HTML is not required; this
+keeps the zipapp dependency-free. The guide explains the purpose, workflow,
+endpoints, result requirements, and network safety without replacing `/prompt`.
+The guide is presentation-only and does not change analysis run identities.
+
 ## Analyze remotely
 
 Copy `serve_ai.pyz` to the analysis machine and start it with Python 3:

@@ -145,7 +145,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split('?', 1)[0]
-        files = {'/prompt': ('ai_analysis_prompt.md', 'text/markdown'),
+        files = {'/': ('ai_server_front_page.md', 'text/markdown; charset=utf-8'),
+                 '/README.md': ('ai_server_front_page.md', 'text/markdown; charset=utf-8'),
+                 '/prompt': ('ai_analysis_prompt.md', 'text/markdown'),
                  '/schema/input': ('ai_analysis_input_schema.json', 'application/json'),
                  '/schema/output': ('ai_analysis_result_schema.json', 'application/json')}
         if path in files:
@@ -347,7 +349,8 @@ if __name__ == '__main__':
 def generate_ai_serve_script(outdir, output_path):
     """Embed immutable inputs, prompt, schemas and manifest into an executable zipapp."""
     assets = ('ai_analysis_prompt.md', 'ai_analysis_input_schema.json',
-              'ai_analysis_result_schema.json', 'ai_analysis_bundle_manifest.json')
+              'ai_analysis_result_schema.json', 'ai_analysis_bundle_manifest.json',
+              'ai_server_front_page.md')
     archive_buffer = io.BytesIO()
     with zipfile.ZipFile(archive_buffer, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         archive.writestr('__main__.py', _MAIN_SOURCE)

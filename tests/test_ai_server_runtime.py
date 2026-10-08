@@ -36,6 +36,7 @@ def app(tmp_path):
                         ('ai_analysis_result_schema.json', schema)]:
         (tmp_path / name).write_text(json.dumps(value), encoding='utf-8')
     (tmp_path / 'ai_analysis_prompt.md').write_text('Analyze commits', encoding='utf-8')
+    (tmp_path / 'ai_server_front_page.md').write_text('# Server purpose\n', encoding='utf-8')
     result = tmp_path / 'serve_ai.pyz'
     generate_ai_serve_script(str(tmp_path), str(result))
     return result
@@ -239,3 +240,17 @@ def test_daemon_lifecycle(app):
         assert len(access_lines(log)) == 1
     with socket.socket() as sock:
         wait_until(lambda: sock.connect_ex(('127.0.0.1', port)) != 0)
+
+
+@pytest.mark.parametrize('auth', [None, 'user:password'])
+def test_front_page_routes(app, auth):
+    with running(app, auth=auth) as (port, log, stderr):
+        for path in ['/', '/README.md']:
+            if auth:
+                assert request(port, path)[0] == 401
+            status, headers, body = request(port, path,
+                authorization=basic(auth) if auth else None)
+            assert status == 200
+            assert headers['Content-Type'] == 'text/markdown; charset=utf-8'
+            assert body == b'# Server purpose\n'
+        assert len(access_lines(log)) == (4 if auth else 2)

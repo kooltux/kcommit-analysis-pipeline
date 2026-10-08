@@ -2,7 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## v19.12.0 — feat: configurable AI server front page and operation (2026-10-08)
+
+### Added
+
+- Configurable external AI server front page via `ai.front_page_path` in
+  `configs/conf.d/07_ai.json`, packaged by Stage 08 and served as UTF-8 Markdown
+  at `/` and `/README.md` under the existing authentication and access logging.
+- Front-page preparation, packaging, HTTP, and smoke-test coverage.
+- Shared guide organized for human readers, AI clients, and automation/testing,
+  including curl/shell and read-only Python examples with chapter-order tests.
 
 ### Changed
 
@@ -21,7 +30,7 @@ All notable changes to this project are documented in this file.
 
 - Default listener and process behavior have changed. Explicit positional port
   and host remain supported; regenerate existing zipapps to receive updates.
-- Release version remains unchanged pending QA and version approval.
+- Minor release requested by the user; existing defaults changed as described above.
 
 ## v19.11.1 — fix: configuration and Stage 07 consistency (2026-10-07)
 

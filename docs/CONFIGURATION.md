@@ -3,6 +3,11 @@
 Config files are JSON with `//` and `#` comment support. All `${VAR}`
 references in string values are expanded by the config loader.
 
+`ai.front_page_path` is a path setting declared in `configs/conf.d/07_ai.json`.
+Its default `${CONFIGDIR}/ai/ai_server_front_page.md` supplies the UTF-8 Markdown
+guide packaged by Stage 08 and served at `/` and `/README.md`. Regenerate the
+zipapp after editing it; see `AI_ANALYSIS.md` for validation and authentication.
+
 Built-in variables (always available):
 - `${WORKSPACE}` — from shell environment
 - `${TOOLDIR}` — pipeline repository root (auto-detected)

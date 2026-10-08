@@ -1,5 +1,7 @@
 # kcommit-analysis-pipeline
 
+Current release: `v19.12.0` — configurable AI server front page and server operation improvements.
+
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
 through configurable profile/rule sets.
@@ -88,6 +90,8 @@ missing results are not negative findings. See `docs/AI_ANALYSIS.md` for the
 server endpoints, network safety, settings, and import contract.
 
 The generated server starts in the background on `0.0.0.0:8000` by default.
+Its `/` and `/README.md` endpoints provide a UTF-8 Markdown usage guide from
+`ai.front_page_path` in `configs/conf.d/07_ai.json`, packaged by Stage 08.
 Use `-d`, `--debug`, or `--no-daemon` (aliases) for foreground operation.
 Access logs append to `/var/log/kcommit-analyze-ai-server.log`; use
 `--log-file PATH` if that location is not writable. Enable the shared access

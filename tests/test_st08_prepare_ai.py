@@ -53,3 +53,37 @@ def test_invalid_chunk_size_rejected(tmp_path, size):
     cfg['ai']['chunk_size'] = size
     with pytest.raises(ValueError, match='chunk_size'):
         run(cfg, str(cache), str(outdir))
+
+
+@pytest.mark.parametrize('custom', [False, True])
+def test_front_page_packaged(tmp_path, custom):
+    cfg, cache, outdir = setup_source(tmp_path, [])
+    content = '# Custom server guide\n\nPurpose: assessment exchange.\n'
+    if custom:
+        path = tmp_path / 'custom.md'
+        path.write_text(content, encoding='utf-8')
+        cfg['ai']['front_page_path'] = str(path)
+    run(cfg, str(cache), str(outdir))
+    data = (outdir / 'ai_server_front_page.md').read_bytes()
+    assert data.strip()
+    if custom:
+        assert data.decode('utf-8') == content
+    with zipfile.ZipFile(outdir / 'serve_ai.pyz') as app:
+        assert app.read('ai_server_front_page.md') == data
+
+
+@pytest.mark.parametrize('content', [None, b'', b' \n', b'\xff'])
+def test_invalid_front_page_fails_before_outputs(tmp_path, content):
+    cfg, cache, outdir = setup_source(tmp_path, [])
+    path = tmp_path / 'front.md'
+    if content is not None:
+        path.write_bytes(content)
+    cfg['ai']['front_page_path'] = str(path)
+    with pytest.raises(ValueError, match='ai.front_page_path'):
+        run(cfg, str(cache), str(outdir))
+    assert not outdir.exists()
+
+
+def test_front_page_config_registered():
+    from lib.config import CONFIG_SCHEMA
+    assert CONFIG_SCHEMA['ai']['front_page_path'] == {'type': 'path'}

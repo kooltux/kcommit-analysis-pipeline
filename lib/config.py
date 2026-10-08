@@ -33,7 +33,7 @@ CONFIG_SCHEMA = {
     'scoring': {'__type__': 'dict', 'scoring_dir': {'type': 'path'}},
     'reports': {'__type__': 'dict', 'outputs': {'type': 'list'}, 'title': {'type': 'str'}, 'top_n': {'type': 'int'}, 'templates_dir': {'type': 'path'}, 'css_override': {'type': 'path'}},
     'history_mapping': {'__type__': 'dict', 'mode': {'type': 'str'}, 'sample_step': {'type': 'int'}, 'max_commits_per_probe': {'type': 'int'}, 'max_failure_rate': {'type': 'float'}, 'history_workers': {'type': 'int'}},
-    'ai': {'__type__': 'dict', 'prompt_path': {'type': 'path'}, 'chunk_size': {'type': 'int'}},
+    'ai': {'__type__': 'dict', 'prompt_path': {'type': 'path'}, 'front_page_path': {'type': 'path'}, 'chunk_size': {'type': 'int'}},
 }
 _ALLOWED_TOP_LEVEL = frozenset(CONFIG_SCHEMA.keys()) | {'vars', 'include'}
 _PATH_KEYS = frozenset(key for section in CONFIG_SCHEMA.values() for key, spec in section.items() if key != '__type__' and spec.get('type') == 'path')

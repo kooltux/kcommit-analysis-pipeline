@@ -16,6 +16,15 @@ def run(cfg, cache, outdir=None):
         raise ValueError('ai.chunk_size must be a positive integer for --ai')
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     prompt = ai.get('prompt_path') or os.path.join(root, 'configs', 'ai', 'ai_analysis_prompt.md')
+    front_page = ai.get('front_page_path') or os.path.join(root, 'configs', 'ai', 'ai_server_front_page.md')
+    try:
+        with open(front_page, 'rb') as stream:
+            front_page_bytes = stream.read()
+        front_page_text = front_page_bytes.decode('utf-8')
+    except (OSError, UnicodeError) as exc:
+        raise ValueError('Cannot read ai.front_page_path as UTF-8 Markdown: ' + str(front_page)) from exc
+    if not front_page_text.strip():
+        raise ValueError('ai.front_page_path Markdown is empty')
     schema_asset = (ai.get('result_schema_path') or
                     os.path.join(root, 'configs', 'ai', 'ai_analysis_result_schema.json'))
     with open(prompt, 'rb') as stream:
@@ -75,6 +84,7 @@ def run(cfg, cache, outdir=None):
                 'output_schema_checksum': output_hash,
                 'prompt_checksum': digest(prompt_bytes), 'chunks': chunks}
     for name, content in (('ai_analysis_prompt.md', prompt_bytes),
+                          ('ai_server_front_page.md', front_page_bytes),
                           ('ai_analysis_input_schema.json', schema_bytes),
                           ('ai_analysis_result_schema.json', output_bytes),
                           ('ai_analysis_bundle_manifest.json', encode(manifest))):
