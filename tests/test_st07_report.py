@@ -4,6 +4,7 @@ import pytest
 
 from lib.stages.st07_report import run
 from lib.manifest import CACHE_FILES, NSTAGES
+from resource_fixtures import seed_resources
 
 
 def _commit(sha='abc123', score=50, rank=1, reason=None):
@@ -32,28 +33,6 @@ def _setup(tmp_path, scored=None, filtered=None, cfg_extra=None):
     with open(os.path.join(cache, CACHE_FILES['filtered']), 'w') as f:
         json.dump(filtered, f)
 
-    # Write a compiled_rules.json that load_profile_rules() accepts
-    # without recompiling (requires a 'schema_hash' sentinel key added in v9.12).
-    # Structure mirrors what compile_rules_for_config() produces:
-    #   top-level: { schema_hash, rules: {rulename: body}, profiles: {pname: {rules:{}}}
-    _rule_body = {
-        'keywords_whitelist': [], 'keywords_blacklist': [],
-        'path_whitelist': [],    'path_blacklist': [],
-        'commit_whitelist': [],  'commit_blacklist': [],
-    }
-    compiled_rules = {
-        'schema_hash': 'test-sentinel-hash',
-        'rules':    {},
-        'profiles': {
-            'security_fixes': {
-                'description': 'Security fixes',
-                'rules': {},
-                'merged': _rule_body,
-            }
-        },
-    }
-    with open(os.path.join(cache, CACHE_FILES['compiled_rules']), 'w') as f:
-        json.dump(compiled_rules, f)
 
     cfg = {
         'reports': {'outputs': ['csv'], 'title': 'Test', 'top_n': 0},
@@ -64,7 +43,18 @@ def _setup(tmp_path, scored=None, filtered=None, cfg_extra=None):
     if cfg_extra:
         for k, v in cfg_extra.items():
             cfg.setdefault(k, {}).update(v)
+    seed_resources(cfg, tmp_path)
     return cache, outdir, cfg
+
+
+def test_setup_returns_seeded_resources_and_valid_cache(tmp_path):
+    from lib.profile_rules import _current_schema_hash
+    cache, outdir, cfg = _setup(tmp_path)
+    with open(os.path.join(cache, CACHE_FILES['compiled_rules']), encoding='utf-8') as stream:
+        document = json.load(stream)
+    assert document['schema_hash'] == _current_schema_hash(cfg)
+    assert os.path.isfile(os.path.join(cfg['paths']['templates_dir'], 'report.html'))
+    assert os.path.isfile(os.path.join(cfg['paths']['assets_dir'], 'cherry_pick.sh'))
 
 
 # ── JSON outputs always written ──────────────────────────────────────────────────────────────────────
@@ -378,25 +368,6 @@ def _setup_ai(tmp_path, num_commits=5):
     with open(os.path.join(cache, CACHE_FILES['commits']), 'w') as f:
         json.dump([], f)
     
-    # Write compiled_rules.json
-    _rule_body = {
-        'keywords_whitelist': [], 'keywords_blacklist': [],
-        'path_whitelist': [],    'path_blacklist': [],
-        'commit_whitelist': [],  'commit_blacklist': [],
-    }
-    compiled_rules = {
-        'schema_hash': 'test-sentinel-hash',
-        'rules':    {},
-        'profiles': {
-            'security_fixes': {
-                'description': 'Security fixes',
-                'rules': {},
-                'merged': _rule_body,
-            }
-        },
-    }
-    with open(os.path.join(cache, CACHE_FILES['compiled_rules']), 'w') as f:
-        json.dump(compiled_rules, f)
     
     cfg = {
         'reports': {'outputs': [], 'title': 'Test', 'top_n': 0},
@@ -406,6 +377,7 @@ def _setup_ai(tmp_path, num_commits=5):
         'ai': {},
     }
     
+    seed_resources(cfg, tmp_path)
     return cache, outdir, cfg
 
 
@@ -475,6 +447,7 @@ def test_ai_analysis_prompt_copied_to_output(tmp_path):
     ai_dir.mkdir(parents=True)
     prompt_path = ai_dir / 'ai_analysis_prompt.md'
     prompt_path.write_text('# Test Prompt\n\nThis is a test prompt.')
+    cfg['ai']['prompt_path'] = str(prompt_path)
     
     run(cfg, cache, outdir)
     
@@ -483,7 +456,7 @@ def test_ai_analysis_prompt_copied_to_output(tmp_path):
     assert os.path.exists(output_prompt), 'ai_analysis_prompt.md not copied to output'
     
     content = open(output_prompt).read()
-    assert '# Test Prompt' in content
+    assert content == prompt_path.read_text()
 
 
 def test_ai_analysis_custom_prompt_path(tmp_path):

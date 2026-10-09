@@ -29,6 +29,10 @@ v19.11.0 changes:
   - Removed the product-specific rule-name alias (_rule_name_candidates): rule
     names are now looked up exactly as written in the profile, first in the
     configured rules_dirs, then in the built-in configs/rules/ tree.
+v20.0.0 changes:
+  - Product profile/rule isolation: samples require explicitly selected roots.
+  - Cache validation includes roots and profile identity and fails closed.
+
 
 Pattern source tracking:
   _read_patterns() now returns (patterns, sources) where sources is a list of
@@ -86,16 +90,14 @@ RULE_SCHEMA = {
 
 
 def _resolve_dirs(cfg, key_plural, default_subdir):
+    from lib.resources import resource_path
     paths = cfg.get('paths', {}) or {}
-    if paths.get(key_plural):
-        return list(paths[key_plural])
     key_singular = key_plural[:-1] if key_plural.endswith('s') else key_plural
-    raw = paths.get(key_singular)
-    if raw not in (None, [], ''):
-        return list(raw) if isinstance(raw, list) else [raw]
-    meta       = cfg.get('_meta', {}) or {}
-    config_dir = meta.get('config_dir') or os.getcwd()
-    return [os.path.join(config_dir, default_subdir)]
+    raw = paths.get(key_plural, paths.get(key_singular))
+    if raw in (None, ''):
+        return [resource_path(cfg, None, default_subdir)]
+    values = raw if isinstance(raw, list) else [raw]
+    return [resource_path(cfg, value, default_subdir) for value in values]
 
 
 def _dirs_explicitly_configured(cfg, key_plural):
@@ -139,37 +141,33 @@ def _merged_patterns(pdata):
 
 
 def _compute_schema_hash(active_profile_names_list, profiles_dirs, rule_bodies_by_name,
-                         rules_dirs, builtin_rules_dirs):
-    hash_parts = []
-    builtin_profiles_dirs = [os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        'configs', 'profiles')]
+                         rules_dirs):
+    hash_parts = ['resource-scope-v1', json.dumps({
+        'active': sorted(active_profile_names_list),
+        'profiles_dirs': [os.path.abspath(d) for d in profiles_dirs],
+        'rules_dirs': [os.path.abspath(d) for d in rules_dirs],
+    }, sort_keys=True)]
+
+    def add_file(path, optional=False):
+        hash_parts.append(os.path.abspath(path))
+        if optional and not os.path.exists(path):
+            hash_parts.append('missing')
+        else:
+            with open(path, 'rb') as stream:
+                hash_parts.append(stream.read().hex())
 
     for pname in sorted(active_profile_names_list):
-        prof_path = _find_preferred(pname, profiles_dirs, builtin_profiles_dirs, suffix='.json')
-        if prof_path and os.path.isfile(prof_path):
-            try:
-                hash_parts.append(open(prof_path, 'rb').read().hex())
-            except Exception:
-                hash_parts.append('missing:%s' % pname)
-        else:
-            hash_parts.append('missing:%s' % pname)
+        prof_path = _find_unique(pname, profiles_dirs, suffix='.json')
+        if not prof_path:
+            raise RuntimeError('profile %r cannot be validated' % pname)
+        add_file(prof_path)
 
-    all_rule_dirs = list(rules_dirs)
-    for d in builtin_rules_dirs:
-        if d not in all_rule_dirs:
-            all_rule_dirs.append(d)
-
-    for rname in sorted(rule_bodies_by_name.keys()):
-        rdir = _find_preferred(rname, rules_dirs, builtin_rules_dirs)
-        if rdir and os.path.isdir(rdir):
-            for fname in sorted(RULE_SCHEMA.values()):
-                fpath = os.path.join(rdir, fname)
-                if os.path.isfile(fpath):
-                    try:
-                        hash_parts.append(open(fpath, 'rb').read().hex())
-                    except Exception:
-                        hash_parts.append('unreadable:%s/%s' % (rname, fname))
+    for rname in sorted(rule_bodies_by_name):
+        rdir = _find_unique(rname, rules_dirs)
+        if not rdir or not os.path.isdir(rdir):
+            raise RuntimeError('rule folder %r cannot be validated' % rname)
+        for fname in sorted(RULE_SCHEMA.values()):
+            add_file(os.path.join(rdir, fname), optional=True)
 
     return hashlib.sha1('|'.join(hash_parts).encode()).hexdigest()[:16]
 
@@ -194,26 +192,10 @@ def compile_rules_for_config(cfg, cache_dir=None):
     profiles_dirs = _resolve_dirs(cfg, 'profiles_dirs', 'profiles')
     rules_dirs    = _resolve_dirs(cfg, 'rules_dirs',    'rules')
 
-    _tool_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    builtin_profiles_dirs = [os.path.join(_tool_root, 'configs', 'profiles')]
-    builtin_rules_dirs    = [os.path.join(_tool_root, 'configs', 'rules')]
-
-    profiles_explicitly_set = _dirs_explicitly_configured(cfg, 'profiles_dirs')
-    rules_explicitly_set    = _dirs_explicitly_configured(cfg, 'rules_dirs')
-
-    if profiles_explicitly_set:
-        for d in profiles_dirs:
-            if not os.path.isdir(d):
-                raise RuntimeError('profiles directory not found: %s' % d)
-    for d in builtin_profiles_dirs:
+    for d in profiles_dirs:
         if not os.path.isdir(d):
             raise RuntimeError('profiles directory not found: %s' % d)
-
-    if rules_explicitly_set:
-        for d in rules_dirs:
-            if not os.path.isdir(d):
-                raise RuntimeError('rules directory not found: %s' % d)
-    for d in builtin_rules_dirs:
+    for d in rules_dirs:
         if not os.path.isdir(d):
             raise RuntimeError('rules directory not found: %s' % d)
 
@@ -221,7 +203,7 @@ def compile_rules_for_config(cfg, cache_dir=None):
     profiles_mem  = {}
 
     for name in active:
-        prof_path = _find_preferred(name, profiles_dirs, builtin_profiles_dirs, suffix='.json')
+        prof_path = _find_unique(name, profiles_dirs, suffix='.json')
         if prof_path is None:
             searched = ', '.join(profiles_dirs)
             raise RuntimeError(
@@ -263,7 +245,7 @@ def compile_rules_for_config(cfg, cache_dir=None):
                 extras = {}
 
             if rname not in rule_bodies:
-                rdir = _find_preferred(rname, rules_dirs, builtin_rules_dirs)
+                rdir = _find_unique(rname, rules_dirs)
                 if rdir is None:
                     searched = ', '.join(rules_dirs)
                     raise RuntimeError(
@@ -307,7 +289,7 @@ def compile_rules_for_config(cfg, cache_dir=None):
         }
 
     schema_hash = _compute_schema_hash(
-        active, profiles_dirs, rule_bodies, rules_dirs, builtin_rules_dirs)
+        active, profiles_dirs, rule_bodies, rules_dirs)
 
     # _sources_* keys are runtime-only; strip them from the on-disk JSON to
     # keep the cache human-readable and avoid bloat. They are rebuilt from
@@ -337,32 +319,21 @@ def compile_rules_for_config(cfg, cache_dir=None):
 
 def _current_schema_hash(cfg):
     try:
-        active        = active_profile_names(cfg)
+        active = active_profile_names(cfg)
+        if not active:
+            return None
         profiles_dirs = _resolve_dirs(cfg, 'profiles_dirs', 'profiles')
-        rules_dirs    = _resolve_dirs(cfg, 'rules_dirs',    'rules')
-        _tool_root    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        builtin_rules_dirs = [os.path.join(_tool_root, 'configs', 'rules')]
-
-        builtin_profiles_dirs = [os.path.join(_tool_root, 'configs', 'profiles')]
-        rule_names_seen = []
-        _seen = set()
+        rules_dirs = _resolve_dirs(cfg, 'rules_dirs', 'rules')
+        rule_names = {}
         for name in active:
-            prof_path = _find_preferred(name, profiles_dirs, builtin_profiles_dirs, suffix='.json')
+            prof_path = _find_unique(name, profiles_dirs, suffix='.json')
             if not prof_path:
                 return None
-            try:
-                with open(prof_path, encoding='utf-8') as _f:
-                    pdata = json.load(_f)
-            except Exception:
+            pdata = load_json(prof_path)
+            if not isinstance(pdata, dict) or not isinstance(pdata.get('rules'), dict):
                 return None
-            for rname in (pdata.get('rules') or {}):
-                if rname not in _seen:
-                    _seen.add(rname)
-                    rule_names_seen.append(rname)
-
-        rule_bodies_by_name = {rn: {} for rn in rule_names_seen}
-        return _compute_schema_hash(
-            active, profiles_dirs, rule_bodies_by_name, rules_dirs, builtin_rules_dirs)
+            rule_names.update({rname: {} for rname in pdata['rules']})
+        return _compute_schema_hash(active, profiles_dirs, rule_names, rules_dirs)
     except Exception:
         return None
 
@@ -393,10 +364,7 @@ def load_profile_rules(cfg):
             return True, 'no schema_hash (pre-v9.12 cache)'
         current_hash = _current_schema_hash(cfg)
         if current_hash is None:
-            logging.debug(
-                'profile_rules: could not compute live schema_hash — '
-                'trusting cached hash %r.', cached_hash)
-            return False, None
+            return True, 'cannot validate configured sources'
         if current_hash != cached_hash:
             return True, 'schema_hash mismatch (rules/profiles changed)'
         return False, None
@@ -420,11 +388,9 @@ def load_profile_rules(cfg):
     # Re-attach _sources_<key> by re-reading the source .txt files.
     # This is cheap (the files are small) and keeps the on-disk cache clean.
     rules_dirs    = _resolve_dirs(cfg, 'rules_dirs', 'rules')
-    _tool_root    = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    builtin_rules_dirs = [os.path.join(_tool_root, 'configs', 'rules')]
 
     for rname, rbody in rule_bodies.items():
-        rdir = _find_preferred(rname, rules_dirs, builtin_rules_dirs)
+        rdir = _find_unique(rname, rules_dirs)
         for key, fname in RULE_SCHEMA.items():
             src_key = '_sources_' + key
             if rdir:

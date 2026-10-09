@@ -14,9 +14,9 @@ def run(cfg, cache, outdir=None):
     size = ai.get('chunk_size', 100)
     if type(size) is not int or size <= 0:
         raise ValueError('ai.chunk_size must be a positive integer for --ai')
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    prompt = ai.get('prompt_path') or os.path.join(root, 'configs', 'ai', 'ai_analysis_prompt.md')
-    front_page = ai.get('front_page_path') or os.path.join(root, 'configs', 'ai', 'ai_server_front_page.md')
+    from lib.resources import resource_path
+    prompt = resource_path(cfg, ai.get('prompt_path'), 'ai', 'ai_analysis_prompt.md')
+    front_page = resource_path(cfg, ai.get('front_page_path'), 'ai', 'ai_server_front_page.md')
     try:
         with open(front_page, 'rb') as stream:
             front_page_bytes = stream.read()
@@ -25,8 +25,7 @@ def run(cfg, cache, outdir=None):
         raise ValueError('Cannot read ai.front_page_path as UTF-8 Markdown: ' + str(front_page)) from exc
     if not front_page_text.strip():
         raise ValueError('ai.front_page_path Markdown is empty')
-    schema_asset = (ai.get('result_schema_path') or
-                    os.path.join(root, 'configs', 'ai', 'ai_analysis_result_schema.json'))
+    schema_asset = resource_path(cfg, ai.get('result_schema_path'), 'ai', 'ai_analysis_result_schema.json')
     with open(prompt, 'rb') as stream:
         prompt_bytes = stream.read()
     with open(schema_asset, 'rb') as stream:

@@ -1,5 +1,6 @@
 """Stage 08 bundle preparation tests."""
 import json
+import os
 import zipfile
 
 import pytest
@@ -14,7 +15,11 @@ def setup_source(tmp_path, commits):
     cache.mkdir()
     (cache / 'prefilter_kept_commits.json').write_text(json.dumps(commits), encoding='utf-8')
     (cache / 'product_map.json').write_text('{}', encoding='utf-8')
-    cfg = {'paths': {'output_dir': str(outdir)}, 'ai': {'chunk_size': 2}}
+    samples = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configs', 'ai')
+    cfg = {'paths': {'output_dir': str(outdir)}, 'ai': {
+        'chunk_size': 2, 'prompt_path': os.path.join(samples, 'ai_analysis_prompt.md'),
+        'front_page_path': os.path.join(samples, 'ai_server_front_page.md'),
+        'result_schema_path': os.path.join(samples, 'ai_analysis_result_schema.json')}}
     return cfg, cache, outdir
 
 

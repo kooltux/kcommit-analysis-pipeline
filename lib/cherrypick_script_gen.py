@@ -5,7 +5,7 @@ JSON data file into the report output directory.
 
 v19.5.0 design:
   - Script: cherry_pick.sh is a STATIC ASSET, resolved from
-    cfg['paths']['assets_dir'] (default: <tool_root>/configs/assets,
+    cfg['paths']['assets_dir'] (default: <initial_config_dir>/assets,
     overridable via the "paths.assets_dir" config key, same convention as
     "reports.templates_dir"). It is copied byte-for-byte into output/
     (then chmod +x) -- never generated via string concatenation. It
@@ -42,26 +42,15 @@ import shutil
 import json
 
 from lib.config import load_json
-from lib.manifest import CACHE_FILES, _ROOT_DIR
+from lib.manifest import CACHE_FILES
 from lib.cherrypick_db import get_cherry_db_path, load_or_create_db
 from lib.gitutils import list_rev_commits
 
 
-# Fallback shipped asset, used when cfg['paths']['assets_dir'] is absent
-# (e.g. hand-built cfg dicts in unit tests) -- mirrors the same default as
-# lib/config.py's load_config() (<tool_root>/configs/assets).
-_DEFAULT_ASSETS_DIR = os.path.join(_ROOT_DIR, 'configs', 'assets')
-_ASSET_SCRIPT_PATH = os.path.join(_DEFAULT_ASSETS_DIR, 'cherry_pick.sh')
-
-
 def _resolve_asset_script_path(cfg):
-    """Return the cherry_pick.sh asset path for *cfg*.
-
-    Prefers cfg['paths']['assets_dir'] (set by lib.config.load_config(),
-    defaulting to the shipped configs/assets/ or a product-config override);
-    falls back to the shipped default when 'paths' is absent or incomplete.
-    """
-    assets_dir = ((cfg.get('paths') or {}).get('assets_dir')) or _DEFAULT_ASSETS_DIR
+    """Use the selected product assets; installed samples must be explicit."""
+    from lib.resources import resource_path
+    assets_dir = resource_path(cfg, (cfg.get('paths') or {}).get('assets_dir'), 'assets')
     return os.path.join(assets_dir, 'cherry_pick.sh')
 
 
@@ -195,8 +184,7 @@ def write_cherry_pick_files(cfg, cache, outdir):
     to *outdir*.
 
     The asset is resolved from cfg['paths']['assets_dir'] (see
-    _resolve_asset_script_path()), falling back to the pipeline's shipped
-    configs/assets/cherry_pick.sh.
+    _resolve_asset_script_path()); installed samples require explicit selection.
 
     Returns (script_path, data_path, stats) or (None, None, stats) when
     nothing is available to write.

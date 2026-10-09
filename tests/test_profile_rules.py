@@ -243,17 +243,15 @@ def test_schema_hash_does_not_include_unloaded_files(tmp_path):
 
 
 # -- fallback to builtin rules dir ---------------------------------------------
-def test_compile_rules_falls_back_to_builtin_rule_dirs(tmp_path):
-    """D.1: external configs may reference shipped shared rules without copying
-    them into the external rules tree."""
+def test_compile_rules_does_not_fall_back_to_sample_rules(tmp_path):
+    """A missing product rule must not be supplied by installed samples."""
+    import pytest
     pd = tmp_path / 'profiles'; pd.mkdir()
-    rd = tmp_path / 'rules';    rd.mkdir()
-    (tmp_path / 'cache').mkdir()
+    rd = tmp_path / 'rules'; rd.mkdir()
     _write_profile(pd, 'performance', ['generic'])
     cfg = _cfg(tmp_path, {'performance': 100}, pd, rd)
-    result = compile_rules_for_config(cfg, str(tmp_path))
-    assert 'performance' in result
-    assert 'generic' in result['performance']['rules']
+    with pytest.raises(RuntimeError, match='rule folder'):
+        compile_rules_for_config(cfg, str(tmp_path))
 
 
 def test_compile_rules_prefers_external_rule_dir_before_builtin(tmp_path):
@@ -319,12 +317,15 @@ def test_compile_rules_builtin_profile_uses_builtin_rule_dirs(tmp_path):
     }
     (tmp_path / 'profiles').mkdir()
     (tmp_path / 'rules').mkdir()
+    samples = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configs')
+    cfg['paths']['profiles_dirs'] = [os.path.join(samples, 'profiles')]
+    cfg['paths']['rules_dirs'] = [os.path.join(samples, 'rules')]
     out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
     assert 'performance' in out
     assert 'generic' in out['performance']['rules']
 
 
-def test_compile_rules_external_profile_can_use_builtin_rule_fallback(tmp_path):
+def test_compile_rules_external_profile_can_use_explicit_sample_rules(tmp_path):
     profiles = tmp_path / 'profiles'
     rules = tmp_path / 'rules'
     profiles.mkdir(); rules.mkdir()
@@ -337,6 +338,8 @@ def test_compile_rules_external_profile_can_use_builtin_rule_fallback(tmp_path):
         },
         '_meta': {'config_dir': str(tmp_path)},
     }
+    samples = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configs', 'rules')
+    cfg['paths']['rules_dirs'].append(samples)
     out = compile_rules_for_config(cfg, cache_dir=str(tmp_path / 'cache'))
     assert 'performance' in out
     assert 'generic' in out['performance']['rules']

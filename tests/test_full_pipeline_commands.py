@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from lib.manifest import CACHE_FILES
 from lib.pipeline_runtime import init_pipeline_state
+from resource_fixtures import seed_resources
 
 
 def _write_json(path, data):
@@ -44,30 +45,6 @@ def _sample_commit(sha, score, profiles, reason=None):
     if reason:
         c['_filter_reason'] = reason
     return c
-
-
-def _compiled_rules():
-    empty_rule_body = {
-        'keywords_whitelist': [], 'keywords_blacklist': [],
-        'path_whitelist': [], 'path_blacklist': [],
-        'commit_whitelist': [], 'commit_blacklist': [],
-    }
-    return {
-        'schema_hash': 'test-sentinel-hash',
-        'rules': {},
-        'profiles': {
-            'performance': {
-                'description': 'Performance profile',
-                'rules': {},
-                'merged': empty_rule_body,
-            },
-            'security_fixes': {
-                'description': 'Security fixes profile',
-                'rules': {},
-                'merged': empty_rule_body,
-            },
-        },
-    }
 
 
 def _make_cfg(tmp_path):
@@ -121,7 +98,7 @@ def _seed_cache(cfg):
         _sample_commit('c' * 40, 0, [], reason='path_blacklist'),
     ]
 
-    _write_json(os.path.join(cache, CACHE_FILES['compiled_rules']), _compiled_rules())
+    seed_resources(cfg, os.path.dirname(cache))
     _write_json(os.path.join(cache, CACHE_FILES['relevant']), relevant)
     _write_json(os.path.join(cache, CACHE_FILES['filtered']), filtered)
     _write_json(os.path.join(cache, CACHE_FILES['postfilter_dropped']), [])

@@ -296,7 +296,7 @@ def _load_hints_from_path(hints_path):
 def infer_touched_paths(subject, cfg=None):
     """Guess relevant kernel path prefixes from a commit subject line.
 
-    Uses configs/scoring/subsystem_path_hints.json.
+    Uses the selected scoring directory, never implicit sample hints.
     Returns a sorted, deduplicated list of path prefix strings.
 
     E.9 (v13.0.0): removed inner 'import os as _os'; uses module-level os.
@@ -304,9 +304,8 @@ def infer_touched_paths(subject, cfg=None):
     if not cfg:
         return []
     paths = cfg.get('paths', {}) or {}
-    scoring_dir = paths.get('scoring_dir') or os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        'configs', 'scoring')
+    from lib.resources import resource_path
+    scoring_dir = resource_path(cfg, paths.get('scoring_dir'), 'scoring')
     hints_path = os.path.join(scoring_dir, 'subsystem_path_hints.json')
     if not os.path.exists(hints_path):
         return []

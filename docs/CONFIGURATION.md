@@ -39,7 +39,7 @@ User-defined shorthand variables expanded before any other processing:
   "work_dir":   "${WORKSPACE}/work",  // required: pipeline working directory
   "cache_dir":  "${WORKSPACE}/work/cache",  // optional override (default: <work_dir>/cache)
   "output_dir": "${WORKSPACE}/work/output", // optional override (default: <work_dir>/output)
-  "assets_dir": "${CONFIGDIR}/assets"  // optional override (default: pipeline's own configs/assets/)
+  "assets_dir": "${CONFIGDIR}/assets"  // optional override (default: <initial_config_dir>/assets)
 }
 ```
 `work_dir` is where `cache/` and `output/` sub-directories are created.
@@ -52,12 +52,12 @@ and `assets_dir` are the only valid keys under `paths`.
 `assets_dir` points to a directory of files that are copied byte-for-byte
 into the report output directory rather than generated — currently just
 `cherry_pick.sh` (see stage 07's cherry-pick execution script, gated by
-`collect.cherry_pick_test`). It defaults to the pipeline's own
-`configs/assets/` directory. Set it to point at your own directory (e.g.
+`collect.cherry_pick_test`). It defaults to `assets/` under the initial
+configuration directory. Set it to point at another directory (e.g.
 `"${CONFIGDIR}/assets"`) to ship a customized `cherry_pick.sh` — for
 example, one with extra pre/post hooks — without forking the pipeline.
-A relative value is resolved against `CONFIGDIR` (the directory containing
-the config file), exactly like `reports.templates_dir` and
+A relative value is resolved against the initial configuration directory,
+exactly like `reports.templates_dir` and
 `scoring.scoring_dir`.
 
 ### `kernel`
@@ -118,7 +118,7 @@ point diverge (unusual).
 ```
 `active` maps profile names to weights (0–100). Weight scales that profile's
 rule contributions: 100 = full, 0 = disabled. Profiles are loaded from
-`profiles_dirs` (defaults to `<CONFIGDIR>/profiles/`). The singular alias `profiles_dir` is also accepted for compatibility and is normalized to the same internal list form. If a requested profile is not found there, built-in fallback profiles from the tool's own `configs/profiles/` are searched automatically, and externally overridden profiles may still reference shipped built-in rule folders.
+`profiles_dirs` defaults to `profiles/` under the initial configuration directory. The singular alias `profiles_dir` is also accepted and normalized to a list. Only selected directories are searched; missing profiles are errors. To use samples, explicitly select `${TOOLDIR}/configs/profiles` and the required sample rule directories.
 
 ### `rules`
 ```json
@@ -126,7 +126,7 @@ rule contributions: 100 = full, 0 = disabled. Profiles are loaded from
   "rules_dirs": ["${CONFIGDIR}/rules"]
 }
 ```
-Rule-set directories to search (defaults to `<CONFIGDIR>/rules/`). Several directories may be listed; a rule name must be unique across them. The singular alias `rules_dir` is also accepted for compatibility and is normalized to the same internal list form. Rule names are looked up exactly as written in the profile. If a requested rule folder is not found there, built-in fallback rules from the tool's own `configs/rules/` are searched automatically, including when an external profile overrides a shipped profile but still relies on shipped rule folders.
+Rule-set directories default to `rules/` under the initial configuration directory. Names must be unique across selected directories and are looked up exactly as written. The singular alias `rules_dir` is also accepted and normalized to a list. There is no automatic sample lookup or lower-priority fallback tier; explicitly select `${TOOLDIR}/configs/rules` to use shipped samples.
 
 ### `filter`
 Controls pre-score filtering (stage 04) and post-score filtering (stage 06).
@@ -219,23 +219,20 @@ pre- or post-filter, with `filter_reason` column). XLSX and ODS also produce
 workbook combining all views.
 
 When `collect.cherry_pick_test` is enabled, stage 07 also copies
-`cherry_pick.sh` from `paths.assets_dir` (default: the pipeline's own
-`configs/assets/`) into `output/`, alongside a generated
+`cherry_pick.sh` from `paths.assets_dir` (default: `<initial_config_dir>/assets`)
+into `output/`, alongside a generated
 `cherry_pick_data.json`. See `paths.assets_dir` above to customize the
 script itself.
 
 
 ### `scoring` (internal)
 
-The file `configs/scoring/subsystem_path_hints.json` maps commit metadata
-keywords (subsystem tags, CVE prefixes, known authors) to kernel source-path
-prefixes used to enrich product-evidence scoring. It is bundled with the
-pipeline and does not normally need editing. To override or extend it, copy
-the file into your product config directory and adjust the code or packaging
-that loads scoring assets; there is no user-facing config key for this file.
-
-The file is read-only from a config perspective — there is no config key
-that references it directly.
+The optional `subsystem_path_hints.json` in the selected scoring directory maps
+commit metadata keywords to kernel source-path prefixes. The default directory is
+`scoring/` under the initial configuration directory; use `scoring.scoring_dir`
+to select another directory. A missing hints file disables this enrichment.
+Installed `configs/scoring/` contains samples and requires explicit selection.
+No code or packaging changes are needed to choose product hints.
 
 ## `--override`
 
@@ -290,8 +287,32 @@ Configurations can be split into ordered fragments using the top-level `include`
 - Top-level key: `"include"` (array of relative JSON file paths, strings).
 - Only `"include"` is accepted at the top level; `"include_configs"` is invalid and rejected.
 - Each fragment may define its own `"include"` and local `"vars"`.
-- Paths are resolved relative to the fragment that declares them.
-- `${CONFIGDIR}` is supported in fragment-local `vars` and in path fields.
+- All relative include and registered resource paths use the initial config file's
+  directory, including references declared in nested fragments. The working
+  directory and a fragment's directory never replace this anchor.
+- Include references support variable expansion and explicit absolute paths.
+  Built-ins, inherited variables, and the declaring file's own variables are
+  available during traversal. Later sibling fragments cannot define an earlier
+  include. Nested files inherit their ancestors' declarations for include lookup.
+- `${CONFIGDIR}` defaults to the initial directory. Explicit variable overrides
+  can select other resources without changing the immutable resolution anchor.
+- `${TOOLDIR}` defaults to the actual tool installation root, not the config's parent.
+- Built-in self-references such as `"WORKSPACE": "${WORKSPACE}"` retain the
+  incoming environment/inherited value; extensions use that same incoming value.
+  Missing incoming values fail clearly. Exports record the resolved built-in
+  override without expanding it a second time. Genuine user-variable cycles fail.
+- `_meta.loaded_files` records traversal order; nested merge events are retained.
+- Runtime configuration and exported configuration share one merged snapshot and
+  built-in-variable context. Exports still preserve intermediate variable references.
+- Profile/rule compilation, hashing, and source tracking use only selected roots.
+  Samples require explicit directory selection; missing live sources force
+  recompilation or a clear error, never blind cache reuse.
+- HTML templates, assets, scoring hints, and AI resources follow the same initial
+  anchor. Defaults are `html/`, `assets/`, `scoring/`, and `ai/`; installed sample
+  data is used only when explicitly selected (for example with `${TOOLDIR}`).
+- Required HTML, cherry-pick, and Stage 08 AI inputs fail at the consuming feature
+  if missing. Optional helper scripts, hints, and legacy report prompts remain
+  optional without importing samples. Hand-built configs should provide anchor metadata.
 - Recursive includes are allowed; cycles are detected using the active include chain.
   A valid shared fragment can be included through separate branches.
 - JSON files may contain `//` line comments and trailing inline comments; these are stripped before parsing. Comments are preserved in source files.

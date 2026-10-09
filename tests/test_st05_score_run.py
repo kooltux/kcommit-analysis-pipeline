@@ -55,32 +55,20 @@ def _read(path):
         return json.load(f)
 
 
-def _compiled_rules():
-    return {
-        'schema_hash': 'test',
-        'rules': {
-            'net_kw': {
-                'keywords_whitelist': ['net:', 'skb'],
-                'keywords_blacklist': [],
-                'path_whitelist':     [],
-                'path_blacklist':     [],
-                'commit_whitelist':   [],
-                'commit_blacklist':   [],
-            }
-        },
-        'profiles': {
-            'networking': {
-                'description': '',
-                'rules': {'net_kw': {'weight': 20}},
-                'merged': {
-                    'keywords_whitelist': ['net:', 'skb'],
-                    'keywords_blacklist': [], 'path_whitelist': [],
-                    'path_blacklist': [], 'commit_whitelist': [],
-                    'commit_blacklist': [],
-                },
-            }
-        }
-    }
+def _compile_fixture_rules(tmp_path, cfg):
+    """Use real networking sources and the production compiler/cache contract."""
+    profiles = tmp_path / 'profiles'
+    rules = tmp_path / 'rules'
+    profiles.mkdir()
+    (rules / 'net_kw').mkdir(parents=True)
+    (profiles / 'networking.json').write_text(
+        json.dumps({'rules': {'net_kw': {'weight': 20}}}), encoding='utf-8')
+    (rules / 'net_kw' / 'keywords_whitelist.txt').write_text('net:\nskb\n', encoding='utf-8')
+    cfg['paths']['profiles_dirs'] = [str(profiles)]
+    cfg['paths']['rules_dirs'] = [str(rules)]
+    cfg['_meta'] = {'initial_config_dir': str(tmp_path)}
+    from lib.profile_rules import compile_rules_for_config
+    compile_rules_for_config(cfg, cache_dir=cfg['paths']['cache_dir'])
 
 
 # ── score_all ─────────────────────────────────────────────────────────────────
@@ -120,12 +108,12 @@ def _setup(tmp_path, commits=None):
     commits = commits if commits is not None else [_commit('x', 'net: fix skb')]
     _write(os.path.join(cache, CACHE_FILES['prefilter_kept']), commits)
     _write(os.path.join(cache, CACHE_FILES['product_map']), {})
-    _write(os.path.join(cache, CACHE_FILES['compiled_rules']), _compiled_rules())
     cfg = {
         'paths': {'work_dir': str(tmp_path), 'cache_dir': cache},
         'profiles': {'active': {'networking': 100}},
         'collect': {},
     }
+    _compile_fixture_rules(tmp_path, cfg)
     return cache, cfg
 
 
@@ -149,3 +137,15 @@ def test_run_empty_commits(tmp_path):
     run(cfg, cache)
     data = _read(os.path.join(cache, CACHE_FILES['scored']))
     assert data == []
+
+
+def test_scoring_fixture_has_valid_cache_and_original_network_rule(tmp_path):
+    from lib.profile_rules import _current_schema_hash, load_profile_rules
+    cache, cfg = _setup(tmp_path)
+    document = _read(os.path.join(cache, CACHE_FILES['compiled_rules']))
+    assert document['schema_hash'] == _current_schema_hash(cfg)
+    rule = load_profile_rules(cfg)['networking']['rules']['net_kw']
+    assert rule['weight'] == 20
+    assert rule['keywords_whitelist'] == ['net:', 'skb']
+    run(cfg, cache)
+    assert _read(os.path.join(cache, CACHE_FILES['scored']))[0]['score'] > 0

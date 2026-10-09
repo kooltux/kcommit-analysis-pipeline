@@ -4,6 +4,10 @@
   //
   // This configuration is split into fragments under conf.d/ for clarity.
   // Each fragment contains one logical section with its documentation.
+  // v20.0.0: all relative includes use this initial file's directory, even nested.
+  // Copy this file and conf.d/ together when relocating the example.
+  // Resource fragments explicitly select samples under ${TOOLDIR}/configs/;
+  // replace those selections with product resources when adapting this example.
   //
   // Variable expansion: ${VAR} is expanded in all string values.
   // Available variables:

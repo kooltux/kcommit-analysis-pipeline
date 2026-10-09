@@ -1,10 +1,21 @@
 # kcommit-analysis-pipeline
 
-Current release: `v19.12.0` — configurable AI server front page and server operation improvements.
+Current release: `v20.0.0` — initial-config anchoring and isolated product resources.
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
 through configurable profile/rule sets.
+
+Configuration includes and registered relative paths are anchored to the initial
+configuration file. Nested includes support variables without changing that base.
+Runtime/export loading shares one snapshot and retains full include provenance.
+Product resource consumers use only selected roots: profiles/, rules/, scoring/,
+html/, assets/, and ai/ default to the initial configuration directory. Installed
+configs/ data is never an implicit fallback; select samples explicitly if needed.
+Rule caches include source roots and profile identity and cannot hide missing sources.
+See [resource isolation and migration](docs/RESOURCE_ISOLATION.md) before adapting
+older configs. The full example and its fragments select sample resources explicitly
+and can be copied together without depending on automatic installation fallbacks.
 
 ## What it does
 

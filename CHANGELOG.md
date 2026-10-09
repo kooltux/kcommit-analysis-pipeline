@@ -4,7 +4,51 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v20.0.0 — breaking: anchored configuration and resource isolation (2026-10-09)
+
+### Breaking
+
+- Nested includes and registered relative resource paths use the initial configuration
+  directory rather than fragment-local or working-directory interpretation.
+- Automatic installed-sample resource fallbacks are removed. Select sample resources
+  explicitly or provide product-owned profiles, rules, templates, assets, and AI inputs.
+- Profile/rule caches cannot hide missing or unverifiable live sources; duplicate names
+  across selected roots are errors rather than a sample override/fallback tier.
+- Migration guidance is available in `docs/RESOURCE_ISOLATION.md`.
+
+### Fixed
+
+- Completed resource-dependent test fixtures after consumer isolation: HTML tests
+  explicitly select sample templates, the mini pipeline selects report resources,
+  and Stage 07 seeds its resources before returning. Added a fixture/cache regression.
+
+- Corrected Step 2 QA fixtures: select sample rules before compilation, compile
+  real Stage 05 networking sources, and explicitly select the test AI prompt.
+  Added scoring-cache validity and positive-score regression coverage.
+
+- Restored built-in variable pass-through declarations after the Step 1 refactor,
+  including include scopes and required-variable errors for missing WORKSPACE.
+- Exported built-in overrides use their resolved value without double expansion.
+  Added pass-through, extension, include-scope, and genuine-cycle regressions.
+
 ### Changed
+
+- Step 3: full-example fragments explicitly select all intended sample resources,
+  including profile/rule roots and AI result schema. Corrected template/AI guidance,
+  removed obsolete fallback claims, and added migration documentation plus relocated
+  nested-example integration coverage for export, provenance, rules, and AI packaging.
+
+- Configuration loader Step 1: initial-file anchoring for nested includes, variable-
+  expanded include references, shared runtime/export snapshots, corrected TOOLDIR
+  defaults, and complete include provenance. Added loader-context regression tests.
+- Step 2 profile/rule isolation: removed implicit sample lookups; cache validation
+  includes selected roots and profile identity and fails closed for missing sources.
+  Compilation and validation share lookup and JSON parsing. Report/command fixtures
+  now compile real local sources instead of relying on fabricated cache hashes.
+- Completed Step 2 consumer isolation for HTML templates, assets, scoring hints,
+  and Stage 07/08 AI resources. Conventional directories use the initial anchor;
+  installed samples require explicit paths. Preserved optional-resource behavior,
+  updated sample fixtures/default assertions, and added consumer isolation tests.
 
 - AI server defaults to `127.0.0.1:8000`. Explicit `-l PATH`/`--log-file PATH`
   is mandatory in daemon mode, with no default log-file path.

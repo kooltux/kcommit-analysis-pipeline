@@ -4,8 +4,9 @@
   // paths: working directories for the pipeline.
 
   "vars": {
-    // Import environment variables used in this file.
-    // export WORKSPACE=/path/to/ws  TOOLDIR=/path/to/kcommit  CONFIGDIR=...
+    // WORKSPACE is required: export WORKSPACE=/path/to/ws.
+    // TOOLDIR and CONFIGDIR default to the installation and initial config roots.
+    // Self-references retain their incoming built-in values.
     "WORKSPACE": "${WORKSPACE}",
     "TOOLDIR":   "${TOOLDIR}",
     "CONFIGDIR": "${CONFIGDIR}",
@@ -18,7 +19,8 @@
   "paths": {
     "work_dir": "${WORKSPACE}/work",
     "output_dir": "${WORKSPACE}/work/output",
-    "assets_dir": "${CONFIGDIR}/assets",
+    // This example explicitly selects installed sample assets; products may replace it.
+    "assets_dir": "${TOOLDIR}/configs/assets",
     "cache_dir": "${WORKSPACE}/work/cache"
   }
 }

@@ -6,12 +6,12 @@ A **profile** defines a relevance axis for commits. Each profile has a
 **weight** (0–100) set in `profiles.active` that scales how much its rule
 matches contribute to the final commit score.
 
-Profile files are JSON, one per profile name, placed in the directories
-listed under `paths.profiles_dirs` (default: `<CONFIGDIR>/profiles/`). The
-singular alias `profiles_dir` is also accepted in the configuration and in
-the derived `paths` mapping, and is normalized to the same internal list form. If a profile is not found there,
-the pipeline also falls back to the built-in shipped profiles under the tool's
-own `configs/profiles/`.
+Profile files are JSON, one per profile name. Configure `profiles.profiles_dirs`;
+the loader derives `paths.profiles_dirs` for consumers. The singular alias
+`profiles_dir` is also accepted and normalized to a list. The default is
+`profiles/` under the initial configuration directory. Only selected roots are
+searched: missing profiles are errors, not a reason to load installed samples.
+Select `${TOOLDIR}/configs/profiles` explicitly if you want the sample profiles.
 
 ### Profile file format
 
@@ -50,14 +50,14 @@ The scoring trace in the commit JSON exposes `raw_rule_total` and
 
 ## Rules
 
-A **rule** is a named directory containing pattern files. Rules live under
-`paths.rules_dirs` (default: `<CONFIGDIR>/rules/`). The singular alias
-`rules_dir` is also accepted in the configuration and in the derived `paths`
-mapping, and is normalized to the same internal list form. The directory name is the rule key referenced in
-profile files, and it is looked up exactly as written. If a rule directory is not found in the configured external
-paths, the pipeline also falls back to the built-in shipped rule directories
-under the tool's own `configs/rules/`. This also covers externally overridden
-profiles that still reference shipped built-in rule folders.
+A **rule** is a named directory containing pattern files. Configure
+`rules.rules_dirs`; the loader derives `paths.rules_dirs`. The singular alias
+`rules_dir` is also accepted and normalized to a list. The default is `rules/`
+under the initial configuration directory. Names are looked up exactly as written
+and must be unique across all selected roots; there is no fallback/override tier.
+Select `${TOOLDIR}/configs/rules` explicitly to use sample rule folders. A product
+profile may reference these folders only when their directory is selected.
+See [resource isolation and migration](RESOURCE_ISOLATION.md) for examples.
 
 ### Rule directory structure
 

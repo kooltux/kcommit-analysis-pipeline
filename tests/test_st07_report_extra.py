@@ -5,6 +5,7 @@ import pytest
 
 from lib.stages.st07_report import run, _fmt_date, _commit_rows
 from lib.manifest import CACHE_FILES
+from resource_fixtures import seed_resources
 
 
 def _commit(sha='abc', score=50, rank=1, profiles=None):
@@ -13,22 +14,6 @@ def _commit(sha='abc', score=50, rank=1, profiles=None):
         '_rank': rank, 'author_name': 'Dev', 'author_time': 1700000000,
         'matched_profiles': profiles or ['security_fixes'],
         'product_evidence': ['config_map:CONFIG_USB'],
-    }
-
-
-def _compiled_rules():
-    return {
-        'schema_hash': 'test',
-        'rules': {},
-        'profiles': {
-            'security_fixes': {'description': 'Security', 'rules': {},
-                         'merged': {'keywords_whitelist': [],
-                                     'keywords_blacklist': [],
-                                     'path_whitelist': [],
-                                     'path_blacklist': [],
-                                     'commit_whitelist': [],
-                                     'commit_blacklist': []}},
-        }
     }
 
 
@@ -42,14 +27,13 @@ def _setup(tmp_path, scored=None, filtered=None, outputs=None):
         json.dump(scored, f)
     with open(os.path.join(cache, CACHE_FILES['filtered']), 'w') as f:
         json.dump(filtered, f)
-    with open(os.path.join(cache, CACHE_FILES['compiled_rules']), 'w') as f:
-        json.dump(_compiled_rules(), f)
     cfg = {
         'reports': {'outputs': outputs or ['csv'], 'title': 'Test', 'top_n': 0},
         'paths':   {'templates_dir': None, 'cache_dir': cache,
                     'work_dir': str(tmp_path)},
         'profiles': {'active': {'security_fixes': 100}},
     }
+    seed_resources(cfg, tmp_path)
     return cache, outdir, cfg
 
 

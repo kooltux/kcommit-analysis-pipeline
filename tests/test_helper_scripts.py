@@ -102,19 +102,10 @@ def test_copy_helper_scripts_partial_missing(tmp_path):
     assert not (outdir / 'scripts' / 'archive_output.sh').exists()
 
 
-def test_copy_helper_scripts_falls_back_to_repo_assets_dir(tmp_path):
-    """When cfg has no assets_dir, real configs/assets/ scripts are used."""
+def test_copy_helper_scripts_does_not_fall_back_to_repo_assets(tmp_path):
+    """Missing optional product scripts must not import installed samples."""
     outdir = tmp_path / 'output'
     outdir.mkdir()
-
-    cfg = {'paths': {}}
-    written = _copy_helper_scripts(cfg, str(outdir))
-
-    # The real repo ships both scripts in configs/assets/
-    assert sorted(written) == [
-        os.path.join('scripts', 'archive_output.sh'),
-        os.path.join('scripts', 'json_query.sh'),
-    ]
-    assert not any(os.path.isabs(p) for p in written)
-    assert (outdir / 'scripts' / 'json_query.sh').exists()
-    assert (outdir / 'scripts' / 'archive_output.sh').exists()
+    cfg = {'paths': {}, '_meta': {'initial_config_dir': str(tmp_path)}}
+    assert _copy_helper_scripts(cfg, str(outdir)) == []
+    assert not (outdir / 'scripts').exists()

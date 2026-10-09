@@ -1,9 +1,9 @@
 """Miniature end-to-end pipeline/command regression using test-local inputs.
 
-Fixtures live entirely under tests/: a tiny kernel tree, test-only profiles,
-rules, and a dedicated config file. The test calls the command handlers and
-runs report generation from realistic small cache artifacts while also
-exercising early-stage helpers with miniature input files.
+Kernel, profile/rule, and config fixtures live under tests/. HTML templates and
+helper assets are explicitly selected repository samples. The test calls command
+handlers and runs report generation from realistic small cache artifacts while
+also exercising early-stage helpers with miniature input files.
 """
 import json
 import os
@@ -65,7 +65,10 @@ def _cfg_from_fixture(tmp_path):
         os.path.abspath('tests/mini-sample/rules'),
         os.path.abspath('tests/mini-sample/rules-extra'),
     ]
-    cfg['paths']['templates_dir'] = None
+    samples = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'configs')
+    cfg['paths']['templates_dir'] = os.path.join(samples, 'html')
+    cfg['paths']['assets_dir'] = os.path.join(samples, 'assets')
+    cfg.setdefault('ai', {}).setdefault('prompt_path', os.path.join(samples, 'ai', 'ai_analysis_prompt.md'))
     cfg['reports'].pop('html_detail_mode', None)
     return cfg
 

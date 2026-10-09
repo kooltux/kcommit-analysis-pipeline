@@ -3,7 +3,14 @@ import json
 import os
 import re
 
-from lib.html_report import generate_html_report
+from lib.html_report import generate_html_report as _generate_html_report
+
+
+def generate_html_report(*args, **kwargs):
+    """Select sample templates explicitly for report-content integration tests."""
+    kwargs.setdefault('templates_dir', os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'configs', 'html'))
+    return _generate_html_report(*args, **kwargs)
 
 
 def _tpl_dir(tmp_path):

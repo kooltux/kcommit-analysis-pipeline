@@ -12,15 +12,18 @@ import pytest
 from lib.cherrypick_script_gen import (
     write_cherry_pick_files,
     _load_commits, _index_shas_and_subjects,
-    _ASSET_SCRIPT_PATH,
 )
 from lib.cherrypick_db import load_or_create_db
 from lib.manifest import CACHE_FILES
 from lib.config import save_json
 
+_ASSET_SCRIPT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                  'configs', 'assets', 'cherry_pick.sh')
+
 
 def _cfg(tmp_path, rev_old='v6.1', rev_new='v6.6', cache_dir_name='cpcache'):
     return {
+        'paths': {'assets_dir': os.path.dirname(_ASSET_SCRIPT_PATH)},
         'kernel': {
             'source_dir': str(tmp_path / 'src'),
             'rev_old': rev_old,
@@ -408,12 +411,11 @@ def test_copied_script_full_cherry_pick_run_with_special_characters(tmp_path):
 
 # ── paths.assets_dir override (v19.5.0) ────────────────────────────
 
-def test_asset_script_path_defaults_to_shipped_configs_assets(tmp_path):
-    """When cfg has no 'paths' key (or no assets_dir), the shipped default
-    configs/assets/cherry_pick.sh is used."""
+def test_asset_script_path_defaults_to_initial_config_assets(tmp_path):
+    """An omitted asset directory must not select installed samples."""
     from lib.cherrypick_script_gen import _resolve_asset_script_path
-    cfg = _cfg(tmp_path)
-    assert _resolve_asset_script_path(cfg) == _ASSET_SCRIPT_PATH
+    cfg = {'paths': {}, '_meta': {'initial_config_dir': str(tmp_path)}}
+    assert _resolve_asset_script_path(cfg) == str(tmp_path / 'assets' / 'cherry_pick.sh')
 
 
 def test_asset_script_path_honors_paths_assets_dir_override(tmp_path):

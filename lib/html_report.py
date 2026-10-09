@@ -627,10 +627,8 @@ def generate_html_report(commits, profile_summary, report_stats, output_path,
     v19.1.0 — *commits* is now also forwarded to _sidebar_payload() so the
     sidebar 'cherry_pick' block can be computed from cherry_pickable flags.
     """
-    if templates_dir is None:
-        templates_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'configs', 'html')
+    from lib.resources import resource_path
+    templates_dir = resource_path(cfg, templates_dir, 'html')
 
     tpl = _get_template('report.html', templates_dir, '')
     if not tpl:

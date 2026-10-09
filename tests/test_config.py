@@ -95,9 +95,8 @@ def test_load_config_templates_dir_override(tmp_path):
     assert cfg['paths']['templates_dir'] == custom_tpl
 
 
-def test_load_config_assets_dir_defaults_to_shipped_configs_assets(tmp_path):
-    """v19.5.0: paths.assets_dir defaults to the pipeline's own
-    configs/assets/ directory when not overridden."""
+def test_load_config_assets_dir_defaults_to_initial_config_assets(tmp_path):
+    """Omitted assets use the initial directory, not installed samples."""
     minimal = {
         'paths':  {'work_dir': str(tmp_path)},
         'kernel': {'source_dir': '/linux', 'rev_old': 'v6.8', 'rev_new': 'HEAD'},
@@ -107,8 +106,7 @@ def test_load_config_assets_dir_defaults_to_shipped_configs_assets(tmp_path):
     cfg = load_config(str(p))
     assets_dir = cfg['paths']['assets_dir']
     assert os.path.isabs(assets_dir)
-    assert assets_dir.endswith(os.path.join('configs', 'assets'))
-    assert os.path.exists(os.path.join(assets_dir, 'cherry_pick.sh'))
+    assert assets_dir == str(tmp_path / 'assets')
 
 
 def test_load_config_assets_dir_override_absolute(tmp_path):

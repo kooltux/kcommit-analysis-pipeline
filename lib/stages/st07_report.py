@@ -415,10 +415,8 @@ def _build_ai_analysis_input(cfg, prefilter_kept_commits, product_map):
 def _get_ai_analysis_prompt(cfg):
     """Load AI analysis prompt from config file."""
     ai_cfg = cfg.get('ai', {}) or {}
-    prompt_path = ai_cfg.get('prompt_path')
-    
-    if not prompt_path:
-        prompt_path = os.path.join(cfg['paths'].get('configdir', 'configs'), 'ai', 'ai_analysis_prompt.md')
+    from lib.resources import resource_path
+    prompt_path = resource_path(cfg, ai_cfg.get('prompt_path'), 'ai', 'ai_analysis_prompt.md')
     
     if not os.path.exists(prompt_path):
         logging.warning('AI analysis prompt not found at %s, using empty prompt', prompt_path)
@@ -565,11 +563,8 @@ def _copy_helper_scripts(cfg, outdir):
     """
     written = []
 
-    # Get assets directory from config.
-    # __file__ is lib/stages/st07_report.py, so three dirname() calls are
-    # needed to reach the repository root (stages -> lib -> repo root).
-    tool_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    assets_dir = cfg['paths'].get('assets_dir') or os.path.join(tool_dir, 'configs', 'assets')
+    from lib.resources import resource_path
+    assets_dir = resource_path(cfg, (cfg.get('paths') or {}).get('assets_dir'), 'assets')
 
     # Scripts directory inside output/
     scripts_dir = os.path.join(outdir, 'scripts')

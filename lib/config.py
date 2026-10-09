@@ -214,11 +214,76 @@ def apply_override(cfg, override_json):
     return cfg
 
 
-def _merge_includes(path, active, is_root=True):
-    path = os.path.abspath(path)
-    if path in active:
-        raise ValueError('cyclic include detected: {}'.format(path))
+def _initial_variables(config_dir, inherited_vars=None):
+    variables = dict(inherited_vars or {})
+    variables.setdefault('WORKSPACE', os.environ.get('WORKSPACE', ''))
+    tool_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    variables.setdefault('TOOLDIR', os.environ.get('TOOLDIR', tool_dir))
+    variables.setdefault('CONFIGDIR', config_dir)
+    variables.setdefault('CWD', os.getcwd())
+    return variables
+
+
+def _variable_definitions(initial, declarations):
+    definitions = dict(initial)
+    definitions.update(declarations)
+    for key, value in declarations.items():
+        if key in _ENV_VARS and key in initial:
+            marker = '${%s}' % key
+            if marker in str(value):
+                _check_required_variables({'value': marker}, initial)
+            definitions[key] = str(value).replace(marker, str(initial[key]))
+    return definitions
+
+
+def _context_variables(cfg, initial):
+    declarations = cfg.get('vars', {}) or {}
+    if not isinstance(declarations, dict):
+        raise ValueError('configuration vars must be an object')
+    definitions = _variable_definitions(initial, declarations)
+    _check_required_variables(cfg, definitions)
+    variables = {key: _expand_string(str(value), definitions)
+                 for key, value in definitions.items()}
+    _check_required_variables(cfg, variables)
+    return variables
+
+
+def _load_context(path, inherited_vars=None, seen=None):
+    path = os.path.abspath(os.path.expanduser(os.fspath(path)))
+    config_dir = os.path.dirname(path)
+    initial = _initial_variables(config_dir, inherited_vars)
+    loaded_files = []
+    raw, events = _merge_includes(path, tuple(seen or ()), is_root=True,
+                                  root_dir=config_dir, variables=initial,
+                                  loaded_files=loaded_files)
+    return {'path': path, 'config_dir': config_dir, 'raw': raw,
+            'initial_vars': initial, 'inherited_vars': dict(inherited_vars or {}),
+            'variables': _context_variables(raw, initial),
+            'events': events, 'loaded_files': loaded_files}
+
+
+def _partial_from_context(context):
+    cfg = copy.deepcopy(context['raw'])
+    env_vars = {key: context['variables'][key] for key in _ENV_VARS}
+    declarations = dict(context['inherited_vars'])
+    declarations.update(cfg.get('vars', {}) or {})
+    cfg['vars'] = {key: env_vars[key] if key in _ENV_VARS
+                   else _expand_string_partial(str(value), env_vars)
+                   for key, value in declarations.items()}
+    return _resolve_known_paths(_expand_node_partial(cfg, env_vars), context['config_dir'])
+
+
+def _merge_includes(path, active, is_root=True, root_dir=None, variables=None, loaded_files=None):
+    path = os.path.abspath(os.path.expanduser(os.fspath(path)))
+    root_dir = root_dir or os.path.dirname(path)
+    variables = _initial_variables(root_dir) if variables is None else variables
+    if os.path.realpath(path) in {os.path.realpath(value) for value in active}:
+        raise ValueError('cyclic include detected: ' + ' -> '.join(active + (path,)))
+    if not os.path.isfile(path):
+        raise FileNotFoundError('configuration/include file missing: ' + ' -> '.join(active + (path,)))
     raw = load_json(path)
+    if loaded_files is not None:
+        loaded_files.append(path)
     if not isinstance(raw, dict):
         raise ValueError('configuration must be an object: {}'.format(path))
     if 'include_configs' in raw:
@@ -228,11 +293,27 @@ def _merge_includes(path, active, is_root=True):
     includes = raw.get('include', [])
     if not isinstance(includes, list) or not all(isinstance(v, str) for v in includes):
         raise ValueError("'include' must be an array of strings")
+    declarations = raw.get('vars', {}) or {}
+    if not isinstance(declarations, dict):
+        raise ValueError('configuration vars must be an object: ' + path)
+    scope = _variable_definitions(variables, declarations)
     merged = {}
     events = []
     for include in includes:
-        child_path = include if os.path.isabs(include) else os.path.join(os.path.dirname(path), include)
-        child, child_events = _merge_includes(child_path, active + (path,), is_root=False)
+        try:
+            _check_required_variables({'include': [include]}, scope)
+            reference = os.path.expanduser(_expand_string(include, scope))
+        except (KeyError, ValueError) as exc:
+            raise ValueError('include resolution failed in ' + ' -> '.join(active + (path,)) + ': ' + str(exc)) from exc
+        if not reference.strip():
+            raise ValueError('empty include reference in ' + path)
+        child_path = reference if os.path.isabs(reference) else os.path.join(root_dir, reference)
+        child_path = os.path.abspath(child_path)
+        child, child_events = _merge_includes(child_path, active + (path,), is_root=False,
+                                              root_dir=root_dir, variables=scope,
+                                              loaded_files=loaded_files)
+        events.append({'event': 'include_loaded', 'source': path, 'target': child_path})
+        events.extend(child_events)
         for key, value in child.items():
             if key not in merged:
                 merged[key] = copy.deepcopy(value)
@@ -292,7 +373,7 @@ def _build_raw_merged_config(path):
     - paths are not resolved
     - No _meta section added
     """
-    path = os.path.abspath(path)
+    path = os.path.abspath(os.path.expanduser(os.fspath(path)))
     cfg, _events = _merge_includes(path, tuple(), is_root=True)
     # Keep vars as-is without expansion
     # Do not resolve paths
@@ -300,7 +381,7 @@ def _build_raw_merged_config(path):
     return cfg
 
 
-def _build_partial_expanded_config(path):
+def _build_partial_expanded_config(path, inherited_vars=None, seen=None):
     """Build merged config with only environment variables expanded.
     
     This expands WORKSPACE, TOOLDIR, CONFIGDIR, CWD but leaves intermediate
@@ -314,35 +395,7 @@ def _build_partial_expanded_config(path):
     - Paths resolved only where they don't contain unexpanded vars
     - No _meta section added
     """
-    path = os.path.abspath(path)
-    cfg, _events = _merge_includes(path, tuple(), is_root=True)
-    config_dir = os.path.dirname(path)
-    
-    # Build environment-only variables
-    env_vars = {
-        'WORKSPACE': os.environ.get('WORKSPACE', ''),
-        'TOOLDIR': os.environ.get('TOOLDIR', os.path.abspath(os.path.join(config_dir, '..'))),
-        'CONFIGDIR': config_dir,
-        'CWD': os.getcwd(),
-    }
-    
-    # Expand only env vars in user-defined vars
-    user_vars = cfg.get('vars', {}) or {}
-    expanded_user_vars = {}
-    for key, value in user_vars.items():
-        expanded_user_vars[key] = _expand_string_partial(str(value), env_vars)
-    
-    # Keep the vars section with partial expansion
-    cfg['vars'] = expanded_user_vars
-    
-    # Expand only env vars in the rest of the config
-    partial = _expand_node_partial(cfg, env_vars)
-    
-    # Try to resolve paths where possible (skip if contains unexpanded vars)
-    partial = _resolve_known_paths(partial, config_dir)
-    
-    # Do NOT add _meta or config_dir
-    return partial
+    return _partial_from_context(_load_context(path, inherited_vars, seen))
 
 
 def _check_required_variables(cfg, variables):
@@ -362,28 +415,23 @@ def _check_required_variables(cfg, variables):
 
 
 def load_config(path, inherited_vars=None, seen=None):
-    path = os.path.abspath(path)
-    cfg, _events = _merge_includes(path, tuple(seen or ()), is_root=True)
-    config_dir = os.path.dirname(path)
-    variables = dict(inherited_vars or {})
-    variables.setdefault('WORKSPACE', os.environ.get('WORKSPACE', ''))
-    variables.setdefault('TOOLDIR', os.environ.get('TOOLDIR', os.path.abspath(os.path.join(config_dir, '..'))))
-    variables.setdefault('CONFIGDIR', config_dir)
-    variables.setdefault('CWD', os.getcwd())
-    user_vars = cfg.get('vars', {}) or {}
-    for key, value in user_vars.items():
-        variables[key] = _expand_string(str(value), variables)
-    _check_required_variables(cfg, variables)
+    return _load_config_context(_load_context(path, inherited_vars, seen))
+
+
+def _load_config_context(context):
+    path = context['path']
+    config_dir = context['config_dir']
+    cfg = copy.deepcopy(context['raw'])
+    variables = dict(context['variables'])
     cfg['vars'] = variables
     expanded = _resolve_known_paths(_expand_node(cfg, variables), config_dir)
     paths = expanded.setdefault('paths', {})
     work = paths.get('work_dir', os.path.join(config_dir, 'work'))
     if not os.path.isabs(work):
         work = os.path.normpath(os.path.join(config_dir, work))
-    tool_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     scoring = (expanded.get('scoring') or {}).get('scoring_dir') or os.path.join(config_dir, 'scoring')
-    templates = (expanded.get('reports') or {}).get('templates_dir') or os.path.join(tool_dir, 'configs', 'html')
-    assets = paths.get('assets_dir') or os.path.join(tool_dir, 'configs', 'assets')
+    templates = (expanded.get('reports') or {}).get('templates_dir') or os.path.join(config_dir, 'html')
+    assets = paths.get('assets_dir') or os.path.join(config_dir, 'assets')
     profiles = (expanded.get('profiles') or {})
     rules = (expanded.get('rules') or {})
     def dirs(section, plural, singular, default):
@@ -400,7 +448,10 @@ def load_config(path, inherited_vars=None, seen=None):
         'scoring_dir': scoring,
         'templates_dir': templates,
     }
-    expanded['_meta'] = {'config_path': path, 'config_dir': config_dir, 'vars': variables, 'include_events': _events}
+    expanded['_meta'] = {'config_path': path, 'config_dir': config_dir,
+                         'initial_config_path': path, 'initial_config_dir': config_dir,
+                         'vars': variables, 'include_events': context['events'],
+                         'loaded_files': list(context['loaded_files'])}
     expanded['config_dir'] = config_dir
     return expanded
 
@@ -414,6 +465,5 @@ def load_config_with_raw(path, inherited_vars=None, seen=None):
             - manifest_cfg: Config with env vars expanded but intermediate vars preserved,
                            suitable for pipeline_config.json manifest
     """
-    expanded = load_config(path, inherited_vars=inherited_vars, seen=seen)
-    manifest = _build_partial_expanded_config(path)
-    return expanded, manifest
+    context = _load_context(path, inherited_vars, seen)
+    return _load_config_context(context), _partial_from_context(context)

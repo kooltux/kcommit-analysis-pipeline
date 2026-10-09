@@ -1,8 +1,7 @@
 {
   // ── Scoring ──────────────────────────────────────────────────────────────────
-  // Optional: override the scoring data directory.
-  // Default: ${CONFIGDIR}/scoring
-  // "scoring": { "scoring_dir": "${CONFIGDIR}/scoring" },
+  // This example explicitly selects sample hints. Missing hints remain optional.
+  "scoring": { "scoring_dir": "${TOOLDIR}/configs/scoring" },
 
   // ── HTML report and output options ───────────────────────────────────────────
   "reports": {
@@ -16,13 +15,15 @@
 
     // top_n: maximum number of commits included in HTML/XLSX/ODS reports.
     // Accepted: integer > 0. Default: 5000
-    "top_n":   500
+    "top_n":   500,
+
+    // Select sample templates explicitly; the product default is initial-dir/html.
+    "templates_dir": "${TOOLDIR}/configs/html"
 
     // css_override: optional extra stylesheet appended to the HTML report.
     // Useful for light branding or local presentation tweaks.
     // "css_override": "${CONFIGDIR}/html/local-overrides.css",
 
-    // templates_dir is configured via paths.templates_dir when you need to
-    // override the built-in HTML template directory.
+    // reports.templates_dir is the user-facing key. The loader derives paths.templates_dir.
   }
 }
