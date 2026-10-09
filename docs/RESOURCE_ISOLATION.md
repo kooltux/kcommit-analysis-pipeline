@@ -64,7 +64,16 @@ file does not cause the tool to import a sample file instead.
 This fragment selects resources; it is not a complete kernel/product configuration.
 Do not mix product and sample roots containing the same profile/rule names and
 expect precedence. Select one implementation, or rename the product entries.
-Stage 08 `--ai` requires a positive integer chunk size; zero is not supported.
+Stage 08 requires a positive integer `ai.chunk_size`; zero is not supported.
+
+## Validation of resources (v20.1.0)
+
+`validate` and Stage 00 check every file/directory setting declared in
+`CONFIG_SCHEMA` (see [CONFIGURATION.md](CONFIGURATION.md#schema-attributes-and-validation)).
+Missing required resources are errors; optional inputs (`kernel.*` sources and logs,
+`paths.assets_dir`, `paths.scoring_dir`) are notices. `ai.*` assets are checked
+only when AI is active (an `ai` section not disabled by `ai.enabled: false`);
+`paths.templates_dir` and `reports.css_override` only when HTML output is produced.
 
 ## Relocating the full example
 

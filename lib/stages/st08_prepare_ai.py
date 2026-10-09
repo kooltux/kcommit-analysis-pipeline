@@ -13,7 +13,7 @@ def run(cfg, cache, outdir=None):
     ai = cfg.get('ai') or {}
     size = ai.get('chunk_size', 100)
     if type(size) is not int or size <= 0:
-        raise ValueError('ai.chunk_size must be a positive integer for --ai')
+        raise ValueError('ai.chunk_size must be a positive integer')
     from lib.resources import resource_path
     prompt = resource_path(cfg, ai.get('prompt_path'), 'ai', 'ai_analysis_prompt.md')
     front_page = resource_path(cfg, ai.get('front_page_path'), 'ai', 'ai_server_front_page.md')

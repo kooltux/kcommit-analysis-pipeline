@@ -68,7 +68,12 @@ def _cfg_from_fixture(tmp_path):
     samples = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'configs')
     cfg['paths']['templates_dir'] = os.path.join(samples, 'html')
     cfg['paths']['assets_dir'] = os.path.join(samples, 'assets')
-    cfg.setdefault('ai', {}).setdefault('prompt_path', os.path.join(samples, 'ai', 'ai_analysis_prompt.md'))
+    # v20.1.0: an ai section activates AI, so all its assets must exist (select samples).
+    ai = cfg.setdefault('ai', {})
+    for key, name in (('prompt_path', 'ai_analysis_prompt.md'),
+                      ('front_page_path', 'ai_server_front_page.md'),
+                      ('result_schema_path', 'ai_analysis_result_schema.json')):
+        ai.setdefault(key, os.path.join(samples, 'ai', name))
     cfg['reports'].pop('html_detail_mode', None)
     return cfg
 

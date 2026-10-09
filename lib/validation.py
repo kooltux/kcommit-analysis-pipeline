@@ -3,7 +3,9 @@ import os
 import subprocess
 import sys
 
-from lib.config import CONFIG_SCHEMA
+from lib.config import CONFIG_SCHEMA, ai_active
+from lib.content_checks import check_content
+from lib.resources import resource_path
 
 # ── Schema-driven type validation ─────────────────────────────────────────────
 #
@@ -64,7 +66,7 @@ def _schema_problems(cfg):
                 for i, item in enumerate(val):
                     if not isinstance(item, expected_type):
                         errors.append((
-                            '{}{}[{}]'.format(section_name, key, i),
+                            '{}.{}[{}]'.format(section_name, key, i),
                             'item must be {}, got {!r}'.format(
                                 spec['type'], type(item).__name__)))
             else:
@@ -76,6 +78,11 @@ def _schema_problems(cfg):
                     errors.append(('{}.{}'.format(section_name, key),
                                    'must be {}, got {!r}'.format(
                                        spec['type'], type(val).__name__)))
+                elif spec.get('type') == 'int' and isinstance(val, bool):
+                    errors.append(('{}.{}'.format(section_name, key),
+                                   'must be int, got bool'))
+                else:
+                    errors.extend(_range_problems('{}.{}'.format(section_name, key), val, spec))
     errors.extend(_validate_unknown_keys(cfg))
     return errors
 
@@ -98,6 +105,103 @@ def _emit_schema_errors(errors, problems):
         # Return the group for callers that want it; do not raise here.
         return ExceptionGroup('config schema violations', exc_list)  # noqa: F821
     return None
+
+
+# ── schema-driven range / path validation (v20.1.0) ───────────────────────
+
+def _range_problems(dotted, val, spec):
+    """Check the optional ``enum``/``min``/``max`` attributes of a schema key."""
+    errors = []
+    if 'enum' in spec and val not in spec['enum']:
+        errors.append((dotted, 'must be one of {}, got {!r}'.format(
+            '/'.join(str(v) for v in spec['enum']), val)))
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        if 'min' in spec and val < spec['min']:
+            errors.append((dotted, 'must be >= {}, got {!r}'.format(spec['min'], val)))
+        if 'max' in spec and val > spec['max']:
+            errors.append((dotted, 'must be <= {}, got {!r}'.format(spec['max'], val)))
+    return errors
+
+
+# Keys that keep a dedicated check (message stability) or are duplicates of a
+# derived paths.* key that is checked instead.
+_DEDICATED_PATH_CHECKS = frozenset({
+    ('kernel', 'source_dir'), ('kernel', 'kernel_config'), ('kernel', 'build_dir'),
+    ('paths', 'profiles_dirs'), ('paths', 'rules_dirs'),
+    ('profiles', 'profiles_dirs'), ('rules', 'rules_dirs'),
+    ('scoring', 'scoring_dir'), ('reports', 'templates_dir'),
+})
+
+
+def _needs_met(cfg, needs):
+    """Evaluate the ``needs`` attribute: is the feature using this path active?"""
+    if needs in (None, 'always'):
+        return True
+    if needs == 'ai':
+        return ai_active(cfg)
+    if needs == 'html':
+        outputs = (cfg.get('reports') or {}).get('outputs')
+        if outputs is None:
+            return True
+        return 'html' in {str(o).lower() for o in (outputs or [])}
+    raise ValueError('unknown schema needs value: {!r}'.format(needs))
+
+
+def _check_one_path(cfg, label, raw, spec, problems, notices):
+    resolved = resource_path(cfg, raw)
+    is_notice = spec.get('severity', 'error') == 'notice'
+    sink = notices if is_notice else problems
+    prefix = 'notice: ' if is_notice else ''
+    kind = spec['kind']
+    present = os.path.isdir(resolved) if kind == 'dir' else os.path.isfile(resolved)
+    if not present:
+        if os.path.exists(resolved):
+            sink.append('{}{}: {} is not a {}: {}'.format(
+                prefix, label, 'path', 'directory' if kind == 'dir' else 'file', resolved))
+        elif spec.get('access') != 'create':
+            sink.append('{}{}: {} not found: {}'.format(
+                prefix, label, 'directory' if kind == 'dir' else 'file', resolved))
+        return
+    if not os.access(resolved, os.R_OK):
+        sink.append('{}{}: not readable: {}'.format(prefix, label, resolved))
+        return
+    if kind == 'file' and spec.get('content'):
+        problem = check_content(spec['content'], resolved)
+        if problem:
+            sink.append('{}{}: {} ({})'.format(prefix, label, problem, resolved))
+
+
+def _validate_paths(cfg, problems, notices):
+    """Check every schema key declared as a file/dir path (v20.1.0).
+
+    Driven by CONFIG_SCHEMA attributes: kind, access, needs, severity, default,
+    content.  A key is checked only when its feature is active (``needs``), so
+    for example no ai.* asset is validated when AI is not enabled.
+    """
+    for section_name, section_schema in CONFIG_SCHEMA.items():
+        section = cfg.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        for key, spec in section_schema.items():
+            if key == '__type__' or spec.get('type') != 'path' or 'kind' not in spec:
+                continue
+            if (section_name, key) in _DEDICATED_PATH_CHECKS:
+                continue
+            if not _needs_met(cfg, spec.get('needs')):
+                continue
+            value = section.get(key)
+            if value in (None, '', []) and spec.get('default'):
+                value = os.path.join(*spec['default'].split('/'))
+            if value in (None, '', []):
+                continue
+            items = value if spec.get('list') and isinstance(value, list) else [value]
+            for index, item in enumerate(items):
+                if not isinstance(item, str) or not item:
+                    continue
+                label = '{}.{}'.format(section_name, key)
+                if spec.get('list'):
+                    label += '[{}]'.format(index)
+                _check_one_path(cfg, label, item, spec, problems, notices)
 
 
 # ── filter section ──────────────────────────────────────────────────
@@ -210,6 +314,7 @@ def _validate_common(cfg, problems, notices):
 
     _validate_filter(cfg, problems, notices)
     _validate_dirs(cfg, problems, notices)
+    _validate_paths(cfg, problems, notices)
 
 
 # ── public API ──────────────────────────────────────────────────────────────

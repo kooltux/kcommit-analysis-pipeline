@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """kcommit-analysis-pipeline — top-level CLI entry point.
 
-Run stages 00–07 normally, or request optional AI preparation with run --ai.
+Run stages 00–07 normally; Stage 08 (AI preparation) runs when the configuration
+declares an "ai" section that is not disabled with "ai.enabled": false.
 Subcommands: run, status, validate, report, dropped, diagnose, cp-check, ai-import.
 """
 import argparse
@@ -35,8 +36,6 @@ def main():
     p_run.add_argument('--resume', action='store_true')
     p_run.add_argument('--force', action='store_true')
     p_run.add_argument('--progress-json', action='store_true')
-    p_run.add_argument('--ai', action='store_true',
-                       help='Prepare AI chunks and portable serve_ai.pyz in optional stage 08')
 
     p_st = sub.add_parser('status', help='Show stage completion status')
     p_st.add_argument('--config', required=True)

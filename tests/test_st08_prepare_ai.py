@@ -91,4 +91,6 @@ def test_invalid_front_page_fails_before_outputs(tmp_path, content):
 
 def test_front_page_config_registered():
     from lib.config import CONFIG_SCHEMA
-    assert CONFIG_SCHEMA['ai']['front_page_path'] == {'type': 'path'}
+    spec = CONFIG_SCHEMA['ai']['front_page_path']
+    assert spec['type'] == 'path' and spec['kind'] == 'file' and spec['needs'] == 'ai'
+    assert spec['default'] == 'ai/ai_server_front_page.md'

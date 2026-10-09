@@ -4,6 +4,46 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v20.1.0 — schema-driven path validation and config-driven AI stage (2026-10-09)
+
+### Changed
+
+- `CONFIG_SCHEMA` now describes path settings (`kind`, `access`, `needs`, `severity`,
+  `default`, `content`) and value limits (`enum`, `min`, `max`); `validate` is driven by it.
+- `validate` (and the stage-level checks) verify every declared file/directory setting:
+  existence, kind, readability and content (`ai.*` assets, `reports.css_override`,
+  `paths.templates_dir` when HTML output is produced, optional `kernel.*` inputs as notices).
+- Include, variable and JSON loading errors are reported by `validate` as errors (exit 1,
+  no traceback).
+- Stage 08 and AI asset validation are driven by the configuration only: an `ai` section
+  enables them unless `ai.enabled` is `false`. With no `ai` section or `ai.enabled: false`,
+  nothing AI-related is run or validated, and `--stage 8` / `--from 8` are refused.
+- `ai.chunk_size` must be an integer >= 1 (booleans are rejected).
+- `kernel.source_dir` is declared optional (notice only), as `validate` already behaved.
+
+### Added
+
+- `ai.enabled` (bool, default true when the section exists) and `ai.result_schema_path`
+  (already read by Stage 08) are declared in the schema.
+- `lib/content_checks.py` (content checkers) and `ai_active()` in `lib/config.py`.
+
+### Removed (no migration path)
+
+- The `run --ai` option.
+- The singular aliases `profiles.profiles_dir` and `rules.rules_dir`; use the plural lists.
+
+### Fixed
+
+- List-item schema errors are named `section.key[index]` (the dot was missing).
+- The stage total shown in progress bars and `pipeline_state.json` is the number of stages
+  of the run (8, or 9 when the optional AI stage is active) instead of always 9
+  (`lib.pipeline_runtime.set_stage_total()`, also used by `report`). Progress bars and the
+  stage-finished line are 0-based like the `[stage N]` lines and show `index/last_index`
+  (`0/7`..`7/7` without AI, `0/8`..`8/8` with it): the first stage has an empty bar and the
+  last one a full bar. The `total` kept in `pipeline_state.json` stays the stage count.
+- Embedded AI server tests no longer race the access log: the server logs a request after
+  sending the response, so the tests now wait for the expected number of access lines.
+
 ## v20.0.0 — breaking: anchored configuration and resource isolation (2026-10-09)
 
 ### Breaking

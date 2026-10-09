@@ -122,6 +122,12 @@ def access_lines(log):
     return [line for line in log.read_text().splitlines() if ' SERVER ' not in line]
 
 
+def assert_access_count(log, expected):
+    """The server logs a request after sending the response: wait for the line(s)."""
+    wait_until(lambda: len(access_lines(log)) >= expected)
+    assert len(access_lines(log)) == expected
+
+
 def test_defaults(namespace):
     args = namespace['build_parser']().parse_args([])
     assert (args.host, args.port, args.no_daemon) == ('127.0.0.1', 8000, False)
@@ -134,7 +140,7 @@ def test_foreground_aliases(app, namespace, flag):
     assert namespace['build_parser']().parse_args([flag]).no_daemon
     with running(app, flag=flag) as (port, log, stderr):
         assert request(port, '/chunks')[0] == 200
-        assert len(access_lines(log)) == 1
+        assert_access_count(log, 1)
         assert 'WARNING: authentication disabled' in log.read_text()
         assert stderr.read_text() == ''
     assert 'SERVER stop' in log.read_text()
@@ -169,7 +175,7 @@ def test_all_endpoints_require_auth_and_log_once(app):
         assert request(port, '/missing', authorization=basic(credentials))[0] == 404
         assert request(port, '/result/1.json', method='PUT', body=b'{}',
                        authorization=basic(credentials))[0] == 400
-        assert len(access_lines(log)) == len(cases) + 7
+        assert_access_count(log, len(cases) + 7)
         assert not Path(str(app) + '.results').exists()
         text = log.read_text() + stderr.read_text()
         for secret in [credentials, basic(credentials), 'do-not-log', 'token=']:
@@ -189,7 +195,7 @@ def test_valid_upload_and_export(app):
                        authorization=authorization)[0] == 200
         assert request(port, '/result/1.json', authorization=authorization)[2] == payload
         assert request(port, '/export', authorization=authorization)[0] == 200
-        assert len(access_lines(log)) == 3
+        assert_access_count(log, 3)
 
 
 def test_log_appends(app):
@@ -240,7 +246,7 @@ def test_startup_failures_do_not_detach(app):
 def test_daemon_lifecycle(app):
     with running(app, daemon=True, auth='user:password') as (port, log, stderr):
         assert request(port, '/chunks', authorization=basic('user:password'))[0] == 200
-        assert len(access_lines(log)) == 1
+        assert_access_count(log, 1)
     with socket.socket() as sock:
         wait_until(lambda: sock.connect_ex(('127.0.0.1', port)) != 0)
 
@@ -256,7 +262,7 @@ def test_front_page_routes(app, auth):
             assert status == 200
             assert headers['Content-Type'] == 'text/markdown; charset=utf-8'
             assert body == b'# Server purpose\n'
-        assert len(access_lines(log)) == (4 if auth else 2)
+        assert_access_count(log, 4 if auth else 2)
 
 
 @pytest.mark.parametrize('flag', ['-d', '--debug', '--no-daemon'])
@@ -264,7 +270,7 @@ def test_foreground_without_file_uses_only_stderr(app, flag):
     with running(app, flag=flag, file_logging=False) as (port, log, stderr):
         assert request(port, '/chunks')[0] == 200
         assert log == stderr
-        assert len(access_lines(log)) == 1
+        assert_access_count(log, 1)
         assert 'WARNING: authentication disabled' in stderr.read_text()
         assert not (app.parent / 'access.log').exists()
 

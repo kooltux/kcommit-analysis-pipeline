@@ -1,15 +1,18 @@
 {
-  // ── AI Analysis (v20.0.0) ─────────────────────────────────────────────────────
-  // Stage 08 (--ai) prepares an advisory AI package without changing pipeline scores.
+  // ── AI Analysis (v20.1.0) ─────────────────────────────────────────────────────
+  // The presence of this section enables Stage 08 (AI work package) and the
+  // validation of its assets. Set "enabled": false, or drop the section, to
+  // disable both. AI never changes pipeline scores.
   // Select sample inputs explicitly; product defaults are under initial-dir/ai.
   "ai": {
+    "enabled": true,
     "prompt_path": "${TOOLDIR}/configs/ai/ai_analysis_prompt.md",
     "front_page_path": "${TOOLDIR}/configs/ai/ai_server_front_page.md",
     "result_schema_path": "${TOOLDIR}/configs/ai/ai_analysis_result_schema.json",
 
-    // Stage 08 requires a positive integer (default: 100); 0 is not valid for --ai.
+    // Stage 08 requires a positive integer (default: 100); 0 is not valid.
     // Numbered input chunks carry identity/checksums in the portable work package.
-    // These files must exist when Stage 08 runs; there is no implicit sample lookup.
+    // These files must exist (checked by 'validate'); there is no implicit sample lookup.
     "chunk_size": 100
   }
 }

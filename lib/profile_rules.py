@@ -92,8 +92,7 @@ RULE_SCHEMA = {
 def _resolve_dirs(cfg, key_plural, default_subdir):
     from lib.resources import resource_path
     paths = cfg.get('paths', {}) or {}
-    key_singular = key_plural[:-1] if key_plural.endswith('s') else key_plural
-    raw = paths.get(key_plural, paths.get(key_singular))
+    raw = paths.get(key_plural)
     if raw in (None, ''):
         return [resource_path(cfg, None, default_subdir)]
     values = raw if isinstance(raw, list) else [raw]
@@ -102,13 +101,7 @@ def _resolve_dirs(cfg, key_plural, default_subdir):
 
 def _dirs_explicitly_configured(cfg, key_plural):
     paths = cfg.get('paths', {}) or {}
-    if paths.get(key_plural):
-        return True
-    key_singular = key_plural[:-1] if key_plural.endswith('s') else key_plural
-    raw = paths.get(key_singular)
-    if raw not in (None, [], ''):
-        return True
-    return False
+    return bool(paths.get(key_plural))
 
 
 def _find_unique(name, dirs, suffix=''):

@@ -2,6 +2,7 @@
 import os
 
 from lib.commands.base import load_cfg
+from lib.config import ai_active
 from lib.manifest import NSTAGES
 from lib.pipeline_runtime import (
     fail_stage, finish_stage, init_pipeline_state, start_stage,
@@ -28,7 +29,9 @@ def cmd_report(args):
             sys.exit(1)
         cfg.setdefault('reports', {})['outputs'] = formats
     from lib.stages.st07_ai_report import run as stage_run
-    token = start_stage(state_path, 'report_commits', 7, NSTAGES)
+    # v20.1.0: total = stages of this configuration (the AI stage counts only when active).
+    total = NSTAGES if ai_active(cfg) else NSTAGES - 1
+    token = start_stage(state_path, 'report_commits', 7, total)
     try:
         stats = stage_run(cfg, cache, outdir)
         finish_stage(state_path, 'report_commits', token, status='ok',

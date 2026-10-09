@@ -24,17 +24,57 @@ VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 INLINE_COMMENT_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
 
 CONFIG_SCHEMA = {
-    'kernel': {'__type__': 'dict', 'source_dir': {'type': 'path', 'required': True}, 'rev_old': {'type': 'str', 'required': True}, 'rev_new': {'type': 'str', 'required': True}, 'kernel_config': {'type': 'path'}, 'build_dir': {'type': 'path'}, 'kernel_build_log': {'type': 'path'}, 'yocto_build_log': {'type': 'path'}, 'dts_roots': {'type': 'path', 'list': True}},
-    'paths': {'__type__': 'dict', 'work_dir': {'type': 'path'}, 'cache_dir': {'type': 'path'}, 'output_dir': {'type': 'path'}, 'assets_dir': {'type': 'path'}, 'profiles_dirs': {'type': 'path', 'list': True}, 'rules_dirs': {'type': 'path', 'list': True}, 'scoring_dir': {'type': 'path'}, 'templates_dir': {'type': 'path'}},
-    'profiles': {'__type__': 'dict', 'active': {'type': 'dict'}, 'profiles_dirs': {'type': 'path', 'list': True}, 'profiles_dir': {'type': 'path'}},
-    'rules': {'__type__': 'dict', 'rules_dirs': {'type': 'path', 'list': True}, 'rules_dir': {'type': 'path'}},
+    # Path attributes (v20.1.0): kind=file|dir, access=read|create, needs=always|ai|html,
+    # severity=error|notice, default=<relative path under the initial config dir>,
+    # content=text|markdown|json|ai_result_schema.  Validation is driven by these.
+    'kernel': {'__type__': 'dict',
+               'source_dir': {'type': 'path', 'kind': 'dir', 'severity': 'notice'},
+               'rev_old': {'type': 'str', 'required': True},
+               'rev_new': {'type': 'str', 'required': True},
+               'kernel_config': {'type': 'path', 'kind': 'file', 'severity': 'notice'},
+               'build_dir': {'type': 'path', 'kind': 'dir', 'severity': 'notice'},
+               'kernel_build_log': {'type': 'path', 'kind': 'file', 'severity': 'notice'},
+               'yocto_build_log': {'type': 'path', 'kind': 'file', 'severity': 'notice'},
+               'dts_roots': {'type': 'path', 'list': True, 'kind': 'dir', 'severity': 'notice'}},
+    'paths': {'__type__': 'dict',
+              'work_dir': {'type': 'path', 'kind': 'dir', 'access': 'create'},
+              'cache_dir': {'type': 'path', 'kind': 'dir', 'access': 'create'},
+              'output_dir': {'type': 'path', 'kind': 'dir', 'access': 'create'},
+              'assets_dir': {'type': 'path', 'kind': 'dir', 'severity': 'notice'},
+              'profiles_dirs': {'type': 'path', 'list': True, 'kind': 'dir'},
+              'rules_dirs': {'type': 'path', 'list': True, 'kind': 'dir'},
+              'scoring_dir': {'type': 'path', 'kind': 'dir', 'severity': 'notice'},
+              'templates_dir': {'type': 'path', 'kind': 'dir', 'needs': 'html'}},
+    'profiles': {'__type__': 'dict', 'active': {'type': 'dict'}, 'profiles_dirs': {'type': 'path', 'list': True, 'kind': 'dir'}},
+    'rules': {'__type__': 'dict', 'rules_dirs': {'type': 'path', 'list': True, 'kind': 'dir'}},
     'filter': {'__type__': 'dict', 'enabled': {'type': 'bool'}, 'min_score': {'type': 'float'}, 'path_blacklist_global': {'type': 'bool'}, 'require_kconfig_coverage': {'type': 'bool'}},
-    'collect': {'__type__': 'dict', 'use_numstat': {'type': 'bool'}, 'count_hunks': {'type': 'bool'}, 'cherry_pick_test': {'type': 'bool'}, 'cherry_pick_cache_dir': {'type': 'path'}, 'cherry_pick_workers': {'type': 'int'}, 'no_merges': {'type': 'bool'}, 'first_parent': {'type': 'bool'}, 'score_workers': {'type': 'int'}, 'max_commits': {'type': 'int'}, 'git_binary': {'type': 'str'}, 'use_name_only': {'type': 'bool'}, 'extra_git_log_args': {'type': 'list'}, 'jsonl': {'type': 'bool'}, 'include_parents': {'type': 'bool'}},
-    'scoring': {'__type__': 'dict', 'scoring_dir': {'type': 'path'}},
-    'reports': {'__type__': 'dict', 'outputs': {'type': 'list'}, 'title': {'type': 'str'}, 'top_n': {'type': 'int'}, 'templates_dir': {'type': 'path'}, 'css_override': {'type': 'path'}},
+    'collect': {'__type__': 'dict', 'use_numstat': {'type': 'bool'}, 'count_hunks': {'type': 'bool'}, 'cherry_pick_test': {'type': 'bool'}, 'cherry_pick_cache_dir': {'type': 'path', 'kind': 'dir', 'access': 'create'}, 'cherry_pick_workers': {'type': 'int'}, 'no_merges': {'type': 'bool'}, 'first_parent': {'type': 'bool'}, 'score_workers': {'type': 'int'}, 'max_commits': {'type': 'int'}, 'git_binary': {'type': 'str'}, 'use_name_only': {'type': 'bool'}, 'extra_git_log_args': {'type': 'list'}, 'jsonl': {'type': 'bool'}, 'include_parents': {'type': 'bool'}},
+    'scoring': {'__type__': 'dict', 'scoring_dir': {'type': 'path', 'kind': 'dir', 'severity': 'notice'}},
+    'reports': {'__type__': 'dict', 'outputs': {'type': 'list'}, 'title': {'type': 'str'}, 'top_n': {'type': 'int'},
+                'templates_dir': {'type': 'path', 'kind': 'dir', 'needs': 'html'},
+                'css_override': {'type': 'path', 'kind': 'file', 'needs': 'html', 'content': 'text'}},
     'history_mapping': {'__type__': 'dict', 'mode': {'type': 'str'}, 'sample_step': {'type': 'int'}, 'max_commits_per_probe': {'type': 'int'}, 'max_failure_rate': {'type': 'float'}, 'history_workers': {'type': 'int'}},
-    'ai': {'__type__': 'dict', 'prompt_path': {'type': 'path'}, 'front_page_path': {'type': 'path'}, 'chunk_size': {'type': 'int'}},
+    # The ai section is active when present unless ai.enabled is false (see ai_active()).
+    'ai': {'__type__': 'dict',
+           'enabled': {'type': 'bool'},
+           'prompt_path': {'type': 'path', 'kind': 'file', 'needs': 'ai', 'default': 'ai/ai_analysis_prompt.md', 'content': 'markdown'},
+           'front_page_path': {'type': 'path', 'kind': 'file', 'needs': 'ai', 'default': 'ai/ai_server_front_page.md', 'content': 'markdown'},
+           'result_schema_path': {'type': 'path', 'kind': 'file', 'needs': 'ai', 'default': 'ai/ai_analysis_result_schema.json', 'content': 'ai_result_schema'},
+           'chunk_size': {'type': 'int', 'min': 1}},
 }
+
+
+def ai_active(cfg):
+    """True when the configuration declares an ``ai`` section not disabled.
+
+    v20.1.0: AI preparation (Stage 08) and AI asset validation are driven by
+    the configuration only.  A missing ``ai`` section or ``ai.enabled: false``
+    disables both.
+    """
+    section = (cfg or {}).get('ai')
+    return isinstance(section, dict) and section.get('enabled', True) is not False
+
+
 _ALLOWED_TOP_LEVEL = frozenset(CONFIG_SCHEMA.keys()) | {'vars', 'include'}
 _PATH_KEYS = frozenset(key for section in CONFIG_SCHEMA.values() for key, spec in section.items() if key != '__type__' and spec.get('type') == 'path')
 
@@ -434,8 +474,8 @@ def _load_config_context(context):
     assets = paths.get('assets_dir') or os.path.join(config_dir, 'assets')
     profiles = (expanded.get('profiles') or {})
     rules = (expanded.get('rules') or {})
-    def dirs(section, plural, singular, default):
-        raw = section.get(plural, section.get(singular))
+    def dirs(section, plural, default):
+        raw = section.get(plural)
         vals = raw if isinstance(raw, list) else [raw] if raw else [default]
         return [v if os.path.isabs(v) else os.path.normpath(os.path.join(config_dir, v)) for v in vals]
     expanded['paths'] = {
@@ -443,8 +483,8 @@ def _load_config_context(context):
         'cache_dir': paths.get('cache_dir') or os.path.join(work, 'cache'),
         'output_dir': paths.get('output_dir') or os.path.join(work, 'output'),
         'assets_dir': assets,
-        'profiles_dirs': dirs(profiles, 'profiles_dirs', 'profiles_dir', os.path.join(config_dir, 'profiles')),
-        'rules_dirs': dirs(rules, 'rules_dirs', 'rules_dir', os.path.join(config_dir, 'rules')),
+        'profiles_dirs': dirs(profiles, 'profiles_dirs', os.path.join(config_dir, 'profiles')),
+        'rules_dirs': dirs(rules, 'rules_dirs', os.path.join(config_dir, 'rules')),
         'scoring_dir': scoring,
         'templates_dir': templates,
     }

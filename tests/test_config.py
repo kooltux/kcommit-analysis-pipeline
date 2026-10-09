@@ -257,31 +257,39 @@ def test_load_config_rejects_unknown_top_level(tmp_path):
 
 
 
-def test_load_config_rules_dir_singular_alias_normalised(tmp_path):
-    """D.1: rules.rules_dir singular alias is accepted and normalized."""
+def test_load_config_rules_dirs_normalised_and_singular_alias_removed(tmp_path):
+    """v20.1.0: only rules.rules_dirs is accepted; rules.rules_dir is an unknown key."""
     from lib.config import load_config
+    from lib.validation import validate_config_only
     cfg_json = tmp_path / 'cfg.json'
     (tmp_path / 'team_rules').mkdir()
     cfg_json.write_text(
         '{\n'
         '  "kernel": {"source_dir": "/tmp", "rev_old": "a", "rev_new": "b"},\n'
         '  "profiles": {"active": {}},\n'
-        '  "rules": {"rules_dir": "team_rules"}\n'
+        '  "rules": {"rules_dirs": ["team_rules"]}\n'
         '}')
     cfg = load_config(str(cfg_json))
     assert cfg['paths']['rules_dirs'] == [str((tmp_path / 'team_rules').resolve())]
+    cfg['rules'] = {'rules_dir': 'team_rules'}
+    problems, _ = validate_config_only(cfg)
+    assert any('rules.rules_dir' in p and 'unknown key' in p for p in problems)
 
 
-def test_load_config_profiles_dir_singular_alias_normalised(tmp_path):
-    """D.1: profiles.profiles_dir singular alias is accepted and normalized."""
+def test_load_config_profiles_dirs_normalised_and_singular_alias_removed(tmp_path):
+    """v20.1.0: only profiles.profiles_dirs is accepted; profiles.profiles_dir is unknown."""
     from lib.config import load_config
+    from lib.validation import validate_config_only
     cfg_json = tmp_path / 'cfg.json'
     (tmp_path / 'team_profiles').mkdir()
     cfg_json.write_text(
         '{\n'
         '  "kernel": {"source_dir": "/tmp", "rev_old": "a", "rev_new": "b"},\n'
-        '  "profiles": {"profiles_dir": "team_profiles", "active": {}},\n'
+        '  "profiles": {"profiles_dirs": ["team_profiles"], "active": {}},\n'
         '  "rules": {}\n'
         '}')
     cfg = load_config(str(cfg_json))
     assert cfg['paths']['profiles_dirs'] == [str((tmp_path / 'team_profiles').resolve())]
+    cfg['profiles'] = {'profiles_dir': 'team_profiles', 'active': {}}
+    problems, _ = validate_config_only(cfg)
+    assert any('profiles.profiles_dir' in p and 'unknown key' in p for p in problems)

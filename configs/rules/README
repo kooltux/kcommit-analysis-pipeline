@@ -50,12 +50,8 @@
 #   The pipeline searches for rule sets in one or more rules directories.
 #   Configure via the "rules" section of your config file:
 #
-#     Single directory:
-#       "rules": { "rules_dir": "${CONFIGDIR}/rules" }
-#
-#     Multiple directories (rule set names must be unique across all dirs):
+#     One or more directories (rule set names must be unique across all dirs):
 #       "rules": { "rules_dirs": ["${CONFIGDIR}/rules", "/shared/team/rules"] }
 #
-#   Default when neither key is present: ${CONFIGDIR}/rules
-#   Note: "rules_dir" (singular) and "rules_dirs" (plural list) are both accepted;
-#   the plural form is canonical.
+#   Default when the key is absent: ${CONFIGDIR}/rules
+#   Note: the singular "rules_dir" alias was removed in v20.1.0.

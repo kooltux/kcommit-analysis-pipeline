@@ -92,6 +92,18 @@ _stage_t0 = {}   # (index, total) -> monotonic start time
 _last_upd  = {}   # (index, total) -> monotonic last update time
 _spinner_i = {}   # (index, total) -> current spinner frame index
 
+# v20.1.0: number of stages of the current run (8 without AI, 9 with the optional
+# Stage 08).  When set, it replaces the caller-supplied total in progress output and
+# in the pipeline state so every display agrees with the stages actually run.
+_STAGE_TOTAL = None
+
+
+def set_stage_total(total):
+    """Set (or clear with None) the stage total shown by progress bars/state."""
+    global _STAGE_TOTAL
+    _STAGE_TOTAL = total
+
+
 # Evaluate once at import time; stages inherit the same stderr fd as the
 # parent process so this correctly tracks redirection done before exec.
 _STDERR_IS_TTY = hasattr(sys.stderr, 'isatty') and sys.stderr.isatty()
@@ -124,6 +136,11 @@ def _write(path, state):
 def _bar(done, total, width=_BAR_WIDTH):
     n = int(width * done / max(total, 1))
     return '[%s%s] %d/%d' % ('#' * n, '-' * (width - n), done, total)
+
+
+def _last_index(total):
+    """Index of the last stage for *total* stages (stages are numbered from 0)."""
+    return max(int(total) - 1, 0)
 
 
 def _eprint(*args, **kwargs):
@@ -175,6 +192,8 @@ def update_stage_progress(index, total, frac, label,
     if not _STDERR_IS_TTY:
         return
 
+    total = _STAGE_TOTAL or total
+    shown = _last_index(total)
     key = (index, total)
     now = time.monotonic()
     if now - _last_upd.get(key, 0.0) < _PROGRESS_REFRESH and frac < 1.0:
@@ -188,7 +207,7 @@ def update_stage_progress(index, total, frac, label,
         # Mode 1: caller has a real fraction but no count of any kind.
         w  = _BAR_WIDTH
         f  = int(w * max(0.0, min(1.0, frac)))
-        b  = '[%s%s] %d/%d  %-24s' % ('#' * f, '-' * (w - f), index, total, label)
+        b  = '[%s%s] %d/%d  %-24s' % ('#' * f, '-' * (w - f), index, shown, label)
         line = '\r%s  %s' % (b, _fmt_hms(el))
         if len(line) < _LINE_WIDTH:
             line += ' ' * (_LINE_WIDTH - len(line))
@@ -201,7 +220,7 @@ def update_stage_progress(index, total, frac, label,
         si = _spinner_i.get(key, 0)
         _spinner_i[key] = (si + 1) % len(_SPINNER_FRAMES)
         spin = _SPINNER_FRAMES[si]
-        b = '[%s] %d/%d  %-24s' % (spin, index, total, label)
+        b = '[%s] %d/%d  %-24s' % (spin, index, shown, label)
         line = '\r%s  %d  %s' % (b, n_done, _fmt_hms(el))
         if len(line) < _LINE_WIDTH:
             line += ' ' * (_LINE_WIDTH - len(line))
@@ -212,7 +231,7 @@ def update_stage_progress(index, total, frac, label,
     # Mode 3: full determinate bar with counts, rate, and ETA.
     w  = _BAR_WIDTH
     f  = int(w * max(0.0, min(1.0, frac)))
-    b  = '[%s%s] %d/%d  %-24s' % ('#' * f, '-' * (w - f), index, total, label)
+    b  = '[%s%s] %d/%d  %-24s' % ('#' * f, '-' * (w - f), index, shown, label)
     counts = '  %d/%d' % (n_done, n_total)
     rate = ('  %.1f/s' % (n_done / el)) if n_done and el > 0.5 else ''
     eta  = ('  ETA %s' % _fmt_hms((el / n_done) * (n_total - n_done))
@@ -225,6 +244,7 @@ def update_stage_progress(index, total, frac, label,
 
 
 def start_stage(path, key, index, total):
+    total = _STAGE_TOTAL or total
     state = _read(path)
     state.setdefault('stages', {})
     started = time.time()
@@ -251,7 +271,9 @@ def finish_stage(path, key, started, status='ok', extra=None):
         e.update(extra)
     state['stages'][key] = e
     _write(path, state)
-    _eprint('%s %s  %.1fs' % (_bar(e.get('index', 1), e.get('total', 1)),
+    # v20.1.0: stages are numbered 0..last, so the bar reads index/last: the first
+    # stage is 0/last with an empty bar and the last one is last/last with a full bar.
+    _eprint('%s %s  %.1fs' % (_bar(e.get('index', 0), _last_index(e.get('total', 1))),
                                key.ljust(30), el))
 
 

@@ -5,18 +5,33 @@ require an AI service. Stage 08 prepares an independent work package from the
 stage 04 prefilter-kept commits, before scoring and postfiltering. It does not
 change scores, priorities, or cherry-pick test results.
 
+## Enabling AI
+
+The configuration alone decides (v20.1.0; there is no `--ai` option). The AI
+workflow is active when the config declares an `ai` section, unless
+`ai.enabled` is `false`. When active:
+
+- a full `run` includes Stage 08 after Stage 07;
+- `validate` and Stage 00 check that `ai.prompt_path`, `ai.front_page_path` and
+  `ai.result_schema_path` exist and have valid content (non-empty UTF-8
+  Markdown; a JSON object schema with `properties.results`). When unset they
+  default to `ai/ai_analysis_prompt.md`, `ai/ai_server_front_page.md` and
+  `ai/ai_analysis_result_schema.json` under the initial configuration directory.
+
+With no `ai` section or `"enabled": false`, nothing AI-related runs or is
+validated, and `run --stage 8` / `--from 8` are refused.
+
 ## Prepare
 
-Run the ordinary pipeline first, then use:
+A full run prepares the package. To rerun only Stage 08:
 
 ```sh
 python3 kcommit_pipeline.py run --config product.json --stage 8
 ```
 
-Alternatively, `run --config product.json --ai` includes Stage 08 in the
-full run. The `ai.chunk_size` setting is the positive number of commits per
-chunk (default 100); `ai.prompt_path` selects an optional prompt override.
-The bundled result schema is `configs/ai/ai_analysis_result_schema.json`.
+The `ai.chunk_size` setting is the positive number of commits per chunk
+(default 100, minimum 1); `ai.prompt_path` selects the prompt.
+The sample result schema is `configs/ai/ai_analysis_result_schema.json`.
 Stage 08 writes numbered JSON chunks, input and output schemas, a prompt, a
 checksummed bundle manifest, and `serve_ai.pyz` to the configured output
 directory. An empty prefilter set produces an empty chunk. Keep these files

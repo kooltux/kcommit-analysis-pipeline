@@ -1,12 +1,13 @@
-"""Run pipeline stages, with optional AI work-package preparation."""
+"""Run pipeline stages; Stage 08 (AI work package) runs when the config enables AI."""
 import os
 
 from lib.commands.base import (
     STAGE_ORDER, emit_progress, load_cfg, load_state, resolve_stage,
     run_stage, stage_needs_run,
 )
+from lib.config import ai_active
 from lib.manifest import STAGE_OUTPUTS
-from lib.pipeline_runtime import init_pipeline_state, wipe_downstream
+from lib.pipeline_runtime import init_pipeline_state, set_stage_total, wipe_downstream
 from lib.stages import STAGES
 
 
@@ -25,13 +26,17 @@ def cmd_run(args):
     if not os.path.exists(state_path):
         init_pipeline_state(state_path)
     base_dirs = {'cache': cache, 'output': outdir}
-    enabled = getattr(args, 'ai', False) is True
+    # v20.1.0: AI preparation is driven by the configuration only (ai section
+    # present and ai.enabled not false); there is no --ai option.
+    enabled = ai_active(cfg)
+    ai_error = ('AI is not enabled in the configuration: declare an "ai" section '
+                'and do not set "ai.enabled" to false')
     selected = [(i, k, fn) for i, (k, fn) in enumerate(STAGES)
                 if enabled or k != 'prepare_ai_analysis']
     if args.stage is not None:
         idx, key = resolve_stage(args.stage)
-        if enabled and key != 'prepare_ai_analysis':
-            raise SystemExit('--ai cannot be combined with --stage other than 8')
+        if key == 'prepare_ai_analysis' and not enabled:
+            raise SystemExit(ai_error)
         if args.force:
             wipe_downstream(state_path, key, work, STAGE_OUTPUTS,
                             stage_order=STAGE_ORDER, base_dirs=base_dirs)
@@ -39,7 +44,7 @@ def cmd_run(args):
     elif args.from_ is not None:
         from_idx, from_key = resolve_stage(args.from_)
         if from_key == 'prepare_ai_analysis' and not enabled:
-            raise SystemExit('Use --ai with --from 8, or use --stage 8')
+            raise SystemExit(ai_error)
         wipe_downstream(state_path, from_key, work, STAGE_OUTPUTS,
                         stage_order=STAGE_ORDER, base_dirs=base_dirs)
         run_list = [(i, k, fn) for i, k, fn in selected if i >= from_idx]
@@ -57,8 +62,14 @@ def cmd_run(args):
         if args.force:
             wipe_downstream(state_path, STAGE_ORDER[0], work, STAGE_OUTPUTS,
                             stage_order=STAGE_ORDER, base_dirs=base_dirs)
-    for idx, key, fn in run_list:
-        run_stage(idx, key, fn, cfg, cache, work, state_path, args)
+    # v20.1.0: the displayed stage total is the number of stages of this
+    # configuration (8, or 9 when the optional AI stage is active).
+    set_stage_total(len(selected))
+    try:
+        for idx, key, fn in run_list:
+            run_stage(idx, key, fn, cfg, cache, work, state_path, args)
+    finally:
+        set_stage_total(None)
     if args.progress_json:
         emit_progress(-1, 'pipeline', 'complete')
     else:

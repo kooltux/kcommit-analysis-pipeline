@@ -8,6 +8,30 @@ Its default `${CONFIGDIR}/ai/ai_server_front_page.md` supplies the UTF-8 Markdow
 guide packaged by Stage 08 and served at `/` and `/README.md`. Regenerate the
 zipapp after editing it; see `AI_ANALYSIS.md` for validation and authentication.
 
+## Schema attributes and validation
+
+`CONFIG_SCHEMA` in `lib/config.py` is the single definition of the configuration.
+Unknown sections/keys are errors. Each key declares a `type` (and `list` for
+lists) and may declare:
+
+| Attribute | Meaning |
+|---|---|
+| `kind` | `file` or `dir` (mandatory for `path` keys) |
+| `access` | `read` (default: must exist and be readable) or `create` (may be absent, must be a directory if present) |
+| `needs` | Feature that uses the key: `always` (default), `ai` (AI active), `html` (HTML output produced) |
+| `severity` | `error` (default, `validate` fails) or `notice` (reported only) |
+| `default` | Path under the initial configuration directory used when the key is unset |
+| `content` | Content check: `text` (UTF-8), `markdown` (UTF-8, non-empty), `json`, `ai_result_schema` |
+| `required` | Key must be set (`kernel.rev_old`, `kernel.rev_new`) |
+| `min` / `max` / `enum` | Value limits, e.g. `ai.chunk_size` >= 1 |
+
+`validate` (and Stage 00) check only keys whose `needs` feature is active, so the
+`ai.*` assets are ignored without an `ai` section or with `ai.enabled: false`.
+Include, variable and JSON errors are reported as validation errors (exit code 1).
+
+`ai.enabled` (bool): the `ai` section enables Stage 08 and the validation of its
+assets unless it is `false`. There is no `--ai` command-line option.
+
 Built-in variables (always available):
 - `${WORKSPACE}` — from shell environment
 - `${TOOLDIR}` — pipeline repository root (auto-detected)
@@ -118,7 +142,7 @@ point diverge (unusual).
 ```
 `active` maps profile names to weights (0–100). Weight scales that profile's
 rule contributions: 100 = full, 0 = disabled. Profiles are loaded from
-`profiles_dirs` defaults to `profiles/` under the initial configuration directory. The singular alias `profiles_dir` is also accepted and normalized to a list. Only selected directories are searched; missing profiles are errors. To use samples, explicitly select `${TOOLDIR}/configs/profiles` and the required sample rule directories.
+`profiles_dirs` defaults to `profiles/` under the initial configuration directory. The singular alias `profiles_dir` was removed in v20.1.0 (unknown key). Only selected directories are searched; missing profiles are errors. To use samples, explicitly select `${TOOLDIR}/configs/profiles` and the required sample rule directories.
 
 ### `rules`
 ```json
@@ -126,7 +150,7 @@ rule contributions: 100 = full, 0 = disabled. Profiles are loaded from
   "rules_dirs": ["${CONFIGDIR}/rules"]
 }
 ```
-Rule-set directories default to `rules/` under the initial configuration directory. Names must be unique across selected directories and are looked up exactly as written. The singular alias `rules_dir` is also accepted and normalized to a list. There is no automatic sample lookup or lower-priority fallback tier; explicitly select `${TOOLDIR}/configs/rules` to use shipped samples.
+Rule-set directories default to `rules/` under the initial configuration directory. Names must be unique across selected directories and are looked up exactly as written. The singular alias `rules_dir` was removed in v20.1.0 (unknown key). There is no automatic sample lookup or lower-priority fallback tier; explicitly select `${TOOLDIR}/configs/rules` to use shipped samples.
 
 ### `filter`
 Controls pre-score filtering (stage 04) and post-score filtering (stage 06).

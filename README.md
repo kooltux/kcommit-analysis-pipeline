@@ -1,6 +1,6 @@
 # kcommit-analysis-pipeline
 
-Current release: `v20.0.0` — initial-config anchoring and isolated product resources.
+Current release: `v20.1.0` — schema-driven path validation and config-driven AI stage.
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
@@ -41,8 +41,14 @@ prefilter-kept commits separately without changing pipeline scores.
 | 8 | `prepare_ai_analysis`  | `lib/stages/st08_prepare_ai.py`    | Optional: package prefilter-kept commits for advisory AI assessment |
 
 Intermediate data is stored in `<work_dir>/cache/` and each stage can be
-restarted independently. The ordinary run stops at stage 07 unless `--ai` is
-selected; stage 08 can also be run explicitly.
+restarted independently. Stage 08 runs only when the configuration declares an
+`ai` section that is not disabled with `"enabled": false`; otherwise the run
+stops at stage 07 and `--stage 8` is refused.
+
+`validate` checks every file/directory setting declared in `CONFIG_SCHEMA`
+(existence, kind, readability, content) plus include errors; settings of a
+disabled feature (e.g. `ai.*` without an `ai` section) are not checked. See
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md#schema-attributes-and-validation).
 
 ## Running the pipeline
 
@@ -82,10 +88,10 @@ python3 kcommit_pipeline.py run --config /path/to/cfg.json --progress-json
 ## Optional AI assessment
 
 Stage 08 packages stage 04 prefilter-kept commits for independent assessment.
-It is opt-in and advisory: AI output does not change rule/profile scoring,
-rankings, or cherry-pick test results. Run the normal pipeline first, then
-prepare and import results using the commands below. Alternatively, add `--ai`
-to the full `run` command to include stage 08.
+It is enabled by the configuration (an `ai` section, unless `ai.enabled` is
+false) and advisory: AI output does not change rule/profile scoring, rankings,
+or cherry-pick test results. A full `run` then includes stage 08; it can also be
+run alone as shown below.
 
 ```bash
 python3 kcommit_pipeline.py run --config /path/to/cfg.json --stage 8
@@ -364,14 +370,14 @@ Key sections:
 
 ## Profiles and rules
 
-Profiles and rules live in directories referenced by `paths.profiles_dirs`
-and `paths.rules_dirs` (defaulting to `<CONFIGDIR>/profiles/` and
-`<CONFIGDIR>/rules/`). The singular compatibility aliases `profiles_dir` and
-`rules_dir` are also accepted and normalized to the same internal list form.
-When a requested profile or rule is not found in the external config tree, the
-pipeline automatically falls back to the built-in shipped `configs/profiles/`
-and `configs/rules/` directories. See `docs/PROFILES_AND_RULES.md` for the
-full format.
+Profiles and rules live in the directories listed in `profiles.profiles_dirs`
+and `rules.rules_dirs` (defaulting to `<CONFIGDIR>/profiles/` and
+`<CONFIGDIR>/rules/`); the loader derives `paths.profiles_dirs` and
+`paths.rules_dirs`. The singular `profiles_dir` / `rules_dir` aliases were
+removed in v20.1.0. Only the selected directories are searched: there is no
+automatic fallback to the shipped `configs/profiles/` and `configs/rules/`;
+select them explicitly through `${TOOLDIR}`. See `docs/PROFILES_AND_RULES.md`
+for the full format.
 
 ## Outputs
 

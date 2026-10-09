@@ -7,7 +7,13 @@ from lib.validation import validate_inputs
 
 
 def cmd_validate(args):
-    cfg = load_cfg(args)
+    # v20.1.0: include/variable/JSON errors are reported as validation problems
+    # (exit 1, no traceback); built-in variable errors keep their SystemExit.
+    try:
+        cfg = load_cfg(args)
+    except (OSError, ValueError) as exc:
+        logging.error('%s', exc)
+        raise SystemExit(1)
     work     = cfg['paths']['work_dir']
     kernel   = cfg.get('kernel', {}) or {}
     filt     = cfg.get('filter', {}) or {}

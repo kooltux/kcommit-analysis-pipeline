@@ -224,6 +224,29 @@ def test_update_stage_progress_switches_from_spinner_to_bar(monkeypatch):
     assert '10/100' in buf2.getvalue()
 
 
+def test_finish_stage_bar_is_zero_based_and_full_on_last_stage(tmp_path, capsys):
+    """v20.1.0: 9 stages are numbered 0..8: first reads 0/8 (empty), last 8/8 (full)."""
+    path = str(tmp_path / 'state.json')
+    init_pipeline_state(path)
+    t0 = start_stage(path, 'prepare_pipeline', 0, 9)
+    finish_stage(path, 'prepare_pipeline', t0)
+    first = capsys.readouterr().err
+    assert '] 0/8' in first and first.count('#') == 0
+    t0 = start_stage(path, 'prepare_ai_analysis', 8, 9)
+    finish_stage(path, 'prepare_ai_analysis', t0)
+    last = capsys.readouterr().err
+    assert '] 8/8' in last and last.count('#') == 25
+
+
+def test_in_progress_bar_is_zero_based(monkeypatch):
+    line = _capture_stderr_line(monkeypatch, dict(
+        index=8, total=9, frac=0.5, label='x', n_done=None, n_total=None))
+    assert '8/8' in line
+    line = _capture_stderr_line(monkeypatch, dict(
+        index=0, total=9, frac=0.5, label='x', n_done=None, n_total=None))
+    assert '0/8' in line
+
+
 def test_bar_helper_uses_25_char_width():
     """finish_stage()'s _bar() helper matches the same 25-char width."""
     from lib.pipeline_runtime import _bar

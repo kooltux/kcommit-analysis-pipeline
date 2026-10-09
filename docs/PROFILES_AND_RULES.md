@@ -8,7 +8,7 @@ matches contribute to the final commit score.
 
 Profile files are JSON, one per profile name. Configure `profiles.profiles_dirs`;
 the loader derives `paths.profiles_dirs` for consumers. The singular alias
-`profiles_dir` is also accepted and normalized to a list. The default is
+`profiles_dir` was removed in v20.1.0. The default is
 `profiles/` under the initial configuration directory. Only selected roots are
 searched: missing profiles are errors, not a reason to load installed samples.
 Select `${TOOLDIR}/configs/profiles` explicitly if you want the sample profiles.
@@ -52,7 +52,7 @@ The scoring trace in the commit JSON exposes `raw_rule_total` and
 
 A **rule** is a named directory containing pattern files. Configure
 `rules.rules_dirs`; the loader derives `paths.rules_dirs`. The singular alias
-`rules_dir` is also accepted and normalized to a list. The default is `rules/`
+`rules_dir` was removed in v20.1.0. The default is `rules/`
 under the initial configuration directory. Names are looked up exactly as written
 and must be unique across all selected roots; there is no fallback/override tier.
 Select `${TOOLDIR}/configs/rules` explicitly to use sample rule folders. A product
