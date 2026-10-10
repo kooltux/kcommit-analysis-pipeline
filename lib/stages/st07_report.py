@@ -600,12 +600,26 @@ def _dump_merged_config(cfg, raw_cfg, outdir):
     
     Internal metadata (_meta, standalone config_dir) are filtered out to keep the
     manifest clean and focused on user-facing configuration.
+
+    v20.1.1: all paths are written relative to *outdir* (the directory that holds
+    the manifest), so the exported file contains no absolute path.
     
     Returns the path written, or None on error.
     """
     try:
         # Use raw_cfg (non-expanded) to preserve variable references
         dump_cfg = {k: v for k, v in raw_cfg.items() if k not in ('_meta', 'config_dir')}
+        # v20.1.1: no absolute path in the exported manifest; every path (schema
+        # path keys and absolute 'vars' values) is relative to the output directory.
+        from lib.config import materialize_resources, relativize_paths
+        # Repeatable analysis: the exported file is used as the initial configuration
+        # from its own directory, so implicit locations (profiles/, rules/, ai/ ...)
+        # are made explicit and every path is relative to that directory.
+        dump_cfg = materialize_resources(dump_cfg, cfg)
+        dump_cfg = relativize_paths(dump_cfg, outdir)
+        if isinstance(dump_cfg.get('vars'), dict) and 'CONFIGDIR' in dump_cfg['vars']:
+            # The exported file is the configuration: its directory is CONFIGDIR.
+            dump_cfg['vars']['CONFIGDIR'] = '.'
         config_path = os.path.join(outdir, 'pipeline_config.json')
         _save_ordered_json(config_path, dump_cfg)
         return config_path

@@ -32,6 +32,27 @@ Include, variable and JSON errors are reported as validation errors (exit code 1
 `ai.enabled` (bool): the `ai` section enables Stage 08 and the validation of its
 assets unless it is `false`. There is no `--ai` command-line option.
 
+### Exported configuration
+
+Stage 07 writes the merged configuration to `output/pipeline_config.json`
+(includes merged, built-in variables expanded, user variable references kept).
+Since v20.1.1 it contains no absolute path: every value of a `path` key and every
+absolute value in `vars` is relative to the `output/` directory, so the output can be
+archived and moved anywhere. `vars.CONFIGDIR` is `.`: the exported file is itself the
+configuration. Shortest paths are computed by comparing real filesystem objects, so
+symlinks and mount points do not make a path climb to `/`. Values with unresolved `${VAR}` references, URLs and
+already relative paths are written as they are. Loading the exported file resolves
+the paths relative to its own directory.
+
+The export is meant for a repeatable analysis: on another machine where the tool and the
+inputs have been transferred with the same relative layout, go to the output directory and
+run `python3 <tool>/kcommit_pipeline.py run --config pipeline_config.json`. For that, the
+export states every location explicitly, including the conventional `profiles/`, `rules/`,
+`scoring/`, `html/`, `assets/` and `ai/` resources of the original configuration directory
+and the work/cache/output directories. Paths use the shortest relative spelling, also
+through nearby directory symlinks, and the default `TOOLDIR` keeps the spelling used to
+start the tool.
+
 Built-in variables (always available):
 - `${WORKSPACE}` — from shell environment
 - `${TOOLDIR}` — pipeline repository root (auto-detected)

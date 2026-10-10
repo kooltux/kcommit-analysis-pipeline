@@ -1,10 +1,63 @@
 #!/bin/bash
+#
+# run_tests - run the unit tests (extra arguments are passed to pytest).
+#
+#   * colored output on the terminal (when stdout is a terminal)
+#   * uncolored log in $KCAP_TEST_LOG (default: /tmp/kcommit-analysis-pipeline.log)
+#   * copy of that log in the clipboard (xclip -selection clipboard), when xclip
+#     is installed and a display is available
+#
+# Where the output goes is announced before the tests start and repeated at the
+# end (the beginning of a long output is easily missed).
+#
+# The exit status is the one of pytest.
 
 # we must be in top dir...
-cd $(dirname $0)
+cd "$(dirname "$0")" || exit 1
 
 # Set WORKSPACE to current directory
-export WORKSPACE=$(pwd)
+export WORKSPACE="$(pwd)"
+
+LOG="${KCAP_TEST_LOG:-/tmp/kcommit-analysis-pipeline.log}"
+RAW="$(mktemp)"
+trap 'rm -f "$RAW"' EXIT
+
+COLOR=no
+[ -t 1 ] && COLOR=yes
+
+# Clipboard availability, decided up front so that it can be announced.
+CLIP_OK=no
+if ! command -v xclip >/dev/null 2>&1; then
+    CLIP_PLAN="will NOT be copied to the clipboard (xclip not found)"
+elif [ -z "$DISPLAY" ]; then
+    CLIP_PLAN="will NOT be copied to the clipboard (no DISPLAY)"
+else
+    CLIP_OK=yes
+    CLIP_PLAN="will be copied to the clipboard (xclip -selection clipboard)"
+fi
+
+echo "run_tests: this output is also available (uncolored) in the file $LOG"
+echo "run_tests: the log $CLIP_PLAN"
 
 # to run pytest correctly . path matters :)
-python3 -m pytest $@
+# (our --color comes first: an explicit --color given by the caller wins)
+python3 -m pytest --color="$COLOR" "$@" 2>&1 | tee "$RAW"
+STATUS=${PIPESTATUS[0]}
+
+# uncolored log: strip ANSI escape sequences and carriage returns
+sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\r$//' "$RAW" > "$LOG"
+
+CLIP_DONE="NOT copied to the clipboard"
+if [ "$CLIP_OK" = yes ]; then
+    if xclip -selection clipboard -i < "$LOG" >/dev/null 2>&1; then
+        CLIP_DONE="copied to the clipboard"
+    else
+        CLIP_DONE="NOT copied to the clipboard (xclip failed)"
+    fi
+fi
+
+echo "run_tests: exit status $STATUS"
+echo "run_tests: the output above is also available (uncolored) in the file $LOG"
+echo "run_tests: the log was $CLIP_DONE"
+
+exit "$STATUS"

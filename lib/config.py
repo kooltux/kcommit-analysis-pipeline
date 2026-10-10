@@ -16,6 +16,7 @@ import copy
 import json
 import os
 import re
+import sys
 import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -209,6 +210,205 @@ def _resolve_known_paths(node, base_dir):
     return node
 
 
+def _relative_value(value, base_dir, aliases=None):
+    """Return *value* relative to *base_dir* when it is an absolute filesystem path.
+
+    Anything else (relative paths, URLs, empty strings, values with unresolved
+    ``${VAR}`` references, ``~`` paths, non-strings) is returned unchanged.
+    *aliases* is an optional callable returning the symlink alias map used to find
+    a shorter spelling when the plain result climbs three levels or more.
+    """
+    if (not isinstance(value, str) or not value or '://' in value or '${' in value
+            or not os.path.isabs(value)):
+        return value
+    best = _physical_relpath(value, base_dir)
+    if aliases is None or _climb(best) < _ALIAS_MIN_CLIMB:
+        return best
+    for candidate in _alias_candidates(value, aliases()):
+        rel = _physical_relpath(candidate, base_dir)
+        if (_climb(rel), len(rel)) < (_climb(best), len(best)):
+            best = rel
+    return best
+
+
+_ALIAS_MIN_CLIMB = 3      # only look for symlink aliases when the path climbs this much
+_ALIAS_MAX_DEPTH = 3      # directory levels explored below each ancestor of the base
+_ALIAS_PER_DIR = 1000     # entries examined per directory
+_ALIAS_MAX_ENTRIES = 20000  # entries examined in total
+
+
+def _climb(rel):
+    """Number of leading '..' components of a relative path."""
+    count = 0
+    for part in rel.split('/'):
+        if part != '..':
+            break
+        count += 1
+    return count
+
+
+def _symlink_aliases(base_dir):
+    """Map real directory -> nearest symlink spelling found around *base_dir*.
+
+    Directories below every ancestor of *base_dir* are explored (nearest ancestor
+    first, bounded in depth and entry count, symlinks never followed while walking)
+    and every symlink to a directory is recorded under its real target.  A path
+    inside such a target can then be spelled through the (usually nearer) symlink.
+    """
+    aliases = {}
+    seen = set()
+    budget = [_ALIAS_MAX_ENTRIES]
+
+    def scan(path, depth):
+        if depth > _ALIAS_MAX_DEPTH or budget[0] <= 0 or path in seen:
+            return
+        seen.add(path)
+        try:
+            iterator = os.scandir(path)
+        except OSError:
+            return
+        with iterator:
+            for number, entry in enumerate(iterator):
+                if number >= _ALIAS_PER_DIR or budget[0] <= 0:
+                    break
+                budget[0] -= 1
+                try:
+                    if entry.is_symlink():
+                        if entry.is_dir():
+                            aliases.setdefault(os.path.realpath(entry.path), entry.path)
+                    elif entry.is_dir(follow_symlinks=False):
+                        scan(entry.path, depth + 1)
+                except OSError:
+                    continue
+
+    parts = [p for p in os.path.normpath(base_dir).split(os.sep) if p]
+    for count in range(len(parts), -1, -1):
+        scan(os.sep + os.sep.join(parts[:count]), 1)
+    return aliases
+
+
+def _alias_candidates(value, aliases):
+    """Spellings of *value* through the known directory symlinks."""
+    parts = [p for p in os.path.realpath(value).split(os.sep) if p]
+    for count in range(len(parts), 0, -1):
+        alias = aliases.get(os.sep + os.sep.join(parts[:count]))
+        if alias:
+            yield os.path.join(alias, *parts[count:])
+
+
+def _physical_relpath(value, base_dir):
+    """Shortest relative path from *base_dir* to *value*, comparing real locations.
+
+    The deepest ancestor of *base_dir* that is the same filesystem object as an
+    ancestor of *value* (``os.path.samestat``) is used as the common root, so
+    symlinks, bind mounts and differently spelled mount points (for example
+    ``/net/storage/AI`` seen through two paths) do not make the result climb to
+    ``/`` and come back down.  Without a common object other than ``/`` (or when
+    the paths cannot be examined) the purely lexical relative path is returned.
+    """
+    v = [p for p in os.path.normpath(value).split(os.sep) if p]
+    b = [p for p in os.path.normpath(base_dir).split(os.sep) if p]
+
+    def anchor(parts, count):
+        return os.sep + os.sep.join(parts[:count])
+
+    v_stats = []
+    for j in range(len(v), -1, -1):
+        try:
+            v_stats.append((j, os.stat(anchor(v, j))))
+        except OSError:
+            continue
+    for i in range(len(b), -1, -1):
+        try:
+            base_stat = os.stat(anchor(b, i))
+        except OSError:
+            continue
+        for j, stat in v_stats:
+            if os.path.samestat(base_stat, stat):
+                return '/'.join(['..'] * (len(b) - i) + v[j:]) or '.'
+    return os.path.relpath(value, base_dir)
+
+
+def relativize_paths(cfg, base_dir):
+    """Return a deep copy of *cfg* whose absolute paths are relative to *base_dir*.
+
+    v20.1.1: used for the exported ``output/pipeline_config.json`` so that the
+    manifest holds no absolute path and can be moved anywhere together with the
+    output directory.  Values of every schema ``path`` key (scalars and list
+    items, in any section) and every absolute value of the top-level ``vars``
+    section are converted; other strings are never rewritten.  ``vars.CONFIGDIR``
+    is the directory of the original configuration file and is converted like
+    every other path (it is not the directory of the exported file).
+    """
+    base_dir = os.path.realpath(os.path.abspath(os.fspath(base_dir)))
+    alias_map = []
+
+    def aliases():
+        # Symlink aliases are explored lazily, once, only when a path climbs far.
+        if not alias_map:
+            alias_map.append(_symlink_aliases(base_dir))
+        return alias_map[0]
+
+    def rel(value):
+        return _relative_value(value, base_dir, aliases)
+
+    def convert(node, top=False):
+        if isinstance(node, dict):
+            out = {}
+            for key, value in node.items():
+                if top and key == 'vars' and isinstance(value, dict):
+                    out[key] = {k: rel(v) for k, v in value.items()}
+                elif key in _PATH_KEYS and isinstance(value, list):
+                    out[key] = [rel(v) for v in value]
+                elif key in _PATH_KEYS:
+                    out[key] = rel(value)
+                else:
+                    out[key] = convert(value)
+            return out
+        if isinstance(node, list):
+            return [convert(v) for v in node]
+        return node
+
+    return convert(copy.deepcopy(cfg), top=True)
+
+
+_EXPLICIT_PATHS = (
+    ('paths', 'work_dir'), ('paths', 'cache_dir'), ('paths', 'output_dir'),
+    ('paths', 'assets_dir'), ('profiles', 'profiles_dirs'), ('rules', 'rules_dirs'),
+    ('scoring', 'scoring_dir'), ('reports', 'templates_dir'),
+)
+
+
+def materialize_resources(manifest_cfg, runtime_cfg):
+    """Return a copy of *manifest_cfg* with every implicit resource location explicit.
+
+    v20.1.1: the exported configuration must reproduce the run when it is used as
+    the initial configuration from another directory.  Locations that were only
+    conventional (``profiles/``, ``rules/``, ``scoring/``, ``html/``, ``assets/``
+    under the original configuration directory, the work/cache/output directories
+    and the ``ai`` assets) are copied from the loaded *runtime_cfg* into the
+    user-facing keys, unless the manifest already sets them.
+    """
+    from lib.resources import resource_path
+    out = copy.deepcopy(manifest_cfg)
+    runtime_paths = (runtime_cfg or {}).get('paths') or {}
+
+    def fill(section, key, value):
+        if value in (None, '', []):
+            return
+        target = out.setdefault(section, {})
+        if isinstance(target, dict) and target.get(key) in (None, '', []):
+            target[key] = copy.deepcopy(value)
+
+    for section, key in _EXPLICIT_PATHS:
+        fill(section, key, runtime_paths.get(key))
+    if ai_active(out):
+        for key, spec in CONFIG_SCHEMA['ai'].items():
+            if key != '__type__' and spec.get('default'):
+                fill('ai', key, resource_path(runtime_cfg, None, *spec['default'].split('/')))
+    return out
+
+
 def deep_merge(base, patch, source=None, events=None, path_prefix='', lists='union'):
     """Recursively merge patch into base in-place and return base.
 
@@ -254,11 +454,33 @@ def apply_override(cfg, override_json):
     return cfg
 
 
+def _default_tool_dir():
+    """Tool installation root, spelled the way the tool was started.
+
+    Python resolves symlinks of the script directory, so ``__file__`` points to the
+    physical location of the tool (for example ``/net/storage/AI/kcap``) even when it
+    is started through a nearby symlink such as ``../../tools/kcap``.  v20.1.1: when
+    ``sys.argv[0]`` names the same installation (checked on lib/config.py), the
+    directory as spelled there is returned, so relative paths exported from it stay
+    short.  Otherwise the physical location is used.
+    """
+    physical = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    argv0 = sys.argv[0] if sys.argv else ''
+    if argv0:
+        spelled = os.path.dirname(os.path.abspath(argv0))
+        marker = os.path.join(spelled, 'lib', 'config.py')
+        try:
+            if spelled != physical and os.path.samefile(marker, os.path.abspath(__file__)):
+                return spelled
+        except OSError:
+            pass
+    return physical
+
+
 def _initial_variables(config_dir, inherited_vars=None):
     variables = dict(inherited_vars or {})
     variables.setdefault('WORKSPACE', os.environ.get('WORKSPACE', ''))
-    tool_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    variables.setdefault('TOOLDIR', os.environ.get('TOOLDIR', tool_dir))
+    variables.setdefault('TOOLDIR', os.environ.get('TOOLDIR', _default_tool_dir()))
     variables.setdefault('CONFIGDIR', config_dir)
     variables.setdefault('CWD', os.getcwd())
     return variables

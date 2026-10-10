@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v20.1.1 — relative paths in the exported configuration (2026-10-09)
+
+### Changed
+
+- `run_tests` prints colored pytest output on a terminal, writes an uncolored log to
+  `/tmp/kcommit-analysis-pipeline.log` (override with `KCAP_TEST_LOG`), copies it to the
+  clipboard with `xclip -selection clipboard` when available, and keeps pytest's exit status.
+- In the exported file `vars.CONFIGDIR` is `.`: the exported file is the configuration, so its
+  own directory (`output/`) is the configuration directory and every other path is expressed
+  relative to it.
+- `output/pipeline_config.json` contains no absolute path: every value of a schema `path`
+  key (scalars and list items) and every absolute value of `vars` is written relative to the
+  `output/` directory that holds the file. Relative paths, URLs, `~` paths and values with
+  unresolved `${VAR}` references are left untouched. Loading the exported file resolves the
+  paths relative to its own directory again (`lib.config.relativize_paths()`). The common root of a
+  path and the output directory is found by comparing real filesystem objects, so the result
+  is the shortest relative path even when a path is spelled through a symlink, a bind mount
+  or a differently named mount point.
+- The export is a repeatable configuration: used as the initial configuration from its own
+  directory (`run --config output/pipeline_config.json`) it resolves to the same paths.
+  Implicit locations (conventional `profiles/`, `rules/`, `scoring/`, `html/`, `assets/`,
+  `ai/` next to the original config, and the work/cache/output directories) are written
+  explicitly (`lib.config.materialize_resources()`), and `vars.CONFIGDIR` is `.`.
+- When a path still climbs three levels or more, directory symlinks found around the output
+  directory (below each of its ancestors, at most three levels deep and 20000 entries, never
+  followed while exploring) are tried as shorter spellings, and the shortest result wins.
+- The default `${TOOLDIR}` keeps the spelling used to start the tool: when it is started through a
+  symlink (for example `tools/kcap -> /net/storage/AI/kcap`), `TOOLDIR` is that nearby symlink
+  path instead of the physical target Python resolves, so exported paths stay short. The
+  `TOOLDIR` environment variable still takes precedence.
+
 ## v20.1.0 — schema-driven path validation and config-driven AI stage (2026-10-09)
 
 ### Changed

@@ -1,6 +1,6 @@
 # kcommit-analysis-pipeline
 
-Current release: `v20.1.0` — schema-driven path validation and config-driven AI stage.
+Current release: `v20.1.1` — relative paths in the exported `output/pipeline_config.json`.
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
