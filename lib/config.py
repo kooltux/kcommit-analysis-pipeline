@@ -21,7 +21,8 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-VAR_RE = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
+# ${NAME} is a configuration variable; ${env:NAME} is taken from the environment (v20.2.0).
+VAR_RE = re.compile(r'\$\{(env:)?([A-Za-z_][A-Za-z0-9_]*)\}')
 INLINE_COMMENT_RE = re.compile(r'(^|(?<=\s))#.*$', re.MULTILINE)
 
 CONFIG_SCHEMA = {
@@ -41,6 +42,8 @@ CONFIG_SCHEMA = {
               'work_dir': {'type': 'path', 'kind': 'dir', 'access': 'create'},
               'cache_dir': {'type': 'path', 'kind': 'dir', 'access': 'create'},
               'output_dir': {'type': 'path', 'kind': 'dir', 'access': 'create'},
+              # v20.2.0: per-host timing statistics (default ${WORKSPACE}/pipeline_stats).
+              'stats_dir': {'type': 'path', 'kind': 'dir', 'access': 'create'},
               'assets_dir': {'type': 'path', 'kind': 'dir', 'severity': 'notice'},
               'profiles_dirs': {'type': 'path', 'list': True, 'kind': 'dir'},
               'rules_dirs': {'type': 'path', 'list': True, 'kind': 'dir'},
@@ -145,10 +148,22 @@ def save_json(path, data):
         f.write('\n')
 
 
+def _env_value(name):
+    """Value of the environment variable *name* for a ``${env:NAME}`` reference."""
+    value = os.environ.get(name, '')
+    if not value:
+        raise SystemExit(
+            'Config error: environment variable {0} is not set. '
+            'Export {0} before running the tool.'.format(name))
+    return value
+
+
 def _expand_string(text, variables, stack=None):
     stack = [] if stack is None else stack
     def repl(match):
-        name = match.group(1)
+        name = match.group(2)
+        if match.group(1):
+            return _env_value(name)
         if name in stack:
             raise ValueError('cyclic variable reference: ' + ' -> '.join(stack + [name]))
         if name not in variables:
@@ -161,10 +176,16 @@ def _expand_string(text, variables, stack=None):
 
 
 def _expand_string_partial(text, variables, stack=None):
-    """Expand only environment variables, leaving intermediate vars unexpanded."""
+    """Expand only environment variables, leaving intermediate vars unexpanded.
+
+    ``${env:NAME}`` references are environment values and are expanded too (left
+    as written when the variable is not set).
+    """
     stack = [] if stack is None else stack
     def repl(match):
-        name = match.group(1)
+        name = match.group(2)
+        if match.group(1):
+            return os.environ.get(name) or match.group(0)
         if name in stack:
             raise ValueError('cyclic variable reference: ' + ' -> '.join(stack + [name]))
         # Only expand if it's an environment variable
@@ -374,7 +395,8 @@ def relativize_paths(cfg, base_dir):
 
 _EXPLICIT_PATHS = (
     ('paths', 'work_dir'), ('paths', 'cache_dir'), ('paths', 'output_dir'),
-    ('paths', 'assets_dir'), ('profiles', 'profiles_dirs'), ('rules', 'rules_dirs'),
+    ('paths', 'stats_dir'), ('paths', 'assets_dir'),
+    ('profiles', 'profiles_dirs'), ('rules', 'rules_dirs'),
     ('scoring', 'scoring_dir'), ('reports', 'templates_dir'),
 )
 
@@ -710,6 +732,13 @@ def _load_config_context(context):
         'scoring_dir': scoring,
         'templates_dir': templates,
     }
+    # v20.2.0: timing statistics directory; default ${WORKSPACE}/pipeline_stats.  Without
+    # a configured directory and without WORKSPACE, statistics are simply not recorded.
+    stats = paths.get('stats_dir')
+    if not stats and variables.get('WORKSPACE'):
+        stats = os.path.join(variables['WORKSPACE'], 'pipeline_stats')
+    if stats:
+        expanded['paths']['stats_dir'] = stats if os.path.isabs(stats) else os.path.normpath(os.path.join(config_dir, stats))
     expanded['_meta'] = {'config_path': path, 'config_dir': config_dir,
                          'initial_config_path': path, 'initial_config_dir': config_dir,
                          'vars': variables, 'include_events': context['events'],

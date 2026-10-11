@@ -16,11 +16,14 @@ v19.9.1:
 import json
 import os
 from lib.config import save_json
-from lib.gitutils import iter_git_log_records, compute_numstat_totals, batch_count_hunks
-from lib.pipeline_runtime import update_stage_progress, finish_progress_line
+from lib.gitutils import (
+    iter_git_log_records, compute_numstat_totals, batch_count_hunks, count_rev_commits,
+)
+from lib.pipeline_runtime import update_stage_progress, finish_progress_line, set_run_size
 from lib.manifest import CACHE_FILES, NSTAGES
 
-_PROGRESS_INTERVAL = 100
+# v20.2.0: the renderer throttles itself in time, so calls can be frequent and cheap.
+_PROGRESS_INTERVAL = 25
 
 
 def _extract_author_org(email):
@@ -42,7 +45,17 @@ def run(cfg, cache):
     include_parents = bool(collect_cfg.get('include_parents', False))
 
     commits = []
-    update_stage_progress(1, NSTAGES, 0.01, 'collecting commits', n_done=0, n_total=max_commits if max_commits else None)
+    # v20.2.0: the commit total is known up front (git rev-list --count), so the
+    # collection shows a determinate bar and an ETA even without collect.max_commits.
+    try:
+        total_hint = count_rev_commits(cfg)
+    except Exception:
+        total_hint = None
+    if max_commits:
+        total_hint = min(total_hint, max_commits) if total_hint else max_commits
+    if total_hint:
+        set_run_size(total_hint)
+    update_stage_progress(1, NSTAGES, 0.0, 'collecting commits', n_done=0, n_total=total_hint or None)
     for rec in iter_git_log_records(cfg):
         if max_commits and len(commits) >= max_commits:
             print('\n  WARNING: stopping at %d commits (collect.max_commits)' % max_commits)
@@ -72,13 +85,14 @@ def run(cfg, cache):
         commits.append(entry)
         n = len(commits)
         if n % _PROGRESS_INTERVAL == 0:
-            if max_commits:
-                update_stage_progress(1, NSTAGES, min(0.99, n / max_commits),
-                                      'collecting commits', n_done=n, n_total=max_commits)
+            if total_hint:
+                shown_total = max(total_hint, n)
+                update_stage_progress(1, NSTAGES, min(0.99, n / shown_total),
+                                      'collecting commits', n_done=n, n_total=shown_total)
             else:
                 update_stage_progress(1, NSTAGES, 0.0, 'collecting commits', n_done=n)
 
-    update_stage_progress(1, NSTAGES, 1.0, 'collecting commits', n_done=len(commits), n_total=max_commits if max_commits else len(commits))
+    update_stage_progress(1, NSTAGES, 1.0, 'collecting commits', n_done=len(commits), n_total=len(commits))
     finish_progress_line()
 
     # Compute actual hunk counts for all commits (replaces placeholder hunks=0)
@@ -94,14 +108,15 @@ def run(cfg, cache):
         shas = [c['commit'] for c in commits if c.get('commit')]
         if shas:
             total = len(shas)
-            step = max(1, total // 80)
 
             def _hunk_progress(done, total_n):
-                if done % step == 0 or done == total_n:
-                    update_stage_progress(1, NSTAGES, done / max(total_n, 1),
-                                          'counting hunks', n_done=done, n_total=total_n)
+                # v20.2.0: no count-based throttle here; the shared renderer limits
+                # the refresh rate in time, so every callback can be forwarded.
+                update_stage_progress(1, NSTAGES, done / max(total_n, 1),
+                                      'counting hunks', n_done=done, n_total=total_n)
 
             print('  counting hunks for %d commits...' % total)
+            update_stage_progress(1, NSTAGES, 0.0, 'counting hunks', n_done=0, n_total=total)
             hunk_counts = batch_count_hunks(cfg, shas, progress_callback=_hunk_progress)
             finish_progress_line()
             for c in commits:

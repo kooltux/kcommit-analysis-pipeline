@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v20.2.0 — environment references, timing statistics, stage progress (2026-10-11)
+
+### Added
+
+- `${env:NAME}` references: the value comes from the environment, never from a
+  configuration variable of the same name; an unset or empty variable is a clear error.
+  `configs/conf.d/00_vars_paths.json` now declares `"WORKSPACE": "${env:WORKSPACE}"`.
+- `paths.stats_dir` (default `${WORKSPACE}/pipeline_stats`, set in `00_vars_paths.json`):
+  per-host timing statistics `<hostname>.json`, the last 10 runs of every stage and of
+  every progress step with an item count (`lib/stats.py`).
+- Duration predictions from these statistics: estimated duration before each stage,
+  estimated total/remaining time after each stage (not with `--progress-json`), and an
+  `ETA ~` on a progress step until its live rate is known.
+- Stage 0 reports progress (validation, rule compilation, cache writing).
+- Stage 1 knows the commit total up front (`git rev-list --count`), so collecting
+  commits shows a determinate bar and an ETA.
+
+### Changed
+
+- Progress lines read `[stage N] [bar] N/stage_count  label`: the bar is local to the
+  step (it no longer suggests a global progress); a finished stage is a full bar.
+- `git log` is streamed: commits are parsed while git is still writing (previously the
+  whole output was awaited first, so stage 1 showed nothing for minutes).
+- `batch_count_hunks` reports after every chunk and the default chunk size is 200 (was 2000).
+
 ## v20.1.1 — relative paths in the exported configuration (2026-10-09)
 
 ### Changed

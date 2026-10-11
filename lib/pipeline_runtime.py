@@ -104,6 +104,73 @@ def set_stage_total(total):
     _STAGE_TOTAL = total
 
 
+# v20.2.0: timing statistics (see lib/stats.py).  *_STATS_DIR* enables recording of the
+# progress steps that have an item count and the prediction shown in their ETA;
+# *_RUN_SIZE* is the number of collected commits of the current run, once known.
+_STATS_DIR = None
+_RUN_SIZE = None
+_steps = {}       # stage index -> {'label', 'start', 'n_total', 'predicted'}
+
+
+def set_stats(stats_dir, run_size=None):
+    """Enable (or disable with None) statistics; optionally set the run size."""
+    global _STATS_DIR, _RUN_SIZE
+    _STATS_DIR = stats_dir or None
+    _RUN_SIZE = run_size
+    _steps.clear()
+
+
+def set_run_size(run_size):
+    global _RUN_SIZE
+    _RUN_SIZE = run_size
+
+
+def _stage_key(index):
+    try:
+        from lib.manifest import PIPELINE_STAGES
+        return PIPELINE_STAGES[index]['key']
+    except (ImportError, IndexError, KeyError, TypeError):
+        return 'stage%s' % index
+
+
+def _close_step(index):
+    """Record the open progress step of stage *index* when it has an item count."""
+    step = _steps.pop(index, None)
+    if not step or not _STATS_DIR or not step.get('n_total'):
+        return
+    elapsed = time.monotonic() - step['start']
+    if elapsed >= 0.5:
+        from lib import stats
+        stats.record(_STATS_DIR, '%s/%s' % (_stage_key(index), step['label']), elapsed,
+                     commits=_RUN_SIZE, items=step['n_total'])
+
+
+def _track_step(index, label, n_total):
+    """Follow the progress steps of a stage (a step is a run of calls with one label)."""
+    step = _steps.get(index)
+    if step and step['label'] != label:
+        _close_step(index)
+        step = None
+    if step is None:
+        _steps[index] = {'label': label, 'start': time.monotonic(), 'n_total': n_total,
+                         'predicted': None}
+    elif n_total and not step['n_total']:
+        step['n_total'] = n_total
+    return _steps[index]
+
+
+def _predicted_seconds(index, step):
+    """Predicted duration of the open step from past runs on this host (cached)."""
+    if step['predicted'] is None:
+        seconds = None
+        if _STATS_DIR and step.get('n_total'):
+            from lib import stats
+            seconds, _ = stats.predict(_STATS_DIR, '%s/%s' % (_stage_key(index), step['label']),
+                                       commits=_RUN_SIZE, items=step['n_total'])
+        step['predicted'] = seconds if seconds is not None else False
+    return step['predicted'] or None
+
+
 # Evaluate once at import time; stages inherit the same stderr fd as the
 # parent process so this correctly tracks redirection done before exec.
 _STDERR_IS_TTY = hasattr(sys.stderr, 'isatty') and sys.stderr.isatty()
@@ -136,11 +203,6 @@ def _write(path, state):
 def _bar(done, total, width=_BAR_WIDTH):
     n = int(width * done / max(total, 1))
     return '[%s%s] %d/%d' % ('#' * n, '-' * (width - n), done, total)
-
-
-def _last_index(total):
-    """Index of the last stage for *total* stages (stages are numbered from 0)."""
-    return max(int(total) - 1, 0)
 
 
 def _eprint(*args, **kwargs):
@@ -189,11 +251,11 @@ def update_stage_progress(index, total, frac, label,
        done/total counts, elapsed time, rate, and ETA -- unchanged from
        prior versions.
     """
+    total = _STAGE_TOTAL or total
+    step = _track_step(index, label, n_total)   # statistics work even without a TTY
     if not _STDERR_IS_TTY:
         return
 
-    total = _STAGE_TOTAL or total
-    shown = _last_index(total)
     key = (index, total)
     now = time.monotonic()
     if now - _last_upd.get(key, 0.0) < _PROGRESS_REFRESH and frac < 1.0:
@@ -207,7 +269,7 @@ def update_stage_progress(index, total, frac, label,
         # Mode 1: caller has a real fraction but no count of any kind.
         w  = _BAR_WIDTH
         f  = int(w * max(0.0, min(1.0, frac)))
-        b  = '[%s%s] %d/%d  %-24s' % ('#' * f, '-' * (w - f), index, shown, label)
+        b  = '[stage %d] [%s%s] %d/%d  %-24s' % (index, '#' * f, '-' * (w - f), index, total, label)
         line = '\r%s  %s' % (b, _fmt_hms(el))
         if len(line) < _LINE_WIDTH:
             line += ' ' * (_LINE_WIDTH - len(line))
@@ -220,7 +282,7 @@ def update_stage_progress(index, total, frac, label,
         si = _spinner_i.get(key, 0)
         _spinner_i[key] = (si + 1) % len(_SPINNER_FRAMES)
         spin = _SPINNER_FRAMES[si]
-        b = '[%s] %d/%d  %-24s' % (spin, index, shown, label)
+        b = '[stage %d] [%s] %d/%d  %-24s' % (index, spin, index, total, label)
         line = '\r%s  %d  %s' % (b, n_done, _fmt_hms(el))
         if len(line) < _LINE_WIDTH:
             line += ' ' * (_LINE_WIDTH - len(line))
@@ -231,11 +293,15 @@ def update_stage_progress(index, total, frac, label,
     # Mode 3: full determinate bar with counts, rate, and ETA.
     w  = _BAR_WIDTH
     f  = int(w * max(0.0, min(1.0, frac)))
-    b  = '[%s%s] %d/%d  %-24s' % ('#' * f, '-' * (w - f), index, shown, label)
+    b  = '[stage %d] [%s%s] %d/%d  %-24s' % (index, '#' * f, '-' * (w - f), index, total, label)
     counts = '  %d/%d' % (n_done, n_total)
     rate = ('  %.1f/s' % (n_done / el)) if n_done and el > 0.5 else ''
-    eta  = ('  ETA %s' % _fmt_hms((el / n_done) * (n_total - n_done))
-            if n_done and n_total and frac > 0.01 else '')
+    if n_done and n_total and frac > 0.01:
+        eta = '  ETA %s' % _fmt_hms((el / n_done) * (n_total - n_done))
+    else:
+        # v20.2.0: no live rate yet; use the prediction from past runs on this host.
+        predicted = _predicted_seconds(index, step)
+        eta = ('  ETA ~%s' % _fmt_hms(max(0.0, predicted - el))) if predicted else ''
     line = '\r%s%s  %s%s%s' % (b, counts, _fmt_hms(el), rate, eta)
     if len(line) < _LINE_WIDTH:
         line += ' ' * (_LINE_WIDTH - len(line))
@@ -253,6 +319,7 @@ def start_stage(path, key, index, total):
         'start_time': time.strftime('%Y-%m-%dT%H:%M:%S'),
     }
     _write(path, state)
+    _steps.pop(index, None)
     sk = (index, total)
     _stage_t0[sk] = time.monotonic()
     _last_upd[sk] = 0.0
@@ -271,10 +338,12 @@ def finish_stage(path, key, started, status='ok', extra=None):
         e.update(extra)
     state['stages'][key] = e
     _write(path, state)
-    # v20.1.0: stages are numbered 0..last, so the bar reads index/last: the first
-    # stage is 0/last with an empty bar and the last one is last/last with a full bar.
-    _eprint('%s %s  %.1fs' % (_bar(e.get('index', 0), _last_index(e.get('total', 1))),
-                               key.ljust(30), el))
+    # v20.2.0: bars are step-local, there is no global progress.  A finished stage is
+    # a full bar labelled with its own number out of the number of stages.
+    index = e.get('index', 0)
+    _close_step(index)
+    _eprint('[stage %d] [%s] %d/%d  %s  %.1fs' % (
+        index, '#' * _BAR_WIDTH, index, e.get('total', 1), key.ljust(30), el))
 
 
 def fail_stage(path, key, started, error_msg=''):
@@ -286,6 +355,7 @@ def fail_stage(path, key, started, error_msg=''):
               'duration_sec': round(el, 2), 'error': error_msg or '(unknown)'})
     state['stages'][key] = e
     _write(path, state)
+    _steps.pop(e.get('index', 0), None)   # failed runs are not recorded in the statistics
     _eprint('FAILED %s  %.1fs  %s' % (key.ljust(30), el, error_msg or ''))
 
 

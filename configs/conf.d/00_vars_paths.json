@@ -4,10 +4,11 @@
   // paths: working directories for the pipeline.
 
   "vars": {
+    // ${env:NAME} takes the value from the environment (error when it is not set).
     // WORKSPACE is required: export WORKSPACE=/path/to/ws.
+    "WORKSPACE": "${env:WORKSPACE}",
     // TOOLDIR and CONFIGDIR default to the installation and initial config roots.
     // Self-references retain their incoming built-in values.
-    "WORKSPACE": "${WORKSPACE}",
     "TOOLDIR":   "${TOOLDIR}",
     "CONFIGDIR": "${CONFIGDIR}",
     // User-defined shorthand variables for readability.
@@ -21,6 +22,8 @@
     "output_dir": "${WORKSPACE}/work/output",
     // This example explicitly selects installed sample assets; products may replace it.
     "assets_dir": "${TOOLDIR}/configs/assets",
-    "cache_dir": "${WORKSPACE}/work/cache"
+    "cache_dir": "${WORKSPACE}/work/cache",
+    // Per-host timing statistics (last 10 runs per stage/step) used to predict durations.
+    "stats_dir": "${WORKSPACE}/pipeline_stats"
   }
 }

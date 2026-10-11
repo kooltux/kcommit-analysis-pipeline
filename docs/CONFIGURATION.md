@@ -61,6 +61,12 @@ Built-in variables (always available):
 
 A built-in variable is required only when the configuration references it. If a referenced built-in variable is empty, configuration loading stops with an error before paths are resolved. This prevents an unset `${WORKSPACE}` from silently turning `${WORKSPACE}/work` into `/work`. A non-empty value supplied through the environment, configuration `vars`, or inherited variables satisfies this check.
 
+`${env:NAME}` (since v20.2.0) is a reference to the environment variable `NAME`. It never
+looks at configuration variables, so `"WORKSPACE": "${env:WORKSPACE}"` (as declared by
+`configs/conf.d/00_vars_paths.json`) makes the environment the only source of `WORKSPACE`.
+When `NAME` is unset or empty, loading stops with `environment variable NAME is not set`.
+The exported `pipeline_config.json` holds the expanded value, like any environment value.
+
 For `--override`, objects merge recursively, but every list is replaced in full rather than appended or unioned. For example, the following selects only CSV, removing any other configured report formats:
 
 ```bash
@@ -84,13 +90,30 @@ User-defined shorthand variables expanded before any other processing:
   "work_dir":   "${WORKSPACE}/work",  // required: pipeline working directory
   "cache_dir":  "${WORKSPACE}/work/cache",  // optional override (default: <work_dir>/cache)
   "output_dir": "${WORKSPACE}/work/output", // optional override (default: <work_dir>/output)
-  "assets_dir": "${CONFIGDIR}/assets"  // optional override (default: <initial_config_dir>/assets)
+  "assets_dir": "${CONFIGDIR}/assets",  // optional override (default: <initial_config_dir>/assets)
+  "stats_dir":  "${WORKSPACE}/pipeline_stats" // optional override (default: ${WORKSPACE}/pipeline_stats)
 }
 ```
 `work_dir` is where `cache/` and `output/` sub-directories are created.
 Override `cache_dir` or `output_dir` individually to place them on different
 storage (e.g. a RAM disk for the cache). `work_dir`, `cache_dir`, `output_dir`,
-and `assets_dir` are the only valid keys under `paths`.
+`assets_dir` and `stats_dir` are the only valid keys under `paths`.
+
+#### `stats_dir` — timing statistics used for predictions (v20.2.0)
+
+Every successful stage run adds a record to `<stats_dir>/<hostname>.json` (one file per
+host, because durations depend on the machine). Progress steps that know their item count
+(collecting commits, counting hunks, scoring, ...) are recorded too, under
+`<stage>/<label>`. Only the last 10 runs of each entry are kept; the file also stores the
+average duration and the duration per collected commit / per item.
+
+The predictions use these averages: `run` prints `estimated duration` before a stage,
+`estimated total time` before the first stage and `estimated time for the remaining stages`
+after each stage (none of this with `--progress-json`), and a progress step shows `ETA ~`
+until it has a live rate. With a known commit count the prediction scales with it, so a
+smaller range gives a shorter estimate. Statistics are best effort: an unreadable or
+unwritable `stats_dir` is ignored and never fails a run. Without `stats_dir` and without
+`WORKSPACE` nothing is recorded. Delete the file to forget the history of a host.
 
 #### `assets_dir` — static files copied verbatim into `output/`
 
@@ -462,7 +485,7 @@ Events include:
 ### Validation and finalization
 
 After composition:
-- `paths` is normalized and derived fields are populated (`cache_dir`, `output_dir`, `assets_dir`, `profiles_dirs`, `rules_dirs`, `scoring_dir`, `templates_dir`).
+- `paths` is normalized and derived fields are populated (`cache_dir`, `output_dir`, `stats_dir`, `assets_dir`, `profiles_dirs`, `rules_dirs`, `scoring_dir`, `templates_dir`).
 - Path fields are resolved (including `${CONFIGDIR}` at the root) and canonicalized to absolute paths.
 
 ### Example configuration

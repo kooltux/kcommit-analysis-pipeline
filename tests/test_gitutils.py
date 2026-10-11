@@ -22,6 +22,7 @@ from lib.gitutils import (
     compute_numstat_totals,
     count_hunks_in_patch,
     batch_count_hunks,
+    count_rev_commits,
     RS, FS,
 )
 
@@ -444,9 +445,32 @@ def _make_log_output(sha='abc123', subject='net: fix', body='Details.',
     return RS + head + FS + '\n' + files + '\n'
 
 
+class _FakePopen:
+    """Minimal subprocess.Popen stand-in: text stdout, exit status, kill()."""
+    def __init__(self, text, returncode=0):
+        self.stdout = io.StringIO(text)
+        self.returncode = returncode
+        self.killed = False
+
+    def wait(self):
+        return self.returncode
+
+    def kill(self):
+        self.killed = True
+
+
+def _popen(text, returncode=0, sink=None):
+    def factory(*args, **kwargs):
+        proc = _FakePopen(text, returncode)
+        if sink is not None:
+            sink.append(proc)
+        return proc
+    return patch('subprocess.Popen', side_effect=factory)
+
+
 def test_iter_git_log_records_single():
     out = _make_log_output()
-    with patch('subprocess.run', return_value=_ok(out)):
+    with _popen(out):
         records = list(iter_git_log_records(_cfg()))
     assert len(records) == 1
     assert records[0]['commit'] == 'abc123'
@@ -455,20 +479,20 @@ def test_iter_git_log_records_single():
 
 def test_iter_git_log_records_multiple():
     out = _make_log_output('aaa', 'fix1') + _make_log_output('bbb', 'fix2')
-    with patch('subprocess.run', return_value=_ok(out)):
+    with _popen(out):
         records = list(iter_git_log_records(_cfg()))
     assert len(records) == 2
 
 
 def test_iter_git_log_records_empty():
-    with patch('subprocess.run', return_value=_ok('')):
+    with _popen(''):
         records = list(iter_git_log_records(_cfg()))
     assert records == []
 
 
 def test_iter_git_log_no_merges_flag():
     out = _make_log_output()
-    with patch('subprocess.run', return_value=_ok(out)) as m:
+    with _popen(out) as m:
         list(iter_git_log_records(_cfg(no_merges=True)))
     args = m.call_args[0][0]
     assert '--no-merges' in args
@@ -476,10 +500,58 @@ def test_iter_git_log_no_merges_flag():
 
 def test_iter_git_log_no_numstat_flag():
     out = _make_log_output()
-    with patch('subprocess.run', return_value=_ok(out)) as m:
+    with _popen(out) as m:
         list(iter_git_log_records(_cfg(numstat=False, name_only=True)))
     args = m.call_args[0][0]
     assert '--name-only' in args
+
+
+def test_iter_git_log_records_streams_records_in_small_reads(monkeypatch):
+    """Records are yielded while git is still writing: a stream cut at arbitrary
+    points (here 7-byte reads) gives the same records as one big read."""
+    import lib.gitutils as gitutils
+    out = _make_log_output('aaa', 'fix1') + _make_log_output('bbb', 'fix2') + _make_log_output('ccc', 'fix3')
+    monkeypatch.setattr(gitutils, '_LOG_READ_SIZE', 7)
+    with _popen(out):
+        records = list(iter_git_log_records(_cfg()))
+    assert [r['commit'] for r in records] == ['aaa', 'bbb', 'ccc']
+    assert records[2]['subject'] == 'fix3'
+
+
+def test_iter_git_log_records_yields_first_record_before_the_stream_ends():
+    out = _make_log_output('aaa', 'fix1') + _make_log_output('bbb', 'fix2')
+    procs = []
+    with _popen(out, sink=procs):
+        generator = iter_git_log_records(_cfg())
+        first = next(generator)
+        assert first['commit'] == 'aaa'
+        generator.close()
+    assert procs[0].killed          # the consumer stopped early: git is killed
+
+
+def test_iter_git_log_records_raises_when_git_fails():
+    with _popen('', returncode=128):
+        with pytest.raises(RuntimeError, match='git command failed'):
+            list(iter_git_log_records(_cfg()))
+
+
+def test_count_rev_commits_uses_rev_list_count_with_the_collect_filters():
+    with patch('subprocess.run', return_value=_ok('1234\n')) as m:
+        assert count_rev_commits(_cfg(no_merges=True, first_parent=True)) == 1234
+    args = m.call_args[0][0]
+    assert 'rev-list' in args and '--count' in args
+    assert '--no-merges' in args and '--first-parent' in args
+
+
+@pytest.mark.parametrize('output', ['', 'fatal: bad revision', 'abc'])
+def test_count_rev_commits_returns_none_on_unexpected_output(output):
+    with patch('subprocess.run', return_value=_ok(output)):
+        assert count_rev_commits(_cfg()) is None
+
+
+def test_count_rev_commits_returns_none_when_git_cannot_run():
+    with patch('subprocess.run', side_effect=OSError('no git')):
+        assert count_rev_commits(_cfg()) is None
 
 
 # ── show_commit_patch / show_path_history ────────────────────────────────

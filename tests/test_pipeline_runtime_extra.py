@@ -224,27 +224,26 @@ def test_update_stage_progress_switches_from_spinner_to_bar(monkeypatch):
     assert '10/100' in buf2.getvalue()
 
 
-def test_finish_stage_bar_is_zero_based_and_full_on_last_stage(tmp_path, capsys):
-    """v20.1.0: 9 stages are numbered 0..8: first reads 0/8 (empty), last 8/8 (full)."""
+def test_finished_stage_line_is_a_full_bar_labelled_stage_n_of_count(tmp_path, capsys):
+    """v20.2.0: no global progress; a finished stage is a full bar, 'N/stage_count'."""
     path = str(tmp_path / 'state.json')
     init_pipeline_state(path)
-    t0 = start_stage(path, 'prepare_pipeline', 0, 9)
-    finish_stage(path, 'prepare_pipeline', t0)
-    first = capsys.readouterr().err
-    assert '] 0/8' in first and first.count('#') == 0
-    t0 = start_stage(path, 'prepare_ai_analysis', 8, 9)
-    finish_stage(path, 'prepare_ai_analysis', t0)
-    last = capsys.readouterr().err
-    assert '] 8/8' in last and last.count('#') == 25
+    for index, key in ((0, 'prepare_pipeline'), (7, 'report_commits'), (8, 'prepare_ai_analysis')):
+        t0 = start_stage(path, key, index, 9)
+        finish_stage(path, key, t0)
+        err = capsys.readouterr().err
+        assert err.startswith('[stage %d] [%s] %d/9  %s' % (index, '#' * 25, index, key))
 
 
-def test_in_progress_bar_is_zero_based(monkeypatch):
+def test_in_stage_bar_is_local_to_the_step_and_labelled_stage_n_of_count(monkeypatch):
     line = _capture_stderr_line(monkeypatch, dict(
-        index=8, total=9, frac=0.5, label='x', n_done=None, n_total=None))
-    assert '8/8' in line
+        index=8, total=9, frac=0.0, label='x', n_done=None, n_total=None))
+    assert '[stage 8] [' in line and '] 8/9' in line
+    assert line.count('#') == 0          # empty at the start of the step, whatever the stage
     line = _capture_stderr_line(monkeypatch, dict(
         index=0, total=9, frac=0.5, label='x', n_done=None, n_total=None))
-    assert '0/8' in line
+    assert '[stage 0] [' in line and '] 0/9' in line
+    assert line.count('#') == 12
 
 
 def test_bar_helper_uses_25_char_width():

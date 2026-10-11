@@ -4,3 +4,4 @@
 .*.sw*
 .coverage
 work/
+pipeline_stats/

@@ -1,6 +1,6 @@
 # kcommit-analysis-pipeline
 
-Current release: `v20.1.1` — relative paths in the exported `output/pipeline_config.json`.
+Current release: `v20.2.0` — `${env:}` references, per-host timing statistics with duration predictions, stage 0/1 progress.
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
@@ -84,6 +84,14 @@ python3 kcommit_pipeline.py run --config /path/to/cfg.json \
 # Machine-readable progress events (one JSON line per stage)
 python3 kcommit_pipeline.py run --config /path/to/cfg.json --progress-json
 ```
+
+### Progress and duration estimates
+
+On a terminal each step shows `[stage N] [#####-----] N/stage_count  label`; the bar is
+local to the step (there is no global progress). The tool records timings per host in
+`paths.stats_dir` (default `${WORKSPACE}/pipeline_stats`, last 10 runs) and uses them to
+print estimated durations and an `ETA ~` before a live rate is known. See
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md#stats_dir--timing-statistics-used-for-predictions-v2020).
 
 ## Optional AI assessment
 

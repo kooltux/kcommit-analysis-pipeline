@@ -65,6 +65,7 @@ v19.9.1:
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -129,20 +130,79 @@ def iter_git_log_records(cfg):
         args.append('--name-only')
     args.extend(collect.get('extra_git_log_args', []))
 
-    output = run_git(cfg, args)
-    for raw in output.split(RS):
-        raw = raw.strip()
-        if not raw:
-            continue
-        if FS in raw:
-            head, tail = raw.split(FS, 1)
-        else:
-            head, tail = raw, ''
-        rec = parse_pretty_block(head)
-        files, numstat = parse_tail_block(tail)
-        rec['files']   = files
-        rec['numstat'] = numstat
-        yield rec
+    # v20.2.0: stream the output of git log instead of waiting for the whole history,
+    # so records (and the stage 1 progress bar) appear while git is still working.
+    git_bin = collect.get('git_binary', 'git')
+    cmd = [git_bin, '-C', kernel['source_dir']] + args
+    with tempfile.TemporaryFile('w+', encoding='utf-8', errors='replace') as errors:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errors,
+                                encoding='utf-8', errors='replace')
+        finished = False
+        try:
+            pending = ''
+            while True:
+                chunk = proc.stdout.read(_LOG_READ_SIZE)
+                if not chunk:
+                    break
+                pending += chunk
+                sections = pending.split(RS)
+                pending = sections.pop()      # the last section may still be incomplete
+                for raw in sections:
+                    rec = _parse_log_section(raw)
+                    if rec is not None:
+                        yield rec
+            rec = _parse_log_section(pending)
+            if rec is not None:
+                yield rec
+            finished = True
+        finally:
+            proc.stdout.close()
+            if not finished:
+                proc.kill()               # consumer stopped early (e.g. max_commits)
+            returncode = proc.wait()
+        if returncode != 0:
+            errors.seek(0)
+            raise RuntimeError('git command failed (%s): %s' % (returncode, errors.read().strip()))
+
+
+_LOG_READ_SIZE = 1 << 16
+
+
+def _parse_log_section(raw):
+    """Parse one RS-separated section of the git log stream (None when empty)."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    if FS in raw:
+        head, tail = raw.split(FS, 1)
+    else:
+        head, tail = raw, ''
+    rec = parse_pretty_block(head)
+    files, numstat = parse_tail_block(tail)
+    rec['files']   = files
+    rec['numstat'] = numstat
+    return rec
+
+
+def count_rev_commits(cfg):
+    """Number of commits that ``iter_git_log_records`` will report, or None.
+
+    ``git rev-list --count`` over the same range with the same ``no_merges`` and
+    ``first_parent`` filters; it is quick and gives stage 1 a progress total.
+    Returns None when git fails or prints something unexpected.
+    """
+    kernel  = cfg['kernel']
+    collect = cfg.get('collect', {}) or {}
+    args = ['rev-list', '--count', '%s..%s' % (kernel['rev_old'], kernel['rev_new'])]
+    if collect.get('no_merges', True):
+        args.append('--no-merges')
+    if collect.get('first_parent'):
+        args.append('--first-parent')
+    try:
+        out = run_git(cfg, args, check=False).strip()
+    except (OSError, RuntimeError):
+        return None
+    return int(out) if out.isdigit() else None
 
 
 def parse_pretty_block(text):
@@ -307,7 +367,9 @@ def count_hunks_in_patch(patch_text):
 # other flags, and the environment block that also counts against the
 # same OS limit.  Overridable via collect.hunk_count_chunk_size for
 # unusually constrained environments or to tune throughput.
-_HUNK_CHUNK_SIZE = 2000
+# v20.2.0: default lowered from 2000 to 200; a chunk is the unit of waiting between
+# two progress updates, so smaller chunks keep the progress bar moving.
+_HUNK_CHUNK_SIZE = 200
 
 
 def batch_count_hunks(cfg, shas, progress_callback=None):
@@ -379,8 +441,10 @@ def batch_count_hunks(cfg, shas, progress_callback=None):
             if sha in counts:
                 counts[sha] = count_hunks_in_patch(body)
                 done += 1
-                if progress_callback and (done % 500 == 0 or done == total):
-                    progress_callback(done, total)
+        # v20.2.0: report after every chunk (chunks are small), not every 500 commits:
+        # one chunk is the unit of waiting, the renderer limits the refresh rate.
+        if progress_callback:
+            progress_callback(done, total)
 
     if progress_callback and done != total:
         progress_callback(total, total)

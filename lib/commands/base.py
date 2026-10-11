@@ -5,10 +5,12 @@ import time
 
 from lib.config import load_config, apply_override, load_json
 from lib.manifest import VERSION, STAGE_OUTPUTS, NSTAGES, CACHE_FILES
+from lib import stats as _stats
 from lib.pipeline_runtime import (
     is_stage_done, wipe_downstream, init_pipeline_state,
     start_stage, finish_stage, fail_stage,
     print_stage_output, StageResult,
+    get_pipeline_state, set_run_size,
 )
 from lib.stages import STAGES, NSTAGES as _NSTAGES  # noqa: F811
 
@@ -66,6 +68,30 @@ def emit_progress(stage_idx, key, status, pct=None, extra=None):
     print(json.dumps(obj), flush=True)
 
 
+def run_size_from_state(state_path):
+    """Number of collected commits recorded by stage 1 in the pipeline state (or None)."""
+    stage = (get_pipeline_state(state_path).get('stages') or {}).get('collect_commits') or {}
+    count = stage.get('commit_count')
+    return count if isinstance(count, int) and count > 0 else None
+
+
+def print_estimate(cfg, state_path, keys, args, what):
+    """Print the predicted time of the stages *keys* from this host's statistics.
+
+    Nothing is printed without statistics (no stats_dir, no history) or in
+    --progress-json mode, whose stdout must stay machine readable.
+    """
+    stats_dir = (cfg.get('paths') or {}).get('stats_dir')
+    if not keys or not stats_dir or getattr(args, 'progress_json', False):
+        return
+    seconds, unknown = _stats.remaining(stats_dir, keys, commits=run_size_from_state(state_path))
+    if unknown == len(keys):
+        return
+    note = '' if not unknown else ', %d stage(s) without history' % unknown
+    print('  %s: %s (statistics of %s%s)' % (
+        what, _stats.format_duration(seconds), _stats.host_name(), note))
+
+
 def stage_extra(key, result, elapsed):
     """Extract finish metadata from a stage result."""
     if result is None:
@@ -120,12 +146,23 @@ def run_stage(idx, key, fn, cfg, cache, work, state_path, args):
     else:
         print(f'\n[stage {idx}] {key} …')
     t0 = time.time()
+    stats_dir = (cfg.get('paths') or {}).get('stats_dir')
+    if stats_dir and not args.progress_json:
+        seconds, runs = _stats.predict(stats_dir, key, commits=run_size_from_state(state_path))
+        if seconds:
+            print('  estimated duration %s (%d past run(s) on %s)' % (
+                _stats.format_duration(seconds), runs, _stats.host_name()))
     t = start_stage(state_path, key, idx, NSTAGES)
     outdir = cfg.get('paths', {}).get('output_dir') or os.path.join(work, 'output')
     try:
         result = fn(cfg, cache, outdir) if key in ('report_commits', 'prepare_ai_analysis') else fn(cfg, cache)
         elapsed = time.time() - t0
         extra = stage_extra(key, result, elapsed)
+        # v20.2.0: update the per-host statistics after every successful stage run.
+        run_size = (extra or {}).get('commit_count') or run_size_from_state(state_path)
+        if run_size:
+            set_run_size(run_size)
+        _stats.record(stats_dir, key, elapsed, commits=run_size)
         finish_stage(state_path, key, t, status='ok', extra=extra or None)
         if args.progress_json:
             emit_progress(idx, key, 'ok', extra={'elapsed_sec': round(elapsed, 1)})

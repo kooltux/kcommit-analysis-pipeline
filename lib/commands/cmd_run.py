@@ -2,12 +2,14 @@
 import os
 
 from lib.commands.base import (
-    STAGE_ORDER, emit_progress, load_cfg, load_state, resolve_stage,
-    run_stage, stage_needs_run,
+    STAGE_ORDER, emit_progress, load_cfg, load_state, print_estimate, resolve_stage,
+    run_size_from_state, run_stage, stage_needs_run,
 )
 from lib.config import ai_active
 from lib.manifest import STAGE_OUTPUTS
-from lib.pipeline_runtime import init_pipeline_state, set_stage_total, wipe_downstream
+from lib.pipeline_runtime import (
+    init_pipeline_state, set_stage_total, set_stats, wipe_downstream,
+)
 from lib.stages import STAGES
 
 
@@ -65,11 +67,18 @@ def cmd_run(args):
     # v20.1.0: the displayed stage total is the number of stages of this
     # configuration (8, or 9 when the optional AI stage is active).
     set_stage_total(len(selected))
+    # v20.2.0: per-host statistics (paths.stats_dir) feed the ETA predictions.
+    set_stats((cfg.get('paths') or {}).get('stats_dir'), run_size_from_state(state_path))
+    keys = [key for _, key, _ in run_list]
     try:
-        for idx, key, fn in run_list:
+        print_estimate(cfg, state_path, keys, args, 'estimated total time')
+        for position, (idx, key, fn) in enumerate(run_list):
             run_stage(idx, key, fn, cfg, cache, work, state_path, args)
+            print_estimate(cfg, state_path, keys[position + 1:], args,
+                           'estimated time for the remaining stages')
     finally:
         set_stage_total(None)
+        set_stats(None)
     if args.progress_json:
         emit_progress(-1, 'pipeline', 'complete')
     else:
