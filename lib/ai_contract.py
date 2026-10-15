@@ -4,7 +4,7 @@ import json
 import re
 
 SHA = re.compile(r'^[0-9a-f]{40}$')
-NAME = re.compile(r'^[0-9]+\.json$')
+NAME = re.compile(r'^(?:batch_[0-9]{3,}/)?[0-9]+[.]json$')
 FIELDS = ('commit', 'subject', 'author_name', 'author_email', 'author_org',
           'author_time', 'body', 'files', 'stats', 'meta', 'product_evidence')
 
@@ -36,7 +36,7 @@ def input_schema():
         'schema_version': string('AI exchange contract version.'),
         'pipeline_version': string('Version of the pipeline that generated this input.'),
         'run_id': string('SHA-256 identity of the source data and effective contracts.'),
-        'source_chunk': string('Basename of this numbered source chunk.'),
+        'source_chunk': string('Relative chunk path including batch folder; legacy numbered basenames are accepted.'),
         'input_schema_checksum': string('SHA-256 checksum of the input schema bytes.'),
         'output_schema_checksum': string('SHA-256 checksum of the output schema bytes.'),
         'total_commits': count('Number of commits in this chunk.'),
@@ -45,7 +45,10 @@ def input_schema():
                            'chunk_number': count('One-based chunk number.'),
                            'total_chunks': count('Number of chunks in the bundle.'),
                            'start_index': count('Zero-based inclusive first index.'),
-                           'end_index': count('Zero-based exclusive last index.')},
+                           'end_index': count('Zero-based exclusive last index.'),
+                           'batch_number': {'type': 'integer', 'minimum': 1},
+                           'total_batches': {'type': 'integer', 'minimum': 1},
+                           'chunk_in_batch': {'type': 'integer', 'minimum': 1}},
                        'required': ['chunk_number', 'total_chunks', 'start_index', 'end_index'],
                        'additionalProperties': False},
         'commits': {'type': 'array', 'description': 'Commit records selected by prefilter.',
@@ -81,11 +84,21 @@ def validate_chunk(chunk, schema_checksum, output_checksum, run_id, name):
     info = chunk['chunk_info']
     if (not isinstance(chunk['pipeline_version'], str) or not isinstance(commits, list)
             or type(chunk['total_commits']) is not int or chunk['total_commits'] != len(commits)
-            or not isinstance(info, dict) or set(info) != {'chunk_number', 'total_chunks', 'start_index', 'end_index'}
+            or not isinstance(info, dict) or set(info) != (
+                {'chunk_number', 'total_chunks', 'start_index', 'end_index'}
+                | ({'batch_number', 'total_batches', 'chunk_in_batch'} if '/' in name else set()))
             or any(type(info[key]) is not int for key in info)
             or info['chunk_number'] < 1 or info['total_chunks'] < info['chunk_number']
             or info['start_index'] < 0 or info['end_index'] - info['start_index'] != len(commits)):
         raise ValueError('Invalid chunk structure or counts')
+    if '/' in name:
+        batch_id, filename = name.split('/')
+        if (info['batch_number'] != int(batch_id[len('batch_'):])
+                or info['total_batches'] < info['batch_number']
+                or info['batch_number'] < 1 or info['chunk_in_batch'] < 1
+                or info['chunk_in_batch'] > info['chunk_number']
+                or int(filename[:-5]) != info['chunk_number']):
+            raise ValueError('Invalid chunk batch identity or counts')
     for item in commits:
         if (not isinstance(item, dict) or set(item) != set(FIELDS)
                 or not isinstance(item['commit'], str) or not SHA.fullmatch(item['commit'])

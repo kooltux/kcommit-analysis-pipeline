@@ -29,8 +29,21 @@ A full run prepares the package. To rerun only Stage 08:
 python3 kcommit_pipeline.py run --config product.json --stage 8
 ```
 
-The `ai.chunk_size` setting is the positive number of commits per chunk
-(default 100, minimum 1); `ai.prompt_path` selects the prompt.
+`ai.chunk_size` counts commits per chunk (default 100); `ai.batch_size` counts
+chunks per batch (default 10). Both require positive integers, not booleans.
+`ai.prompt_path` selects the prompt. Inputs use `ai_analysis_input/batch_001/001.json`,
+etc., with global chunk numbering and at least three digits. The last batch may
+be smaller. Empty input produces one empty chunk in one batch.
+
+The manifest records sizes, total chunks/batches, and an ordered `batches` list
+with `batch_id`, `batch_number`, `chunks` and `total_commits`. Checksums use full
+relative chunk paths. Chunk metadata includes `batch_number`, `total_batches`
+and `chunk_in_batch`. Batch size contributes to the run identity.
+Use `/batches` and `/batch/<id>` to discover work; `/chunks` still lists all inputs.
+Submit one result per chunk to `/result/<source_chunk>`. Result storage and ZIP
+export/import preserve subfolders. Legacy flat bundles remain readable.
+Rerun Stage 08 with `--force` to replace old flat outputs. Update custom prompts
+and front pages to describe batch paths; do not manually move existing chunks.
 The sample result schema is `configs/ai/ai_analysis_result_schema.json`.
 Stage 08 writes numbered JSON chunks, input and output schemas, a prompt, a
 checksummed bundle manifest, and `serve_ai.pyz` to the configured output

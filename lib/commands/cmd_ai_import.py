@@ -3,7 +3,7 @@ import json
 import os
 import zipfile
 
-from lib.ai_contract import digest, validate_chunk, validate_result
+from lib.ai_contract import NAME, digest, validate_chunk, validate_result
 from lib.commands.base import load_cfg
 from lib.config import load_json, save_json
 from lib.manifest import CACHE_FILES
@@ -29,6 +29,8 @@ def import_results(cfg, bundle_path):
         raise ValueError('Local AI contract checksum mismatch')
     schema = json.loads(output_bytes)
     expected = set(manifest['chunks'])
+    if any(not isinstance(name, str) or not NAME.fullmatch(name) for name in expected):
+        raise ValueError('Invalid chunk path in AI manifest')
     merged = {}
     with zipfile.ZipFile(bundle_path) as bundle:
         names = bundle.namelist()

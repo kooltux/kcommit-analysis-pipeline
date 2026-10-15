@@ -9,6 +9,14 @@ and provides an export ZIP. It does not perform the analysis itself.
 This reference is for human reviewers, AI clients, and CI jobs. Assessment
 instructions live in `/prompt`; exact data contracts live in the schemas.
 
+### Batch navigation
+
+`GET /batches` lists batches and `/batch/<batch_id>` lists their chunk/result
+URLs. `/chunks` remains the complete listing. `ai.batch_size` counts chunks per
+folder (default 10); `ai.chunk_size` counts commits per chunk (default 100).
+Preserve paths such as `batch_002/011.json` in `source_chunk` and result URLs.
+Process every chunk in an assigned batch, submitting a separate result per chunk.
+
 ### Access and scope
 
 GET requests are read-only. PUT replaces the stored result for a chunk.
@@ -97,7 +105,7 @@ curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/schema/output"
 curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/chunks"
 
 # Replace this example with a filename returned by /chunks.
-CHUNK='1.json'
+CHUNK='batch_001/001.json'  # Use a source_chunk listed by this server.
 curl --fail-with-body --silent --show-error --user "$AUTH" \
   "$BASE/chunk/$CHUNK" --output chunk.json
 sha256sum chunk.json

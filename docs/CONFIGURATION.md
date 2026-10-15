@@ -1,5 +1,10 @@
 # Configuration Reference
 
+AI grouping uses `ai.chunk_size` (commits per chunk, default 100) and
+`ai.batch_size` (chunks per batch, default 10). Both are positive integers.
+Batch folders, manifest entries and HTTP discovery are described in
+[AI_ANALYSIS.md](AI_ANALYSIS.md).
+
 Config files are JSON with `//` and `#` comment support. All `${VAR}`
 references in string values are expanded by the config loader.
 

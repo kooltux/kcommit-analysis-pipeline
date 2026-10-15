@@ -13,6 +13,10 @@
     // Stage 08 requires a positive integer (default: 100); 0 is not valid.
     // Numbered input chunks carry identity/checksums in the portable work package.
     // These files must exist (checked by 'validate'); there is no implicit sample lookup.
-    "chunk_size": 100
+    "chunk_size": 100,
+
+    // Maximum chunks per batch subfolder (positive integer; default: 10).
+    // chunk_size counts commits; batch_size counts chunks.
+    "batch_size": 10
   }
 }

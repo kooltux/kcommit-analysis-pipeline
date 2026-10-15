@@ -129,7 +129,7 @@ def smoke(app):
                 listing = json.loads(expect(base, '/chunks'))
                 paths = listing['chunks']
                 check(isinstance(paths, list) and paths, 'No chunks listed')
-                check(all(re.fullmatch(r'/chunk/[0-9]+[.]json', path) for path in paths),
+                check(all(re.fullmatch(r'/chunk/(?:batch_[0-9]{3,}/)?[0-9]+[.]json', path) for path in paths),
                       'Invalid chunk paths')
                 name = paths[0].removeprefix('/chunk/')
                 source = expect(base, paths[0])
@@ -168,12 +168,12 @@ def smoke(app):
                     check(exported.testzip() is None, 'Corrupt export')
                     manifest = json.loads(exported.read('ai_analysis_bundle_manifest.json'))
                     check(manifest['run_id'] == listing['run_id'], 'Export run ID mismatch')
-                    check(set(manifest['chunks']) == {path.rsplit('/', 1)[1] for path in paths},
+                    check(set(manifest['chunks']) == {path.removeprefix('/chunk/') for path in paths},
                           'Export chunk listing differs')
                     for path in paths:
-                        part = exported.read('ai_analysis_input/' + path.rsplit('/', 1)[1])
+                        part = exported.read('ai_analysis_input/' + path.removeprefix('/chunk/'))
                         check(hashlib.sha256(part).hexdigest() ==
-                              manifest['chunks'][path.rsplit('/', 1)[1]],
+                              manifest['chunks'][path.removeprefix('/chunk/')],
                               'Export source checksum mismatch')
                     check(exported.read('results/' + name) == payload,
                           'Export result differs')

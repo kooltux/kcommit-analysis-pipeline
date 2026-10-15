@@ -8,7 +8,7 @@
   "properties": {
     "schema_version": {"type": "string", "const": "1.0", "description": "AI exchange contract version."},
     "run_id": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Run identity copied from the input chunk."},
-    "source_chunk": {"type": "string", "pattern": "^[0-9]+[.]json$", "description": "Exact input chunk filename."},
+    "source_chunk": {"type": "string", "pattern": "^(?:batch_[0-9]{3,}/)?[0-9]+[.]json$", "description": "Exact relative chunk path including its batch folder; legacy basenames are accepted."},
     "input_checksum": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the exact source chunk bytes."},
     "input_schema_checksum": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of the served input schema bytes."},
     "output_schema_checksum": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of this served output schema's exact bytes."},

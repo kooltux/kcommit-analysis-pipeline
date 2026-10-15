@@ -30,7 +30,7 @@ def test_chunks_and_zipapp_follow_manifest(tmp_path):
     assert summary['total_commits'] == 3
     assert summary['chunk_count'] == 2
     manifest = json.loads((outdir / 'ai_analysis_bundle_manifest.json').read_text())
-    assert set(manifest['chunks']) == {'1.json', '2.json'}
+    assert set(manifest['chunks']) == {'batch_001/001.json', 'batch_001/002.json'}
     for name in manifest['chunks']:
         data = (outdir / 'ai_analysis_input' / name).read_bytes()
         assert digest(data) == manifest['chunks'][name]
@@ -39,7 +39,7 @@ def test_chunks_and_zipapp_follow_manifest(tmp_path):
                               manifest['output_schema_checksum'], manifest['run_id'], name)
         assert 'score' not in chunk['commits'][0]
     with zipfile.ZipFile(outdir / 'serve_ai.pyz') as app:
-        assert app.read('ai_analysis_input/1.json') == (outdir / 'ai_analysis_input' / '1.json').read_bytes()
+        assert app.read('ai_analysis_input/batch_001/001.json') == (outdir / 'ai_analysis_input' / 'batch_001/001.json').read_bytes()
         assert app.read('ai_analysis_bundle_manifest.json') == (outdir / 'ai_analysis_bundle_manifest.json').read_bytes()
 
 
@@ -48,7 +48,7 @@ def test_empty_source_has_one_empty_chunk(tmp_path):
     summary = run(cfg, str(cache), str(outdir))
     assert summary['total_commits'] == 0
     assert summary['chunk_count'] == 1
-    chunk = json.loads((outdir / 'ai_analysis_input' / '1.json').read_text())
+    chunk = json.loads((outdir / 'ai_analysis_input' / 'batch_001/001.json').read_text())
     assert chunk['commits'] == []
     assert chunk['chunk_info']['start_index'] == chunk['chunk_info']['end_index'] == 0
 

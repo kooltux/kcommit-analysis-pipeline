@@ -1,5 +1,7 @@
 """Generate a self-contained AI exchange zipapp with validated result uploads."""
 import io
+import json
+from lib.ai_contract import NAME
 import os
 import zipapp
 import zipfile
@@ -27,7 +29,8 @@ ARCHIVE = zipfile.ZipFile(sys.argv[0], 'r')
 MANIFEST = json.loads(ARCHIVE.read('ai_analysis_bundle_manifest.json'))
 SCHEMA = json.loads(ARCHIVE.read('ai_analysis_result_schema.json'))
 NAMES = MANIFEST['chunks']
-SAFE = re.compile(r'^[0-9]+[.]json$')
+SAFE = re.compile(r'^(?:batch_[0-9]{3,}/)?[0-9]+[.]json$')
+BATCHES = {batch['batch_id']: batch for batch in MANIFEST.get('batches', [])}
 RESULTS = os.path.abspath(sys.argv[0]) + '.results'
 
 def checksum(data):
@@ -193,6 +196,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             member, kind = files[path]
             self.send_bytes(ARCHIVE.read(member), kind)
             return
+        if path == '/batches':
+            self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
+                'batch_size': MANIFEST.get('batch_size'), 'total_batches': len(BATCHES),
+                'batches': [dict(batch, url='/batch/' + key)
+                            for key, batch in BATCHES.items()]}, sort_keys=True).encode())
+            return
+        if path.startswith('/batch/') and path[len('/batch/'):] in BATCHES:
+            batch = BATCHES[path[len('/batch/'):]]
+            self.send_bytes(json.dumps(dict(batch, run_id=MANIFEST['run_id'],
+                chunks=['/chunk/' + name for name in batch['chunks']],
+                results=['/result/' + name for name in batch['chunks']]),
+                sort_keys=True).encode())
+            return
         if path == '/chunks':
             self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
                                         'chunks': ['/chunk/' + n for n in NAMES]},
@@ -242,8 +258,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 raise ValueError('Result must be 1..10485760 bytes')
             data = self.rfile.read(length)
             validate(name, json.loads(data))
-            os.makedirs(RESULTS, exist_ok=True)
-            fd, temp = tempfile.mkstemp(dir=RESULTS, prefix='.upload-')
+            result_dir = os.path.dirname(os.path.join(RESULTS, name))
+            os.makedirs(result_dir, exist_ok=True)
+            fd, temp = tempfile.mkstemp(dir=result_dir, prefix='.upload-')
             try:
                 with os.fdopen(fd, 'wb') as stream:
                     stream.write(data)
@@ -406,9 +423,12 @@ def generate_ai_serve_script(outdir, output_path):
         for name in assets:
             archive.write(os.path.join(outdir, name), name)
         root = os.path.join(outdir, 'ai_analysis_input')
-        for name in sorted(os.listdir(root)):
-            if name.endswith('.json'):
-                archive.write(os.path.join(root, name), 'ai_analysis_input/' + name)
+        with open(os.path.join(outdir, 'ai_analysis_bundle_manifest.json'), encoding='utf-8') as stream:
+            manifest = json.load(stream)
+        for name in sorted(manifest['chunks']):
+            if not NAME.fullmatch(name):
+                raise ValueError('Invalid chunk path in AI manifest')
+            archive.write(os.path.join(root, name), 'ai_analysis_input/' + name)
     archive_buffer.seek(0)
     with open(output_path, 'wb') as target:
         zipapp.create_archive(archive_buffer, target=target, interpreter='/usr/bin/env python3')

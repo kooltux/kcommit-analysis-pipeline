@@ -24,6 +24,11 @@ def test_front_page_chapters_are_ordered_and_examples_are_technical():
     chapters = re.findall(r'^## .+$', text, re.MULTILINE)
     assert chapters == ['## 1. For human readers', '## 2. For AI clients',
                         '## 3. For automation and testing']
+    batch_start = text.index('### Batch navigation')
+    assert text.count('### Batch navigation') == 1
+    assert text.index(chapters[0]) < batch_start < text.index(chapters[1])
+    for required in ('/batches', '/batch/<batch_id>', 'batch_002/011.json', 'source_chunk'):
+        assert required in text[batch_start:text.index(chapters[1])]
     technical = text.index(chapters[2])
     assert text.index('```sh') > technical
     assert text.index('```python') > technical

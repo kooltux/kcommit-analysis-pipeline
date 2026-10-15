@@ -64,7 +64,8 @@ CONFIG_SCHEMA = {
            'prompt_path': {'type': 'path', 'kind': 'file', 'needs': 'ai', 'default': 'ai/ai_analysis_prompt.md', 'content': 'markdown'},
            'front_page_path': {'type': 'path', 'kind': 'file', 'needs': 'ai', 'default': 'ai/ai_server_front_page.md', 'content': 'markdown'},
            'result_schema_path': {'type': 'path', 'kind': 'file', 'needs': 'ai', 'default': 'ai/ai_analysis_result_schema.json', 'content': 'ai_result_schema'},
-           'chunk_size': {'type': 'int', 'min': 1}},
+           'chunk_size': {'type': 'int', 'min': 1},
+           'batch_size': {'type': 'int', 'min': 1}},
 }
 
 

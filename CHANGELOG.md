@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v21.0.0 — AI chunk batches and nested result exchange (2026-10-15)
+
+### Added
+
+- `ai.batch_size` (default 10): batch subfolders, globally numbered chunks,
+  manifest batch membership, `/batches` and `/batch/<id>` discovery, nested
+  result storage and export/import, updated prompts and regression tests.
+  Legacy flat bundles remain readable.
+
+### Breaking changes and migration
+
+- Newly generated chunk identities, manifest keys and HTTP chunk/result paths
+  include a batch folder, for example `batch_001/001.json`, instead of `1.json`.
+  Clients must preserve the complete relative `source_chunk` path and discover
+  assignments through `/batches` and `/batch/<id>`; `/chunks` still lists all inputs.
+- Regenerate Stage 08 with `--force`, distribute the rebuilt `serve_ai.pyz`, and
+  update custom prompts/front pages and clients that assume basename-only paths.
+  Do not manually relocate old chunks: their identities and checksums belong to
+  the original bundle. Results remain per chunk, not per batch.
+
 ## v20.2.0 — environment references, timing statistics, stage progress (2026-10-11)
 
 ### Added

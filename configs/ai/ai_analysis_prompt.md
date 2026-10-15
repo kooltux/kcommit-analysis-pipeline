@@ -7,15 +7,19 @@ backporting. Treat recommendations as advisory: a human must review them.
 
 1. Read `GET /prompt`, `GET /schema/input`, and `GET /schema/output`. The schemas
    define the input and output fields and are authoritative over examples.
-2. Read `GET /chunks` and fetch each listed `/chunk/<name>`. Analyze each commit
-   independently; these are prefilter-kept commits, not pipeline-scored results.
+2. Read `GET /batches` and select the assigned batch(es). Read each
+   `GET /batch/<batch_id>` and fetch every listed chunk URL. `/chunks` still
+   lists all chunks. Analyze commits independently; these are prefilter-kept
+   commits, not pipeline-scored results. A batch groups chunks for assignment,
+   not for merging inputs or results.
 3. Create one result JSON object per input chunk, following `/schema/output`.
    Copy `run_id`, `source_chunk`, `input_schema_checksum`, and
    `output_schema_checksum` from the chunk. Set `input_checksum` to the SHA-256
    of the exact chunk response bytes. Keep `total_commits` unchanged; set
    `analyzed_commits` to the number of SHA-keyed entries in `results`. Use the
    full 40-character commit SHA as each key.
-4. `PUT /result/<same chunk filename>` with the result JSON. Use
+4. `PUT /result/<source_chunk>` with one result per chunk. Preserve the full
+   relative path, for example `batch_002/011.json`, not its basename. Use
    `analysis_status: "partial"` if any commit has not been analyzed. Retrieve
    accepted results with `GET /result/<name>`. Once done, download `/export`
    and return the ZIP to the pipeline machine for `ai-import`.
