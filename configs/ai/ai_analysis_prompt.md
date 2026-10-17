@@ -5,7 +5,8 @@ backporting. Treat recommendations as advisory: a human must review them.
 
 ## Contract
 
-1. Read `GET /prompt`, `GET /schema/input`, and `GET /schema/output`. The schemas
+1. Read `GET /api` for the code-derived API catalog, then `GET /prompt`,
+   `GET /schema/input`, and `GET /schema/output`. The schemas
    define the input and output fields and are authoritative over examples.
 2. Read `GET /batches` and select the assigned batch(es). Read each
    `GET /batch/<batch_id>` and fetch every listed chunk URL. `/chunks` still

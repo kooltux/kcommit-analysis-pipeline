@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v21.1.0 — code-derived HTTP API discovery (2026-10-16)
+
+### Added
+
+- `GET /api`: live JSON discovery from the executable HTTP route registry and
+  handler docstrings, including runtime authentication, schema links and upload
+  limits. Existing endpoints use the same registry for dispatch.
+- API discovery, registry/dispatch consistency and standalone zipapp regressions;
+  the server front page now points to `/api` instead of maintaining a route table.
+
 ## v21.0.0 — AI chunk batches and nested result exchange (2026-10-15)
 
 ### Added

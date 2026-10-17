@@ -93,6 +93,26 @@ def validate(name, value):
             raise ValueError('CVE ID and probability counts differ')
     return True
 
+ROUTES = []
+MAX_RESULT_BYTES = 10 * 1024 * 1024
+
+
+def route(method, path, content_type='application/json', **contract):
+    """Register an executable route and its machine-readable contract together."""
+    parameters = re.findall(r'<([a-z_]+)>', path)
+    pattern = re.escape(path)
+    for name in parameters:
+        pattern = pattern.replace('<' + name + '>', '(?P<' + name + '>.+)')
+    def register(handler):
+        if any(item['method'] == method and item['path'] == path for item in ROUTES):
+            raise ValueError('Duplicate API route: ' + method + ' ' + path)
+        ROUTES.append(dict(contract, method=method, path=path,
+                           response_content_type=content_type, parameters=parameters,
+                           handler=handler, matcher=re.compile(pattern)))
+        return handler
+    return register
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def setup(self):
         self.request.settimeout(10)
@@ -178,7 +198,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
         return valid
 
-    def send_bytes(self, data, kind='application/json'):
+    def send_bytes(self, data, kind=None):
+        kind = kind or getattr(self, 'active_route', {}).get('response_content_type', 'application/json')
         self.send_response(200)
         self.send_header('Content-Type', kind)
         self.send_header('Content-Length', str(len(data)))
@@ -186,76 +207,131 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
-        path = self.path.split('?', 1)[0]
-        files = {'/': ('ai_server_front_page.md', 'text/markdown; charset=utf-8'),
-                 '/README.md': ('ai_server_front_page.md', 'text/markdown; charset=utf-8'),
-                 '/prompt': ('ai_analysis_prompt.md', 'text/markdown'),
-                 '/schema/input': ('ai_analysis_input_schema.json', 'application/json'),
-                 '/schema/output': ('ai_analysis_result_schema.json', 'application/json')}
-        if path in files:
-            member, kind = files[path]
-            self.send_bytes(ARCHIVE.read(member), kind)
-            return
-        if path == '/batches':
-            self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
-                'batch_size': MANIFEST.get('batch_size'), 'total_batches': len(BATCHES),
-                'batches': [dict(batch, url='/batch/' + key)
-                            for key, batch in BATCHES.items()]}, sort_keys=True).encode())
-            return
-        if path.startswith('/batch/') and path[len('/batch/'):] in BATCHES:
-            batch = BATCHES[path[len('/batch/'):]]
-            self.send_bytes(json.dumps(dict(batch, run_id=MANIFEST['run_id'],
-                chunks=['/chunk/' + name for name in batch['chunks']],
-                results=['/result/' + name for name in batch['chunks']]),
-                sort_keys=True).encode())
-            return
-        if path == '/chunks':
-            self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
-                                        'chunks': ['/chunk/' + n for n in NAMES]},
-                                       sort_keys=True).encode())
-            return
-        if path.startswith('/chunk/'):
-            name = path[len('/chunk/'): ]
-            if name in NAMES and SAFE.fullmatch(name):
-                self.send_bytes(ARCHIVE.read('ai_analysis_input/' + name))
-                return
-        if path.startswith('/result/'):
-            name = path[len('/result/'): ]
-            if name in NAMES and SAFE.fullmatch(name):
-                try:
-                    with open(os.path.join(RESULTS, name), 'rb') as stream:
-                        self.send_bytes(stream.read())
-                    return
-                except FileNotFoundError:
-                    pass
-        if path == '/export':
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as dest:
-                dest.writestr('ai_analysis_bundle_manifest.json',
-                              ARCHIVE.read('ai_analysis_bundle_manifest.json'))
-                for name in NAMES:
-                    source = ARCHIVE.read('ai_analysis_input/' + name)
-                    dest.writestr('ai_analysis_input/' + name, source)
-                    file = os.path.join(RESULTS, name)
-                    if os.path.isfile(file):
-                        with open(file, 'rb') as stream:
-                            data = stream.read()
-                        validate(name, json.loads(data))
-                        dest.writestr('results/' + name, data)
-            self.send_bytes(buf.getvalue(), 'application/zip')
-            return
-        self.send_error(404)
+        self.dispatch('GET')
 
     def do_PUT(self):
+        self.dispatch('PUT')
+
+    def dispatch(self, method):
         path = self.path.split('?', 1)[0]
-        name = path[len('/result/'):] if path.startswith('/result/') else ''
+        for item in ROUTES:
+            match = item['matcher'].fullmatch(path)
+            if item['method'] == method and match:
+                self.active_route = item
+                item['handler'](self, **match.groupdict())
+                return
+        self.send_error(404)
+
+    @route('GET', '/api')
+    def api(self):
+        """Describe routes from the executable registry, not a packaged document."""
+        routes = []
+        for item in ROUTES:
+            if not callable(getattr(type(self), 'do_' + item['method'], None)):
+                continue
+            entry = {key: value for key, value in item.items() if key not in ('handler', 'matcher')}
+            entry['description'] = (item['handler'].__doc__ or '').strip()
+            routes.append(entry)
+        required = self.server.auth_credentials is not None
+        self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'], 'routes': routes,
+            'authentication': {'required': required, 'scheme': 'Basic' if required else None}},
+            sort_keys=True).encode())
+
+    @route('GET', '/', 'text/markdown; charset=utf-8')
+    @route('GET', '/README.md', 'text/markdown; charset=utf-8')
+    def front_page(self):
+        """Read the shared human, AI-client and automation guide."""
+        self.send_bytes(ARCHIVE.read('ai_server_front_page.md'))
+
+    @route('GET', '/prompt', 'text/markdown')
+    def prompt(self):
+        """Read the assessment instructions."""
+        self.send_bytes(ARCHIVE.read('ai_analysis_prompt.md'))
+
+    @route('GET', '/schema/input')
+    def input_schema(self):
+        """Read the authoritative source-chunk JSON Schema."""
+        self.send_bytes(ARCHIVE.read('ai_analysis_input_schema.json'))
+
+    @route('GET', '/schema/output')
+    def output_schema(self):
+        """Read the authoritative result JSON Schema."""
+        self.send_bytes(ARCHIVE.read('ai_analysis_result_schema.json'))
+
+    @route('GET', '/batches')
+    def batches(self):
+        """List batch assignments, member chunk paths and discovery URLs."""
+        self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
+            'batch_size': MANIFEST.get('batch_size'), 'total_batches': len(BATCHES),
+            'batches': [dict(batch, url='/batch/' + key)
+                        for key, batch in BATCHES.items()]}, sort_keys=True).encode())
+
+    @route('GET', '/batch/<batch_id>')
+    def batch(self, batch_id):
+        """List chunk and result URLs for a batch ID returned by /batches."""
+        if batch_id not in BATCHES:
+            self.send_error(404)
+            return
+        batch = BATCHES[batch_id]
+        self.send_bytes(json.dumps(dict(batch, run_id=MANIFEST['run_id'],
+            chunks=['/chunk/' + name for name in batch['chunks']],
+            results=['/result/' + name for name in batch['chunks']]), sort_keys=True).encode())
+
+    @route('GET', '/chunks')
+    def chunks(self):
+        """List the run identity and all available source-chunk URLs."""
+        self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
+            'chunks': ['/chunk/' + name for name in NAMES]}, sort_keys=True).encode())
+
+    @route('GET', '/chunk/<name>', response_schema='/schema/input')
+    def chunk(self, name):
+        """Read a manifest-listed chunk; name includes the batch folder when present."""
+        if name not in NAMES or not SAFE.fullmatch(name):
+            self.send_error(404)
+            return
+        self.send_bytes(ARCHIVE.read('ai_analysis_input/' + name))
+
+    @route('GET', '/result/<name>', response_schema='/schema/output')
+    def result(self, name):
+        """Read an accepted result using its full source_chunk path; 404 if absent."""
+        if name not in NAMES or not SAFE.fullmatch(name):
+            self.send_error(404)
+            return
+        try:
+            with open(os.path.join(RESULTS, name), 'rb') as stream:
+                self.send_bytes(stream.read())
+        except FileNotFoundError:
+            self.send_error(404)
+
+    @route('GET', '/export', 'application/zip')
+    def export(self):
+        """Download a ZIP of the manifest, source chunks and validated stored results."""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as dest:
+            dest.writestr('ai_analysis_bundle_manifest.json',
+                          ARCHIVE.read('ai_analysis_bundle_manifest.json'))
+            for name in NAMES:
+                source = ARCHIVE.read('ai_analysis_input/' + name)
+                dest.writestr('ai_analysis_input/' + name, source)
+                file = os.path.join(RESULTS, name)
+                if os.path.isfile(file):
+                    with open(file, 'rb') as stream:
+                        data = stream.read()
+                    validate(name, json.loads(data))
+                    dest.writestr('results/' + name, data)
+        self.send_bytes(buf.getvalue())
+
+    @route('PUT', '/result/<name>', request_content_type='application/json',
+           request_schema='/schema/output', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES)
+    def put_result(self, name):
+        """Validate and atomically replace a result for a manifest-listed source_chunk path."""
         if name not in NAMES or not SAFE.fullmatch(name):
             self.send_error(404)
             return
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            if length < 1 or length > 10 * 1024 * 1024:
-                raise ValueError('Result must be 1..10485760 bytes')
+            if length < self.active_route['min_body_bytes'] or length > self.active_route['max_body_bytes']:
+                raise ValueError('Result must be 1..%s bytes' % self.active_route['max_body_bytes'])
             data = self.rfile.read(length)
             validate(name, json.loads(data))
             result_dir = os.path.dirname(os.path.join(RESULTS, name))

@@ -1,6 +1,6 @@
 # kcommit-analysis-pipeline
 
-Current release: `v21.0.0` — AI chunk batches, manifest-based batch discovery and nested result exchange. Generated chunk paths now include batch folders; see [migration details](docs/AI_ANALYSIS.md#prepare).
+Current release: `v21.1.0` — code-derived `GET /api` discovery from executable server routes. For AI batch-path migration, see [migration details](docs/AI_ANALYSIS.md#prepare).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively

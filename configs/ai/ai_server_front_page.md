@@ -24,19 +24,15 @@ When authentication is enabled, use the operator-provided credentials; browsers
 can use the HTTP login prompt. Assessments remain advisory. This server is an
 exchange interface, not an autonomous reviewer or a backport approval system.
 
-### API overview
+### Live API discovery
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/` or `/README.md` | This page as UTF-8 Markdown |
-| GET | `/prompt` | Assessment instructions |
-| GET | `/schema/input` | Source chunk schema |
-| GET | `/schema/output` | Required result schema |
-| GET | `/chunks` | Run identity and available chunk URLs |
-| GET | `/chunk/<name>` | One source chunk; use names returned by `/chunks` |
-| PUT | `/result/<name>` | Validate and save a result for a known chunk |
-| GET | `/result/<name>` | Retrieve an accepted result; 404 if absent |
-| GET | `/export` | ZIP of manifest, source chunks, and accepted results |
+Human readers, AI clients and CI jobs should retrieve `GET /api` for the live
+JSON API catalog. It is generated from the same executable route registry that
+dispatches requests, using handler docstrings and effective route contracts.
+It describes methods, paths, parameters, content types, schema links and upload
+limits. Authentication status comes from the running server; no credentials
+are exposed. `/api` requires authentication whenever the server enables it.
+This guide explains usage; it does not maintain a second endpoint catalog.
 
 ## 2. For AI clients
 
@@ -50,7 +46,7 @@ Do not infer that a missing result is a negative assessment.
 
 ### Using this server
 
-1. Retrieve `/prompt`, `/schema/input`, and `/schema/output` before analyzing.
+1. Retrieve `/api` for the live API, then `/prompt`, `/schema/input`, and `/schema/output`.
 2. Retrieve `/chunks` and use its run ID and listed URLs exactly. Do not guess
    chunk filenames or assume a numbering width.
 3. Download a listed chunk and preserve its original bytes for checksum matching.

@@ -8,6 +8,6 @@ Configuration validation, batch directories, canonical chunk identities,
 manifest metadata, server routes, nested uploads/export/import, prompts and
 regression tests are implemented. See AI_ANALYSIS.md for usage.
 The user reported the full test suite passing on 2026-10-15 after the front-page fix.
-The approved release is v21.0.0 because generated paths and chunk identities change.
+Batch-relative paths and chunk identities were introduced in v21.0.0.
 Release metadata edits require a fresh version-consistency and full-suite run.
 Staging, committing and tagging require their separate confirmations; never push.

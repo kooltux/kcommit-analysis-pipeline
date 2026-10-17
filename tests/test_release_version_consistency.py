@@ -14,4 +14,6 @@ def test_release_version_matches_readme_and_latest_changelog():
     releases = re.findall(r'^## (v[0-9]+[.][0-9]+[.][0-9]+)\b', changelog, re.MULTILINE)
     assert releases and releases[0] == version
     assert len(releases) == len(set(releases)), 'Duplicate release headings'
+    if len(releases) > 1:
+        assert tuple(map(int, version[1:].split('.'))) > tuple(map(int, releases[1][1:].split('.')))
     assert 'Release version remains unchanged pending QA and version approval.' not in changelog
