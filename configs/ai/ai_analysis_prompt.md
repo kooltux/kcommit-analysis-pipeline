@@ -1,5 +1,11 @@
 # AI Analysis Prompt for Linux kernel commits
 
+Respect the operator-selected batch/chunk listing and its `limit`/`offset` query.
+These parameters select work only on `/batches`, `/chunks`, and `/batch/<batch_id>`;
+never replace a selected subset with the full global listing. For a complete
+batch retry, use `/batch/<batch_id>` without pagination and resubmit per chunk.
+`/api` remains complete and describes the effective pagination rules.
+
 Analyze commits that passed the pipeline prefilter for product relevance and
 backporting. Treat recommendations as advisory: a human must review them.
 

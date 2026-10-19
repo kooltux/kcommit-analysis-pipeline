@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Shared `limit`/`offset` selection on batch/chunk listings, including individual
+  batch membership. Preserve listing order, complete batch objects, aligned
+  chunk/result URLs and full-collection totals; `/api` remains unpaginated.
+- Code-derived query metadata, debug/single-batch-retry guidance, and unit/HTTP
+  regressions for pagination defaults, invalid values and boundaries.
+
 ## v21.1.0 — code-derived HTTP API discovery (2026-10-16)
 
 ### Added

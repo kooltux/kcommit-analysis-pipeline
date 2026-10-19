@@ -17,6 +17,17 @@ folder (default 10); `ai.chunk_size` counts commits per chunk (default 100).
 Preserve paths such as `batch_002/011.json` in `source_chunk` and result URLs.
 Process every chunk in an assigned batch, submitting a separate result per chunk.
 
+Optional `limit` and `offset` apply only to `/batches`, `/chunks`, and
+`/batch/<batch_id>`. `limit` is a positive maximum; absent, invalid or nonpositive
+means unlimited. `offset` skips items from zero; absent, invalid or negative
+means zero. Offset is applied first, in existing order; out-of-range offsets
+return empty lists. The first value wins for repeated parameters.
+`/batches?limit=2` selects two complete batches; `/chunks?limit=5&offset=10`
+selects five chunks after skipping ten. `/batch/batch_002?limit=3` selects three
+chunks in that batch; omit both parameters to retry the complete batch.
+Chunk and result URLs stay aligned, totals remain full-collection values, and
+`/api` always returns the complete catalog, even with pagination parameters.
+
 ### Access and scope
 
 GET requests are read-only. PUT replaces the stored result for a chunk.
@@ -47,8 +58,9 @@ Do not infer that a missing result is a negative assessment.
 ### Using this server
 
 1. Retrieve `/api` for the live API, then `/prompt`, `/schema/input`, and `/schema/output`.
-2. Retrieve `/chunks` and use its run ID and listed URLs exactly. Do not guess
-   chunk filenames or assume a numbering width.
+2. Retrieve the selected batch or chunk listing, preserving any `limit` and
+   `offset`. Use its run ID and URLs exactly; do not guess filenames or replace
+   a debug subset or single-batch retry with the unrestricted global listing.
 3. Download a listed chunk and preserve its original bytes for checksum matching.
    Assess only commits from that chunk using the prompt and supported evidence.
 4. Build a schema-conforming result. Use partial status if only a subset was

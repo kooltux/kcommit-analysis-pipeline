@@ -95,6 +95,32 @@ def validate(name, value):
 
 ROUTES = []
 MAX_RESULT_BYTES = 10 * 1024 * 1024
+LIST_QUERY_PARAMETERS = {
+    'limit': {'type': 'integer', 'default': 0, 'minimum': 0,
+              'description': 'Maximum returned items; missing, invalid or nonpositive means unlimited. First repeated value wins.'},
+    'offset': {'type': 'integer', 'default': 0, 'minimum': 0,
+               'description': 'Zero-based number of items to skip; missing, invalid or negative means zero. First repeated value wins.'},
+}
+
+
+def listing_page(target, values):
+    """Apply offset before limit without changing order or the source collection."""
+    query = urllib.parse.parse_qs(target.partition('?')[2], keep_blank_values=True)
+    numbers = {}
+    for name, spec in LIST_QUERY_PARAMETERS.items():
+        raw = query.get(name, [str(spec['default'])])[0].strip()
+        try:
+            if not re.fullmatch(r'[+-]?[0-9]+', raw):
+                raise ValueError('Not an integer')
+            number = int(raw)
+            numbers[name] = number if number >= spec['minimum'] else spec['default']
+        except ValueError:
+            numbers[name] = spec['default']
+    offset, limit = numbers['offset'], numbers['limit']
+    items = list(values)
+    return items[offset:offset + limit if limit else None]
+
+
 
 
 def route(method, path, content_type='application/json', **contract):
@@ -258,30 +284,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """Read the authoritative result JSON Schema."""
         self.send_bytes(ARCHIVE.read('ai_analysis_result_schema.json'))
 
-    @route('GET', '/batches')
+    @route('GET', '/batches', query_parameters=LIST_QUERY_PARAMETERS)
     def batches(self):
         """List batch assignments, member chunk paths and discovery URLs."""
         self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
             'batch_size': MANIFEST.get('batch_size'), 'total_batches': len(BATCHES),
             'batches': [dict(batch, url='/batch/' + key)
-                        for key, batch in BATCHES.items()]}, sort_keys=True).encode())
+                        for key, batch in listing_page(self.path, BATCHES.items())]}, sort_keys=True).encode())
 
-    @route('GET', '/batch/<batch_id>')
+    @route('GET', '/batch/<batch_id>', query_parameters=LIST_QUERY_PARAMETERS)
     def batch(self, batch_id):
         """List chunk and result URLs for a batch ID returned by /batches."""
         if batch_id not in BATCHES:
             self.send_error(404)
             return
         batch = BATCHES[batch_id]
+        names = listing_page(self.path, batch['chunks'])
         self.send_bytes(json.dumps(dict(batch, run_id=MANIFEST['run_id'],
-            chunks=['/chunk/' + name for name in batch['chunks']],
-            results=['/result/' + name for name in batch['chunks']]), sort_keys=True).encode())
+            chunks=['/chunk/' + name for name in names],
+            results=['/result/' + name for name in names]), sort_keys=True).encode())
 
-    @route('GET', '/chunks')
+    @route('GET', '/chunks', query_parameters=LIST_QUERY_PARAMETERS)
     def chunks(self):
         """List the run identity and all available source-chunk URLs."""
         self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
-            'chunks': ['/chunk/' + name for name in NAMES]}, sort_keys=True).encode())
+            'chunks': ['/chunk/' + name for name in listing_page(self.path, NAMES)]}, sort_keys=True).encode())
 
     @route('GET', '/chunk/<name>', response_schema='/schema/input')
     def chunk(self, name):
