@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Smoke-test a generated serve_ai.pyz over loopback with curl."""
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -79,6 +80,88 @@ def expect(base, path, status=200, *, method='GET', data=None, binary=False, rea
     return body
 
 
+def check_pages(base, endpoint, full, fields):
+    """Compare paginated responses with independent slices of the full listing."""
+    end = len(full[fields[0]]) + 1
+    cases = [('limit=1', 0, 1), ('offset=1', 1, None),
+             ('limit=1&offset=1', 1, 1), ('limit=0', 0, None),
+             ('limit=-1&offset=-1', 0, None), ('limit=bad&offset=bad', 0, None),
+             ('limit=&offset=', 0, None), ('limit=1.5&offset=1.5', 0, None),
+             ('limit=1_0', 0, None), ('limit=1&limit=2', 0, 1),
+             (f'limit=1&offset={end}', end, 1), (f'limit={end}', 0, end)]
+    for query, offset, limit in cases:
+        page = json.loads(expect(base, endpoint + '?' + query))
+        expected = dict(full)
+        for field in fields:
+            expected[field] = full[field][offset:offset + limit if limit else None]
+        check(page == expected, f'Pagination or metadata mismatch: {endpoint}?{query}')
+
+
+def check_discovery(base, expected_version=None):
+    """Exercise live API, batch discovery and pagination; return the full chunk list."""
+    api = json.loads(expect(base, '/api'))
+    check(isinstance(api.get('routes'), list), 'Missing API routes')
+    routes = {(r['method'], r['path']): r for r in api['routes']}
+    check(('GET', '/api') in routes, 'API must describe itself')
+    check(('GET', '/api/version') in routes, 'Missing version route')
+    version = json.loads(expect(base, '/api/version'))
+    check(isinstance(version.get('tool_version'), str) and bool(version['tool_version'].strip()),
+          'Invalid tool version')
+    check(version.get('version_source') == 'MANIFEST.json' and
+          version.get('captured_at') == 'zipapp_generation', 'Invalid version provenance')
+    if expected_version is not None:
+        check(version == expected_version, 'Reported version differs from the generated zipapp')
+    check(json.loads(expect(base, '/api/version?limit=1&offset=999')) == version,
+          'Version endpoint must not be paginated')
+    for path in ('/batches', '/chunks', '/batch/<batch_id>'):
+        check(('GET', path) in routes, 'Missing discovery route: ' + path)
+        check(set(routes[('GET', path)].get('query_parameters', {})) == {'limit', 'offset'},
+              'Missing pagination contract: ' + path)
+    check('query_parameters' not in routes[('GET', '/api')], 'API must not advertise pagination')
+    chunks = json.loads(expect(base, '/chunks'))
+    batches = json.loads(expect(base, '/batches'))
+    check(isinstance(chunks.get('chunks'), list), 'Invalid chunk listing')
+    check(isinstance(batches.get('batches'), list), 'Invalid batch listing')
+    check(api['run_id'] == batches['run_id'] == chunks['run_id'], 'Discovery run IDs differ')
+    check(batches['total_batches'] == len(batches['batches']), 'Incorrect total batch count')
+    check_pages(base, '/chunks', chunks, ('chunks',))
+    check_pages(base, '/batches', batches, ('batches',))
+    members = batches['batches']
+    if members:
+        names = [name for batch in members for name in batch['chunks']]
+        check(['/chunk/' + name for name in names] == chunks['chunks'], 'Batch membership differs from chunks')
+        selected = members[:1] + (members[-1:] if len(members) > 1 else [])
+        for batch in selected:
+            endpoint = '/batch/' + batch['batch_id']
+            check(batch['url'] == endpoint, 'Incorrect batch URL')
+            detail = json.loads(expect(base, endpoint))
+            check(detail['run_id'] == chunks['run_id'], 'Batch run ID differs')
+            check(detail['chunks'] == ['/chunk/' + n for n in batch['chunks']], 'Batch chunks differ')
+            check(detail['results'] == ['/result/' + n for n in batch['chunks']], 'Batch result URLs differ')
+            check_pages(base, endpoint, detail, ('chunks', 'results'))
+    check(json.loads(expect(base, '/api?limit=1&offset=999999')) == api, 'API catalog was paginated')
+    return chunks
+
+
+def check_export(data, listing, result_name=None, payload=None):
+    """Prove export stays complete after paginated discovery, including empty input."""
+    with zipfile.ZipFile(io.BytesIO(data)) as exported:
+        check(exported.testzip() is None, 'Corrupt export')
+        manifest = json.loads(exported.read('ai_analysis_bundle_manifest.json'))
+        names = {path.removeprefix('/chunk/') for path in listing['chunks']}
+        check(manifest['run_id'] == listing['run_id'], 'Export run ID mismatch')
+        check(set(manifest['chunks']) == names, 'Export chunk listing differs')
+        sources = {n.removeprefix('ai_analysis_input/') for n in exported.namelist()
+                   if n.startswith('ai_analysis_input/') and not n.endswith('/')}
+        check(sources == names, 'Export omitted or added source chunks')
+        for name in names:
+            source = exported.read('ai_analysis_input/' + name)
+            check(hashlib.sha256(source).hexdigest() == manifest['chunks'][name], 'Export source checksum mismatch')
+        if result_name is not None:
+            check(exported.read('results/' + result_name) == payload, 'Export result differs')
+        print('Verified export members: ' + ', '.join(exported.namelist()), flush=True)
+
+
 def free_port():
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
@@ -126,9 +209,15 @@ def smoke(app):
                 output_schema = expect(base, '/schema/output')
                 check(json.loads(input_schema)['type'] == 'object', 'Invalid input schema')
                 check(json.loads(output_schema)['type'] == 'object', 'Invalid output schema')
-                listing = json.loads(expect(base, '/chunks'))
+                with zipfile.ZipFile(copy) as source_archive:
+                    expected_version = json.loads(source_archive.read('ai_server_version.json'))
+                listing = check_discovery(base, expected_version)
                 paths = listing['chunks']
-                check(isinstance(paths, list) and paths, 'No chunks listed')
+                check(isinstance(paths, list), 'Invalid chunk listing')
+                if not paths:
+                    check_export(expect(base, '/export', binary=True), listing)
+                    print(paint('PASS: empty discovery, pagination and complete export', '32'))
+                    return
                 check(all(re.fullmatch(r'/chunk/(?:batch_[0-9]{3,}/)?[0-9]+[.]json', path) for path in paths),
                       'Invalid chunk paths')
                 name = paths[0].removeprefix('/chunk/')
@@ -162,23 +251,8 @@ def smoke(app):
                 check(reply == {'status': 'ok'}, 'Unexpected PUT response')
                 check(expect(base, '/result/' + name) == payload, 'Result round trip differs')
                 archive = expect(base, '/export', binary=True)
-                archive_file = Path(temp) / 'export.zip'
-                archive_file.write_bytes(archive)
-                with zipfile.ZipFile(archive_file) as exported:
-                    check(exported.testzip() is None, 'Corrupt export')
-                    manifest = json.loads(exported.read('ai_analysis_bundle_manifest.json'))
-                    check(manifest['run_id'] == listing['run_id'], 'Export run ID mismatch')
-                    check(set(manifest['chunks']) == {path.removeprefix('/chunk/') for path in paths},
-                          'Export chunk listing differs')
-                    for path in paths:
-                        part = exported.read('ai_analysis_input/' + path.removeprefix('/chunk/'))
-                        check(hashlib.sha256(part).hexdigest() ==
-                              manifest['chunks'][path.removeprefix('/chunk/')],
-                              'Export source checksum mismatch')
-                    check(exported.read('results/' + name) == payload,
-                          'Export result differs')
-                    print('Verified export members: ' + ', '.join(exported.namelist()), flush=True)
-                print(paint(f'PASS: {len(paths)} chunks; endpoints, rejection, upload, export', '32'))
+                check_export(archive, listing, name, payload)
+                print(paint(f'PASS: {len(paths)} chunks; API, batches, pagination, upload, complete export', '32'))
             finally:
                 if proc.poll() is None:
                     proc.terminate()

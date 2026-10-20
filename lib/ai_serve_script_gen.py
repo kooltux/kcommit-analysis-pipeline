@@ -6,6 +6,8 @@ import os
 import zipapp
 import zipfile
 
+TOOL_MANIFEST_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'MANIFEST.json')
+
 _MAIN_SOURCE = '''\
 import argparse
 import base64
@@ -27,6 +29,7 @@ import hashlib
 
 ARCHIVE = zipfile.ZipFile(sys.argv[0], 'r')
 MANIFEST = json.loads(ARCHIVE.read('ai_analysis_bundle_manifest.json'))
+SERVER_VERSION = json.loads(ARCHIVE.read('ai_server_version.json'))
 SCHEMA = json.loads(ARCHIVE.read('ai_analysis_result_schema.json'))
 NAMES = MANIFEST['chunks']
 SAFE = re.compile(r'^(?:batch_[0-9]{3,}/)?[0-9]+[.]json$')
@@ -262,6 +265,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'], 'routes': routes,
             'authentication': {'required': required, 'scheme': 'Basic' if required else None}},
             sort_keys=True).encode())
+
+    @route('GET', '/api/version')
+    def version(self):
+        """Report the tool manifest version captured when this zipapp was generated."""
+        self.send_bytes(json.dumps(SERVER_VERSION, sort_keys=True).encode())
 
     @route('GET', '/', 'text/markdown; charset=utf-8')
     @route('GET', '/README.md', 'text/markdown; charset=utf-8')
@@ -517,11 +525,20 @@ if __name__ == '__main__':
 
 def generate_ai_serve_script(outdir, output_path):
     """Embed immutable inputs, prompt, schemas and manifest into an executable zipapp."""
+    with open(TOOL_MANIFEST_PATH, encoding='utf-8') as stream:
+        tool_manifest = json.load(stream)
+    version = tool_manifest.get('version') if isinstance(tool_manifest, dict) else None
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError('MANIFEST.json must define a nonempty string version')
+    server_version = {'tool_version': version, 'version_source': 'MANIFEST.json',
+                      'captured_at': 'zipapp_generation'}
     assets = ('ai_analysis_prompt.md', 'ai_analysis_input_schema.json',
               'ai_analysis_result_schema.json', 'ai_analysis_bundle_manifest.json',
               'ai_server_front_page.md')
     archive_buffer = io.BytesIO()
     with zipfile.ZipFile(archive_buffer, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        archive.writestr('ai_server_version.json',
+                         json.dumps(server_version, sort_keys=True).encode('utf-8'))
         archive.writestr('__main__.py', _MAIN_SOURCE)
         for name in assets:
             archive.write(os.path.join(outdir, name), name)

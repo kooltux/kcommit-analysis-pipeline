@@ -1,6 +1,6 @@
 # kcommit-analysis-pipeline
 
-Current release: `v21.1.0` — code-derived `GET /api` discovery from executable server routes. For AI batch-path migration, see [migration details](docs/AI_ANALYSIS.md#prepare).
+Current release: `v21.1.1` — manifest-derived `/api/version`, batch/chunk listing controls and complete server smoke checks. For AI batch-path migration, see [migration details](docs/AI_ANALYSIS.md#prepare).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively

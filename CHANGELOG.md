@@ -4,13 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v21.1.1 — server version provenance and listing controls (2026-10-20)
+
 ### Added
 
+- `/api/version`: authenticated, unpaginated tool-version discovery from a
+  manifest snapshot read at zipapp generation, with provenance metadata.
+- Version snapshot, portability, HTTP and smoke-test coverage.
 - Shared `limit`/`offset` selection on batch/chunk listings, including individual
   batch membership. Preserve listing order, complete batch objects, aligned
   chunk/result URLs and full-collection totals; `/api` remains unpaginated.
-- Code-derived query metadata, debug/single-batch-retry guidance, and unit/HTTP
-  regressions for pagination defaults, invalid values and boundaries.
+- Code-derived query metadata and debug/single-batch-retry guidance.
+- Regression checks for pagination defaults, invalid values and boundaries,
+  and generated server versions matching the current tool manifest.
+
+### Fixed
+
+- Complete `run_tests_ai` coverage for `/api`, batch discovery and pagination;
+  compare pages against full listings and prove API/export remain complete.
+- Add smoke-check fault-detection tests and generated-zipapp end-to-end tests,
+  including empty input, single-chunk and multi-batch packages.
 
 ## v21.1.0 — code-derived HTTP API discovery (2026-10-16)
 

@@ -45,6 +45,12 @@ limits. Authentication status comes from the running server; no credentials
 are exposed. `/api` requires authentication whenever the server enables it.
 This guide explains usage; it does not maintain a second endpoint catalog.
 
+`GET /api/version` reports `tool_version`, captured from the generating tool's
+`MANIFEST.json`, with `version_source` and `captured_at` provenance. The version
+is embedded in the zipapp, remains unchanged when the repository changes, and
+does not require repository access at runtime. It is separate from the input
+bundle's `pipeline_version`; normal authentication applies and it is not paginated.
+
 ## 2. For AI clients
 
 ### Context and task

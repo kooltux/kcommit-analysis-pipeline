@@ -1,5 +1,22 @@
 # Optional AI analysis workflow
 
+## Server version provenance
+
+`GET /api/version` returns the generating tool's `tool_version`, read directly
+from its current `MANIFEST.json` during zipapp generation and embedded with
+`version_source: MANIFEST.json` and `captured_at: zipapp_generation` metadata.
+It is not inferred from the input bundle's `pipeline_version` or a stale imported
+constant. Existing zipapps retain their snapshot; rebuild to use a newer version.
+
+## Test entry points
+
+`./run_tests` includes pagination and smoke-tool regression tests. Run
+`./run_tests_ai output/serve_ai.pyz` to exercise the actual generated zipapp with
+curl in an isolated temporary directory. The smoke tool checks live `/api`, batch
+and chunk discovery, pagination against complete listings, and unpaginated API
+and ZIP export. It handles empty/small listings and verifies returned results;
+its uploads affect only the temporary copy, not the original server results.
+
 ## Selecting work for debug runs and retries
 
 `/batches`, `/chunks`, and `/batch/<batch_id>` accept independent `limit` and
