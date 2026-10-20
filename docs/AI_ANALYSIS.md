@@ -1,5 +1,70 @@
 # Optional AI analysis workflow
 
+## Convert manual CSV assessments
+
+Use the original run's generated configuration; the converter reads its resolved
+output directory, original manifest, exact source chunks and generated schemas.
+It does not rerun Stage 08, import assessments or regenerate reports.
+
+```sh
+python3 tools/ai_csv_to_results.py --config output/pipeline_config.json \
+  --output-dir converted-results --rationale-from-summary manual-results/
+python3 kcommit_pipeline.py ai-import --config output/pipeline_config.json \
+  --results-bundle converted-results/
+```
+
+Inputs may be CSV files or recursively scanned batch directories. `commit_hash`
+is authoritative; CSV filenames and folder names do not determine identity.
+Output uses the original `batch_NNN/NNN.json` paths and server-compatible result
+envelopes, including original identities, exact-byte checksums and complete or
+partial status. Chunks without assessments are omitted. These JSONs can also
+be submitted to `PUT /result/<source_chunk>`; the tool itself never contacts a server.
+
+Boolean cells accept TRUE/FALSE, case-insensitively. Array cells accept JSON
+arrays or one scalar item; blank/EMPTY arrays become `[]`. Numeric probabilities
+must be integers aligned with the CVE IDs; they are never inferred from text.
+Missing probabilities are allowed only when no CVEs are present. String EMPTY
+markers become empty strings. Missing rationale is an error unless the explicit
+`--rationale-from-summary` option copies the existing summary. This option does
+not generate new assessment evidence. All other required columns must be present.
+The known `extracted_Filename`, `ai_cve_id_pattern` and `rv_*` columns are ignored
+and reported; unknown columns are errors. UTF-8 BOM and quoted CSV cells are supported.
+
+The output directory must not already exist. All rows and result documents are
+validated before creating it; write failures may leave a partial new directory.
+Duplicate and progress behavior is shared with import, with CSV line locations
+in conflict warnings. Progress goes to stderr; stdout contains one JSON summary.
+
+## Import grouping and progress
+
+`ai-import --results-bundle PATH` accepts an existing server-export ZIP, a
+server-compatible chunk-result JSON, or a directory recursively containing
+result JSONs. For JSON inputs, filenames and folders do not determine identity.
+The current source package and generated schemas remain authoritative.
+
+For arbitrary grouping, use a collection object with exactly `schema_version`
+(`"1.0"`), `run_id`, `input_schema_checksum`, `output_schema_checksum`, and
+`results`. Copy identities from the original source package. `results` maps
+full commit SHAs to the same per-commit assessment objects as the output schema.
+One collection may span source chunks; it must not claim a single `source_chunk`
+or `input_checksum`. One large collection and many one-commit collections are
+imported identically. Existing chunk envelopes are also accepted and validated.
+
+Files are processed in sorted absolute-path order. Identical duplicate SHAs
+are counted and skipped. Conflicting duplicates keep the first valid assessment
+and reject the later assessment as a whole, warning with SHA, both locations,
+and retained/rejected values for every differing field. Fields are never merged.
+Duplicate keys within a JSON object are errors. Invalid assessments, unknown
+SHAs and identity mismatches remain fatal; all input is validated before the
+sidecar or reports change. Import replaces the current sidecar with the accepted
+collection; it does not append assessments from previous import runs.
+
+Progress and warnings go to stderr, with elapsed time and periodic discovery,
+source-validation, file/commit-processing and final-summary messages. Normal
+progress is throttled to about once per second; phase boundaries, first/last
+files and conflicting-duplicate warnings are always shown. Stage 08 preparation
+is not rerun during import.
+
 ## Server version provenance
 
 `GET /api/version` returns the generating tool's `tool_version`, read directly

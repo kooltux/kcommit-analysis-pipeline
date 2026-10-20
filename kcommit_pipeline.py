@@ -54,7 +54,8 @@ def main():
     p_import = sub.add_parser('ai-import', help='Validate and import AI analysis results')
     p_import.add_argument('--config', required=True)
     p_import.add_argument('--override', default=None, metavar='JSON')
-    p_import.add_argument('--results-bundle', required=True, metavar='ZIP')
+    p_import.add_argument('--results-bundle', required=True, metavar='PATH',
+                          help='Server-export ZIP, result JSON, or recursive JSON results directory')
 
     p_dr = sub.add_parser('dropped', help='Inspect filtered-out commits')
     p_dr.add_argument('--config', required=True)

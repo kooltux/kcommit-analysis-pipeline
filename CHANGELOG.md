@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Manual CSV-to-server-result conversion using generated pipeline configuration,
+  original chunk identities, explicit missing-field handling and progress.
+- CSV conversion, duplicate, validation and configuration-resolution regressions.
+- SHA-based AI import from server ZIPs, chunk JSONs or arbitrarily grouped JSON
+  collections, with deterministic duplicate warnings and throttled progress.
+- Grouping, thousand-commit, duplicate and fail-before-write import regressions.
+
 ## v21.1.1 — server version provenance and listing controls (2026-10-20)
 
 ### Added

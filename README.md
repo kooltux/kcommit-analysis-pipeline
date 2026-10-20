@@ -1,5 +1,15 @@
 # kcommit-analysis-pipeline
 
+Manual CSV assessments can be converted to server-compatible chunk JSONs with
+`python3 tools/ai_csv_to_results.py --config output/pipeline_config.json
+--output-dir converted-results manual-results/`. See
+[CSV conversion](docs/AI_ANALYSIS.md#convert-manual-csv-assessments).
+
+AI import accepts server ZIPs, individual result JSONs or recursive result
+folders through `--results-bundle PATH`; commit SHA, run identity and schema
+validation are independent of file grouping. See
+[AI import details](docs/AI_ANALYSIS.md#import-grouping-and-progress).
+
 Current release: `v21.1.1` — manifest-derived `/api/version`, batch/chunk listing controls and complete server smoke checks. For AI batch-path migration, see [migration details](docs/AI_ANALYSIS.md#prepare).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
