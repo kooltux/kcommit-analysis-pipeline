@@ -60,10 +60,11 @@ def test_standalone_zipapp_api_and_authentication(app, auth):
         assert int(headers['Content-Length']) == len(raw)
         catalog = json.loads(raw)
         assert catalog['authentication'] == {'required': bool(auth), 'scheme': 'Basic' if auth else None}
-        assert {r['method'] for r in catalog['routes']} == {'GET', 'PUT'}
+        assert {r['method'] for r in catalog['routes']} == {'GET', 'PUT', 'POST'}
         assert ('GET', '/api') in {(r['method'], r['path']) for r in catalog['routes']}
         assert 'secret' not in raw.decode() and 'reviewer' not in raw.decode()
-        for method in ('HEAD', 'POST', 'OPTIONS', 'DELETE'):
+        assert request(port, '/api', method='POST', authorization=token)[0] == 404
+        for method in ('HEAD', 'OPTIONS', 'DELETE'):
             assert request(port, '/api', method=method, authorization=token)[0] == 501
         for path, kind in (('/', 'text/markdown; charset=utf-8'), ('/prompt', 'text/markdown'), ('/chunks', 'application/json')):
             code, headers, raw = request(port, path, authorization=token)

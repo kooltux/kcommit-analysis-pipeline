@@ -136,9 +136,10 @@ def check_discovery(base, expected_version=None):
             check(batch['url'] == endpoint, 'Incorrect batch URL')
             detail = json.loads(expect(base, endpoint))
             check(detail['run_id'] == chunks['run_id'], 'Batch run ID differs')
-            check(detail['chunks'] == ['/chunk/' + n for n in batch['chunks']], 'Batch chunks differ')
-            check(detail['results'] == ['/result/' + n for n in batch['chunks']], 'Batch result URLs differ')
-            check_pages(base, endpoint, detail, ('chunks', 'results'))
+            check('results' not in detail, 'Batch detail must not expose parallel result arrays')
+            expected = [{'chunk': '/chunk/' + n, 'result': '/result/' + n} for n in batch['chunks']]
+            check(detail['chunks'] == expected, 'Batch chunk/result pairs differ')
+            check_pages(base, endpoint, detail, ('chunks',))
     check(json.loads(expect(base, '/api?limit=1&offset=999999')) == api, 'API catalog was paginated')
     return chunks
 
@@ -234,8 +235,9 @@ def smoke(app):
                        reason='unknown chunk is rejected')
                 expect(base, '/result/' + name, 404,
                        reason='result is absent before upload')
-                expect(base, '/result/' + name, 400, method='PUT', data=b'{}',
-                       reason='invalid result is rejected')
+                for method in ('PUT', 'POST'):
+                    expect(base, '/result/' + name, 400, method=method, data=b'{}',
+                           reason=f'invalid {method} result is rejected')
                 expect(base, '/result/' + name, 404,
                        reason='rejected upload saved nothing')
                 result = {
@@ -247,9 +249,10 @@ def smoke(app):
                     'total_commits': len(chunk['commits']), 'analyzed_commits': 0, 'results': {},
                 }
                 payload = json.dumps(result, sort_keys=True).encode()
-                reply = json.loads(expect(base, '/result/' + name, method='PUT', data=payload))
-                check(reply == {'status': 'ok'}, 'Unexpected PUT response')
-                check(expect(base, '/result/' + name) == payload, 'Result round trip differs')
+                for method in ('PUT', 'POST'):
+                    reply = json.loads(expect(base, '/result/' + name, method=method, data=payload))
+                    check(reply == {'status': 'ok'}, f'Unexpected {method} response')
+                    check(expect(base, '/result/' + name) == payload, 'Result round trip differs')
                 archive = expect(base, '/export', binary=True)
                 check_export(archive, listing, name, payload)
                 print(paint(f'PASS: {len(paths)} chunks; API, batches, pagination, upload, complete export', '32'))

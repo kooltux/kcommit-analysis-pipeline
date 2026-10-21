@@ -4,7 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v21.1.2 — manual AI import and server API improvements (2026-10-20)
+
+### Fixed
+
+- Update the server-guide content regression to require both PUT and POST upload documentation instead of the obsolete PUT-only wording.
+
 ### Added
+
+- Batch detail uses paired chunk/result URL objects instead of parallel arrays, with pagination and smoke coverage.
+- POST result uploads as a PUT-compatible alias, with shared validation and HTTP/smoke regressions.
 
 - Manual CSV-to-server-result conversion using generated pipeline configuration,
   original chunk identities, explicit missing-field handling and progress.

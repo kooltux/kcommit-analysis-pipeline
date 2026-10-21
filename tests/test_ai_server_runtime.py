@@ -320,7 +320,7 @@ def test_request_completion_logs(app):
         assert request(port, '/chunks?secret=hidden', authorization=token)[0] == 200
         assert request(port, '/chunks')[0] == 401
         assert request(port, '/missing', authorization=token)[0] == 404
-        assert request(port, '/chunks', method='POST', authorization=token)[0] == 501
+        assert request(port, '/chunks', method='DELETE', authorization=token)[0] == 501
         assert request(port, '/result/1.json', method='PUT', body=b'{}', authorization=token)[0] == 400
         wait_until(lambda: len(access_lines(log)) == 5)
         lines = access_lines(log)

@@ -10,7 +10,7 @@ folders through `--results-bundle PATH`; commit SHA, run identity and schema
 validation are independent of file grouping. See
 [AI import details](docs/AI_ANALYSIS.md#import-grouping-and-progress).
 
-Current release: `v21.1.1` — manifest-derived `/api/version`, batch/chunk listing controls and complete server smoke checks. For AI batch-path migration, see [migration details](docs/AI_ANALYSIS.md#prepare).
+Current release: `v21.1.2` — manual CSV conversion, SHA-based AI import, POST/PUT result uploads and paired batch discovery URLs. For AI batch-path migration, see [migration details](docs/AI_ANALYSIS.md#prepare).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively

@@ -62,7 +62,7 @@ def test_http_export_import(tmp_path, monkeypatch):
         assert request(port, '/batches')[0] == 401
         batches = json.loads(req('/batches')[2])
         assert batches['total_batches'] == 3
-        paths = [p for b in batches['batches'] for p in json.loads(req(b['url'])[2])['chunks']]
+        paths = [p['chunk'] for b in batches['batches'] for p in json.loads(req(b['url'])[2])['chunks']]
         assert paths == json.loads(req('/chunks')[2])['chunks']
         name = manifest['batches'][1]['chunks'][0]
         source = req('/chunk/' + name)[2]

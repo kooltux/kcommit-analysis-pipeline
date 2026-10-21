@@ -34,8 +34,8 @@ def fake_discovery(size):
                '/batches': {'run_id': 'r', 'total_batches': len(batches), 'batches': batches}}
     for batch in batches:
         replies[batch['url']] = dict(batch, run_id='r',
-            chunks=['/chunk/' + n for n in batch['chunks']],
-            results=['/result/' + n for n in batch['chunks']])
+            chunks=[{'chunk': '/chunk/' + n, 'result': '/result/' + n}
+                    for n in batch['chunks']])
     return replies
 
 
@@ -52,7 +52,7 @@ def fake_expect(replies, fault=None):
                 return 0
         limit, offset = number('limit'), number('offset')
         if path != '/api':
-            for key in ('chunks', 'results', 'batches'):
+            for key in ('chunks', 'batches'):
                 if key in result:
                     result[key] = result[key][offset:offset + limit if limit else None]
         if query and fault == 'ignore_pagination' and path != '/api':
@@ -60,7 +60,7 @@ def fake_expect(replies, fault=None):
         if query and fault == 'metadata' and path != '/api':
             result['run_id'] = 'wrong'
         if query and fault == 'misalign' and path.startswith('/batch/'):
-            result['results'] = full['results']
+            result['chunks'] = [dict(item, result='/result/wrong.json') for item in result['chunks']]
         if query and fault == 'paginate_api' and path == '/api':
             result['routes'] = result['routes'][:1]
         return json.dumps(result).encode()

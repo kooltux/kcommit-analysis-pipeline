@@ -190,7 +190,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except ValueError:
                 path = '<invalid-target>'
         method = getattr(self, 'command', None) or '-'
-        reasons = {400: 'invalid_result' if method == 'PUT' else 'malformed_request',
+        reasons = {400: 'invalid_result' if method in ('PUT', 'POST') else 'malformed_request',
                    401: 'authentication_failed', 404: 'not_found', 408: 'timeout',
                    414: 'request_line_too_long', 431: 'headers_too_large',
                    500: 'internal_error', 501: 'unsupported_method'}
@@ -237,6 +237,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.dispatch('GET')
+
+    def do_POST(self):
+        self.dispatch('POST')
 
     def do_PUT(self):
         self.dispatch('PUT')
@@ -302,15 +305,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     @route('GET', '/batch/<batch_id>', query_parameters=LIST_QUERY_PARAMETERS)
     def batch(self, batch_id):
-        """List chunk and result URLs for a batch ID returned by /batches."""
+        """List paired chunk/result URLs in chunks for a batch ID returned by /batches."""
         if batch_id not in BATCHES:
             self.send_error(404)
             return
         batch = BATCHES[batch_id]
         names = listing_page(self.path, batch['chunks'])
         self.send_bytes(json.dumps(dict(batch, run_id=MANIFEST['run_id'],
-            chunks=['/chunk/' + name for name in names],
-            results=['/result/' + name for name in names]), sort_keys=True).encode())
+            chunks=[{'chunk': '/chunk/' + name, 'result': '/result/' + name}
+                    for name in names]), sort_keys=True).encode())
 
     @route('GET', '/chunks', query_parameters=LIST_QUERY_PARAMETERS)
     def chunks(self):
@@ -356,6 +359,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     dest.writestr('results/' + name, data)
         self.send_bytes(buf.getvalue())
 
+    @route('POST', '/result/<name>', request_content_type='application/json',
+           request_schema='/schema/output', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES)
     @route('PUT', '/result/<name>', request_content_type='application/json',
            request_schema='/schema/output', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES)
     def put_result(self, name):

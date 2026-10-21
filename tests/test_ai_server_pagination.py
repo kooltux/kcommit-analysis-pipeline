@@ -15,7 +15,7 @@ CASES = [('', 0, None), ('?limit=2', 0, 2), ('?offset=2', 2, None),
          ('?offset=1&offset=3', 1, None), ('?offset=0', 0, None),
          ('?limit=%2B2&offset=%20%2B1%20', 1, 2)]
 ENDPOINTS = [('/batches', ('batches',)), ('/chunks', ('chunks',)),
-             ('/batch/batch_002', ('chunks', 'results'))]
+             ('/batch/batch_002', ('chunks',))]
 
 
 @pytest.fixture
@@ -33,8 +33,11 @@ def check_page(full, page, fields, offset, limit):
     for key in fields:
         assert page[key] == full[key][offset:stop]
     assert {k: v for k, v in page.items() if k not in fields} == {k: v for k, v in full.items() if k not in fields}
-    if 'results' in fields:
-        assert [p.removeprefix('/chunk/') for p in page['chunks']] == [p.removeprefix('/result/') for p in page['results']]
+    if 'batch_id' in page:
+        assert 'results' not in page
+        for item in page['chunks']:
+            assert set(item) == {'chunk', 'result'}
+            assert item['chunk'].removeprefix('/chunk/') == item['result'].removeprefix('/result/')
 
 
 @pytest.mark.parametrize('endpoint,fields', ENDPOINTS)

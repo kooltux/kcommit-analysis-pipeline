@@ -18,7 +18,8 @@ is authoritative; CSV filenames and folder names do not determine identity.
 Output uses the original `batch_NNN/NNN.json` paths and server-compatible result
 envelopes, including original identities, exact-byte checksums and complete or
 partial status. Chunks without assessments are omitted. These JSONs can also
-be submitted to `PUT /result/<source_chunk>`; the tool itself never contacts a server.
+be submitted to `PUT /result/<source_chunk>` or `POST /result/<source_chunk>`;
+the tool itself never contacts a server.
 
 Boolean cells accept TRUE/FALSE, case-insensitively. Array cells accept JSON
 arrays or one scalar item; blank/EMPTY arrays become `[]`. Numeric probabilities
@@ -89,8 +90,11 @@ its uploads affect only the temporary copy, not the original server results.
 means unlimited; missing, empty, non-integer or negative `offset` means zero.
 The first repeated value wins. Offset skips items before limit caps the result;
 order and full-collection totals are preserved. Beyond-end offsets return empty
-lists. Batch-level chunk/result URLs are sliced together, but batches returned
-by `/batches` retain complete membership. `/api` is never paginated.
+lists. Batch detail returns `chunks: [{"chunk": "...", "result": "..."}]`,
+without a separate `results` array. Pagination selects complete pairs; full-batch
+metadata stays unchanged. A result URL does not imply a stored result exists.
+`/batches` retains complete membership and `/chunks` remains a list of chunk URLs.
+`/api` is never paginated.
 
 Use `/batches?limit=2` for two complete batches, `/chunks?limit=5&offset=10` for
 five selected chunks, or `/batch/batch_002` without parameters for a complete
@@ -239,7 +243,10 @@ socket timeout; the server processes requests serially.
 
 Use `GET /prompt`, `GET /schema/input`, `GET /schema/output`,
 `GET /chunks`, and `GET /chunk/<name>` to inspect the work. Return one schema-
-conforming result document per chunk using `PUT /result/<name>`. Results may
+conforming result document per chunk using `PUT /result/<name>` or
+`POST /result/<name>`. Both share authentication, size limits, validation and
+atomic replacement, returning HTTP 200 with `{"status":"ok"}`. Rebuild Stage 08
+and restart the generated zipapp to enable POST. Results may
 be partial; a complete result must cover every source SHA. `GET /result/<name>`
 retrieves an uploaded result. `GET /export` returns a ZIP containing the source
 manifest, chunks, and any accepted results. Keep the ZIP for the import step.

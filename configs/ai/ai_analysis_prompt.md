@@ -15,7 +15,8 @@ backporting. Treat recommendations as advisory: a human must review them.
    `GET /schema/input`, and `GET /schema/output`. The schemas
    define the input and output fields and are authoritative over examples.
 2. Read `GET /batches` and select the assigned batch(es). Read each
-   `GET /batch/<batch_id>` and fetch every listed chunk URL. `/chunks` still
+   `GET /batch/<batch_id>` and iterate its `chunks` objects. Fetch each object's
+   `chunk` URL and submit its assessment to its `result` URL. `/chunks` still
    lists all chunks. Analyze commits independently; these are prefilter-kept
    commits, not pipeline-scored results. A batch groups chunks for assignment,
    not for merging inputs or results.
@@ -25,7 +26,8 @@ backporting. Treat recommendations as advisory: a human must review them.
    of the exact chunk response bytes. Keep `total_commits` unchanged; set
    `analyzed_commits` to the number of SHA-keyed entries in `results`. Use the
    full 40-character commit SHA as each key.
-4. `PUT /result/<source_chunk>` with one result per chunk. Preserve the full
+4. Submit with `PUT /result/<source_chunk>` or `POST /result/<source_chunk>`;
+   both accept one result per chunk with identical behavior. Preserve the full
    relative path, for example `batch_002/011.json`, not its basename. Use
    `analysis_status: "partial"` if any commit has not been analyzed. Retrieve
    accepted results with `GET /result/<name>`. Once done, download `/export`

@@ -25,12 +25,14 @@ return empty lists. The first value wins for repeated parameters.
 `/batches?limit=2` selects two complete batches; `/chunks?limit=5&offset=10`
 selects five chunks after skipping ten. `/batch/batch_002?limit=3` selects three
 chunks in that batch; omit both parameters to retry the complete batch.
-Chunk and result URLs stay aligned, totals remain full-collection values, and
+Each `/batch/<batch_id>` entry in `chunks` is a `{"chunk": "...", "result": "..."}`
+object; there is no separate `results` array. Pagination keeps each pair together.
+Result URLs exist in discovery even before upload. Totals remain full-collection values, and
 `/api` always returns the complete catalog, even with pagination parameters.
 
 ### Access and scope
 
-GET requests are read-only. PUT replaces the stored result for a chunk.
+GET requests are read-only. PUT and POST replace the stored result for a chunk.
 When authentication is enabled, use the operator-provided credentials; browsers
 can use the HTTP login prompt. Assessments remain advisory. This server is an
 exchange interface, not an autonomous reviewer or a backport approval system.
@@ -71,7 +73,8 @@ Do not infer that a missing result is a negative assessment.
    Assess only commits from that chunk using the prompt and supported evidence.
 4. Build a schema-conforming result. Use partial status if only a subset was
    assessed; do not fabricate results or unsupported CVE IDs.
-5. When authorized, submit to `PUT /result/<name>` for that source chunk.
+5. When authorized, submit to `PUT /result/<name>` or `POST /result/<name>`.
+   Both validate and atomically replace the result for that source chunk.
 6. Check for HTTP 200 and `{"status":"ok"}`, then GET the same result URL to
    verify acceptance. A rejected upload is not a completed submission.
 
