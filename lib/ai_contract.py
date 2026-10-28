@@ -115,6 +115,38 @@ def validate_chunk(chunk, schema_checksum, output_checksum, run_id, name):
         raise ValueError('Duplicate source commit')
     return True
 
+def result_properties(schema):
+    """Read inline or local-pointer assessment properties without mutating schemas.
+
+    This is contract layout resolution, not general JSON Schema validation.
+    Reference siblings are rejected rather than silently losing constraints.
+    """
+    try:
+        node = schema['properties']['results']['additionalProperties']
+        seen = set()
+        while isinstance(node, dict) and '$ref' in node:
+            ref = node['$ref']
+            if (set(node) != {'$ref'} or not isinstance(ref, str)
+                    or not ref.startswith('#/') or ref in seen):
+                raise ValueError('Unsupported or cyclic assessment reference')
+            seen.add(ref)
+            node = schema
+            for part in ref[2:].split('/'):
+                if re.search(r'~(?:[^01]|$)', part):
+                    raise ValueError('Invalid assessment JSON Pointer escape')
+                part = part.replace('~1', '/').replace('~0', '~')
+                if not isinstance(node, dict):
+                    raise ValueError('Assessment reference must traverse objects')
+                node = node[part]
+        if not isinstance(node, dict) or not isinstance(node.get('properties'), dict):
+            raise ValueError('Assessment schema must define object properties')
+        if node.get('type', 'object') != 'object':
+            raise ValueError('Assessment schema must describe an object')
+        return node['properties']
+    except (KeyError, TypeError) as exc:
+        raise ValueError('Invalid assessment schema layout or unresolved reference') from exc
+
+
 def validate_result(result, chunk, schema, input_checksum):
     """Validate identity, completeness, and every field of every result."""
     if not isinstance(result, dict) or set(result) != set(schema['required']):
@@ -139,13 +171,19 @@ def validate_result(result, chunk, schema, input_checksum):
         raise ValueError('Analyzed count mismatch')
     if result['analysis_status'] == 'complete' and set(results) != source:
         raise ValueError('Incomplete result marked complete')
-    props = schema['properties']['results']['additionalProperties']['properties']
+    props = result_properties(schema)
     for item in results.values():
         if not isinstance(item, dict) or set(item) != set(props):
             raise ValueError('Invalid per-commit result fields')
         for key, spec in props.items():
             value = item[key]
             kind = spec['type']
+            if isinstance(kind, list):
+                if set(kind) != {'array', 'null'}:
+                    raise ValueError('Unsupported nullable type: ' + key)
+                if value is None:
+                    continue
+                kind = 'array'
             if kind == 'boolean' and type(value) is not bool:
                 raise ValueError('Invalid boolean: ' + key)
             if kind == 'string' and (not isinstance(value, str)
@@ -161,6 +199,20 @@ def validate_result(result, chunk, schema, input_checksum):
                         or ('pattern' in item_spec and not re.fullmatch(item_spec['pattern'], v))
                         for v in value)):
                     raise ValueError('Invalid array: ' + key)
+                if (len(value) < spec.get('minItems', 0)
+                        or ('maxItems' in spec and len(value) > spec['maxItems'])
+                        or (spec.get('uniqueItems') and len(value) != len(set(value)))):
+                    raise ValueError('Invalid array constraints: ' + key)
+        if 'rv_agreement' in props:
+            review = (item.get('rv_notes'), item.get('rv_recommendation'))
+            if item['rv_agreement'] == 'agree':
+                if any(value is not None for value in review):
+                    raise ValueError('Review agreement requires null notes and recommendations')
+            elif item['rv_agreement'] == 'disagree':
+                if any(not isinstance(value, list) or not value for value in review):
+                    raise ValueError('Review disagreement requires nonempty review arrays')
+            else:
+                raise ValueError('Invalid review agreement')
         risks = item.get('ai_risks_if_not_backported')
         if risks is not None and (len(risks) != len(set(risks))
                                   or ('none' in risks and len(risks) != 1)):

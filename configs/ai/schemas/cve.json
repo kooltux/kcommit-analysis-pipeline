@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CVE expert intermediate assessment",
+  "description": "One source-bound document per chunk. Cross-document identity, coverage, array-length and assembly-preservation checks are additional validation gates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version","run_id","source_chunk","input_checksum","input_schema_checksum","output_schema_checksum","analysis_status","total_commits","analyzed_commits","role","results"],
+  "properties": {
+    "schema_version": {"type": "string","const": "1.0"},
+    "run_id": {"type": "string","pattern": "^[0-9a-f]{64}$"},
+    "source_chunk": {"type": "string","pattern": "^(?:batch_[0-9]{3,}/)?[0-9]+[.]json$"},
+    "input_checksum": {"type": "string","pattern": "^[0-9a-f]{64}$","description": "Exact source-byte SHA-256 supplied by trusted server metadata."},
+    "input_schema_checksum": {"type": "string","pattern": "^[0-9a-f]{64}$"},
+    "output_schema_checksum": {"type": "string","pattern": "^[0-9a-f]{64}$","description": "Shared final result.json checksum, not the role-specific schema checksum."},
+    "analysis_status": {"type": "string","enum": ["complete","partial"]},
+    "total_commits": {"type": "integer","minimum": 0},
+    "analyzed_commits": {"type": "integer","minimum": 0},
+    "role": {"type": "string","const": "cve"},
+    "results": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[0-9a-f]{40}$"},
+      "additionalProperties": {"$ref": "#/$defs/assessment"}
+    }
+  },
+  "$defs": {
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ai_cve_ids","ai_cve_probabilities"],
+      "properties": {
+        "ai_cve_ids": {
+          "type": "array",
+          "items": {"type": "string","pattern": "^CVE-[0-9]{4}-[0-9]{4,}$"},
+          "description": "CVE IDs explicitly supported by the input; no inferred or invented identifiers."
+        },
+        "ai_cve_probabilities": {
+          "type": "array",
+          "items": {"type": "integer","minimum": 0,"maximum": 100},
+          "description": "Estimated relevance percentages corresponding positionally to ai_cve_ids; empty if no CVEs."
+        }
+      }
+    }
+  }
+}

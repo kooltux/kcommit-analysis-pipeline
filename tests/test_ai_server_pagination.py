@@ -6,14 +6,12 @@ from test_ai_server_api import invoke
 from test_ai_batch_layout import prepare
 
 CASES = [('', 0, None), ('?limit=2', 0, 2), ('?offset=2', 2, None),
-         ('?limit=2&offset=1', 1, 2), ('?limit=abc', 0, None),
-         ('?limit=1.5', 0, None), ('?limit=1_0', 0, None), ('?limit=0', 0, None),
-         ('?limit=-1', 0, None), ('?limit=&offset=', 0, None),
-         ('?offset=-1&limit=2', 0, 2), ('?offset=abc&limit=2', 0, 2),
-         ('?limit=999', 0, 999), ('?offset=999', 999, None),
-         ('?limit=1&limit=3&offset=1', 1, 1), ('?limit=&limit=1', 0, None),
-         ('?offset=1&offset=3', 1, None), ('?offset=0', 0, None),
+         ('?limit=2&offset=1', 1, 2), ('?limit=0', 0, None),
+         ('?limit=999', 0, 999), ('?offset=999', 999, None), ('?offset=0', 0, None),
          ('?limit=%2B2&offset=%20%2B1%20', 1, 2)]
+INVALID = ['?limit=abc', '?limit=1.5', '?limit=1_0', '?limit=-1', '?limit=&offset=',
+           '?offset=-1&limit=2', '?offset=abc&limit=2', '?limit=1&limit=3&offset=1',
+           '?limit=&limit=1', '?offset=1&offset=3', '?limti=1', '?limit=1&unknown=2']
 ENDPOINTS = [('/batches', ('batches',)), ('/chunks', ('chunks',)),
              ('/batch/batch_002', ('chunks',))]
 
@@ -72,3 +70,25 @@ def test_standalone_paginated_http_and_complete_api(tmp_path):
                 check_page(full, get(endpoint + query), fields, offset, limit)
         assert get('/api?limit=1&offset=999') == get('/api')
         assert request(port, '/batch/missing?limit=1', authorization=basic('reviewer:secret'))[0] == 404
+
+        for endpoint, fields in ENDPOINTS:
+            original = get(endpoint)
+            for query in INVALID:
+                assert request(port, endpoint + query, authorization=basic('reviewer:secret'))[0] == 400
+            assert get(endpoint) == original
+
+
+@pytest.mark.parametrize('endpoint,fields', ENDPOINTS)
+@pytest.mark.parametrize('query', INVALID)
+def test_invalid_pagination_never_expands_work(listings, endpoint, fields, query):
+    original = invoke(listings, endpoint)
+    assert invoke(listings, endpoint + query) == 400
+    assert invoke(listings, endpoint) == original
+
+
+def test_invalid_pagination_is_rejected_before_enumerating_sources(namespace):
+    def forbidden():
+        pytest.fail('invalid pagination must not enumerate source work')
+        yield None
+    with pytest.raises(ValueError, match='integer'):
+        namespace['listing_page']('/chunks?limit=bad', forbidden())

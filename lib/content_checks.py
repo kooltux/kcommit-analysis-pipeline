@@ -41,14 +41,14 @@ def check_json(path):
 
 
 def check_ai_result_schema(path):
-    """Same acceptance rule as Stage 08: an object schema with properties.results."""
-    text, problem = _read_text(path)
-    if problem:
-        return problem
+    """Check schema correctness before legacy result-envelope compatibility."""
+    from lib.ai_schema_validation import load_schema, SchemaDecodeError
     try:
-        schema = json.loads(text)
+        schema = load_schema(path)
+    except SchemaDecodeError as exc:
+        return f'is not valid JSON ({exc})'
     except ValueError as exc:
-        return 'is not valid JSON ({})'.format(exc)
+        return str(exc)
     props = schema.get('properties') if isinstance(schema, dict) else None
     if (not isinstance(schema, dict) or schema.get('type') != 'object'
             or not isinstance(props, dict) or 'results' not in props):

@@ -3,6 +3,7 @@ import copy
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 import runpy
 import shutil
@@ -23,11 +24,27 @@ def fake_discovery(size):
     batches = [{'batch_id': f'batch_{i // 2 + 1:03d}', 'batch_number': i // 2 + 1,
                 'chunks': names[i:i + 2], 'total_commits': len(names[i:i + 2]),
                 'url': f'/batch/batch_{i // 2 + 1:03d}'} for i in range(0, size, 2)]
-    routes = [{'method': 'GET', 'path': '/api'},
-              {'method': 'GET', 'path': '/api/version'}] + [
-        {'method': 'GET', 'path': p, 'query_parameters': {'limit': {}, 'offset': {}}}
-        for p in ('/chunks', '/batches', '/batch/<batch_id>')]
-    replies = {'/api': {'run_id': 'r', 'routes': routes},
+    groups = ['discovery', 'contract', 'sources', 'validation', 'results', 'other']
+    routes = [{'method': 'GET', 'path': '/api', 'group': 'discovery'},
+              {'method': 'GET', 'path': '/api/version', 'group': 'discovery'},
+              {'method': 'GET', 'path': '/schema/result', 'group': 'contract'}] + [
+        {'method': 'GET', 'path': p, 'group': 'sources',
+         'query_parameters': {'limit': {'default': 0, 'example': 1},
+                              'offset': {'default': 0, 'example': 0}}}
+        for p in ('/batches', '/batch/<batch_id>', '/chunks')]
+    for route in routes:
+        route.update(path_parameters={}, examples=[])
+        url = route['path']
+        if '<batch_id>' in url:
+            batch_id = batches[0]['batch_id'] if batches else None
+            route['path_parameters']['batch_id'] = {'type': 'string', 'example': batch_id}
+            if batch_id is not None:
+                url = url.replace('<batch_id>', batch_id)
+        if '<' not in url:
+            route['examples'].append({'method': 'GET', 'url': url})
+            if 'query_parameters' in route:
+                route['examples'].append({'method': 'GET', 'url': url + '?limit=1&offset=0'})
+    replies = {'/api': {'run_id': 'r', 'groups': groups, 'routes': routes},
                '/api/version': {'tool_version': 'v0.0.1', 'version_source': 'MANIFEST.json',
                                 'captured_at': 'zipapp_generation'},
                '/chunks': {'run_id': 'r', 'chunks': ['/chunk/' + n for n in names]},
@@ -45,19 +62,23 @@ def fake_expect(replies, fault=None):
         full = copy.deepcopy(replies[path])
         result = copy.deepcopy(full)
         params = parse_qs(query, keep_blank_values=True)
-        def number(name):
-            try:
-                return max(0, int(params.get(name, ['0'])[0]))
-            except ValueError:
-                return 0
-        limit, offset = number('limit'), number('offset')
+        paginated = path in ('/chunks', '/batches') or path.startswith('/batch/')
+        invalid = paginated and (bool(set(params) - {'limit', 'offset'}) or any(
+            len(values) != 1 or not re.fullmatch(r'[+-]?[0-9]+', values[0].strip())
+            or int(values[0]) < 0 for values in params.values()))
+        status = 400 if invalid and fault != 'accept_invalid' else 200
+        assert kwargs.get('status', 200) == status, 'Pagination HTTP status mismatch'
+        if invalid:
+            return b'{"error":"invalid_pagination"}'
+        limit = int(params.get('limit', ['0'])[0]) if paginated else 0
+        offset = int(params.get('offset', ['0'])[0]) if paginated else 0
         if path != '/api':
             for key in ('chunks', 'batches'):
                 if key in result:
                     result[key] = result[key][offset:offset + limit if limit else None]
         if query and fault == 'ignore_pagination' and path != '/api':
             result = full
-        if query and fault == 'metadata' and path != '/api':
+        if query and fault == 'metadata' and (path in ('/chunks', '/batches') or path.startswith('/batch/')):
             result['run_id'] = 'wrong'
         if query and fault == 'misalign' and path.startswith('/batch/'):
             result['chunks'] = [dict(item, result='/result/wrong.json') for item in result['chunks']]
@@ -74,10 +95,40 @@ def test_discovery_handles_empty_single_and_multiple_listings(tool, monkeypatch,
     assert tool['check_discovery']('unused') == replies['/chunks']
 
 
-@pytest.mark.parametrize('fault', ['ignore_pagination', 'metadata', 'misalign', 'paginate_api'])
-def test_smoke_checks_detect_broken_pagination(tool, monkeypatch, fault):
+@pytest.mark.parametrize('fault,message', [
+    ('ignore_pagination', 'Pagination or metadata mismatch: /chunks'),
+    ('metadata', 'Pagination or metadata mismatch: /chunks'),
+    ('misalign', 'Pagination or metadata mismatch: /batch/'),
+    ('paginate_api', 'API catalog was paginated'),
+    ('accept_invalid', 'Pagination HTTP status mismatch'),
+])
+def test_smoke_checks_detect_broken_pagination(tool, monkeypatch, fault, message):
     monkeypatch.setitem(tool, 'expect', fake_expect(fake_discovery(5), fault))
-    with pytest.raises(AssertionError):
+    with pytest.raises(AssertionError, match=message):
+        tool['check_discovery']('unused')
+
+
+@pytest.mark.parametrize('fault,message', [
+    ('missing_schema', 'Missing canonical result schema'),
+    ('removed_alias', 'Removed schema alias is advertised'),
+    ('group_order', 'API groups are not logically ordered'),
+    ('examples', 'Missing API parameter examples'),
+    ('path_parameters', 'Missing API parameter examples'),
+])
+def test_smoke_checks_detect_invalid_api_contract(tool, monkeypatch, fault, message):
+    replies = fake_discovery(1)
+    routes = replies['/api']['routes']
+    if fault == 'missing_schema':
+        routes[:] = [route for route in routes if route['path'] != '/schema/result']
+    elif fault == 'removed_alias':
+        routes.append(dict(method='GET', path='/schema/output', group='contract',
+                           path_parameters={}, examples=[]))
+    elif fault == 'group_order':
+        routes.reverse()
+    else:
+        del routes[0][fault]
+    monkeypatch.setitem(tool, 'expect', fake_expect(replies))
+    with pytest.raises(AssertionError, match=message):
         tool['check_discovery']('unused')
 
 

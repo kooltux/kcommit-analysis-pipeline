@@ -61,9 +61,9 @@ CONFIG_SCHEMA = {
     # The ai section is active when present unless ai.enabled is false (see ai_active()).
     'ai': {'__type__': 'dict',
            'enabled': {'type': 'bool'},
-           'prompt_path': {'type': 'path', 'kind': 'file', 'needs': 'ai', 'default': 'ai/ai_analysis_prompt.md', 'content': 'markdown'},
+           'prompts_dir': {'type': 'path', 'kind': 'dir', 'access': 'read', 'needs': 'ai', 'default': 'ai/prompts'},
            'front_page_path': {'type': 'path', 'kind': 'file', 'needs': 'ai', 'default': 'ai/ai_server_front_page.md', 'content': 'markdown'},
-           'result_schema_path': {'type': 'path', 'kind': 'file', 'needs': 'ai', 'default': 'ai/ai_analysis_result_schema.json', 'content': 'ai_result_schema'},
+           'schemas_dir': {'type': 'path', 'kind': 'dir', 'access': 'read', 'needs': 'ai', 'default': 'ai/schemas'},
            'chunk_size': {'type': 'int', 'min': 1},
            'batch_size': {'type': 'int', 'min': 1}},
 }
@@ -72,9 +72,9 @@ CONFIG_SCHEMA = {
 def ai_active(cfg):
     """True when the configuration declares an ``ai`` section not disabled.
 
-    v20.1.0: AI preparation (Stage 08) and AI asset validation are driven by
-    the configuration only.  A missing ``ai`` section or ``ai.enabled: false``
-    disables both.
+    AI preparation and configured product-resource checks follow this flag.
+    Missing ``ai`` or ``ai.enabled: false`` disables those operations, not
+    the unconditional correctness checks of the tool's bundled AI schemas.
     """
     section = (cfg or {}).get('ai')
     return isinstance(section, dict) and section.get('enabled', True) is not False

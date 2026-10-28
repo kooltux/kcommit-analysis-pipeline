@@ -1,14 +1,15 @@
 {
   // ── AI Analysis (v20.1.0) ─────────────────────────────────────────────────────
-  // The presence of this section enables Stage 08 (AI work package) and the
-  // validation of its assets. Set "enabled": false, or drop the section, to
-  // disable both. AI never changes pipeline scores.
+  // This section enables Stage 08 and checks of configured product AI assets.
+  // Set "enabled": false, or drop the section, to disable those operations.
+  // Bundled schema correctness checks always run; AI never changes scores.
+  // Stage 08 snapshots every selected role prompt and schema.
   // Select sample inputs explicitly; product defaults are under initial-dir/ai.
   "ai": {
     "enabled": true,
-    "prompt_path": "${TOOLDIR}/configs/ai/ai_analysis_prompt.md",
+    "prompts_dir": "${TOOLDIR}/configs/ai/prompts",
     "front_page_path": "${TOOLDIR}/configs/ai/ai_server_front_page.md",
-    "result_schema_path": "${TOOLDIR}/configs/ai/ai_analysis_result_schema.json",
+    "schemas_dir": "${TOOLDIR}/configs/ai/schemas",
 
     // Stage 08 requires a positive integer (default: 100); 0 is not valid.
     // Numbered input chunks carry identity/checksums in the portable work package.

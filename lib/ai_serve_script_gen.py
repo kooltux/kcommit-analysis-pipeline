@@ -1,10 +1,13 @@
 """Generate a self-contained AI exchange zipapp with validated result uploads."""
 import io
+import inspect
 import json
-from lib.ai_contract import NAME
+from lib.ai_contract import NAME, result_properties, validate_result
 import os
 import zipapp
 import zipfile
+
+_RESULT_VALIDATION_SOURCE = '\n\n'.join(inspect.getsource(fn) for fn in (result_properties, validate_result))
 
 TOOL_MANIFEST_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'MANIFEST.json')
 
@@ -56,69 +59,40 @@ def validate(name, value):
                           ('total_commits', len(chunk['commits']))):
         if value[key] != expected:
             raise ValueError('Result identity mismatch: ' + key)
-    records = value['results']
-    allowed = {c['commit'] for c in chunk['commits']}
-    if not isinstance(records, dict) or not set(records).issubset(allowed):
-        raise ValueError('Unknown result commit')
-    if type(value['analyzed_commits']) is not int or value['analyzed_commits'] != len(records):
-        raise ValueError('Invalid analyzed count')
-    if value['analysis_status'] not in ('complete', 'partial') or (
-            value['analysis_status'] == 'complete' and set(records) != allowed):
-        raise ValueError('Invalid analysis status or incomplete result')
-    specs = SCHEMA['properties']['results']['additionalProperties']['properties']
-    for item in records.values():
-        if not isinstance(item, dict) or set(item) != set(specs):
-            raise ValueError('Invalid result fields')
-        for key, spec in specs.items():
-            val = item[key]
-            if spec['type'] == 'boolean' and type(val) is not bool:
-                raise ValueError('Invalid boolean ' + key)
-            if spec['type'] == 'string' and (not isinstance(val, str) or
-                    ('enum' in spec and val not in spec['enum'])):
-                raise ValueError('Invalid string ' + key)
-            if spec['type'] == 'array':
-                sub = spec['items']
-                if not isinstance(val, list) or any(
-                        (type(v) is not int if sub['type'] == 'integer' else not isinstance(v, str))
-                        or ('enum' in sub and v not in sub['enum'])
-                        or ('minimum' in sub and v < sub['minimum'])
-                        or ('maximum' in sub and v > sub['maximum'])
-                        or ('pattern' in sub and not re.fullmatch(sub['pattern'], v))
-                        for v in val):
-                    raise ValueError('Invalid array ' + key)
-        risks = item.get('ai_risks_if_not_backported')
-        if risks is not None and (len(risks) != len(set(risks)) or
-                                  ('none' in risks and len(risks) != 1)):
-            raise ValueError('Invalid risk combination')
-        ids = item.get('ai_cve_ids')
-        probabilities = item.get('ai_cve_probabilities')
-        if ids is not None and probabilities is not None and len(ids) != len(probabilities):
-            raise ValueError('CVE ID and probability counts differ')
-    return True
+    bound_chunk = dict(chunk, run_id=MANIFEST['run_id'], source_chunk=name,
+                       input_schema_checksum=MANIFEST['input_schema_checksum'],
+                       output_schema_checksum=MANIFEST['output_schema_checksum'],
+                       total_commits=len(chunk['commits']))
+    return validate_result(value, bound_chunk, SCHEMA, checksum(source))
 
 ROUTES = []
 MAX_RESULT_BYTES = 10 * 1024 * 1024
 LIST_QUERY_PARAMETERS = {
-    'limit': {'type': 'integer', 'default': 0, 'minimum': 0,
-              'description': 'Maximum returned items; missing, invalid or nonpositive means unlimited. First repeated value wins.'},
-    'offset': {'type': 'integer', 'default': 0, 'minimum': 0,
-               'description': 'Zero-based number of items to skip; missing, invalid or negative means zero. First repeated value wins.'},
+    'limit': {'type': 'integer', 'default': 0, 'minimum': 0, 'example': 1,
+              'description': 'Maximum returned items; absent or zero means unlimited. A supplied value must be a nonnegative integer and occur once.'},
+    'offset': {'type': 'integer', 'default': 0, 'minimum': 0, 'example': 0,
+               'description': 'Zero-based number of items to skip; absent means zero. A supplied value must be a nonnegative integer and occur once.'},
 }
 
 
 def listing_page(target, values):
     """Apply offset before limit without changing order or the source collection."""
     query = urllib.parse.parse_qs(target.partition('?')[2], keep_blank_values=True)
+    unknown = set(query) - set(LIST_QUERY_PARAMETERS)
+    if unknown:
+        raise ValueError('Unknown pagination parameter: ' + ', '.join(sorted(unknown)))
     numbers = {}
     for name, spec in LIST_QUERY_PARAMETERS.items():
-        raw = query.get(name, [str(spec['default'])])[0].strip()
-        try:
-            if not re.fullmatch(r'[+-]?[0-9]+', raw):
-                raise ValueError('Not an integer')
-            number = int(raw)
-            numbers[name] = number if number >= spec['minimum'] else spec['default']
-        except ValueError:
-            numbers[name] = spec['default']
+        values_for_name = query.get(name, [str(spec['default'])])
+        if len(values_for_name) != 1:
+            raise ValueError('Repeated pagination parameter: ' + name)
+        raw = values_for_name[0].strip()
+        if not re.fullmatch(r'[+-]?[0-9]+', raw):
+            raise ValueError('Pagination parameter must be an integer: ' + name)
+        number = int(raw)
+        if number < spec['minimum']:
+            raise ValueError('Pagination parameter must be nonnegative: ' + name)
+        numbers[name] = number
     offset, limit = numbers['offset'], numbers['limit']
     items = list(values)
     return items[offset:offset + limit if limit else None]
@@ -131,7 +105,8 @@ def route(method, path, content_type='application/json', **contract):
     parameters = re.findall(r'<([a-z_]+)>', path)
     pattern = re.escape(path)
     for name in parameters:
-        pattern = pattern.replace('<' + name + '>', '(?P<' + name + '>.+)')
+        capture = '.+' if name == parameters[-1] else '[^/]+'
+        pattern = pattern.replace('<' + name + '>', '(?P<' + name + '>' + capture + ')')
     def register(handler):
         if any(item['method'] == method and item['path'] == path for item in ROUTES):
             raise ValueError('Duplicate API route: ' + method + ' ' + path)
@@ -250,52 +225,102 @@ class Handler(http.server.BaseHTTPRequestHandler):
             match = item['matcher'].fullmatch(path)
             if item['method'] == method and match:
                 self.active_route = item
+                try:
+                    if item.get('query_parameters') == LIST_QUERY_PARAMETERS:
+                        listing_page(self.path, ())
+                except ValueError as exc:
+                    self.send_error(400, str(exc))
+                    return
                 item['handler'](self, **match.groupdict())
                 return
         self.send_error(404)
 
-    @route('GET', '/api')
+    @route('GET', '/api', group='discovery', order=0)
     def api(self):
         """Describe routes from the executable registry, not a packaged document."""
+        groups = ['discovery', 'contract', 'sources', 'validation', 'results', 'other']
+        assets = globals().get('CONTRACT', {})
         routes = []
         for item in ROUTES:
             if not callable(getattr(type(self), 'do_' + item['method'], None)):
                 continue
             entry = {key: value for key, value in item.items() if key not in ('handler', 'matcher')}
-            entry['description'] = (item['handler'].__doc__ or '').strip()
+            entry.setdefault('group', 'other')
+            entry.setdefault('order', 0)
+            entry['description'] = entry.get('description') or (item['handler'].__doc__ or '').strip()
+            if entry.get('request_content_type'):
+                body = dict(required=True, content_type=entry['request_content_type'])
+                if entry.get('document_roles'):
+                    documents = entry['document_roles']
+                    body['schema'] = dict(type='object', required=list(documents), additionalProperties=False,
+                        properties={role: {'$ref': '/schema/' + role} for role in documents})
+                    body['description'] = 'An object containing complete JSON documents, not filenames or chunk names; the assembled document is nested under result.'
+                elif entry.get('request_schema'):
+                    body['schema'] = {'$ref': entry['request_schema']}
+                    body['description'] = 'A complete JSON document conforming to the referenced schema, not the source chunk or its name. Replace <role> in the schema reference with the URL role when present.'
+                entry['request_body'] = body
+            roles = entry.get('roles', [])
+            if entry['path'].startswith(('/prompt/', '/schema/')):
+                prefix = 'prompts/' if entry['path'].startswith('/prompt/') else 'schemas/'
+                roles = sorted(name.split('/')[1].rsplit('.', 1)[0] for name in assets if name.startswith(prefix))
+            samples = {'name': next(iter(sorted(NAMES)), None),
+                       'batch_id': next(iter(sorted(BATCHES)), None),
+                       'role': 'analyst' if 'analyst' in roles else next(iter(roles), None)}
+            descriptions = {'name': 'Source chunk path returned by /chunks; retain its batch subfolder.',
+                            'batch_id': 'Batch identifier returned by /batches.',
+                            'role': 'Selected role or asset name; use one of the listed values.'}
+            entry['path_parameters'] = {}
+            url = entry['path']
+            for parameter in entry['parameters']:
+                value = samples.get(parameter)
+                spec = dict(type='string', description=descriptions.get(parameter, 'Route path parameter.'), example=value)
+                if parameter == 'role':
+                    spec['enum'] = list(roles)
+                entry['path_parameters'][parameter] = spec
+                if value is not None:
+                    url = url.replace('<' + parameter + '>', urllib.parse.quote(value, safe='/'))
+            entry['examples'] = []
+            if '<' not in url:
+                entry['examples'].append(dict(method=entry['method'], url=url))
+                if entry.get('query_parameters'):
+                    query = {key: spec.get('example', spec.get('default', 0)) for key, spec in entry['query_parameters'].items()}
+                    query_url = url + '?' + urllib.parse.urlencode(query)
+                    entry['examples'].append(dict(method=entry['method'], url=query_url))
             routes.append(entry)
+        routes.sort(key=lambda entry: (groups.index(entry['group']) if entry['group'] in groups else len(groups),
+                    entry['order'], entry['path'], {'GET': 0, 'POST': 1, 'PUT': 2}.get(entry['method'], 9)))
         required = self.server.auth_credentials is not None
-        self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'], 'routes': routes,
+        self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'], 'groups': groups, 'routes': routes,
             'authentication': {'required': required, 'scheme': 'Basic' if required else None}},
             sort_keys=True).encode())
 
-    @route('GET', '/api/version')
+    @route('GET', '/api/version', group='discovery', order=1)
     def version(self):
         """Report the tool manifest version captured when this zipapp was generated."""
         self.send_bytes(json.dumps(SERVER_VERSION, sort_keys=True).encode())
 
-    @route('GET', '/', 'text/markdown; charset=utf-8')
-    @route('GET', '/README.md', 'text/markdown; charset=utf-8')
+    @route('GET', '/', 'text/markdown; charset=utf-8', group='discovery', order=2)
+    @route('GET', '/README.md', 'text/markdown; charset=utf-8', group='discovery', order=3)
     def front_page(self):
         """Read the shared human, AI-client and automation guide."""
         self.send_bytes(ARCHIVE.read('ai_server_front_page.md'))
 
-    @route('GET', '/prompt', 'text/markdown')
+    @route('GET', '/prompt', 'text/markdown', group='contract', order=1)
     def prompt(self):
         """Read the assessment instructions."""
         self.send_bytes(ARCHIVE.read('ai_analysis_prompt.md'))
 
-    @route('GET', '/schema/input')
+    @route('GET', '/schema/input', group='contract', order=3)
     def input_schema(self):
         """Read the authoritative source-chunk JSON Schema."""
         self.send_bytes(ARCHIVE.read('ai_analysis_input_schema.json'))
 
-    @route('GET', '/schema/output')
-    def output_schema(self):
+    @route('GET', '/schema/result', group='contract', order=5)
+    def result_schema(self):
         """Read the authoritative result JSON Schema."""
         self.send_bytes(ARCHIVE.read('ai_analysis_result_schema.json'))
 
-    @route('GET', '/batches', query_parameters=LIST_QUERY_PARAMETERS)
+    @route('GET', '/batches', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=0)
     def batches(self):
         """List batch assignments, member chunk paths and discovery URLs."""
         self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
@@ -303,7 +328,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'batches': [dict(batch, url='/batch/' + key)
                         for key, batch in listing_page(self.path, BATCHES.items())]}, sort_keys=True).encode())
 
-    @route('GET', '/batch/<batch_id>', query_parameters=LIST_QUERY_PARAMETERS)
+    @route('GET', '/batch/<batch_id>', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=1)
     def batch(self, batch_id):
         """List paired chunk/result URLs in chunks for a batch ID returned by /batches."""
         if batch_id not in BATCHES:
@@ -315,13 +340,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             chunks=[{'chunk': '/chunk/' + name, 'result': '/result/' + name}
                     for name in names]), sort_keys=True).encode())
 
-    @route('GET', '/chunks', query_parameters=LIST_QUERY_PARAMETERS)
+    @route('GET', '/chunks', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=2)
     def chunks(self):
         """List the run identity and all available source-chunk URLs."""
         self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
             'chunks': ['/chunk/' + name for name in listing_page(self.path, NAMES)]}, sort_keys=True).encode())
 
-    @route('GET', '/chunk/<name>', response_schema='/schema/input')
+    @route('GET', '/chunk/<name>', response_schema='/schema/input', group='sources', order=3)
     def chunk(self, name):
         """Read a manifest-listed chunk; name includes the batch folder when present."""
         if name not in NAMES or not SAFE.fullmatch(name):
@@ -329,7 +354,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         self.send_bytes(ARCHIVE.read('ai_analysis_input/' + name))
 
-    @route('GET', '/result/<name>', response_schema='/schema/output')
+    @route('GET', '/result/<name>', response_schema='/schema/result', group='results', order=0)
     def result(self, name):
         """Read an accepted result using its full source_chunk path; 404 if absent."""
         if name not in NAMES or not SAFE.fullmatch(name):
@@ -341,7 +366,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except FileNotFoundError:
             self.send_error(404)
 
-    @route('GET', '/export', 'application/zip')
+    @route('GET', '/export', 'application/zip', group='results', order=1)
     def export(self):
         """Download a ZIP of the manifest, source chunks and validated stored results."""
         buf = io.BytesIO()
@@ -359,10 +384,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     dest.writestr('results/' + name, data)
         self.send_bytes(buf.getvalue())
 
-    @route('POST', '/result/<name>', request_content_type='application/json',
-           request_schema='/schema/output', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES)
-    @route('PUT', '/result/<name>', request_content_type='application/json',
-           request_schema='/schema/output', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES)
+    @route('POST', '/result/<name>', request_content_type='application/json', group='results', order=0,
+           request_schema='/schema/result', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES)
+    @route('PUT', '/result/<name>', request_content_type='application/json', group='results', order=0,
+           request_schema='/schema/result', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES)
     def put_result(self, name):
         """Validate and atomically replace a result for a manifest-listed source_chunk path."""
         if name not in NAMES or not SAFE.fullmatch(name):
@@ -527,6 +552,8 @@ def main(argv=None):
 if __name__ == '__main__':
     sys.exit(main())
 '''
+
+_MAIN_SOURCE = _RESULT_VALIDATION_SOURCE + '\n' + _MAIN_SOURCE
 
 def generate_ai_serve_script(outdir, output_path):
     """Embed immutable inputs, prompt, schemas and manifest into an executable zipapp."""

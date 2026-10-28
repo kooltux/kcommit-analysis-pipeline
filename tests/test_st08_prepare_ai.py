@@ -17,9 +17,9 @@ def setup_source(tmp_path, commits):
     (cache / 'product_map.json').write_text('{}', encoding='utf-8')
     samples = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configs', 'ai')
     cfg = {'paths': {'output_dir': str(outdir)}, 'ai': {
-        'chunk_size': 2, 'prompt_path': os.path.join(samples, 'ai_analysis_prompt.md'),
+        'chunk_size': 2, 'prompts_dir': os.path.join(samples, 'prompts'),
         'front_page_path': os.path.join(samples, 'ai_server_front_page.md'),
-        'result_schema_path': os.path.join(samples, 'ai_analysis_result_schema.json')}}
+        'schemas_dir': os.path.join(samples, 'schemas')}}
     return cfg, cache, outdir
 
 
@@ -94,3 +94,60 @@ def test_front_page_config_registered():
     spec = CONFIG_SCHEMA['ai']['front_page_path']
     assert spec['type'] == 'path' and spec['kind'] == 'file' and spec['needs'] == 'ai'
     assert spec['default'] == 'ai/ai_server_front_page.md'
+
+
+def test_selected_assets_published_and_embedded(tmp_path):
+    from pathlib import Path
+    cfg, cache, out = setup_source(tmp_path, [{'commit': 'a' * 40}])
+    run(cfg, str(cache))
+    manifest = json.loads((out / 'ai_analysis_bundle_manifest.json').read_bytes())
+    assert len(manifest['contract_assets']) >= 9
+    with zipfile.ZipFile(out / 'serve_ai.pyz') as app:
+        for name, expected in manifest['contract_assets'].items():
+            group, filename = name.split('/')
+            data = (Path(cfg['ai'][group + '_dir']) / filename).read_bytes()
+            assert digest(data) == expected
+            assert (out / 'ai_contract' / name).read_bytes() == data
+            assert app.read('ai_contract/' + name) == data
+    for alias, selected in [('input', 'input'), ('result', 'result')]:
+        assert (out / ('ai_analysis_' + alias + '_schema.json')).read_bytes() == (out / 'ai_contract/schemas' / (selected + '.json')).read_bytes()
+
+
+def test_generation_failure_preserves_existing_package(tmp_path, monkeypatch):
+    from lib.stages import st08_prepare_ai
+    cfg, cache, out = setup_source(tmp_path, [{'commit': 'a' * 40}])
+    run(cfg, str(cache))
+    before = {p.relative_to(out): p.read_bytes() for p in out.rglob('*') if p.is_file()}
+    def fail(*args):
+        raise ValueError('generation failed')
+    monkeypatch.setattr(st08_prepare_ai, 'generate_ai_package_server', fail)
+    with pytest.raises(ValueError, match='generation failed'):
+        run(cfg, str(cache))
+    assert {p.relative_to(out): p.read_bytes() for p in out.rglob('*') if p.is_file()} == before
+    assert not list(tmp_path.glob('.ai-prepare-*'))
+
+
+def test_asset_identity_and_stale_tree_replacement(tmp_path):
+    import shutil
+    cfg, cache, out = setup_source(tmp_path, [{'commit': 'a' * 40}])
+    selected = tmp_path / 'prompts'
+    shutil.copytree(cfg['ai']['prompts_dir'], selected)
+    cfg['ai']['prompts_dir'] = str(selected)
+    first = run(cfg, str(cache))
+    (selected / 'extra.md').write_bytes(b'# Additional instruction\n')
+    assert run(cfg, str(cache))['run_id'] != first['run_id']
+    assert (out / 'ai_contract/prompts/extra.md').is_file()
+    (selected / 'extra.md').unlink()
+    assert run(cfg, str(cache))['run_id'] == first['run_id']
+    assert not (out / 'ai_contract/prompts/extra.md').exists()
+
+
+@pytest.mark.parametrize('asset', ['prompts/analyst.md', 'schemas/reviewer.json'])
+def test_import_rejects_modified_contract_tree(tmp_path, asset):
+    from lib.ai_exchange import Progress, WorkPackage
+    cfg, cache, out = setup_source(tmp_path, [])
+    run(cfg, str(cache))
+    target = out / 'ai_contract' / asset
+    target.write_bytes(target.read_bytes() + b'\n')
+    with pytest.raises(ValueError, match='contract checksum mismatch'):
+        WorkPackage(cfg, Progress('test'))

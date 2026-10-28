@@ -1,12 +1,14 @@
 """Validated AI exchange readers, deterministic deduplication and progress."""
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import time
 import zipfile
 
 from lib.ai_contract import NAME, SHA, digest, validate_chunk, validate_result
+from lib.ai_assets import PROMPT_ROLES, SCHEMA_ROLES
 
 
 class Progress:
@@ -98,6 +100,21 @@ class WorkPackage:
                 raise ValueError('Local AI contract checksum mismatch: ' + filename)
             if field == 'output_schema_checksum':
                 self.schema = decode(data)
+        assets = self.manifest.get('contract_assets')
+        required = ({'prompts/' + role + '.md' for role in PROMPT_ROLES}
+                    | {'schemas/' + role + '.json' for role in SCHEMA_ROLES})
+        if not isinstance(assets, dict) or required - set(assets):
+            raise ValueError('Local AI package lacks required contract assets')
+        for name, expected in assets.items():
+            if not isinstance(name, str) or not re.fullmatch(
+                    r'(?:prompts/[A-Za-z0-9][A-Za-z0-9_-]*[.]md|schemas/[A-Za-z0-9][A-Za-z0-9_-]*[.]json)', name):
+                raise ValueError('Invalid contract asset path')
+            if digest((self.root / 'ai_contract' / name).read_bytes()) != expected:
+                raise ValueError('Local AI contract checksum mismatch: ' + name)
+        for filename, selected in [('ai_analysis_input_schema.json', 'input.json'),
+                                   ('ai_analysis_result_schema.json', 'result.json')]:
+            if (self.root / filename).read_bytes() != (self.root / 'ai_contract/schemas' / selected).read_bytes():
+                raise ValueError('Root schema differs from selected contract: ' + filename)
         self.chunks, self.raw, self.by_sha = {}, {}, {}
         for index, (name, expected) in enumerate(sorted(self.manifest['chunks'].items()), 1):
             if not NAME.fullmatch(name):

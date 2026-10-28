@@ -41,9 +41,9 @@ def test_relocated_nested_example_keeps_explicit_resources_and_provenance(tmp_pa
     assert runtime['paths']['scoring_dir'] == manifest['scoring']['scoring_dir'] == str(CONFIGS / 'scoring')
     assert runtime['paths']['profiles_dirs'] == manifest['profiles']['profiles_dirs'] == [str(CONFIGS / 'profiles')]
     assert runtime['paths']['rules_dirs'] == manifest['rules']['rules_dirs'] == [str(CONFIGS / 'rules')]
-    for key, filename in [('prompt_path', 'ai_analysis_prompt.md'),
+    for key, filename in [('prompts_dir', 'prompts'),
                           ('front_page_path', 'ai_server_front_page.md'),
-                          ('result_schema_path', 'ai_analysis_result_schema.json')]:
+                          ('schemas_dir', 'schemas')]:
         assert runtime['ai'][key] == manifest['ai'][key] == str(CONFIGS / 'ai' / filename)
     assert '_meta' not in manifest
 
@@ -57,6 +57,10 @@ def test_relocated_nested_example_keeps_explicit_resources_and_provenance(tmp_pa
     assert summary['total_commits'] == 0
     assert summary['chunk_count'] == 1
     output = Path(runtime['paths']['output_dir'])
-    for filename in ['ai_analysis_prompt.md', 'ai_server_front_page.md', 'ai_analysis_result_schema.json']:
-        assert (output / filename).read_bytes() == (CONFIGS / 'ai' / filename).read_bytes()
+    assert (output / 'ai_server_front_page.md').read_bytes() == (CONFIGS / 'ai/ai_server_front_page.md').read_bytes()
+    for group, pattern in [('prompts', '*.md'), ('schemas', '*.json')]:
+        for asset in (CONFIGS / 'ai' / group).glob(pattern):
+            assert (output / 'ai_contract' / group / asset.name).read_bytes() == asset.read_bytes()
+    for alias, selected in [('input', 'input'), ('result', 'result')]:
+        assert (output / ('ai_analysis_' + alias + '_schema.json')).read_bytes() == (CONFIGS / 'ai/schemas' / (selected + '.json')).read_bytes()
     assert (output / 'serve_ai.pyz').is_file()

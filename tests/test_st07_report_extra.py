@@ -137,140 +137,32 @@ def _product_map_for_test():
     }
 
 
-def test_ai_analysis_input_written(tmp_path):
-    """AI analysis input JSON is written when prefilter_kept commits exist."""
+def test_ai_projection_retains_evidence_without_scores():
+    from lib.ai_contract import project_commit
+    source = {
+        'commit': 'a' * 40, 'subject': 'fix: security vulnerability',
+        'author_name': 'Dev One', 'author_email': 'dev@linux.org',
+        'author_org': 'linux', 'author_time': 1700000000,
+        'body': 'Fixes CVE-2024-1234', 'files': ['drivers/usb/core/hub.c'],
+        'stats': {'files_changed': 1}, 'meta': {'has_cve': True, 'is_fix': True},
+        'score': 50, 'prefilter_debug': {'filter_enabled': True},
+    }
+    commit = project_commit(source, _product_map_for_test())
+    for key in ('commit', 'subject', 'author_name', 'author_email', 'author_org',
+                'author_time', 'body', 'files', 'stats', 'meta'):
+        assert commit[key] == source[key]
+    assert commit['product_evidence']
+    assert not {'score', 'score_norm', 'matched_profiles', 'backport_complexity',
+                'pick_priority', 'prefilter_debug'} & set(commit)
+
+
+def test_report_does_not_consume_ai_resource_directories(tmp_path):
     cache, outdir, cfg = _setup(tmp_path, outputs=['csv'])
-    # Write prefilter_kept cache file (required for AI analysis)
-    from lib.manifest import CACHE_FILES
-    prefilter_kept = [
-        {
-            'commit': 'a' * 40,
-            'subject': 'fix: security vulnerability',
-            'author_name': 'Dev One',
-            'author_email': 'dev@linux.org',
-            'author_org': 'linux',
-            'author_time': 1700000000,
-            'body': 'Fixes CVE-2024-1234\n\nDetailed description',
-            'files': ['drivers/usb/core/hub.c'],
-            'stats': {'files_changed': 1, 'lines_changed': 10, 'hunks': 1},
-            'meta': {'is_fix': True, 'has_cve': True, 'has_syzbot': False, 'has_stable_cc': True},
-            'prefilter_debug': {'filter_enabled': True},
-        }
-    ]
-    import json
-    with open(os.path.join(cache, CACHE_FILES['prefilter_kept']), 'w') as f:
-        json.dump(prefilter_kept, f)
-    with open(os.path.join(cache, CACHE_FILES['product_map']), 'w') as f:
-        json.dump(_product_map_for_test(), f)
-    
+    cfg['ai'] = {'enabled': True, 'prompts_dir': str(tmp_path / 'missing-prompts'),
+                 'schemas_dir': str(tmp_path / 'missing-schemas')}
     run(cfg, cache, outdir)
-    
-    # Check AI input file was written
-    ai_input_path = os.path.join(outdir, 'ai_analysis_input.json')
-    assert os.path.exists(ai_input_path)
-    
-    # Validate content
-    with open(ai_input_path, 'r') as f:
-        ai_data = json.load(f)
-    
-    assert ai_data['version'] == '1.0'
-    assert ai_data['total_commits'] == 1
-    assert 'commits' in ai_data
-    assert len(ai_data['commits']) == 1
-    
-    commit = ai_data['commits'][0]
-    assert commit['commit'] == 'a' * 40
-    assert commit['subject'] == 'fix: security vulnerability'
-    assert commit['author_name'] == 'Dev One'
-    assert commit['author_email'] == 'dev@linux.org'
-    assert commit['author_org'] == 'linux'
-    assert commit['meta']['has_cve'] is True
-    assert commit['meta']['is_fix'] is True
-    # Verify product_evidence is computed
-    assert len(commit['product_evidence']) > 0
-    # Verify prefilter_debug is NOT included
-    assert 'prefilter_debug' not in commit
-    # Verify no scoring/backport fields
-    assert 'score' not in commit
-    assert 'score_norm' not in commit
-    assert 'matched_profiles' not in commit
-    assert 'backport_complexity' not in commit
-    assert 'pick_priority' not in commit
-
-
-def test_ai_analysis_prompt_written(tmp_path):
-    """AI analysis prompt template is written."""
-    cache, outdir, cfg = _setup(tmp_path, outputs=['csv'])
-    # Write prefilter_kept cache file (required for AI analysis)
-    from lib.manifest import CACHE_FILES
-    import json
-    with open(os.path.join(cache, CACHE_FILES['prefilter_kept']), 'w') as f:
-        json.dump([{'commit': 'x' * 40, 'subject': 'test', 'files': []}], f)
-    with open(os.path.join(cache, CACHE_FILES['product_map']), 'w') as f:
-        json.dump({}, f)
-    
-    run(cfg, cache, outdir)
-    
-    # Check prompt file was written
-    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.md')
-    assert os.path.exists(prompt_path)
-    
-    # Validate content
-    with open(prompt_path, 'r') as f:
-        content = f.read()
-    
-    assert '# AI Analysis Prompt' in content
-    assert 'ai_is_security_fix' in content
-    assert 'ai_risks_if_not_backported' in content
-    assert 'ai_backport_recommendation' in content
-
-
-def test_ai_analysis_input_empty_prefilter_kept(tmp_path):
-    """No AI files written when prefilter_kept is empty."""
-    cache, outdir, cfg = _setup(tmp_path, outputs=['csv'])
-    # Write empty prefilter_kept
-    from lib.manifest import CACHE_FILES
-    import json
-    with open(os.path.join(cache, CACHE_FILES['prefilter_kept']), 'w') as f:
-        json.dump([], f)
-    with open(os.path.join(cache, CACHE_FILES['product_map']), 'w') as f:
-        json.dump({}, f)
-    
-    run(cfg, cache, outdir)
-    
-    # AI files should not be written for empty input
-    ai_input_path = os.path.join(outdir, 'ai_analysis_input.json')
-    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.md')
-    assert not os.path.exists(ai_input_path)
-    assert not os.path.exists(prompt_path)
-
-
-def test_ai_analysis_schema_in_prompt(tmp_path):
-    """AI analysis schema is defined in the prompt file, not in the JSON output."""
-    cache, outdir, cfg = _setup(tmp_path, outputs=['csv'])
-    from lib.manifest import CACHE_FILES
-    import json
-    prefilter_kept = [{'commit': 'x' * 40, 'subject': 'test', 'files': []}]
-    with open(os.path.join(cache, CACHE_FILES['prefilter_kept']), 'w') as f:
-        json.dump(prefilter_kept, f)
-    with open(os.path.join(cache, CACHE_FILES['product_map']), 'w') as f:
-        json.dump({}, f)
-    
-    run(cfg, cache, outdir)
-    
-    # Verify schema is NOT in the JSON output (it's in the prompt file)
-    with open(os.path.join(outdir, 'ai_analysis_input.json'), 'r') as f:
-        ai_data = json.load(f)
-    
-    assert 'schema' not in ai_data, 'Schema should not be in JSON output (it is in the prompt file)'
-    assert 'commits' in ai_data
-    
-    # Verify the prompt file exists and contains schema definition
-    prompt_path = os.path.join(outdir, 'ai_analysis_prompt.md')
-    assert os.path.exists(prompt_path)
-    with open(prompt_path, 'r') as f:
-        prompt_content = f.read()
-    assert 'schema' in prompt_content.lower() or 'fields' in prompt_content.lower()
+    assert os.path.isfile(os.path.join(outdir, 'relevant_commits.json'))
+    assert not any(name.startswith('ai_') for name in os.listdir(outdir))
 
 
 # ── XLSX output ───────────────────────────────────────────────────────────────

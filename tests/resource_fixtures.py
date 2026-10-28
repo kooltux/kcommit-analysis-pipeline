@@ -29,6 +29,9 @@ def seed_resources(cfg, root):
     if not paths.get('assets_dir'):
         paths['assets_dir'] = os.path.join(samples, 'assets')
     cfg.setdefault('reports', {}).setdefault('templates_dir', paths['templates_dir'])
-    cfg.setdefault('ai', {}).setdefault('prompt_path', os.path.join(samples, 'ai', 'ai_analysis_prompt.md'))
+    ai = cfg.setdefault('ai', {})
+    for key, name in (('prompts_dir', 'prompts'), ('schemas_dir', 'schemas'),
+                      ('front_page_path', 'ai_server_front_page.md')):
+        ai.setdefault(key, os.path.join(samples, 'ai', name))
     if active:
         compile_rules_for_config(cfg, cache_dir=paths['cache_dir'])

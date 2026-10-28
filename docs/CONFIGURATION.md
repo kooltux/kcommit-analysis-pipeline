@@ -8,8 +8,16 @@ Batch folders, manifest entries and HTTP discovery are described in
 Config files are JSON with `//` and `#` comment support. All `${VAR}`
 references in string values are expanded by the config loader.
 
+`ai.prompts_dir` and `ai.schemas_dir` are readable directories, defaulting to
+`ai/prompts` and `ai/schemas` under the initial configuration directory. Active
+validation uses the shared contract loader for required roles and field ownership.
+The shipped fragment explicitly selects `${TOOLDIR}/configs/ai/prompts` and
+`${TOOLDIR}/configs/ai/schemas`. The old single-file keys are removed. Export
+materializes these registered defaults so reloading preserves resource selection.
+
 `ai.front_page_path` is a path setting declared in `configs/conf.d/07_ai.json`.
-Its default `${CONFIGDIR}/ai/ai_server_front_page.md` supplies the UTF-8 Markdown
+Its default `ai/ai_server_front_page.md` is anchored to the initial configuration
+directory (not an overridden `CONFIGDIR`) and supplies the UTF-8 Markdown
 guide packaged by Stage 08 and served at `/` and `/README.md`. Regenerate the
 zipapp after editing it; see `AI_ANALYSIS.md` for validation and authentication.
 
@@ -30,8 +38,12 @@ lists) and may declare:
 | `required` | Key must be set (`kernel.rev_old`, `kernel.rev_new`) |
 | `min` / `max` / `enum` | Value limits, e.g. `ai.chunk_size` >= 1 |
 
-`validate` (and Stage 00) check only keys whose `needs` feature is active, so the
-`ai.*` assets are ignored without an `ai` section or with `ai.enabled: false`.
+`validate` and Stage 00 apply registered path checks only when `needs` is active;
+configured product `ai.*` assets are ignored when AI is disabled. Separately,
+the five installed `configs/ai/schemas/` contracts are always checked for Draft
+2020-12 correctness and self-contained references. `ai_result_schema` content
+checks also validate schema correctness before checking the legacy envelope.
+These checks require `jsonschema`; see `requirements.txt`.
 Include, variable and JSON errors are reported as validation errors (exit code 1).
 
 `ai.enabled` (bool): the `ai` section enables Stage 08 and the validation of its
@@ -384,8 +396,8 @@ Configurations can be split into ordered fragments using the top-level `include`
   anchor. Defaults are `html/`, `assets/`, `scoring/`, and `ai/`; installed sample
   data is used only when explicitly selected (for example with `${TOOLDIR}`).
 - Required HTML, cherry-pick, and Stage 08 AI inputs fail at the consuming feature
-  if missing. Optional helper scripts, hints, and legacy report prompts remain
-  optional without importing samples. Hand-built configs should provide anchor metadata.
+  if missing. Optional helper scripts and hints remain optional without importing
+  samples. Stage 07 never prepares AI inputs. Hand-built configs should provide anchor metadata.
 - Recursive includes are allowed; cycles are detected using the active include chain.
   A valid shared fragment can be included through separate branches.
 - JSON files may contain `//` line comments and trailing inline comments; these are stripped before parsing. Comments are preserved in source files.

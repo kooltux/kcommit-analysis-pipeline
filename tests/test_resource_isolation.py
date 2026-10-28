@@ -107,10 +107,10 @@ def test_missing_ai_resources_do_not_use_samples(tmp_path):
     assert not (tmp_path / 'output').exists()
 
 
-def test_legacy_prompt_remains_optional_without_samples(tmp_path):
-    from lib.stages.st07_report import _get_ai_analysis_prompt
-    cfg = {'_meta': {'initial_config_dir': str(tmp_path)}}
-    assert _get_ai_analysis_prompt(cfg) == ''
+def test_missing_prompt_directory_does_not_use_samples(tmp_path):
+    from lib.ai_prompts import read_prompts
+    with pytest.raises(ValueError):
+        read_prompts(tmp_path / 'ai' / 'prompts')
 
 
 def test_hints_remain_optional_without_samples(tmp_path):
@@ -119,14 +119,15 @@ def test_hints_remain_optional_without_samples(tmp_path):
     assert infer_touched_paths('usb: fix reset', cfg) == []
 
 
-def test_product_prompt_and_hints_defaults_are_consumed(tmp_path):
-    from lib.stages.st07_report import _get_ai_analysis_prompt
+def test_product_prompt_directory_and_hints_are_consumed(tmp_path):
+    from lib.ai_prompts import read_prompts
     from lib.kbuild import infer_touched_paths
-    (tmp_path / 'ai').mkdir()
-    (tmp_path / 'ai' / 'ai_analysis_prompt.md').write_text('Product-only prompt')
+    prompts = tmp_path / 'ai' / 'prompts'
+    prompts.mkdir(parents=True)
+    (prompts / 'analyst.md').write_text('Product-only prompt')
     (tmp_path / 'scoring').mkdir()
     (tmp_path / 'scoring' / 'subsystem_path_hints.json').write_text(
         json.dumps({'usb:': ['product-only/']}))
     cfg = {'paths': {}, '_meta': {'initial_config_dir': str(tmp_path)}}
-    assert _get_ai_analysis_prompt(cfg) == 'Product-only prompt'
+    assert read_prompts(prompts) == {'analyst.md': b'Product-only prompt'}
     assert infer_touched_paths('usb: fix reset', cfg) == ['product-only/']

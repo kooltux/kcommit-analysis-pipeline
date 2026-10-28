@@ -1,6 +1,7 @@
 """Schema-driven path/content validation and AI gating (v20.1.0)."""
 import json
 from argparse import Namespace
+import shutil
 from pathlib import Path
 
 import pytest
@@ -19,12 +20,15 @@ def _ai_dir(tmp_path, prompt='prompt', page='# page', schema=GOOD_SCHEMA):
     ai = tmp_path / 'ai'
     ai.mkdir()
     if prompt is not None:
-        (ai / 'ai_analysis_prompt.md').write_text(prompt, encoding='utf-8')
+        shutil.copytree(CONFIGS / 'ai/prompts', ai / 'prompts')
+        (ai / 'prompts/analyst.md').write_text(prompt, encoding='utf-8')
     if page is not None:
         (ai / 'ai_server_front_page.md').write_text(page, encoding='utf-8')
     if schema is not None:
-        (ai / 'ai_analysis_result_schema.json').write_text(
-            schema if isinstance(schema, str) else json.dumps(schema), encoding='utf-8')
+        shutil.copytree(CONFIGS / 'ai/schemas', ai / 'schemas')
+        if schema is not GOOD_SCHEMA:
+            (ai / 'schemas/result.json').write_text(
+                schema if isinstance(schema, str) else json.dumps(schema), encoding='utf-8')
     return ai
 
 
@@ -59,7 +63,7 @@ def test_schema_attributes_are_known_and_consistent():
 
 
 def test_schema_declares_ai_keys():
-    assert {'enabled', 'prompt_path', 'front_page_path', 'result_schema_path',
+    assert {'enabled', 'prompts_dir', 'front_page_path', 'schemas_dir',
             'chunk_size'} <= set(CONFIG_SCHEMA['ai'])
 
 
@@ -93,35 +97,36 @@ def test_ai_assets_ok_when_present(tmp_path):
 
 
 @pytest.mark.parametrize('missing,key', [
-    ({'prompt': None}, 'ai.prompt_path'),
+    ({'prompt': None}, 'ai.prompts_dir'),
     ({'page': None}, 'ai.front_page_path'),
-    ({'schema': None}, 'ai.result_schema_path')])
+    ({'schema': None}, 'ai.schemas_dir')])
 def test_missing_ai_asset_is_a_problem(tmp_path, missing, key):
     _ai_dir(tmp_path, **missing)
     problems, _ = validate_config_only(_cfg(tmp_path, ai={}))
-    assert any(p.startswith(key + ': file not found') for p in problems)
+    assert any(p.startswith(key + ':') and 'not found' in p for p in problems)
 
 
-def test_invalid_ai_asset_content_is_a_problem(tmp_path):
-    _ai_dir(tmp_path, prompt='  ', page='', schema='{')
+@pytest.mark.parametrize('invalid,expected', [
+    ({'prompt': '  '}, 'empty'), ({'page': ''}, 'ai.front_page_path: is empty'),
+    ({'schema': '{'}, 'result.json')])
+def test_invalid_ai_asset_content_is_a_problem(tmp_path, invalid, expected):
+    _ai_dir(tmp_path, **invalid)
     problems, _ = validate_config_only(_cfg(tmp_path, ai={}))
-    assert any(p.startswith('ai.prompt_path: is empty') for p in problems)
-    assert any(p.startswith('ai.front_page_path: is empty') for p in problems)
-    assert any(p.startswith('ai.result_schema_path: is not valid JSON') for p in problems)
+    assert any(expected.lower() in p.lower() for p in problems), problems
 
 
 def test_explicit_ai_paths_are_checked(tmp_path):
     _ai_dir(tmp_path)
-    ai = {'prompt_path': str(tmp_path / 'nope.md')}
+    ai = {'prompts_dir': str(tmp_path / 'nope')}
     problems, _ = validate_config_only(_cfg(tmp_path, ai=ai))
-    assert any(p.startswith('ai.prompt_path: file not found') and 'nope.md' in p for p in problems)
+    assert any(p.startswith('ai.prompts_dir: directory not found') and 'nope' in p for p in problems)
 
 
 @pytest.mark.parametrize('section', [None, {'enabled': False}])
 def test_inactive_ai_is_not_validated(tmp_path, section):
     cfg = _cfg(tmp_path)
     if section is not None:
-        cfg['ai'] = dict(section, prompt_path=str(tmp_path / 'nope.md'))
+        cfg['ai'] = dict(section, prompts_dir=str(tmp_path / 'nope'))
     assert not ai_active(cfg)
     problems, _ = validate_config_only(cfg)
     assert not [p for p in problems if p.startswith('ai.') and 'unknown' not in p]
@@ -236,7 +241,7 @@ def test_validate_command_fails_on_missing_ai_asset(tmp_path, caplog):
     with pytest.raises(SystemExit) as excinfo:
         cmd_validate(_validate_args(cfg))
     assert excinfo.value.code == 1
-    assert 'ai.prompt_path' in caplog.text
+    assert 'ai.prompts_dir' in caplog.text
     cfg.write_text(json.dumps({
         'kernel': {'rev_old': 'a', 'rev_new': 'b'},
         'profiles': {'active': {'security_fixes': 100}},

@@ -24,9 +24,9 @@ runtime metadata. Explicit resource selections resolve consistently in both.
 | `scoring.scoring_dir` | `scoring/` |
 | `reports.templates_dir` | `html/` |
 | `paths.assets_dir` | `assets/` |
-| `ai.prompt_path` | `ai/ai_analysis_prompt.md` |
+| `ai.prompts_dir` | `ai/prompts/` |
 | `ai.front_page_path` | `ai/ai_server_front_page.md` |
-| `ai.result_schema_path` | `ai/ai_analysis_result_schema.json` |
+| `ai.schemas_dir` | `ai/schemas/` |
 
 Directory keys for profiles/rules accept multiple roots; names must be unique
 across selected roots. Sample directories are not an automatic secondary tier.
@@ -35,8 +35,8 @@ sections; configure `reports.templates_dir`, not a fabricated derived-path key.
 
 Required profile/rule sources, HTML templates, cherry-pick script assets, and
 Stage 08 AI inputs must exist when their consuming feature runs. Scoring hints,
-helper scripts, and the legacy Stage 07 prompt remain optional. A missing optional
-file does not cause the tool to import a sample file instead.
+and helper scripts remain optional. Report generation does not create or replace AI
+package assets. Missing optional files do not cause sample fallback.
 
 ## Migrating existing configurations
 
@@ -53,9 +53,9 @@ file does not cause the tool to import a sample file instead.
   "reports": {"templates_dir": "${TOOLDIR}/configs/html"},
   "paths": {"assets_dir": "${TOOLDIR}/configs/assets"},
   "ai": {
-    "prompt_path": "${TOOLDIR}/configs/ai/ai_analysis_prompt.md",
+    "prompts_dir": "${TOOLDIR}/configs/ai/prompts",
     "front_page_path": "${TOOLDIR}/configs/ai/ai_server_front_page.md",
-    "result_schema_path": "${TOOLDIR}/configs/ai/ai_analysis_result_schema.json",
+    "schemas_dir": "${TOOLDIR}/configs/ai/schemas",
     "chunk_size": 100
   }
 }
@@ -67,6 +67,14 @@ expect precedence. Select one implementation, or rename the product entries.
 Stage 08 requires a positive integer `ai.chunk_size`; zero is not supported.
 
 ## Validation of resources (v20.1.0)
+
+Tool-bundled contracts in the installed `configs/ai/schemas/` are checked for
+correctness unconditionally. They are installation resources, not a fallback
+for product-owned `ai.*` paths. Their checks do not alter initial-directory
+resolution, explicit `${TOOLDIR}` selections or the AI activation policy below.
+Product contracts use directory-only selection. Stage 08 snapshots every selected
+asset; import checks the retained tree without reopening original resource paths.
+See [AI_ANALYSIS.md](AI_ANALYSIS.md#runtime-schema-correctness-checks).
 
 `validate` and Stage 00 check every file/directory setting declared in
 `CONFIG_SCHEMA` (see [CONFIGURATION.md](CONFIGURATION.md#schema-attributes-and-validation)).

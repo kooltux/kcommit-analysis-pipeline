@@ -1,5 +1,125 @@
 # Optional AI analysis workflow
 
+## Directory-only integration
+
+Validation and Stage 08 use `load_contract(cfg)` to snapshot `ai.prompts_dir` and
+`ai.schemas_dir`. Defaults are `ai/prompts` and `ai/schemas` under the initial
+configuration directory; installed samples require explicit TOOLDIR selection.
+The old `prompt_path` and `result_schema_path` keys are removed.
+
+Stage 08 calls `build_package` with Stage 04 prefilter-kept commits and the Stage 03
+product map, then `generate_ai_package_server` with the exact snapshots and guide.
+All selected prompt/schema bytes affect identity; deterministic scores do not.
+The complete package and zipapp are prepared before live assets are replaced.
+Validation/generation failures preserve existing outputs. Publication is per-file/
+per-tree replacement, not a transaction across filesystem failures.
+
+`lib.ai_workflow` validators are embedded in the portable server for role and
+assembly HTTP gates. Final-result upload alone does not enforce the role chain.
+
+## Directory-contract portable server
+
+`lib.ai_package_server.generate_ai_package_server` consumes the new in-memory
+package, verifies contract/root/source checksums and atomically publishes a zipapp.
+Its `/contract`, `/prompt/<role>`, `/schema/<role>` and `/metadata/<name>` routes
+provide exact assets and trusted identity fields through the executable registry.
+The zipapp has no repository or third-party runtime imports. Stage 08 selects
+this entry point, including the validation-only POST gates described below.
+
+## Directory-package construction engine
+
+`lib.ai_preparation.build_package` builds chunks and manifest/file snapshots in
+memory from the selected contract. It uses exact selected schema bytes, enforces
+input constraints, checks global SHA uniqueness and hashes every prompt/schema
+into run identity. It performs no output writes. Stage 08 publishes its returned
+files, including the complete `ai_contract/` tree, and embeds them in the server.
+
+## Forward-only contract tests
+
+The review-runtime, CSV-review and server-contract tests select only
+`configs/ai/schemas/result.json`. Review cases always execute; old-schema fixture
+combinations and their skip branches have been removed. Ordinary non-nullable
+array/string cell semantics remain tested because they are part of the current
+contract too. Stage 08 integration tests exercise directory configuration.
+
+## AI package ownership
+
+Stage 08 alone creates AI inputs, prompt/schema snapshots and the portable server.
+Stage 07 and import-driven report refreshes leave existing AI package bytes alone,
+including packages awaiting remote analysis. Report regeneration does not require
+prompt/schema resources or rerun analysis. The obsolete Stage 07 single-file/flat
+chunk generator and its import-wrapper workaround have been removed. This does
+not change scoring. Import verifies every packaged contract asset checksum.
+
+## Runtime schema correctness checks
+
+Install `requirements.txt` before running the pipeline; tests use `requirements-dev.txt`.
+`validate`, Stage 00 and lightweight stage preflight check all five bundled schemas,
+even when AI is disabled. Missing or invalid bundled files are blocking errors.
+Active AI checks the selected directory contract. Independent Stage 08 repeats
+bundle and selected-asset checks before reading caches or replacing outputs.
+Input chunks use the exact selected `schemas/input.json`, not a generated schema.
+Checks use the Draft 2020-12 meta-schema and require the canonical dialect URI when
+`$schema` is present; legacy schemas without it default to that dialect.
+Local pointers and anchors must resolve to schemas. External references, nested
+`$id` resources, duplicate anchors/JSON keys and non-JSON constants are rejected.
+These checks are offline and report file/schema locations. They do not replace
+payload validation, source identity, coverage or cross-document preservation gates.
+Role serving, directory packaging and remote role/workflow validation gates are active.
+
+## Explicit role schema assets
+
+`configs/ai/schemas/` contains self-contained Draft 2020-12 contracts:
+`input.json`, `analyst.json`, `cve.json`, `reviewer.json` and `result.json`.
+The input asset initially preserves the generated input contract. Analyst, CVE
+and Reviewer documents require their role identity; final results have no role
+field and require all 18 assessment fields. Agree requires null review arrays;
+disagree requires nonempty, ASCII-formatted arrays naming known assessment fields.
+`output_schema_checksum` identifies the shared final result schema for all roles.
+Runtime packaging, role discovery and HTTP validation use these selected assets.
+
+## Multi-role prompt preparation
+
+Basic role prompts are in `configs/ai/prompts/`: Analyst (`analyst.md`), CVE
+expert (`cve.md`), Reviewer (`reviewer.md`) and Assembler (`assembler.md`).
+The Reviewer emits only review fields; the Assembler preserves the validated
+specialist and review values in the final document without applying corrections.
+The original `configs/ai/ai_analysis_prompt.md` remains unchanged.
+
+Stage 08 packages every selected role prompt and serves `/prompt/<role>`.
+`/prompt` is a catalog, not a single prompt to execute. Do not upload specialist
+intermediate JSON to the final-result endpoint.
+The new prompt loader snapshots immediate `*.md` files, dereferencing directory
+and file symlinks, validating UTF-8 and preserving entry filenames and exact bytes.
+
+## Remote validation gates
+
+POST each Analyst, CVE and Reviewer document to `/validate/role/<role>/<name>`.
+`role` is `analyst`, `cve` or `reviewer`; `name` is the manifest-listed chunk path,
+such as `batch_001/001.json`. A role gate checks that document's identity, source
+membership, counts and fields; it does not cross-check specialist contributions.
+
+After assembly, POST an object with exactly `analyst`, `cve`, `reviewer` and
+`result` documents to `/validate/workflow/<name>`. It validates every document,
+requires reviewer coverage to have both specialist contributions, and requires
+final coverage to be reviewed. Final values must equal the combined contributions;
+recommendations remain advisory and are never applied. Partial coverage is allowed
+when the individual statuses/counts and cross-document subset relations are valid.
+
+Both endpoints return HTTP 200 with `status: valid`, trusted `run_id` and
+`source_chunk`; malformed JSON, identities, fields or assembly return 400. Unknown
+roles/chunks return 404. Normal authentication and access logging apply. Bodies
+must be UTF-8 JSON, 1 byte to 10 MiB with one Content-Length and no Transfer-Encoding.
+Duplicate JSON keys and non-JSON constants are rejected. `/api` lists effective
+limits and role contracts from the executable registry. Validation uses archived
+source bytes, manifest checksums and packaged schemas, never supplied context.
+
+These are validation-only operations: they neither create nor replace stored
+results and return no reusable validation ticket. Submit the unchanged validated
+`result` separately to `/result/<name>`. That endpoint remains available for manual
+CSV results and does not itself enforce the multi-role chain. Keep the package
+unchanged during delayed remote analysis/import; no history database is introduced.
+
 ## Convert manual CSV assessments
 
 Use the original run's generated configuration; the converter reads its resolved
@@ -28,8 +148,15 @@ Missing probabilities are allowed only when no CVEs are present. String EMPTY
 markers become empty strings. Missing rationale is an error unless the explicit
 `--rationale-from-summary` option copies the existing summary. This option does
 not generate new assessment evidence. All other required columns must be present.
-The known `extracted_Filename`, `ai_cve_id_pattern` and `rv_*` columns are ignored
-and reported; unknown columns are errors. UTF-8 BOM and quoted CSV cells are supported.
+The known `extracted_Filename` and `ai_cve_id_pattern` columns are ignored and
+reported; unknown columns are errors. UTF-8 BOM and quoted CSV cells are supported.
+Review columns selected by the packaged schema are required and validated, not
+ignored. For nullable arrays, blank, EMPTY and the exact JSON literal null become
+JSON null; explicit [] remains an empty array. Agreement requires null arrays;
+disagreement requires nonempty, unique, schema-formatted arrays. JSON arrays and
+single-item scalar shorthand are accepted; no agreement or review text is inferred.
+With a legacy schema, non-contract rv_* columns remain ignored and reported, and
+blank/EMPTY non-nullable arrays remain [].
 
 The output directory must not already exist. All rows and result documents are
 validated before creating it; write failures may leave a partial new directory.
@@ -86,9 +213,10 @@ its uploads affect only the temporary copy, not the original server results.
 ## Selecting work for debug runs and retries
 
 `/batches`, `/chunks`, and `/batch/<batch_id>` accept independent `limit` and
-`offset` query parameters. Missing, empty, non-integer or nonpositive `limit`
-means unlimited; missing, empty, non-integer or negative `offset` means zero.
-The first repeated value wins. Offset skips items before limit caps the result;
+`offset` query parameters. An absent or zero `limit` means unlimited; an absent
+`offset` means zero. Supplied values must be nonnegative integers and occur once.
+Empty, malformed, negative, repeated and unknown parameters return HTTP 400 rather
+than expanding the selected work. Offset skips items before limit caps the result;
 order and full-collection totals are preserved. Beyond-end offsets return empty
 lists. Batch detail returns `chunks: [{"chunk": "...", "result": "..."}]`,
 without a separate `results` array. Pagination selects complete pairs; full-batch
@@ -109,6 +237,28 @@ links, effective upload limits and runtime authentication status (no secrets).
 The same registry dispatches requests. Rebuild Stage 08 to update an existing
 zipapp; the front page explains how clients use `/api` without duplicating it.
 
+API entries are sorted by discovery/guide, contract assets, sources, validation,
+and results/export, independent of decorator registration order. Per-route `group`
+and `order` metadata remain in the executable registry. `path_parameters` describe
+parameters and provide examples; role enums and concrete URLs use selected assets
+and manifest IDs. Query examples follow the declared query contract. Each example
+contains exactly `method` and `url`; no curl, body-file, schema or note fields.
+The separate `request_body` contract declares whether a body is required, its
+content type and schema. Single-role validation references `/schema/<role>` (use
+the URL role); workflow validation describes an object requiring exactly the four
+complete documents, with per-property schema links and no additional properties.
+The URL selects trusted source context; submitted documents arrive in the POST
+body, not as filenames or source chunk names. Route-specific descriptions take
+precedence over shared handler docstrings, keeping these two operations distinct.
+Empty source/batch listings produce no invented example IDs. Examples do not run
+requests or upload anything; add authentication credentials separately when needed.
+
+`/schema/result` is the sole final-result schema URL; the former output alias is
+removed. Root package artifact names and the `output_schema_checksum` envelope
+field are unchanged. `/metadata/<name>` supplies trusted per-chunk envelope fields;
+bare `/metadata` is not an endpoint. Copy identities/checksums from it, then add
+assessment fields, counts and status rather than calculating hashes with an LLM.
+
 AI assessment is advisory. The ordinary pipeline runs stages 00–07 and does not
 require an AI service. Stage 08 prepares an independent work package from the
 stage 04 prefilter-kept commits, before scoring and postfiltering. It does not
@@ -121,14 +271,14 @@ workflow is active when the config declares an `ai` section, unless
 `ai.enabled` is `false`. When active:
 
 - a full `run` includes Stage 08 after Stage 07;
-- `validate` and Stage 00 check that `ai.prompt_path`, `ai.front_page_path` and
-  `ai.result_schema_path` exist and have valid content (non-empty UTF-8
-  Markdown; a JSON object schema with `properties.results`). When unset they
-  default to `ai/ai_analysis_prompt.md`, `ai/ai_server_front_page.md` and
-  `ai/ai_analysis_result_schema.json` under the initial configuration directory.
+- `validate` and Stage 00 check `ai.prompts_dir`, `ai.schemas_dir` and
+  `ai.front_page_path`, including required assets and contract consistency. Defaults
+  are `ai/prompts`, `ai/schemas` and `ai/ai_server_front_page.md` under the initial
+  configuration directory.
 
-With no `ai` section or `"enabled": false`, nothing AI-related runs or is
-validated, and `run --stage 8` / `--from 8` are refused.
+With no `ai` section or `"enabled": false`, product AI resources are not
+validated and Stage 08 does not run; `run --stage 8` / `--from 8` are refused.
+Tool-bundled schema correctness checks still run independently of this flag.
 
 ## Prepare
 
@@ -140,7 +290,7 @@ python3 kcommit_pipeline.py run --config product.json --stage 8
 
 `ai.chunk_size` counts commits per chunk (default 100); `ai.batch_size` counts
 chunks per batch (default 10). Both require positive integers, not booleans.
-`ai.prompt_path` selects the prompt. Inputs use `ai_analysis_input/batch_001/001.json`,
+`ai.prompts_dir` selects role prompts. Inputs use `ai_analysis_input/batch_001/001.json`,
 etc., with global chunk numbering and at least three digits. The last batch may
 be smaller. Empty input produces one empty chunk in one batch.
 
@@ -150,10 +300,10 @@ relative chunk paths. Chunk metadata includes `batch_number`, `total_batches`
 and `chunk_in_batch`. Batch size contributes to the run identity.
 Use `/batches` and `/batch/<id>` to discover work; `/chunks` still lists all inputs.
 Submit one result per chunk to `/result/<source_chunk>`. Result storage and ZIP
-export/import preserve subfolders. Legacy flat bundles remain readable.
+export/import preserve subfolders. Regenerate packages after configuration migration.
 Rerun Stage 08 with `--force` to replace old flat outputs. Update custom prompts
 and front pages to describe batch paths; do not manually move existing chunks.
-The sample result schema is `configs/ai/ai_analysis_result_schema.json`.
+The sample result schema is `configs/ai/schemas/result.json`.
 Stage 08 writes numbered JSON chunks, input and output schemas, a prompt, a
 checksummed bundle manifest, and `serve_ai.pyz` to the configured output
 directory. An empty prefilter set produces an empty chunk. Keep these files
@@ -162,7 +312,7 @@ together until importing the returned results.
 ## Server front page
 
 Set `ai.front_page_path` in `configs/conf.d/07_ai.json` to an external UTF-8
-Markdown file. The shipped value is `${CONFIGDIR}/ai/ai_server_front_page.md`.
+Markdown file. The shipped value is `${TOOLDIR}/configs/ai/ai_server_front_page.md`.
 Stage 08 validates the file, copies it to `output/ai_server_front_page.md`,
 and embeds it in `serve_ai.pyz`; missing, empty, or invalid UTF-8 files fail
 preparation before outputs are modified. The portable bundle needs no access
@@ -241,7 +391,7 @@ produces a startup warning. This is minimal shared-password access control,
 not a production-hardened public web service. Connections have a 10-second
 socket timeout; the server processes requests serially.
 
-Use `GET /prompt`, `GET /schema/input`, `GET /schema/output`,
+Use `GET /prompt`, `GET /schema/input`, `GET /schema/result`,
 `GET /chunks`, and `GET /chunk/<name>` to inspect the work. Return one schema-
 conforming result document per chunk using `PUT /result/<name>` or
 `POST /result/<name>`. Both share authentication, size limits, validation and

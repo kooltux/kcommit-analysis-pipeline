@@ -2,6 +2,7 @@
 **/.pytest_cache
 *.pyc
 .*.sw*
+.sw*
 .coverage
 work/
 pipeline_stats/

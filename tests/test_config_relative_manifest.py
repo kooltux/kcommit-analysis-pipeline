@@ -1,6 +1,8 @@
 """The exported output/pipeline_config.json holds no absolute path (v20.1.1)."""
 import json
 import os
+from pathlib import Path
+import shutil
 
 from lib.config import load_config, relativize_paths
 from lib.stages.st07_report import _dump_merged_config
@@ -19,7 +21,7 @@ def _raw(root):
                    'dts_roots': [root + '/dts', '${X}/y']},
         'paths': {'work_dir': root + '/work'},
         'reports': {'css_override': '', 'title': '/not/a/path/key'},
-        'ai': {'prompt_path': '/elsewhere/prompt.md', 'chunk_size': 5},
+        'ai': {'prompts_dir': '/elsewhere/prompts', 'chunk_size': 5},
         'vars': {'WORKSPACE': root, 'CONFIGDIR': root + '/cfg/deep', 'NAME': 'plain',
                  'OUT': '${WORKSPACE}/o', 'URL': 'https://host/path', 'N': 3},
     }
@@ -43,7 +45,7 @@ def test_relativize_paths_converts_path_keys_lists_and_vars(tmp_path):
     assert out['kernel']['source_dir'] == '../../linux'
     assert out['kernel']['dts_roots'] == ['../../dts', '${X}/y']
     assert out['paths']['work_dir'] == '..'
-    assert out['ai']['prompt_path'] == os.path.relpath('/elsewhere/prompt.md', outdir)
+    assert out['ai']['prompts_dir'] == os.path.relpath('/elsewhere/prompts', outdir)
     assert out['vars'] == {'WORKSPACE': '../..', 'CONFIGDIR': '../../cfg/deep', 'NAME': 'plain',
                            'OUT': '${WORKSPACE}/o', 'URL': 'https://host/path', 'N': 3}
     assert out['kernel']['rev_old'] == 'a' and out['ai']['chunk_size'] == 5
@@ -86,10 +88,10 @@ def _write_product(root):
     cfgdir = os.path.join(root, 'proj', 'config')
     for name in ('profiles', 'rules', 'scoring', 'html', 'assets', 'ai'):
         os.makedirs(os.path.join(cfgdir, name))
-    for name in ('ai_analysis_prompt.md', 'ai_server_front_page.md',
-                 'ai_analysis_result_schema.json'):
-        with open(os.path.join(cfgdir, 'ai', name), 'w', encoding='utf-8') as stream:
-            stream.write('{}')
+    samples = Path(__file__).resolve().parents[1] / 'configs' / 'ai'
+    for name in ('prompts', 'schemas'):
+        shutil.copytree(samples / name, os.path.join(cfgdir, 'ai', name))
+    shutil.copyfile(samples / 'ai_server_front_page.md', os.path.join(cfgdir, 'ai', 'ai_server_front_page.md'))
     os.makedirs(os.path.join(root, 'proj', 'linux'))
     main = os.path.join(cfgdir, 'main.json')
     with open(main, 'w', encoding='utf-8') as stream:
@@ -114,18 +116,17 @@ def test_exported_config_reproduces_the_run_from_the_output_directory(tmp_path, 
     assert not [s for s in _strings(dumped) if os.path.isabs(s)]
     assert dumped['profiles']['profiles_dirs'] == ['../../config/profiles']
     assert dumped['rules']['rules_dirs'] == ['../../config/rules']
-    assert dumped['ai']['prompt_path'] == '../../config/ai/ai_analysis_prompt.md'
+    assert dumped['ai']['prompts_dir'] == '../../config/ai/prompts'
+    assert dumped['ai']['schemas_dir'] == '../../config/ai/schemas'
     assert dumped['vars']['CONFIGDIR'] == '.'
     again = load_config(path)
     for key in ('profiles_dirs', 'rules_dirs', 'scoring_dir', 'templates_dir', 'assets_dir',
                 'work_dir', 'cache_dir', 'output_dir'):
         assert again['paths'][key] == cfg['paths'][key], key
     assert again['kernel']['source_dir'] == cfg['kernel']['source_dir']
-    for key in ('prompt_path', 'front_page_path', 'result_schema_path'):
-        assert again['ai'][key] == os.path.join(root, 'proj', 'config', 'ai',
-                                                {'prompt_path': 'ai_analysis_prompt.md',
-                                                 'front_page_path': 'ai_server_front_page.md',
-                                                 'result_schema_path': 'ai_analysis_result_schema.json'}[key])
+    for key, name in [('prompts_dir', 'prompts'), ('schemas_dir', 'schemas'),
+                      ('front_page_path', 'ai_server_front_page.md')]:
+        assert again['ai'][key] == os.path.join(root, 'proj', 'config', 'ai', name)
 
 
 def test_relative_path_to_a_sibling_tree_is_minimal(tmp_path):

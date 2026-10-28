@@ -10,7 +10,7 @@ PAGE = Path(__file__).resolve().parents[1] / 'configs' / 'ai' / 'ai_server_front
 def test_front_page_is_shared_api_reference():
     text = PAGE.read_text(encoding='utf-8')
     for required in ('human reviewers', 'AI clients', 'CI jobs', '### Using this server',
-                     '/schema/input', '/schema/output', '/chunks', '/result/<name>',
+                     '/schema/input', '/schema/result', '/chunks', '/result/<name>',
                      '/export', 'curl --fail-with-body', 'Content-Length',
                      'HTTP 400', 'HTTP 401', 'HTTP 404', 'PUT and POST replace',
                      'PUT /result/<name>', 'POST /result/<name>'):

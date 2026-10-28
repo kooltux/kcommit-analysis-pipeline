@@ -8,7 +8,7 @@ import pytest
 from lib.ai_contract import digest, encode, input_schema, project_commit, validate_result
 
 SCHEMA = json.loads((Path(__file__).resolve().parents[1] /
-                     'configs/ai/ai_analysis_result_schema.json').read_text(encoding='utf-8'))
+                     'configs/ai/schemas/result.json').read_text(encoding='utf-8'))
 SHA = 'a' * 40
 
 def sample():
@@ -21,6 +21,7 @@ def sample():
         'ai_backport_effort_reason': 'Dependencies unclear', 'ai_cve_ids': [],
         'ai_cve_probabilities': [], 'ai_backport_recommendation': 'maybe',
         'ai_summary': 'Review manually',
+        'rv_agreement': 'agree', 'rv_notes': None, 'rv_recommendation': None,
     }
     chunk = {
         'run_id': 'b' * 64, 'source_chunk': '1.json',

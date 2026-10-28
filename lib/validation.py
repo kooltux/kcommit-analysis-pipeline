@@ -6,6 +6,8 @@ import sys
 from lib.config import CONFIG_SCHEMA, ai_active
 from lib.content_checks import check_content
 from lib.resources import resource_path
+from lib.ai_schema_validation import bundled_schema_problems
+from lib.ai_assets import load_contract
 
 # ── Schema-driven type validation ─────────────────────────────────────────────
 #
@@ -315,6 +317,12 @@ def _validate_common(cfg, problems, notices):
     _validate_filter(cfg, problems, notices)
     _validate_dirs(cfg, problems, notices)
     _validate_paths(cfg, problems, notices)
+    problems.extend(bundled_schema_problems())
+    if ai_active(cfg) and not any(key.startswith('ai.') for key, _ in schema_errors):
+        try:
+            load_contract(cfg)
+        except (ValueError, OSError) as exc:
+            problems.append('ai.contract: ' + str(exc))
 
 
 # ── public API ──────────────────────────────────────────────────────────────

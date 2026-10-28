@@ -5,6 +5,7 @@ import zipfile
 import pytest
 
 from lib.ai_exchange import Progress, WorkPackage, decode
+from lib.ai_contract import result_properties
 from lib.commands.cmd_ai_import import import_results
 from test_ai_batch_layout import prepare
 
@@ -17,12 +18,14 @@ def package(tmp_path, monkeypatch):
 
 
 def record(package):
-    props = package.schema['properties']['results']['additionalProperties']['properties']
+    props = result_properties(package.schema)
     value = {}
     for key, spec in props.items():
-        value[key] = (False if spec['type'] == 'boolean' else [] if spec['type'] == 'array'
+        value[key] = (None if isinstance(spec['type'], list) else
+                      False if spec['type'] == 'boolean' else [] if spec['type'] == 'array'
                       else spec.get('enum', ['Manual assessment'])[0])
     value['ai_risks_if_not_backported'] = ['none']
+    value['rv_agreement'] = 'agree'
     return value
 
 

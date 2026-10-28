@@ -9,17 +9,24 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib.ai_exchange import Assessments, Progress, WorkPackage, discover
-from lib.ai_contract import encode, validate_result
+from lib.ai_contract import encode, result_properties, validate_result
 from lib.config import load_config
 
 
 def cell_value(raw, spec):
     raw = raw.strip()
-    if spec['type'] == 'boolean':
+    kind = spec['type']
+    if isinstance(kind, list):
+        if set(kind) != {'array', 'null'}:
+            raise ValueError('Unsupported nullable CSV type')
+        if raw in ('', 'EMPTY', 'null'):
+            return None
+        kind = 'array'
+    if kind == 'boolean':
         if raw.lower() not in ('true', 'false'):
             raise ValueError('Expected TRUE or FALSE')
         return raw.lower() == 'true'
-    if spec['type'] == 'array':
+    if kind == 'array':
         if raw in ('', 'EMPTY'):
             return []
         value = json.loads(raw) if raw.startswith('[') else [raw]
@@ -38,7 +45,7 @@ def convert(cfg, inputs, output_dir, rationale_from_summary=False):
     progress = Progress('ai-csv')
     package = WorkPackage(cfg, progress)
     files = discover(inputs, '.csv', progress)
-    props = package.schema['properties']['results']['additionalProperties']['properties']
+    props = result_properties(package.schema)
     accepted = Assessments(progress)
     rows = 0
     ignored = set()

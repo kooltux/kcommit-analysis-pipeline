@@ -4,6 +4,75 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v21.2.0 — directory-based AI contracts and portable validation (2026-10-28)
+
+### Migration
+
+- Replace `ai.prompt_path` and `ai.result_schema_path` with the selected directories
+  `ai.prompts_dir` and `ai.schemas_dir`.
+- Use `/schema/result` instead of `/schema/output`; invalid, repeated or unknown
+  discovery-pagination parameters now return HTTP 400.
+- Existing portable archives retain their captured version and package identity;
+  preserve the original packages while remote assessments await import.
+
+### Fixed
+
+- Reject malformed, negative, repeated and unknown discovery-pagination parameters
+  with HTTP 400 instead of silently selecting unlimited work. Keep absent defaults
+  and explicit limit=0; migrate HTTP tests, smoke checks and fixtures together.
+- Update access-log regressions to cover valid pagination and rejected unknown
+  parameters while preserving query-secret redaction and exact request counts.
+
+- Migrate smoke-discovery fixtures to the canonical schema, route groups and
+  method/URL examples; assert fault-specific failures so pagination regressions
+  cannot pass accidentally on an unrelated API-contract error.
+
+- Use `/schema/result` as the canonical final schema URL and migrate API contracts,
+  clients, tests and the smoke runner. Keep artifact names/checksum fields unchanged.
+- Clarify per-chunk metadata usage and add manifest/asset-derived parameter and
+  request examples to live API discovery, containing only method and URL.
+  Sort routes by logical workflow groups without changing dispatch order;
+  cover ordering, empty listings and real URLs.
+- Describe required JSON request bodies separately from method/URL-only examples;
+  give role/workflow validation distinct route descriptions and explicit schema
+  contracts, with discovery and real HTTP submission regressions.
+
+- Activate directory-only AI configuration and shared contract validation; wire
+  Stage 08 to the existing package builder and portable-server generator. Prepare
+  all artifacts before replacing live outputs, inventory the contract tree, verify
+  its hashes on import, and migrate fixtures/docs to the current 18-field contract.
+  Add validation-only role/workflow HTTP gates using embedded shared validators,
+  trusted archived context and strict bounded JSON; test auth, malformed input,
+  identity/coverage/preservation failures, partial reviews and no-write behavior.
+
+- Add directory-package zipapp generation with exact-asset checks, atomic publication, contract/role discovery and trusted chunk metadata; cover isolated startup, authentication and result upload/export. Stage 08 uses this generator.
+
+- Add the write-free directory-contract package engine and regressions for exact bytes, deterministic identity, every contract asset, input constraints, global duplicate SHAs, batching and empty input; activate it in Stage 08.
+
+- Remove old-schema parameterizations and review skips from runtime/CSV/server contract tests; retain all new-schema cases and add malformed-review and null/empty CSV regressions.
+
+- Make Stage 08 the sole AI-package writer; remove obsolete Stage 07 generators and wrapper monkeypatching, and replace old export tests with report/package immutability regressions.
+
+- Integrate directory snapshots and role/assembly validation into configuration, preparation and HTTP gates with regression tests. Remove the temporary draft patch.
+
+- Support referenced result schemas and explicit nullable review cells in CSV conversion; add real-package conversion/import and fail-before-write regressions while preserving legacy CSV behavior.
+
+- Embed shared pipeline result validation in new standalone AI servers; cover legacy/new schema payloads, direct execution, dependency-free startup and HTTP upload/export regressions.
+
+- Resolve inline or local-pointer result-record schemas and validate nullable review arrays and agreement rules in the pipeline validator; add runtime payload regressions for new and legacy schemas.
+
+- Preserve the legacy invalid-JSON diagnostic prefix for AI result schema validation while retaining file details and exception causes; keep schema-definition and reference errors distinct.
+
+### Added
+
+- Mandatory offline Draft 2020-12 schema checks in validation and AI preparation, explicit dependencies, configuration-fragment consistency tests and updated resource-policy documentation.
+
+- Five explicit, self-contained role/input/result schemas and contract regression tests, integrated into runtime packaging and validation.
+
+- Basic Analyst, CVE expert, Reviewer and Assembler prompt assets, preserving the original prompt.
+- Separate review from final assembly; preserve specialist values and require trusted checksums and remote validation gates.
+- A deterministic, symlink-resolving prompt snapshot loader with validation regressions and portable-server integration.
+
 ## v21.1.2 — manual AI import and server API improvements (2026-10-20)
 
 ### Fixed

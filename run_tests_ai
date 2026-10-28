@@ -85,9 +85,6 @@ def check_pages(base, endpoint, full, fields):
     end = len(full[fields[0]]) + 1
     cases = [('limit=1', 0, 1), ('offset=1', 1, None),
              ('limit=1&offset=1', 1, 1), ('limit=0', 0, None),
-             ('limit=-1&offset=-1', 0, None), ('limit=bad&offset=bad', 0, None),
-             ('limit=&offset=', 0, None), ('limit=1.5&offset=1.5', 0, None),
-             ('limit=1_0', 0, None), ('limit=1&limit=2', 0, 1),
              (f'limit=1&offset={end}', end, 1), (f'limit={end}', 0, end)]
     for query, offset, limit in cases:
         page = json.loads(expect(base, endpoint + '?' + query))
@@ -96,12 +93,23 @@ def check_pages(base, endpoint, full, fields):
             expected[field] = full[field][offset:offset + limit if limit else None]
         check(page == expected, f'Pagination or metadata mismatch: {endpoint}?{query}')
 
+    for query in ('limit=-1&offset=-1', 'limit=bad&offset=bad', 'limit=&offset=',
+                  'limit=1.5&offset=1.5', 'limit=1_0', 'limit=1&limit=2',
+                  'offset=0&offset=1', 'limti=1', 'limit=1&unknown=2'):
+        expect(base, endpoint + '?' + query, status=400, reason='invalid pagination is rejected')
+
 
 def check_discovery(base, expected_version=None):
     """Exercise live API, batch discovery and pagination; return the full chunk list."""
     api = json.loads(expect(base, '/api'))
     check(isinstance(api.get('routes'), list), 'Missing API routes')
     routes = {(r['method'], r['path']): r for r in api['routes']}
+    check(('GET', '/schema/result') in routes, 'Missing canonical result schema')
+    check(('GET', '/schema/output') not in routes, 'Removed schema alias is advertised')
+    groups = [api['groups'].index(route['group']) for route in api['routes']]
+    check(groups == sorted(groups), 'API groups are not logically ordered')
+    check(all('examples' in route and 'path_parameters' in route for route in api['routes']),
+          'Missing API parameter examples')
     check(('GET', '/api') in routes, 'API must describe itself')
     check(('GET', '/api/version') in routes, 'Missing version route')
     version = json.loads(expect(base, '/api/version'))
@@ -207,7 +215,7 @@ def smoke(app):
                 prompt = expect(base, '/prompt')
                 check(bool(prompt.strip()), 'Empty prompt')
                 input_schema = expect(base, '/schema/input')
-                output_schema = expect(base, '/schema/output')
+                output_schema = expect(base, '/schema/result')
                 check(json.loads(input_schema)['type'] == 'object', 'Invalid input schema')
                 check(json.loads(output_schema)['type'] == 'object', 'Invalid output schema')
                 with zipfile.ZipFile(copy) as source_archive:

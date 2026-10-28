@@ -10,7 +10,7 @@ folders through `--results-bundle PATH`; commit SHA, run identity and schema
 validation are independent of file grouping. See
 [AI import details](docs/AI_ANALYSIS.md#import-grouping-and-progress).
 
-Current release: `v21.1.2` — manual CSV conversion, SHA-based AI import, POST/PUT result uploads and paired batch discovery URLs. For AI batch-path migration, see [migration details](docs/AI_ANALYSIS.md#prepare).
+Current release: `v21.2.0` — directory-based AI contracts, portable role/workflow validation, trusted metadata, and structured API discovery. See [AI workflow and configuration migration](docs/AI_ANALYSIS.md#directory-only-integration).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
@@ -35,6 +35,19 @@ enabled Kconfig symbols to source paths, pre-filters irrelevant commits, scores
 the remainder through profiles and rules, and generates HTML, CSV, XLSX, and
 ODS reports for manual review. An optional advisory AI workflow analyzes
 prefilter-kept commits separately without changing pipeline scores.
+
+Stage 08 selects `ai.prompts_dir` and `ai.schemas_dir`, snapshots every selected
+asset into `ai_contract/`, and embeds the directory contract in `serve_ai.pyz`.
+Removed single-file settings must be migrated. `/contract` and `/metadata/<name>`
+provide exact assets and trusted identities. Import verifies the retained asset
+tree. POST role documents to `/validate/role/<role>/<name>` and the four-document
+assembly to `/validate/workflow/<name>` before final upload. These gates store
+nothing; `/result/<name>` alone does not enforce the complete role chain.
+
+`/api` lists routes in logical workflow order with parameter descriptions, selected
+role values, concrete package-derived URLs and request examples. Use `/schema/result`
+for final results and `/metadata/<name>` for trusted per-chunk envelope fields.
+The redundant output-schema alias has been removed.
 
 ## Pipeline stages
 
@@ -428,7 +441,12 @@ counterparts, plus `profile_summary.*`, `profile_matrix.*`, and workbook outputs
 
 - Python 3.13+
 - `git` on `PATH`
+- `jsonschema>=4.18,<5` for mandatory offline AI schema checks
 - `openpyxl` for XLSX output (`pip install openpyxl`)
+
+Install runtime dependencies with `python3 -m pip install -r requirements.txt`.
+For unit tests, use `python3 -m pip install -r requirements-dev.txt`, then `./run_tests`.
+The generated portable AI server does not acquire this pipeline dependency.
 
 ## Example config
 

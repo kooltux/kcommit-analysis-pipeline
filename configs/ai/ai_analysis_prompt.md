@@ -12,7 +12,7 @@ backporting. Treat recommendations as advisory: a human must review them.
 ## Contract
 
 1. Read `GET /api` for the code-derived API catalog, then `GET /prompt`,
-   `GET /schema/input`, and `GET /schema/output`. The schemas
+   `GET /schema/input`, and `GET /schema/result`. The schemas
    define the input and output fields and are authoritative over examples.
 2. Read `GET /batches` and select the assigned batch(es). Read each
    `GET /batch/<batch_id>` and iterate its `chunks` objects. Fetch each object's
@@ -20,7 +20,7 @@ backporting. Treat recommendations as advisory: a human must review them.
    lists all chunks. Analyze commits independently; these are prefilter-kept
    commits, not pipeline-scored results. A batch groups chunks for assignment,
    not for merging inputs or results.
-3. Create one result JSON object per input chunk, following `/schema/output`.
+3. Create one result JSON object per input chunk, following `/schema/result`.
    Copy `run_id`, `source_chunk`, `input_schema_checksum`, and
    `output_schema_checksum` from the chunk. Set `input_checksum` to the SHA-256
    of the exact chunk response bytes. Keep `total_commits` unchanged; set

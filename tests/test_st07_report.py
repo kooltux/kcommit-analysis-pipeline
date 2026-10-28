@@ -381,116 +381,45 @@ def _setup_ai(tmp_path, num_commits=5):
     return cache, outdir, cfg
 
 
-def test_ai_analysis_single_file_default(tmp_path):
-    """v19.3.0 — AI analysis with chunk_size=0 (default) writes single file."""
+@pytest.mark.parametrize('count,chunk_size', [(0, 100), (5, 100), (25, 10)])
+def test_report_does_not_prepare_ai_inputs(tmp_path, count, chunk_size):
+    from pathlib import Path
+    cache, outdir, cfg = _setup_ai(tmp_path, num_commits=count)
+    cfg['ai']['chunk_size'] = chunk_size
+    protected = {name: (Path(cache) / name).read_bytes() for name in (
+        CACHE_FILES['prefilter_kept'], CACHE_FILES['product_map'],
+        CACHE_FILES['relevant'], CACHE_FILES['scored'])}
+    run(cfg, cache, outdir)
+    assert not list(Path(outdir).glob('ai_*'))
+    assert not (Path(outdir) / 'serve_ai.pyz').exists()
+    assert protected == {name: (Path(cache) / name).read_bytes() for name in protected}
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+def test_report_preserves_existing_ai_package_bytes(tmp_path, enabled):
+    from pathlib import Path
     cache, outdir, cfg = _setup_ai(tmp_path, num_commits=5)
-    
-    run(cfg, cache, outdir)
-    
-    # Should write ai_analysis_input.json (single file)
-    ai_path = os.path.join(outdir, 'ai_analysis_input.json')
-    assert os.path.exists(ai_path), 'ai_analysis_input.json not written'
-    
-    # Should NOT write ai_analysis_input/ directory
-    chunk_dir = os.path.join(outdir, 'ai_analysis_input')
-    assert not os.path.exists(chunk_dir), 'ai_analysis_input/ should not exist with chunk_size=0'
-    
-    # Verify content
-    data = json.load(open(ai_path))
-    assert 'commits' in data
-    assert len(data['commits']) == 5
-    assert 'chunk_info' not in data
-
-
-def test_ai_analysis_chunked_output(tmp_path):
-    """v19.3.0 — AI analysis with chunk_size > 0 writes multiple chunk files."""
-    cache, outdir, cfg = _setup_ai(tmp_path, num_commits=25)
-    cfg['ai']['chunk_size'] = 10  # 25 commits / 10 per chunk = 3 chunks
-    
-    run(cfg, cache, outdir)
-    
-    # Should NOT write ai_analysis_input.json (single file)
-    ai_path = os.path.join(outdir, 'ai_analysis_input.json')
-    assert not os.path.exists(ai_path), 'ai_analysis_input.json should not exist with chunking'
-    
-    # Should write ai_analysis_input/ directory with chunk files
-    chunk_dir = os.path.join(outdir, 'ai_analysis_input')
-    assert os.path.exists(chunk_dir), 'ai_analysis_input/ directory not created'
-    
-    # Should have 3 chunk files: 1.json, 2.json, 3.json
-    chunk_files = sorted([f for f in os.listdir(chunk_dir) if f.endswith('.json')])
-    assert len(chunk_files) == 3, f'Expected 3 chunks, got {len(chunk_files)}'
-    assert chunk_files == ['1.json', '2.json', '3.json']
-    
-    # Verify chunk content
-    for i, chunk_file in enumerate(chunk_files):
-        chunk_path = os.path.join(chunk_dir, chunk_file)
-        data = json.load(open(chunk_path))
-        
-        assert 'chunk_info' in data, f'chunk_info missing from {chunk_file}'
-        assert data['chunk_info']['chunk_number'] == i + 1
-        assert data['chunk_info']['total_chunks'] == 3
-        
-        if i < 2:  # First two chunks should have 10 commits each
-            assert len(data['commits']) == 10
-        else:  # Last chunk should have 5 commits
-            assert len(data['commits']) == 5
-
-
-def test_ai_analysis_prompt_copied_to_output(tmp_path):
-    """v19.3.0 — AI analysis prompt is copied to output directory."""
-    cache, outdir, cfg = _setup_ai(tmp_path, num_commits=5)
-    
-    # Create a prompt file
-    configs_dir = tmp_path / 'configs'
-    ai_dir = configs_dir / 'ai'
-    ai_dir.mkdir(parents=True)
-    prompt_path = ai_dir / 'ai_analysis_prompt.md'
-    prompt_path.write_text('# Test Prompt\n\nThis is a test prompt.')
-    cfg['ai']['prompt_path'] = str(prompt_path)
-    
-    run(cfg, cache, outdir)
-    
-    # Should copy prompt to output
-    output_prompt = os.path.join(outdir, 'ai_analysis_prompt.md')
-    assert os.path.exists(output_prompt), 'ai_analysis_prompt.md not copied to output'
-    
-    content = open(output_prompt).read()
-    assert content == prompt_path.read_text()
-
-
-def test_ai_analysis_custom_prompt_path(tmp_path):
-    """v19.3.0 — AI analysis respects custom ai.prompt_path config."""
-    cache, outdir, cfg = _setup_ai(tmp_path, num_commits=5)
-    
-    # Create custom prompt location
-    custom_prompt = tmp_path / 'custom_prompt.md'
-    custom_prompt.write_text('# Custom Prompt\n\nCustom content.')
-    cfg['ai']['prompt_path'] = str(custom_prompt)
-    
-    run(cfg, cache, outdir)
-    
-    # Should use custom prompt
-    output_prompt = os.path.join(outdir, 'ai_analysis_prompt.md')
-    assert os.path.exists(output_prompt)
-    
-    content = open(output_prompt).read()
-    assert '# Custom Prompt' in content
-    assert 'Custom content' in content
-
-
-def test_ai_analysis_no_commits(tmp_path):
-    """v19.3.0 — AI analysis handles empty prefilter_kept gracefully."""
-    cache, outdir, cfg = _setup_ai(tmp_path, num_commits=0)
-    
-    run(cfg, cache, outdir)
-    
-    # Should not write any AI files when no commits
-    ai_path = os.path.join(outdir, 'ai_analysis_input.json')
-    chunk_dir = os.path.join(outdir, 'ai_analysis_input')
-    
-    assert not os.path.exists(ai_path)
-    assert not os.path.exists(chunk_dir)
+    cfg['ai']['enabled'] = enabled
+    root = Path(outdir)
+    assets = {
+        'ai_analysis_bundle_manifest.json': b'{"run_id":"fixed-package"}',
+        'ai_analysis_prompt.md': b'Frozen prompt',
+        'ai_server_front_page.md': b'Frozen guide',
+        'ai_analysis_input_schema.json': b'{}',
+        'ai_analysis_result_schema.json': b'{}',
+        'ai_analysis_input/batch_001/001.json': b'Frozen source chunk',
+        'serve_ai.pyz': b'Frozen portable server',
+        'serve_ai.pyz.results/batch_001/001.json': b'Previously accepted result',
+    }
+    for name, content in assets.items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    for _ in range(2):
+        run(cfg, cache, outdir)
+        assert assets == {name: (root / name).read_bytes() for name in assets}
+        assert sorted(p.relative_to(root / 'ai_analysis_input').as_posix()
+                      for p in (root / 'ai_analysis_input').rglob('*.json')) == ['batch_001/001.json']
 
 
 # ── v19.5.0: cherry-pick execution script generation (single script + data file) ────────────────────

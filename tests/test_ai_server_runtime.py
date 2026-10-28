@@ -159,7 +159,7 @@ def test_colon_password(namespace):
 
 def test_all_endpoints_require_auth_and_log_once(app):
     credentials = 'test-user:secret:password'
-    cases = [('GET', '/prompt'), ('GET', '/schema/input'), ('GET', '/schema/output'),
+    cases = [('GET', '/prompt'), ('GET', '/schema/input'), ('GET', '/schema/result'),
              ('GET', '/chunks'), ('GET', '/chunk/1.json'), ('GET', '/result/1.json'),
              ('PUT', '/result/1.json'), ('GET', '/export'), ('HEAD', '/chunks'),
              ('POST', '/chunks')]
@@ -171,11 +171,12 @@ def test_all_endpoints_require_auth_and_log_once(app):
             assert body == b''
         for header in [basic('test-user:wrong'), 'Basic !!!', 'Bearer token', 'Basic']:
             assert request(port, '/chunks', authorization=header)[0] == 401
-        assert request(port, '/chunks?token=do-not-log', authorization=basic(credentials))[0] == 200
+        assert request(port, '/chunks?limit=1', authorization=basic(credentials))[0] == 200
+        assert request(port, '/chunks?token=do-not-log', authorization=basic(credentials))[0] == 400
         assert request(port, '/missing', authorization=basic(credentials))[0] == 404
         assert request(port, '/result/1.json', method='PUT', body=b'{}',
                        authorization=basic(credentials))[0] == 400
-        assert_access_count(log, len(cases) + 7)
+        assert_access_count(log, len(cases) + 8)
         assert not Path(str(app) + '.results').exists()
         text = log.read_text() + stderr.read_text()
         for secret in [credentials, basic(credentials), 'do-not-log', 'token=']:
@@ -317,15 +318,16 @@ def test_wildcard_connection_url(namespace):
 def test_request_completion_logs(app):
     with running(app, auth='user:secret') as (port, log, stderr):
         token = basic('user:secret')
-        assert request(port, '/chunks?secret=hidden', authorization=token)[0] == 200
+        assert request(port, '/chunks?limit=1', authorization=token)[0] == 200
+        assert request(port, '/chunks?secret=hidden', authorization=token)[0] == 400
         assert request(port, '/chunks')[0] == 401
         assert request(port, '/missing', authorization=token)[0] == 404
         assert request(port, '/chunks', method='DELETE', authorization=token)[0] == 501
         assert request(port, '/result/1.json', method='PUT', body=b'{}', authorization=token)[0] == 400
-        wait_until(lambda: len(access_lines(log)) == 5)
+        assert_access_count(log, 6)
         lines = access_lines(log)
-        for status, reason, line in zip([200, 401, 404, 501, 400],
-                ['ok', 'authentication_failed', 'not_found', 'unsupported_method', 'invalid_result'], lines):
+        for status, reason, line in zip([200, 400, 401, 404, 501, 400],
+                ['ok', 'malformed_request', 'authentication_failed', 'not_found', 'unsupported_method', 'invalid_result'], lines):
             assert f'status={status}' in line
             assert f'reason={reason}' in line
             assert re.search(r'duration_ms=[0-9]+', line)
