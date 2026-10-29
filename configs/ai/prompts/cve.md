@@ -45,6 +45,16 @@ verification. An unavailable search alone does not mean an unsupported ID is val
 or that a source commit has no CVE.
 Do not infer product exposure or enabled mitigations from a generic CVE record.
 
+## Verification procedure
+
+Use field descriptions in the supplied schema as the authoritative field-crafting guide.
+Scan both subject and body for explicit candidate IDs before researching.
+When configured search is available, verify candidates against authoritative CVE
+or vulnerability records using the ID, full commit hash and relevant technical details.
+Subject keywords may help locate records but similarity alone does not establish a match.
+Distinguish direct commit references from references to a different fix or backport;
+do not assume different hashes identify unrelated or equivalent changes without evidence.
+
 ## Intermediate output - not a final server upload
 
 Return one JSON document per source chunk with role set to cve, the original

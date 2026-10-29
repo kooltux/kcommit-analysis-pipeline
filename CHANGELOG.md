@@ -15,6 +15,14 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Centralize assessment field semantics in schema descriptions and keep matching
+  role/final definitions consistent without changing validation constraints.
+  Adapt useful legacy assessment guidance into vendor-neutral role procedures;
+  preserve source-message-only CVEs, JSON contracts and mechanical assembly.
+  Add schema-description and prompt-policy regression coverage.
+  Match legacy placeholders as case-sensitive whole tokens so ordinary empty-array
+  and nonempty prose remains valid; cover accepted prose and rejected legacy markers.
+
 - Define provider-independent role capabilities: allow configured CVE verification
   search while keeping other roles restricted to supplied inputs. Delegate server
   API access, validation, retries, handoffs and storage to the orchestrator.

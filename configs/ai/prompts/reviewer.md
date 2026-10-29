@@ -47,6 +47,16 @@ namespaces, or locked debug interfaces; do not alter source rankings or cherry-p
 Preserve the source-message-only CVE policy unless the operator changes it.
 Review CVE probabilities as integer percentages, with one value per supported ID.
 
+Use field descriptions in the supplied schemas as the authoritative field-crafting guide.
+Check supplied product_evidence, files[], stats.lines_changed, stats.files_changed,
+stats.hunks and dependency references together; size is not effort ground truth.
+Check vulnerability-fix versus hardening classifications and the consequences of omission.
+Require an evidenced attack-path explanation for mitigation-based impact reductions.
+Secure boot, trusted execution environments, encryption and integrity verification
+do not automatically prevent kernel memory-safety exploitation or justify downgrades.
+Prioritize material, evidence-backed corrections over stylistic preferences; do not
+withhold a supported correction merely because the final recommendation stays unchanged.
+
 Do not rewrite specialist ai_* values. Record proposed corrections in rv_* fields.
 Do not merge missing specialist assessments silently; omit those SHAs and mark
 partial. Report uncertainty rather than inventing assessments. A complete review

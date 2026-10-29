@@ -107,6 +107,18 @@ final result.json output_schema_checksum from trusted metadata, not its own sche
 CVE JSON contains no research-reference fields; only an orchestrator-managed,
 separate evidence channel may carry captured tool records to Reviewer.
 
+Field-crafting semantics live in schema descriptions; role prompts define evidence
+policy, tool permissions and analysis procedures. Matching assessment fields in role
+schemas and `result.json` must have identical definitions. Descriptions guide models
+but are annotations, not additional validation constraints or proof of factual accuracy.
+The Assembler copies values; it must not reinterpret descriptions as assessment work.
+Legacy workflow guidance is adapted only for evidence-based classification, omission
+impact, mitigation applicability, dependencies and independent review. It introduces no
+vendor assumptions, fixed effort thresholds, placeholder values or legacy file discovery.
+Description-only edits leave validation constraints unchanged but change asset checksums.
+Existing exported packages retain their schema snapshots; newly generated packages use
+the updated assets. Never rewrite trusted checksums to combine different snapshots.
+
 The legacy assessment policy is distributed by responsibility, not discarded:
 
 | Policy | Owner |

@@ -31,12 +31,12 @@
         "ai_cve_ids": {
           "type": "array",
           "items": {"type": "string","pattern": "^CVE-[0-9]{4}-[0-9]{4,}$"},
-          "description": "CVE IDs explicitly supported by the input; no inferred or invented identifiers."
+          "description": "Unique CVE IDs explicitly supported by the source commit subject or body under the source-message-only policy. External records may verify these candidates, not introduce additional IDs. An empty array means no supported match was identified, not proof that no vulnerability exists; an omitted commit is unassessed."
         },
         "ai_cve_probabilities": {
           "type": "array",
           "items": {"type": "integer","minimum": 0,"maximum": 100},
-          "description": "Estimated relevance percentages corresponding positionally to ai_cve_ids; empty if no CVEs."
+          "description": "Integer confidence percentages from 0 to 100 that each corresponding CVE matches this commit, not severity or product exploitability. Preserve positional correspondence and equal length with ai_cve_ids; both arrays are empty when no supported match is identified. Do not imply external verification when search was unavailable."
         }
       }
     }

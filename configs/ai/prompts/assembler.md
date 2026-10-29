@@ -58,6 +58,11 @@ Reject overlapping fields from the wrong role instead of selecting a value.
 Only include SHAs present in the source and all three validated contributions.
 Report missing contributions to the workflow; never fabricate a record or review.
 
+Field descriptions explain the copied values, not permission to reassess them.
+Never replace a missing contribution with empty CVE arrays, nulls or placeholder strings.
+An explicit empty CVE assessment is not the same as a missing CVE assessment.
+Keep array order and positional correspondence exactly as supplied.
+
 ## Final document
 
 Return JSON only: no Markdown fences, comments, prose or additional wrapper.

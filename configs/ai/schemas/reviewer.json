@@ -28,14 +28,16 @@
       "additionalProperties": false,
       "required": ["rv_agreement","rv_notes","rv_recommendation"],
       "properties": {
-        "rv_agreement": {"type": "string","enum": ["agree","disagree"]},
+        "rv_agreement": {"type": "string","enum": ["agree","disagree"],"description": "agree accepts the combined specialist baseline without proposed corrections; disagree proposes a correction to at least one field. This is an evidence-based review, not a vote between roles. Style preferences alone do not justify disagreement."},
         "rv_notes": {
+          "description": "Null when agreement is agree; otherwise one evidence-backed note per proposed field correction using field_name: [identifier] - old_value -> new_value (brief reason). Identifiers are minor for slight nuance, moderate for a debatable value, strong for clearly wrong and complete for definitively incorrect. Use printable ASCII with no embedded newlines; represent arrays, numbers and booleans as compact JSON and escape non-ASCII values.",
           "type": ["array","null"],
           "minItems": 1,
           "uniqueItems": true,
           "items": {"type": "string","pattern": "^(?:ai_is_security_fix|ai_is_bug_fix|ai_is_performance_enhancement|ai_is_new_feature|ai_is_new_security_feature|ai_categorisation_rationale|ai_risks_if_not_backported|ai_impact_on_product|ai_impact_description|ai_backport_effort|ai_backport_effort_reason|ai_cve_ids|ai_cve_probabilities|ai_backport_recommendation|ai_summary): \\[(?:minor|moderate|strong|complete)\\] - [ -~]+ -> [ -~]+ \\([ -~]+\\)(?![\\s\\S])"}
         },
         "rv_recommendation": {
+          "description": "Null when agreement is agree; otherwise proposed replacement values using field_name: use value, paired with rv_notes for the same fields. Use printable ASCII with no embedded newlines; represent arrays, numbers and booleans as compact JSON and escape non-ASCII values. These are proposals only; the Assembler must not apply them.",
           "type": ["array","null"],
           "minItems": 1,
           "uniqueItems": true,
