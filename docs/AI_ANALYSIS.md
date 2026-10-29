@@ -92,6 +92,13 @@ Each role prompt directly instructs the model to return one JSON document matchi
 its supplied output schema: Analyst uses `analyst.json`, CVE uses `cve.json`,
 Reviewer uses `reviewer.json`, and Assembler uses `result.json`. Supply the relevant
 input and output schemas as attachments or quoted content after the prompt.
+Roles receive original chunks, trusted metadata and prior role outputs the same way.
+Capabilities are role-specific and independent of model or provider: Analyst and
+Reviewer use supplied evidence only; Assembler performs mechanical assembly only.
+Only the CVE expert may use configured `web_search` to verify source-message CVE
+candidates; search cannot add IDs absent from the source commit message. Tool
+availability is configured externally. Server API access, validation gates, bounded
+retries, handoffs and final storage belong to the operator or external orchestrator.
 Intermediate outputs must not use the final-result schema. A missing, unreadable
 or conflicting required schema stops the task instead of producing guessed JSON.
 The same failure path covers inconsistent or unreadable required inputs: report

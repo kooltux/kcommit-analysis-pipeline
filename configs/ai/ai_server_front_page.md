@@ -97,6 +97,14 @@ Do not infer that a missing result is a negative assessment.
 
 The client orchestrates this workflow for each selected chunk. The server serves
 assets and validates documents; it does not run AI models or invoke the roles.
+The operator or external orchestrator performs every server API
+request described below and supplies schemas, chunks, trusted metadata and prior
+role outputs as attachments or quoted content. LLMs return documents only;
+the orchestrator validates, retries, routes handoffs and stores accepted results.
+Only the CVE expert may use configured `web_search` to verify source-message CVE
+candidates, without adding IDs absent from the source commit message. Analyst and
+Reviewer use supplied evidence only; Assembler performs mechanical assembly only.
+These capabilities do not depend on model or provider.
 
 1. Analyst and CVE expert independently read the same original chunk and metadata.
    Analyst assesses non-CVE classifications, product impact, backport effort and

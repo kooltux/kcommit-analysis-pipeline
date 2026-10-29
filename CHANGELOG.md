@@ -15,6 +15,11 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Define provider-independent role capabilities: allow configured CVE verification
+  search while keeping other roles restricted to supplied inputs. Delegate server
+  API access, validation, retries, handoffs and storage to the orchestrator.
+  Preserve source-message-only CVE matching and output contracts; update regressions.
+
 - Resolve role-output and CVE evidence-handoff instruction conflicts. Clarify
   shared final-schema checksums, proposed review corrections, fragment examples
   and failure reporting without changing schema acceptance rules.
