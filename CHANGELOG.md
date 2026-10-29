@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Migration
+
+- Consolidate server clients on named `/prompt/<name>` and `/schema/<name>`
+  assets and POST-only result uploads. The usage guide is served at `/`;
+  removed aliases are not advertised by the API catalog.
+
+### Fixed
+
+- Align batch, contract, upload, logging and smoke regressions with directory
+  package identities. Preserve POST validation and export checks, verify rejected
+  PUT uploads cannot overwrite results, and exercise declared body-size limits.
+
 ## v21.2.0 — directory-based AI contracts and portable validation (2026-10-28)
 
 ### Migration

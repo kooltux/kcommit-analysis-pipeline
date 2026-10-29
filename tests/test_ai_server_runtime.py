@@ -16,29 +16,21 @@ import zipfile
 
 import pytest
 
-from lib.ai_serve_script_gen import _MAIN_SOURCE, generate_ai_serve_script
+from lib.ai_serve_script_gen import _MAIN_SOURCE
+from lib.ai_assets import load_contract
+from lib.ai_preparation import build_package
+from lib.ai_package_server import generate_ai_package_server
+from lib.manifest import VERSION
 
 
 @pytest.fixture
 def app(tmp_path):
-    source = b'{"commits": []}'
-    manifest = {'run_id': 'test-run', 'chunks': {'1.json': hashlib.sha256(source).hexdigest()},
-                'input_schema_checksum': 'input', 'output_schema_checksum': 'output'}
-    required = ['schema_version', 'run_id', 'source_chunk', 'input_checksum',
-                'input_schema_checksum', 'output_schema_checksum', 'total_commits',
-                'analyzed_commits', 'analysis_status', 'results']
-    schema = {'required': required, 'properties': {'results': {'additionalProperties':
-              {'properties': {}}}}}
-    (tmp_path / 'ai_analysis_input').mkdir()
-    (tmp_path / 'ai_analysis_input' / '1.json').write_bytes(source)
-    for name, value in [('ai_analysis_bundle_manifest.json', manifest),
-                        ('ai_analysis_input_schema.json', {}),
-                        ('ai_analysis_result_schema.json', schema)]:
-        (tmp_path / name).write_text(json.dumps(value), encoding='utf-8')
-    (tmp_path / 'ai_analysis_prompt.md').write_text('Analyze commits', encoding='utf-8')
-    (tmp_path / 'ai_server_front_page.md').write_text('# Server purpose\n', encoding='utf-8')
+    samples = Path(__file__).resolve().parents[1] / 'configs' / 'ai'
+    snapshots = load_contract({'ai': {'prompts_dir': str(samples / 'prompts'),
+                                     'schemas_dir': str(samples / 'schemas')}})['files']
+    package = build_package([], {}, snapshots, VERSION)
     result = tmp_path / 'serve_ai.pyz'
-    generate_ai_serve_script(str(tmp_path), str(result))
+    generate_ai_package_server(package, b'# Server purpose\n', result)
     return result
 
 
@@ -105,6 +97,8 @@ def running(app, flag='--no-daemon', auth=None, daemon=False, file_logging=True)
 
 def request(port, path, method='GET', authorization=None, body=None):
     headers = {} if authorization is None else {'Authorization': authorization}
+    if body is not None and method == 'POST':
+        headers['Content-Type'] = 'application/json'
     connection = http.client.HTTPConnection('127.0.0.1', port, timeout=3)
     try:
         connection.request(method, path, body=body, headers=headers)
@@ -159,22 +153,24 @@ def test_colon_password(namespace):
 
 def test_all_endpoints_require_auth_and_log_once(app):
     credentials = 'test-user:secret:password'
-    cases = [('GET', '/prompt'), ('GET', '/schema/input'), ('GET', '/schema/result'),
-             ('GET', '/chunks'), ('GET', '/chunk/1.json'), ('GET', '/result/1.json'),
-             ('PUT', '/result/1.json'), ('GET', '/export'), ('HEAD', '/chunks'),
+    cases = [('GET', '/prompt/analyst'), ('GET', '/schema/input'), ('GET', '/schema/result'),
+             ('GET', '/chunks'), ('GET', '/chunk/batch_001/001.json'), ('GET', '/result/batch_001/001.json'),
+             ('POST', '/result/batch_001/001.json'), ('GET', '/export'), ('HEAD', '/chunks'),
              ('POST', '/chunks')]
     with running(app, auth=credentials) as (port, log, stderr):
         for method, path in cases:
             status, headers, body = request(port, path, method=method)
             assert status == 401
-            assert headers['WWW-Authenticate'].startswith('Basic ')
-            assert body == b''
+            if method == 'HEAD':
+                assert body == b''
+            else:
+                assert json.loads(body)['error']['code'] == 'authentication_failed'
         for header in [basic('test-user:wrong'), 'Basic !!!', 'Bearer token', 'Basic']:
             assert request(port, '/chunks', authorization=header)[0] == 401
         assert request(port, '/chunks?limit=1', authorization=basic(credentials))[0] == 200
         assert request(port, '/chunks?token=do-not-log', authorization=basic(credentials))[0] == 400
         assert request(port, '/missing', authorization=basic(credentials))[0] == 404
-        assert request(port, '/result/1.json', method='PUT', body=b'{}',
+        assert request(port, '/result/batch_001/001.json', method='POST', body=b'{}',
                        authorization=basic(credentials))[0] == 400
         assert_access_count(log, len(cases) + 8)
         assert not Path(str(app) + '.results').exists()
@@ -186,15 +182,15 @@ def test_all_endpoints_require_auth_and_log_once(app):
 def test_valid_upload_and_export(app):
     with zipfile.ZipFile(app) as archive:
         manifest = json.loads(archive.read('ai_analysis_bundle_manifest.json'))
-    payload = json.dumps({'schema_version': '1.0', 'run_id': 'test-run',
-        'source_chunk': '1.json', 'input_checksum': manifest['chunks']['1.json'],
-        'input_schema_checksum': 'input', 'output_schema_checksum': 'output',
+    payload = json.dumps({'schema_version': '1.0', 'run_id': manifest['run_id'],
+        'source_chunk': 'batch_001/001.json', 'input_checksum': manifest['chunks']['batch_001/001.json'],
+        'input_schema_checksum': manifest['input_schema_checksum'], 'output_schema_checksum': manifest['output_schema_checksum'],
         'total_commits': 0, 'analyzed_commits': 0, 'analysis_status': 'complete', 'results': {}}).encode()
     with running(app, auth='user:password') as (port, log, stderr):
         authorization = basic('user:password')
-        assert request(port, '/result/1.json', method='PUT', body=payload,
+        assert request(port, '/result/batch_001/001.json', method='POST', body=payload,
                        authorization=authorization)[0] == 200
-        assert request(port, '/result/1.json', authorization=authorization)[2] == payload
+        assert request(port, '/result/batch_001/001.json', authorization=authorization)[2] == payload
         assert request(port, '/export', authorization=authorization)[0] == 200
         assert_access_count(log, 3)
 
@@ -255,15 +251,16 @@ def test_daemon_lifecycle(app):
 @pytest.mark.parametrize('auth', [None, 'user:password'])
 def test_front_page_routes(app, auth):
     with running(app, auth=auth) as (port, log, stderr):
-        for path in ['/', '/README.md']:
-            if auth:
-                assert request(port, path)[0] == 401
-            status, headers, body = request(port, path,
-                authorization=basic(auth) if auth else None)
-            assert status == 200
-            assert headers['Content-Type'] == 'text/markdown; charset=utf-8'
-            assert body == b'# Server purpose\n'
-        assert_access_count(log, 4 if auth else 2)
+        path = '/'
+        if auth:
+            status, headers, body = request(port, path)
+            assert status == 401 and headers['WWW-Authenticate'].startswith('Basic ')
+        status, headers, body = request(port, path,
+            authorization=basic(auth) if auth else None)
+        assert status == 200
+        assert headers['Content-Type'] == 'text/markdown; charset=utf-8'
+        assert body == b'# Server purpose\n'
+        assert_access_count(log, 2 if auth else 1)
 
 
 @pytest.mark.parametrize('flag', ['-d', '--debug', '--no-daemon'])
@@ -323,7 +320,7 @@ def test_request_completion_logs(app):
         assert request(port, '/chunks')[0] == 401
         assert request(port, '/missing', authorization=token)[0] == 404
         assert request(port, '/chunks', method='DELETE', authorization=token)[0] == 501
-        assert request(port, '/result/1.json', method='PUT', body=b'{}', authorization=token)[0] == 400
+        assert request(port, '/result/batch_001/001.json', method='POST', body=b'{}', authorization=token)[0] == 400
         assert_access_count(log, 6)
         lines = access_lines(log)
         for status, reason, line in zip([200, 400, 401, 404, 501, 400],
@@ -365,8 +362,11 @@ def test_exception_logs_once(namespace, monkeypatch, failure, reason):
 
 def test_internal_error_returns_500_and_logs_once(app):
     results = Path(str(app) + '.results')
-    results.mkdir()
-    (results / '1.json').write_text('invalid JSON')
+    with zipfile.ZipFile(app) as archive:
+        name = next(iter(json.loads(archive.read('ai_analysis_bundle_manifest.json'))['chunks']))
+    target = results / name
+    target.parent.mkdir(parents=True)
+    target.write_text('invalid JSON')
     with running(app) as (port, log, stderr):
         assert request(port, '/export')[0] == 500
         wait_until(lambda: len(access_lines(log)) == 1)

@@ -18,7 +18,7 @@ materializes these registered defaults so reloading preserves resource selection
 `ai.front_page_path` is a path setting declared in `configs/conf.d/07_ai.json`.
 Its default `ai/ai_server_front_page.md` is anchored to the initial configuration
 directory (not an overridden `CONFIGDIR`) and supplies the UTF-8 Markdown
-guide packaged by Stage 08 and served at `/` and `/README.md`. Regenerate the
+guide packaged by Stage 08 and served at `/`. Regenerate the
 zipapp after editing it; see `AI_ANALYSIS.md` for validation and authentication.
 
 ## Schema attributes and validation

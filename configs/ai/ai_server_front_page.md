@@ -7,7 +7,7 @@ It serves instructions, JSON schemas, and source chunks, stores assessments,
 and provides an export ZIP. It does not perform the analysis itself.
 
 This reference is for human reviewers, AI clients, and CI jobs. Assessment
-instructions live in `/prompt`; exact data contracts live in the schemas.
+instructions live in `/prompt/<name>` assets listed by `/contract`; schemas define exact data contracts.
 
 ### Batch navigation
 
@@ -33,7 +33,7 @@ Result URLs exist in discovery even before upload. Totals remain full-collection
 
 ### Access and scope
 
-GET requests are read-only. PUT and POST replace the stored result for a chunk.
+GET requests are read-only. POST replaces the stored result for a chunk.
 When authentication is enabled, use the operator-provided credentials; browsers
 can use the HTTP login prompt. Assessments remain advisory. This server is an
 exchange interface, not an autonomous reviewer or a backport approval system.
@@ -54,7 +54,7 @@ descriptions/examples, and concrete request examples using this package's IDs.
 Role values come from the selected assets or the validation route's role contract.
 Example objects contain only `method` and `url`, including concrete path/query
 parameters. They contain no curl commands, body filenames, schemas or extra notes.
-Read the separate `request_body` contract for POST/PUT payload requirements; the
+Read the separate `request_body` contract for POST payload requirements; the
 method/URL example alone is not a complete request. Role validation requires the
 complete role JSON document in the body, conforming to `/schema/<role>` with the
 URL role substituted. Workflow validation requires an object with exactly four
@@ -83,14 +83,14 @@ bundle's `pipeline_version`; normal authentication applies and it is not paginat
 ### Context and task
 
 You are the analysis client, not the server. Your task is to assess the supplied
-kernel commits under the instructions retrieved from `/prompt`, using available
+kernel commits under the selected `/prompt/<name>` instructions, using available
 evidence, and return results conforming to `/schema/result`. This API guide
 explains access and submission; it does not replace those assessment instructions.
 Do not infer that a missing result is a negative assessment.
 
 ### Using this server
 
-1. Retrieve `/api` and `/contract`, then the listed `/prompt/<role>` and `/schema/<role>` assets.
+1. Retrieve `/api` and `/contract`, then the listed `/prompt/<name>` and `/schema/<name>` assets.
 2. Retrieve the selected batch or chunk listing, preserving any `limit` and
    `offset`. Use its run ID and URLs exactly; do not guess filenames or replace
    a debug subset or single-batch retry with the unrestricted global listing.
@@ -104,8 +104,8 @@ Do not infer that a missing result is a negative assessment.
    workflow gate checks cross-role coverage and exact assembly preservation.
 4. Build a schema-conforming result. Use partial status if only a subset was
    assessed; do not fabricate results or unsupported CVE IDs.
-5. When authorized, submit to `PUT /result/<name>` or `POST /result/<name>`.
-   Both validate and atomically replace the result for that source chunk.
+5. When authorized, submit to `POST /result/<name>`.
+   POST validates and atomically replaces the result for that source chunk.
 6. Check for HTTP 200 and `{"status":"ok"}`, then GET the same result URL to
    verify acceptance. A rejected upload is not a completed submission.
 
@@ -129,12 +129,13 @@ results as a connectivity test.
 
 ### HTTP requirements and responses
 
-- PUT bodies must be 1 byte to 10 MiB with a valid `Content-Length` header.
-  The curl upload example below supplies that header for a regular file.
+- POST bodies must be 1 byte to 10 MiB with one `Content-Length` and one
+  `Content-Type: application/json` header, without `Transfer-Encoding`.
 - Successful uploads return HTTP 200 and `{"status":"ok"}`.
 - HTTP 400 rejects an invalid upload; read the error and correct the submission.
 - HTTP 401 indicates missing or incorrect authentication.
 - HTTP 404 indicates an unknown path or chunk, or an absent stored result.
+- HTTP 405 rejects a method not allowed for a known path; read the `Allow` header.
 
 ### Read-only checks with curl
 
@@ -147,7 +148,7 @@ BASE='http://localhost:8000'
 AUTH='user:password'
 
 curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/"
-curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/prompt"
+curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/prompt/analyst"
 curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/schema/input"
 curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/schema/result"
 curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/chunks"
@@ -170,7 +171,7 @@ The upload changes server state; the verification and export requests do not.
 
 ```sh
 curl --fail-with-body --silent --show-error --user "$AUTH" \
-  -H 'Content-Type: application/json' --upload-file result.json "$BASE/result/$CHUNK"
+  -H 'Content-Type: application/json' --data-binary @result.json "$BASE/result/$CHUNK"
 curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/result/$CHUNK"
 curl --fail-with-body --silent --show-error --user "$AUTH" \
   "$BASE/export" --output results.zip

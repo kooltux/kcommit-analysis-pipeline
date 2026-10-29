@@ -104,7 +104,8 @@ def check_discovery(base, expected_version=None):
     api = json.loads(expect(base, '/api'))
     check(isinstance(api.get('routes'), list), 'Missing API routes')
     routes = {(r['method'], r['path']): r for r in api['routes']}
-    check(('GET', '/schema/result') in routes, 'Missing canonical result schema')
+    schema = routes.get(('GET', '/schema/<name>'), {})
+    check('result' in schema.get('path_parameters', {}).get('name', {}).get('enum', []), 'Missing canonical result schema')
     check(('GET', '/schema/output') not in routes, 'Removed schema alias is advertised')
     groups = [api['groups'].index(route['group']) for route in api['routes']]
     check(groups == sorted(groups), 'API groups are not logically ordered')
@@ -211,8 +212,8 @@ def smoke(app):
 
                 front_page = expect(base, '/')
                 check(bool(front_page.strip()), 'Empty server front page')
-                check(expect(base, '/README.md') == front_page, 'Front page aliases differ')
-                prompt = expect(base, '/prompt')
+                expect(base, '/README.md', 404, reason='removed guide alias is rejected')
+                prompt = expect(base, '/prompt/analyst')
                 check(bool(prompt.strip()), 'Empty prompt')
                 input_schema = expect(base, '/schema/input')
                 output_schema = expect(base, '/schema/result')
@@ -243,9 +244,10 @@ def smoke(app):
                        reason='unknown chunk is rejected')
                 expect(base, '/result/' + name, 404,
                        reason='result is absent before upload')
-                for method in ('PUT', 'POST'):
-                    expect(base, '/result/' + name, 400, method=method, data=b'{}',
-                           reason=f'invalid {method} result is rejected')
+                expect(base, '/result/' + name, 405, method='PUT', data=b'{}',
+                       reason='removed PUT upload is rejected')
+                expect(base, '/result/' + name, 400, method='POST', data=b'{}',
+                       reason='invalid POST result is rejected')
                 expect(base, '/result/' + name, 404,
                        reason='rejected upload saved nothing')
                 result = {
@@ -257,10 +259,13 @@ def smoke(app):
                     'total_commits': len(chunk['commits']), 'analyzed_commits': 0, 'results': {},
                 }
                 payload = json.dumps(result, sort_keys=True).encode()
-                for method in ('PUT', 'POST'):
-                    reply = json.loads(expect(base, '/result/' + name, method=method, data=payload))
-                    check(reply == {'status': 'ok'}, f'Unexpected {method} response')
-                    check(expect(base, '/result/' + name) == payload, 'Result round trip differs')
+                reply = json.loads(expect(base, '/result/' + name, method='POST', data=payload))
+                check(reply == {'status': 'ok'}, 'Unexpected POST response')
+                check(expect(base, '/result/' + name) == payload, 'Result round trip differs')
+                expect(base, '/result/' + name, 405, method='PUT', data=b'{}',
+                       reason='PUT cannot overwrite an accepted result')
+                check(expect(base, '/result/' + name) == payload,
+                      'Rejected PUT changed the accepted result')
                 archive = expect(base, '/export', binary=True)
                 check_export(archive, listing, name, payload)
                 print(paint(f'PASS: {len(paths)} chunks; API, batches, pagination, upload, complete export', '32'))

@@ -3,6 +3,7 @@ import json
 import zipfile
 import pytest
 import lib.ai_serve_script_gen as generator
+from lib.ai_package_server import generate_ai_package_server
 from test_ai_server_runtime import app, basic, request, running
 
 
@@ -11,14 +12,22 @@ def metadata(path):
         return json.loads(archive.read('ai_server_version.json'))
 
 
-def test_version_is_read_fresh_and_pinned_in_each_zipapp(app, tmp_path, monkeypatch):
+@pytest.fixture
+def package(app):
+    with zipfile.ZipFile(app) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()
+                 if name not in ('__main__.py', 'ai_server_version.json', 'ai_server_front_page.md')}
+    return {'manifest': json.loads(files['ai_analysis_bundle_manifest.json']), 'files': files}
+
+
+def test_version_is_read_fresh_and_pinned_in_each_zipapp(app, package, tmp_path, monkeypatch):
     source = tmp_path / 'tool-manifest.json'
     monkeypatch.setattr(generator, 'TOOL_MANIFEST_PATH', str(source))
     first, second = tmp_path / 'first.pyz', tmp_path / 'second.pyz'
     source.write_text(json.dumps({'version': 'v90.1.2'}))
-    generator.generate_ai_serve_script(str(app.parent), str(first))
+    generate_ai_package_server(package, b'# Version test', first)
     source.write_text(json.dumps({'version': 'v90.1.3'}))
-    generator.generate_ai_serve_script(str(app.parent), str(second))
+    generate_ai_package_server(package, b'# Version test', second)
     source.unlink()
     assert metadata(first) == {'tool_version': 'v90.1.2', 'version_source': 'MANIFEST.json',
                                'captured_at': 'zipapp_generation'}
@@ -26,16 +35,13 @@ def test_version_is_read_fresh_and_pinned_in_each_zipapp(app, tmp_path, monkeypa
 
 
 @pytest.mark.parametrize('auth', [None, 'reviewer:secret'])
-def test_version_endpoint_is_portable_authenticated_and_discoverable(app, tmp_path, monkeypatch, auth):
+def test_version_endpoint_is_portable_authenticated_and_discoverable(app, package, tmp_path, monkeypatch, auth):
     source = tmp_path / 'tool-manifest.json'
     source.write_text(json.dumps({'version': 'v90.1.2'}))
     monkeypatch.setattr(generator, 'TOOL_MANIFEST_PATH', str(source))
-    bundle_path = app.parent / 'ai_analysis_bundle_manifest.json'
-    bundle = json.loads(bundle_path.read_text())
-    bundle['pipeline_version'] = 'v1.0.0'
-    bundle_path.write_text(json.dumps(bundle))
+    bundle = package['manifest']
     target = tmp_path / 'versioned.pyz'
-    generator.generate_ai_serve_script(str(app.parent), str(target))
+    generate_ai_package_server(package, b'# Version test', target)
     expected = metadata(target)
     source.unlink()
     with running(target, auth=auth) as (port, log, errors):
@@ -55,14 +61,14 @@ def test_version_endpoint_is_portable_authenticated_and_discoverable(app, tmp_pa
 
 
 @pytest.mark.parametrize('value', [None, '', ' ', True, 3, []])
-def test_invalid_manifest_version_does_not_overwrite_output(app, tmp_path, monkeypatch, value):
+def test_invalid_manifest_version_does_not_overwrite_output(app, package, tmp_path, monkeypatch, value):
     source = tmp_path / 'tool-manifest.json'
     source.write_text(json.dumps({'version': value}))
     monkeypatch.setattr(generator, 'TOOL_MANIFEST_PATH', str(source))
     target = tmp_path / 'existing.pyz'
     target.write_bytes(b'unchanged')
     with pytest.raises(ValueError, match='version'):
-        generator.generate_ai_serve_script(str(app.parent), str(target))
+        generate_ai_package_server(package, b'# Version test', target)
     assert target.read_bytes() == b'unchanged'
 
 

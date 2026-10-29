@@ -27,7 +27,7 @@ def fake_discovery(size):
     groups = ['discovery', 'contract', 'sources', 'validation', 'results', 'other']
     routes = [{'method': 'GET', 'path': '/api', 'group': 'discovery'},
               {'method': 'GET', 'path': '/api/version', 'group': 'discovery'},
-              {'method': 'GET', 'path': '/schema/result', 'group': 'contract'}] + [
+              {'method': 'GET', 'path': '/schema/<name>', 'group': 'contract'}] + [
         {'method': 'GET', 'path': p, 'group': 'sources',
          'query_parameters': {'limit': {'default': 0, 'example': 1},
                               'offset': {'default': 0, 'example': 0}}}
@@ -35,6 +35,9 @@ def fake_discovery(size):
     for route in routes:
         route.update(path_parameters={}, examples=[])
         url = route['path']
+        if url == '/schema/<name>':
+            route['path_parameters']['name'] = {'type': 'string', 'enum': ['result'], 'example': 'result'}
+            url = '/schema/result'
         if '<batch_id>' in url:
             batch_id = batches[0]['batch_id'] if batches else None
             route['path_parameters']['batch_id'] = {'type': 'string', 'example': batch_id}
@@ -119,7 +122,7 @@ def test_smoke_checks_detect_invalid_api_contract(tool, monkeypatch, fault, mess
     replies = fake_discovery(1)
     routes = replies['/api']['routes']
     if fault == 'missing_schema':
-        routes[:] = [route for route in routes if route['path'] != '/schema/result']
+        routes[:] = [route for route in routes if route['path'] != '/schema/<name>']
     elif fault == 'removed_alias':
         routes.append(dict(method='GET', path='/schema/output', group='contract',
                            path_parameters={}, examples=[]))

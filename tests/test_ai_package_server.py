@@ -64,7 +64,7 @@ def test_contract_discovery_and_trusted_metadata(app, package, auth):
         assert metadata['output_schema_checksum'] == manifest['output_schema_checksum']
         assert metadata['total_commits'] == 1
         routes = json.loads(get('/api'))['routes']
-        assert {'/contract', '/metadata/<name>', '/prompt/<role>', '/schema/<role>'} <= {
+        assert {'/contract', '/metadata/<name>', '/prompt/<name>', '/schema/<name>'} <= {
             item['path'] for item in routes}
         assert get('/') == PAGE
         for path in ['/prompt/unknown', '/schema/unknown', '/metadata/batch_999/999.json']:
@@ -253,10 +253,10 @@ def test_api_examples_are_live_and_metadata_usage_is_explicit(app, package):
         assert not any(entry['path'] == '/schema/output' for entry in catalog['routes'])
         assert request(port, '/schema/output')[0] == 404
         assert request(port, '/metadata')[0] == 404
-        for group, path in [('prompts', '/prompt/<role>'), ('schemas', '/schema/<role>')]:
+        for group, path in [('prompts', '/prompt/<name>'), ('schemas', '/schema/<name>')]:
             expected = sorted(name.split('/')[1].rsplit('.', 1)[0]
                               for name in package['manifest']['contract_assets'] if name.startswith(group + '/'))
-            assert entries[path]['path_parameters']['role']['enum'] == expected
+            assert entries[path]['path_parameters']['name']['enum'] == expected
         metadata = entries['/metadata/<name>']
         name = metadata['path_parameters']['name']['example']
         assert name in package['manifest']['chunks']

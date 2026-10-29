@@ -21,7 +21,7 @@ assembly HTTP gates. Final-result upload alone does not enforce the role chain.
 
 `lib.ai_package_server.generate_ai_package_server` consumes the new in-memory
 package, verifies contract/root/source checksums and atomically publishes a zipapp.
-Its `/contract`, `/prompt/<role>`, `/schema/<role>` and `/metadata/<name>` routes
+Its `/contract`, `/prompt/<name>`, `/schema/<name>` and `/metadata/<name>` routes
 provide exact assets and trusted identity fields through the executable registry.
 The zipapp has no repository or third-party runtime imports. Stage 08 selects
 this entry point, including the validation-only POST gates described below.
@@ -84,10 +84,10 @@ Basic role prompts are in `configs/ai/prompts/`: Analyst (`analyst.md`), CVE
 expert (`cve.md`), Reviewer (`reviewer.md`) and Assembler (`assembler.md`).
 The Reviewer emits only review fields; the Assembler preserves the validated
 specialist and review values in the final document without applying corrections.
-The original `configs/ai/ai_analysis_prompt.md` remains unchanged.
+The legacy `configs/ai/ai_analysis_prompt.md` is not the selected role contract.
 
-Stage 08 packages every selected role prompt and serves `/prompt/<role>`.
-`/prompt` is a catalog, not a single prompt to execute. Do not upload specialist
+Stage 08 packages every selected prompt and serves `/prompt/<name>`.
+`/contract` lists assets; the bare prompt URL is removed. Do not upload specialist
 intermediate JSON to the final-result endpoint.
 The new prompt loader snapshots immediate `*.md` files, dereferencing directory
 and file symlinks, validating UTF-8 and preserving entry filenames and exact bytes.
@@ -138,7 +138,7 @@ is authoritative; CSV filenames and folder names do not determine identity.
 Output uses the original `batch_NNN/NNN.json` paths and server-compatible result
 envelopes, including original identities, exact-byte checksums and complete or
 partial status. Chunks without assessments are omitted. These JSONs can also
-be submitted to `PUT /result/<source_chunk>` or `POST /result/<source_chunk>`;
+be submitted to `POST /result/<source_chunk>`;
 the tool itself never contacts a server.
 
 Boolean cells accept TRUE/FALSE, case-insensitively. Array cells accept JSON
@@ -318,11 +318,11 @@ and embeds it in `serve_ai.pyz`; missing, empty, or invalid UTF-8 files fail
 preparation before outputs are modified. The portable bundle needs no access
 to the original config directory. Regenerate it after editing the Markdown.
 
-`GET /` and `GET /README.md` serve identical raw Markdown with
-`Content-Type: text/markdown; charset=utf-8`. They use the same authentication
+`GET /` serves raw Markdown with
+`Content-Type: text/markdown; charset=utf-8`. It uses the same authentication
 and access logging as other endpoints. Rendering HTML is not required; this
 keeps the zipapp dependency-free. The guide explains the purpose, workflow,
-endpoints, result requirements, and network safety without replacing `/prompt`.
+endpoints, result requirements, and network safety without replacing selected prompts.
 The guide is presentation-only and does not change analysis run identities.
 
 ## Analyze remotely
@@ -374,7 +374,7 @@ no TLS or proxy handling is added:
 
 ```text
 2026-10-09T00:10:03Z client=127.0.0.1 method="GET" path="/chunks" status=200 duration_ms=2 reason=ok
-2026-10-09T00:10:05Z client=127.0.0.1 method="PUT" path="/result/1.json" status=400 duration_ms=1 reason=invalid_result
+2026-10-09T00:10:05Z client=127.0.0.1 method="POST" path="/result/batch_001/001.json" status=400 duration_ms=1 reason=invalid_result
 ```
 
 `--auth USER:PASSWORD` protects all endpoints using HTTP Basic authentication.
@@ -391,12 +391,12 @@ produces a startup warning. This is minimal shared-password access control,
 not a production-hardened public web service. Connections have a 10-second
 socket timeout; the server processes requests serially.
 
-Use `GET /prompt`, `GET /schema/input`, `GET /schema/result`,
+Use `GET /contract`, its listed `/prompt/<name>` assets, `GET /schema/input`, `GET /schema/result`,
 `GET /chunks`, and `GET /chunk/<name>` to inspect the work. Return one schema-
-conforming result document per chunk using `PUT /result/<name>` or
-`POST /result/<name>`. Both share authentication, size limits, validation and
-atomic replacement, returning HTTP 200 with `{"status":"ok"}`. Rebuild Stage 08
-and restart the generated zipapp to enable POST. Results may
+conforming result document per chunk using `POST /result/<name>`.
+POST enforces authentication, size limits, validation and atomic replacement,
+returning HTTP 200 with `{"status":"ok"}`. PUT returns HTTP 405; use `/` for the guide.
+Regenerate and restart the zipapp after changing server code or assets. Results may
 be partial; a complete result must cover every source SHA. `GET /result/<name>`
 retrieves an uploaded result. `GET /export` returns a ZIP containing the source
 manifest, chunks, and any accepted results. Keep the ZIP for the import step.

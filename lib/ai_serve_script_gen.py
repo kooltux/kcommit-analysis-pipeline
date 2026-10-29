@@ -1,11 +1,7 @@
 """Generate a self-contained AI exchange zipapp with validated result uploads."""
-import io
 import inspect
-import json
-from lib.ai_contract import NAME, result_properties, validate_result
+from lib.ai_contract import result_properties, validate_result
 import os
-import zipapp
-import zipfile
 
 _RESULT_VALIDATION_SOURCE = '\n\n'.join(inspect.getsource(fn) for fn in (result_properties, validate_result))
 
@@ -33,7 +29,8 @@ import hashlib
 ARCHIVE = zipfile.ZipFile(sys.argv[0], 'r')
 MANIFEST = json.loads(ARCHIVE.read('ai_analysis_bundle_manifest.json'))
 SERVER_VERSION = json.loads(ARCHIVE.read('ai_server_version.json'))
-SCHEMA = json.loads(ARCHIVE.read('ai_analysis_result_schema.json'))
+CONTRACT = MANIFEST['contract_assets']
+SCHEMA = json.loads(ARCHIVE.read('ai_contract/schemas/result.json'))
 NAMES = MANIFEST['chunks']
 SAFE = re.compile(r'^(?:batch_[0-9]{3,}/)?[0-9]+[.]json$')
 BATCHES = {batch['batch_id']: batch for batch in MANIFEST.get('batches', [])}
@@ -41,6 +38,24 @@ RESULTS = os.path.abspath(sys.argv[0]) + '.results'
 
 def checksum(data):
     return hashlib.sha256(data).hexdigest()
+
+
+for asset_name, expected in CONTRACT.items():
+    if checksum(ARCHIVE.read('ai_contract/' + asset_name)) != expected:
+        raise ValueError('Packaged contract checksum mismatch: ' + asset_name)
+
+
+def decode_json(data):
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError('Duplicate JSON key: ' + key)
+            value[key] = item
+        return value
+    def invalid_constant(value):
+        raise ValueError('Invalid JSON constant: ' + value)
+    return json.loads(data.decode('utf-8'), object_pairs_hook=unique, parse_constant=invalid_constant)
 
 def validate(name, value):
     if name not in NAMES or not SAFE.fullmatch(name):
@@ -165,7 +180,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except ValueError:
                 path = '<invalid-target>'
         method = getattr(self, 'command', None) or '-'
-        reasons = {400: 'invalid_result' if method in ('PUT', 'POST') else 'malformed_request',
+        reasons = {400: 'invalid_result' if method == 'POST' else 'malformed_request',
+                   405: 'method_not_allowed',
                    401: 'authentication_failed', 404: 'not_found', 408: 'timeout',
                    414: 'request_line_too_long', 431: 'headers_too_large',
                    500: 'internal_error', 501: 'unsupported_method'}
@@ -194,13 +210,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 except (ValueError, binascii.Error):
                     pass
         if not valid:
-            self.close_connection = True
-            self.send_response(401)
-            self.send_header('WWW-Authenticate', 'Basic realm="kcommit-analyze-ai", charset="UTF-8"')
-            self.send_header('Content-Length', '0')
-            self.send_header('Connection', 'close')
-            self.end_headers()
+            self.send_error(401)
         return valid
+
+    def send_error(self, code, message=None, explain=None):
+        self.close_connection = True
+        names = {400: 'invalid_request', 401: 'authentication_failed', 404: 'not_found',
+                 405: 'method_not_allowed', 408: 'timeout', 414: 'request_line_too_long',
+                 431: 'headers_too_large', 500: 'internal_error', 501: 'unsupported_method'}
+        message = self.responses.get(code, ('Request failed',))[0] if message is None or code >= 500 else str(message)
+        data = json.dumps({'error': {'code': names.get(code, 'http_error'),
+                                   'status': code, 'message': message}}, sort_keys=True).encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Connection', 'close')
+        if code == 401:
+            self.send_header('WWW-Authenticate', 'Basic realm="kcommit-analyze-ai", charset="UTF-8"')
+        if code == 405:
+            self.send_header('Allow', ', '.join(self.allowed_methods))
+        self.end_headers()
+        if self.command != 'HEAD':
+            self.wfile.write(data)
+
+    def read_json(self):
+        lengths = self.headers.get_all('Content-Length', [])
+        if len(lengths) != 1 or self.headers.get('Transfer-Encoding') is not None:
+            raise ValueError('One Content-Length and no Transfer-Encoding are required')
+        raw = lengths[0].strip()
+        if not re.fullmatch(r'[0-9]+', raw):
+            raise ValueError('Invalid Content-Length')
+        length = int(raw)
+        if not self.active_route['min_body_bytes'] <= length <= self.active_route['max_body_bytes']:
+            raise ValueError('Body exceeds the declared size limits')
+        types = self.headers.get_all('Content-Type', [])
+        if len(types) != 1 or types[0].split(';', 1)[0].strip().lower() != 'application/json':
+            raise ValueError('One application/json Content-Type is required')
+        data = self.rfile.read(length)
+        if len(data) != length:
+            raise ValueError('Truncated JSON body')
+        return data, decode_json(data)
 
     def send_bytes(self, data, kind=None):
         kind = kind or getattr(self, 'active_route', {}).get('response_content_type', 'application/json')
@@ -233,7 +282,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return
                 item['handler'](self, **match.groupdict())
                 return
-        self.send_error(404)
+        self.allowed_methods = sorted({item['method'] for item in ROUTES if item['matcher'].fullmatch(path)})
+        self.send_error(405 if self.allowed_methods else 404)
 
     @route('GET', '/api', group='discovery', order=0)
     def api(self):
@@ -259,23 +309,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     body['schema'] = {'$ref': entry['request_schema']}
                     body['description'] = 'A complete JSON document conforming to the referenced schema, not the source chunk or its name. Replace <role> in the schema reference with the URL role when present.'
                 entry['request_body'] = body
-            roles = entry.get('roles', [])
-            if entry['path'].startswith(('/prompt/', '/schema/')):
-                prefix = 'prompts/' if entry['path'].startswith('/prompt/') else 'schemas/'
-                roles = sorted(name.split('/')[1].rsplit('.', 1)[0] for name in assets if name.startswith(prefix))
-            samples = {'name': next(iter(sorted(NAMES)), None),
-                       'batch_id': next(iter(sorted(BATCHES)), None),
-                       'role': 'analyst' if 'analyst' in roles else next(iter(roles), None)}
-            descriptions = {'name': 'Source chunk path returned by /chunks; retain its batch subfolder.',
-                            'batch_id': 'Batch identifier returned by /batches.',
-                            'role': 'Selected role or asset name; use one of the listed values.'}
+            choices = {'chunks': sorted(NAMES), 'batches': sorted(BATCHES), 'roles': list(entry.get('roles', []))}
+            for group in ('prompts', 'schemas'):
+                choices[group] = sorted(name.split('/')[1].rsplit('.', 1)[0] for name in assets if name.startswith(group + '/'))
+            descriptions = {'chunks': 'Source chunk path from /chunks, including its batch folder.',
+                            'batches': 'Batch identifier from /batches.', 'roles': 'Intermediate validation role.',
+                            'prompts': 'Selected prompt name from /contract.', 'schemas': 'Selected schema name from /contract.'}
+            sources = entry.pop('parameter_sources', {})
             entry['path_parameters'] = {}
             url = entry['path']
             for parameter in entry['parameters']:
-                value = samples.get(parameter)
-                spec = dict(type='string', description=descriptions.get(parameter, 'Route path parameter.'), example=value)
-                if parameter == 'role':
-                    spec['enum'] = list(roles)
+                source = sources.get(parameter)
+                values = choices.get(source, [])
+                value = ('analyst' if source in ('roles', 'prompts') and 'analyst' in values else next(iter(values), None))
+                spec = dict(type='string', description=descriptions.get(source, 'Route path parameter.'), example=value)
+                if source in ('roles', 'prompts', 'schemas'):
+                    spec['enum'] = list(values)
                 entry['path_parameters'][parameter] = spec
                 if value is not None:
                     url = url.replace('<' + parameter + '>', urllib.parse.quote(value, safe='/'))
@@ -288,7 +337,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     entry['examples'].append(dict(method=entry['method'], url=query_url))
             routes.append(entry)
         routes.sort(key=lambda entry: (groups.index(entry['group']) if entry['group'] in groups else len(groups),
-                    entry['order'], entry['path'], {'GET': 0, 'POST': 1, 'PUT': 2}.get(entry['method'], 9)))
+                    entry['order'], entry['path'], {'GET': 0, 'POST': 1}.get(entry['method'], 9)))
         required = self.server.auth_credentials is not None
         self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'], 'groups': groups, 'routes': routes,
             'authentication': {'required': required, 'scheme': 'Basic' if required else None}},
@@ -300,25 +349,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_bytes(json.dumps(SERVER_VERSION, sort_keys=True).encode())
 
     @route('GET', '/', 'text/markdown; charset=utf-8', group='discovery', order=2)
-    @route('GET', '/README.md', 'text/markdown; charset=utf-8', group='discovery', order=3)
     def front_page(self):
         """Read the shared human, AI-client and automation guide."""
         self.send_bytes(ARCHIVE.read('ai_server_front_page.md'))
 
-    @route('GET', '/prompt', 'text/markdown', group='contract', order=1)
-    def prompt(self):
-        """Read the assessment instructions."""
-        self.send_bytes(ARCHIVE.read('ai_analysis_prompt.md'))
+    @route('GET', '/prompt/<name>', 'text/markdown; charset=utf-8', group='contract', order=1,
+           parameter_sources={'name': 'prompts'})
+    def prompt_asset(self, name):
+        """Retrieve one selected prompt; execute roles separately, never a combined catalog."""
+        asset = 'prompts/' + name + '.md'
+        if asset not in CONTRACT:
+            self.send_error(404)
+            return
+        self.send_bytes(ARCHIVE.read('ai_contract/' + asset))
 
-    @route('GET', '/schema/input', group='contract', order=3)
-    def input_schema(self):
-        """Read the authoritative source-chunk JSON Schema."""
-        self.send_bytes(ARCHIVE.read('ai_analysis_input_schema.json'))
-
-    @route('GET', '/schema/result', group='contract', order=5)
-    def result_schema(self):
-        """Read the authoritative result JSON Schema."""
-        self.send_bytes(ARCHIVE.read('ai_analysis_result_schema.json'))
+    @route('GET', '/schema/<name>', group='contract', order=2,
+           parameter_sources={'name': 'schemas'})
+    def schema_asset(self, name):
+        """Retrieve one selected schema: input, a specialist/reviewer, result, or an additional asset."""
+        asset = 'schemas/' + name + '.json'
+        if asset not in CONTRACT:
+            self.send_error(404)
+            return
+        self.send_bytes(ARCHIVE.read('ai_contract/' + asset))
 
     @route('GET', '/batches', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=0)
     def batches(self):
@@ -328,7 +381,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'batches': [dict(batch, url='/batch/' + key)
                         for key, batch in listing_page(self.path, BATCHES.items())]}, sort_keys=True).encode())
 
-    @route('GET', '/batch/<batch_id>', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=1)
+    @route('GET', '/batch/<batch_id>', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=1, parameter_sources={'batch_id': 'batches'})
     def batch(self, batch_id):
         """List paired chunk/result URLs in chunks for a batch ID returned by /batches."""
         if batch_id not in BATCHES:
@@ -346,7 +399,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
             'chunks': ['/chunk/' + name for name in listing_page(self.path, NAMES)]}, sort_keys=True).encode())
 
-    @route('GET', '/chunk/<name>', response_schema='/schema/input', group='sources', order=3)
+    @route('GET', '/chunk/<name>', response_schema='/schema/input', group='sources', order=3, parameter_sources={'name': 'chunks'})
     def chunk(self, name):
         """Read a manifest-listed chunk; name includes the batch folder when present."""
         if name not in NAMES or not SAFE.fullmatch(name):
@@ -354,7 +407,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         self.send_bytes(ARCHIVE.read('ai_analysis_input/' + name))
 
-    @route('GET', '/result/<name>', response_schema='/schema/result', group='results', order=0)
+    @route('GET', '/result/<name>', response_schema='/schema/result', group='results', order=0, parameter_sources={'name': 'chunks'})
     def result(self, name):
         """Read an accepted result using its full source_chunk path; 404 if absent."""
         if name not in NAMES or not SAFE.fullmatch(name):
@@ -384,21 +437,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     dest.writestr('results/' + name, data)
         self.send_bytes(buf.getvalue())
 
-    @route('POST', '/result/<name>', request_content_type='application/json', group='results', order=0,
+    @route('POST', '/result/<name>', request_content_type='application/json', group='results', order=0, parameter_sources={'name': 'chunks'},
            request_schema='/schema/result', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES)
-    @route('PUT', '/result/<name>', request_content_type='application/json', group='results', order=0,
-           request_schema='/schema/result', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES)
-    def put_result(self, name):
+    def post_result(self, name):
         """Validate and atomically replace a result for a manifest-listed source_chunk path."""
         if name not in NAMES or not SAFE.fullmatch(name):
             self.send_error(404)
             return
         try:
-            length = int(self.headers.get('Content-Length', '0'))
-            if length < self.active_route['min_body_bytes'] or length > self.active_route['max_body_bytes']:
-                raise ValueError('Result must be 1..%s bytes' % self.active_route['max_body_bytes'])
-            data = self.rfile.read(length)
-            validate(name, json.loads(data))
+            data, document = self.read_json()
+            validate(name, document)
             result_dir = os.path.dirname(os.path.join(RESULTS, name))
             os.makedirs(result_dir, exist_ok=True)
             fd, temp = tempfile.mkstemp(dir=result_dir, prefix='.upload-')
@@ -410,7 +458,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if os.path.exists(temp):
                     os.unlink(temp)
             self.send_bytes(b'{"status":"ok"}')
-        except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (ValueError, UnicodeError, RecursionError) as exc:
             self.send_error(400, str(exc))
 
 def connection_url(host, port):
@@ -555,34 +603,3 @@ if __name__ == '__main__':
 
 _MAIN_SOURCE = _RESULT_VALIDATION_SOURCE + '\n' + _MAIN_SOURCE
 
-def generate_ai_serve_script(outdir, output_path):
-    """Embed immutable inputs, prompt, schemas and manifest into an executable zipapp."""
-    with open(TOOL_MANIFEST_PATH, encoding='utf-8') as stream:
-        tool_manifest = json.load(stream)
-    version = tool_manifest.get('version') if isinstance(tool_manifest, dict) else None
-    if not isinstance(version, str) or not version.strip():
-        raise ValueError('MANIFEST.json must define a nonempty string version')
-    server_version = {'tool_version': version, 'version_source': 'MANIFEST.json',
-                      'captured_at': 'zipapp_generation'}
-    assets = ('ai_analysis_prompt.md', 'ai_analysis_input_schema.json',
-              'ai_analysis_result_schema.json', 'ai_analysis_bundle_manifest.json',
-              'ai_server_front_page.md')
-    archive_buffer = io.BytesIO()
-    with zipfile.ZipFile(archive_buffer, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        archive.writestr('ai_server_version.json',
-                         json.dumps(server_version, sort_keys=True).encode('utf-8'))
-        archive.writestr('__main__.py', _MAIN_SOURCE)
-        for name in assets:
-            archive.write(os.path.join(outdir, name), name)
-        root = os.path.join(outdir, 'ai_analysis_input')
-        with open(os.path.join(outdir, 'ai_analysis_bundle_manifest.json'), encoding='utf-8') as stream:
-            manifest = json.load(stream)
-        for name in sorted(manifest['chunks']):
-            if not NAME.fullmatch(name):
-                raise ValueError('Invalid chunk path in AI manifest')
-            archive.write(os.path.join(root, name), 'ai_analysis_input/' + name)
-    archive_buffer.seek(0)
-    with open(output_path, 'wb') as target:
-        zipapp.create_archive(archive_buffer, target=target, interpreter='/usr/bin/env python3')
-    os.chmod(output_path, os.stat(output_path).st_mode | 0o111)
-    return output_path

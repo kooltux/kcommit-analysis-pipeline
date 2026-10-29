@@ -139,7 +139,7 @@ server endpoints, network safety, settings, and import contract.
 
 The generated server defaults to `127.0.0.1:8000` and background operation.
 Background startup requires an explicit `-l PATH` or `--log-file PATH`.
-Its `/` and `/README.md` endpoints provide a UTF-8 Markdown usage guide from
+Its `/` endpoint provides a UTF-8 Markdown usage guide from
 `ai.front_page_path` in `configs/conf.d/07_ai.json`, packaged by Stage 08.
 Use `-d`, `--debug`, or `--no-daemon` (aliases) for foreground operation.
 Foreground startup prints a stdout summary with mode, log destination, bind

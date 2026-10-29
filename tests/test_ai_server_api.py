@@ -27,7 +27,7 @@ def test_api_is_derived_from_dispatch_registry(namespace, monkeypatch):
     assert {(r['method'], r['path']) for r in catalog['routes']} == expected
     assert len(catalog['routes']) == len(expected)
     assert all(r['description'] and r['response_content_type'] for r in catalog['routes'])
-    upload = next(r for r in catalog['routes'] if r['method'] == 'PUT')
+    upload = next(r for r in catalog['routes'] if r['method'] == 'POST')
     assert upload['request_schema'] == '/schema/result'
     assert upload['max_body_bytes'] == namespace['MAX_RESULT_BYTES']
     assert upload['parameters'] == ['name']
@@ -60,13 +60,13 @@ def test_standalone_zipapp_api_and_authentication(app, auth):
         assert int(headers['Content-Length']) == len(raw)
         catalog = json.loads(raw)
         assert catalog['authentication'] == {'required': bool(auth), 'scheme': 'Basic' if auth else None}
-        assert {r['method'] for r in catalog['routes']} == {'GET', 'PUT', 'POST'}
+        assert {r['method'] for r in catalog['routes']} == {'GET', 'POST'}
         assert ('GET', '/api') in {(r['method'], r['path']) for r in catalog['routes']}
-        assert 'secret' not in raw.decode() and 'reviewer' not in raw.decode()
-        assert request(port, '/api', method='POST', authorization=token)[0] == 404
+        assert 'reviewer:secret' not in raw.decode() and basic('reviewer:secret') not in raw.decode()
+        assert request(port, '/api', method='POST', authorization=token)[0] == 405
         for method in ('HEAD', 'OPTIONS', 'DELETE'):
             assert request(port, '/api', method=method, authorization=token)[0] == 501
-        for path, kind in (('/', 'text/markdown; charset=utf-8'), ('/prompt', 'text/markdown'), ('/chunks', 'application/json')):
+        for path, kind in (('/', 'text/markdown; charset=utf-8'), ('/prompt/analyst', 'text/markdown; charset=utf-8'), ('/chunks', 'application/json')):
             code, headers, raw = request(port, path, authorization=token)
             assert code == 200 and headers['Content-Type'] == kind
         assert request(port, '/api/extra', authorization=token)[0] == 404
@@ -80,10 +80,10 @@ def test_front_page_points_to_live_catalog_instead_of_a_second_route_table():
 
 
 def test_api_logical_order_is_independent_of_registration(namespace):
-    expected = [('GET', path) for path in ['/api', '/api/version', '/', '/README.md',
-                '/prompt', '/schema/input', '/schema/result', '/batches', '/batch/<batch_id>',
+    expected = [('GET', path) for path in ['/api', '/api/version', '/',
+                '/prompt/<name>', '/schema/<name>', '/batches', '/batch/<batch_id>',
                 '/chunks', '/chunk/<name>', '/result/<name>']]
-    expected += [('POST', '/result/<name>'), ('PUT', '/result/<name>'), ('GET', '/export')]
+    expected += [('POST', '/result/<name>'), ('GET', '/export')]
     before = list(namespace['ROUTES'])
     first = invoke(namespace, '/api')
     assert [(entry['method'], entry['path']) for entry in first['routes']] == expected

@@ -11,38 +11,32 @@ import zipfile
 import pytest
 
 from lib.ai_contract import digest, encode, input_schema, result_properties, validate_result
-from lib.ai_serve_script_gen import _MAIN_SOURCE, generate_ai_serve_script
+from lib.ai_serve_script_gen import _MAIN_SOURCE
+from lib.ai_assets import load_contract
+from lib.ai_preparation import build_package
+from lib.ai_package_server import generate_ai_package_server
+from lib.manifest import VERSION
+from pathlib import Path
 from test_ai_review_runtime import payload, SHA, NOTE, RECOMMENDATION
 from test_ai_server_runtime import request, running
 
 
 @pytest.fixture
 def contract_app(payload, tmp_path):
-    schema, chunk, result = copy.deepcopy(payload)
-    schema_bytes = encode(schema)
-    input_bytes = encode(input_schema())
-    for target in (chunk, result):
-        target['input_schema_checksum'] = digest(input_bytes)
-        target['output_schema_checksum'] = digest(schema_bytes)
-    source = encode(chunk)
+    _, _, result = copy.deepcopy(payload)
+    samples = Path(__file__).resolve().parents[1] / 'configs' / 'ai'
+    snapshots = load_contract({'ai': {'prompts_dir': str(samples / 'prompts'),
+                                     'schemas_dir': str(samples / 'schemas')}})['files']
+    package = build_package([{'commit': SHA}], {}, snapshots, VERSION)
+    name = next(iter(package['manifest']['chunks']))
+    source = package['files']['ai_analysis_input/' + name]
+    chunk = json.loads(source)
+    for key in ('schema_version', 'run_id', 'source_chunk', 'input_schema_checksum',
+                'output_schema_checksum', 'total_commits'):
+        result[key] = chunk[key]
     result['input_checksum'] = digest(source)
-    name = chunk['source_chunk']
-    source_path = tmp_path / 'ai_analysis_input' / name
-    source_path.parent.mkdir(parents=True)
-    source_path.write_bytes(source)
-    manifest = dict(run_id=chunk['run_id'], chunks={name: digest(source)},
-                    input_schema_checksum=digest(input_bytes),
-                    output_schema_checksum=digest(schema_bytes), prompt_checksum=digest(b'prompt'))
-    for filename, data in [
-        ('ai_analysis_bundle_manifest.json', encode(manifest)),
-        ('ai_analysis_input_schema.json', input_bytes),
-        ('ai_analysis_result_schema.json', schema_bytes),
-        ('ai_analysis_prompt.md', b'prompt'),
-        ('ai_server_front_page.md', b'# Test guide'),
-    ]:
-        (tmp_path / filename).write_bytes(data)
     app = tmp_path / 'serve_ai.pyz'
-    generate_ai_serve_script(str(tmp_path), str(app))
+    generate_ai_package_server(package, b'# Test guide', app)
     return app, result
 
 
@@ -82,7 +76,7 @@ def test_direct_source_execution_uses_shared_validation(contract_app, monkeypatc
         namespace['ARCHIVE'].close()
 
 
-@pytest.mark.parametrize('method', ['PUT', 'POST'])
+@pytest.mark.parametrize('method', ['POST'])
 def test_live_upload_validation_preserves_accepted_result(contract_app, method):
     app, result = contract_app
     name = result['source_chunk']

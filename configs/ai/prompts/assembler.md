@@ -46,7 +46,7 @@ of assembled records. Mark complete only if every source SHA is represented;
 otherwise mark partial, without treating missing assessments as negative findings.
 
 Pass the candidate to the remote validation gate. Only its successful result
-may reach the poster node for POST or PUT /result/<source_chunk>.
+may reach the poster node for POST /result/<source_chunk>.
 For repair retries, change only the reported assembly/format errors. Preserve
 the original validated values; do not invent replacements or new evidence.
 The workflow must bound retries and stop on persistent validation errors.

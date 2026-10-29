@@ -72,9 +72,9 @@ def test_http_export_import(tmp_path, monkeypatch):
                   'output_schema_checksum': manifest['output_schema_checksum'], 'analysis_status': 'partial',
                   'total_commits': len(chunk['commits']), 'analyzed_commits': 0, 'results': {}}
         bad = dict(result, source_chunk=name.split('/')[1])
-        assert req('/result/' + name, method='PUT', body=json.dumps(bad).encode())[0] == 400
+        assert req('/result/' + name, method='POST', body=json.dumps(bad).encode())[0] == 400
         payload = json.dumps(result).encode()
-        assert req('/result/' + name, method='PUT', body=payload)[0] == 200
+        assert req('/result/' + name, method='POST', body=payload)[0] == 200
         assert req('/result/' + name)[2] == payload
         for path in ['/batch/batch_999', '/chunk/batch_999/001.json', '/chunk/batch_001/../001.json']:
             assert req(path)[0] == 404

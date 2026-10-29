@@ -14,10 +14,6 @@ from lib.ai_assets import PROMPT_ROLES, SCHEMA_ROLES
 from lib.ai_contract import NAME, digest, encode, validate_chunk
 
 _CONTRACT_ROUTES = '''\
-CONTRACT = MANIFEST['contract_assets']
-for asset_name, expected in CONTRACT.items():
-    if checksum(ARCHIVE.read('ai_contract/' + asset_name)) != expected:
-        raise ValueError('Packaged contract checksum mismatch: ' + asset_name)
 WORKFLOW_SCHEMAS = {role: json.loads(ARCHIVE.read('ai_contract/schemas/' + role + '.json'))
                     for role in ROLES + ('result',)}
 
@@ -37,27 +33,7 @@ def contract_index(self):
         'chunks': {name: '/metadata/' + name for name in NAMES}}, sort_keys=True).encode())
 
 
-@route('GET', '/prompt/<role>', 'text/markdown; charset=utf-8', group='contract', order=2)
-def role_prompt(self, role):
-    """Retrieve exact prompt bytes for a role listed by /contract."""
-    name = 'prompts/' + role + '.md'
-    if name not in CONTRACT:
-        self.send_error(404)
-        return
-    self.send_bytes(ARCHIVE.read('ai_contract/' + name))
-
-
-@route('GET', '/schema/<role>', group='contract', order=4)
-def role_schema(self, role):
-    """Retrieve a packaged role/result schema listed by /contract."""
-    name = 'schemas/' + role + '.json'
-    if name not in CONTRACT:
-        self.send_error(404)
-        return
-    self.send_bytes(ARCHIVE.read('ai_contract/' + name))
-
-
-@route('GET', '/metadata/<name>', group='sources', order=4)
+@route('GET', '/metadata/<name>', group='sources', order=4, parameter_sources={'name': 'chunks'})
 def source_metadata(self, name):
     """Copy trusted envelope fields into role/results; do not calculate hashes with an LLM.
 
@@ -80,11 +56,11 @@ def source_metadata(self, name):
         total_commits=chunk['total_commits']), sort_keys=True).encode())
 
 
-@route('POST', '/validate/workflow/<name>', request_content_type='application/json', group='validation', order=1,
+@route('POST', '/validate/workflow/<name>', request_content_type='application/json', group='validation', order=1, parameter_sources={'name': 'chunks'},
        description='Validate the analyst, cve, reviewer and result documents supplied together in the POST body, including coverage and exact value preservation. The URL selects the source chunk; nothing is stored.',
        min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
        document_roles=['analyst', 'cve', 'reviewer', 'result'], writes_results=False)
-@route('POST', '/validate/role/<role>/<name>', request_content_type='application/json', group='validation', order=0,
+@route('POST', '/validate/role/<role>/<name>', request_content_type='application/json', group='validation', order=0, parameter_sources={'role': 'roles', 'name': 'chunks'},
        description='Validate one complete role document supplied in the POST body. The URL selects the role and source chunk; nothing is stored and other roles are not cross-checked.',
        request_schema='/schema/<role>', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
        roles=['analyst', 'cve', 'reviewer'], writes_results=False)
@@ -107,29 +83,7 @@ def validate_contributions(self, name, role=None):
                  output_schema_checksum=MANIFEST['output_schema_checksum'],
                  total_commits=len(chunk['commits']))
     try:
-        lengths = self.headers.get_all('Content-Length', [])
-        if len(lengths) != 1 or self.headers.get('Transfer-Encoding') is not None:
-            raise ValueError('One Content-Length and no Transfer-Encoding are required')
-        raw_length = lengths[0].strip()
-        if not re.fullmatch(r'[0-9]+', raw_length):
-            raise ValueError('Invalid Content-Length')
-        length = int(raw_length)
-        if not self.active_route['min_body_bytes'] <= length <= self.active_route['max_body_bytes']:
-            raise ValueError('Validation body must be 1..%s bytes' % self.active_route['max_body_bytes'])
-        data = self.rfile.read(length)
-        if len(data) != length:
-            raise ValueError('Truncated validation body')
-        def unique(pairs):
-            value = {}
-            for key, item in pairs:
-                if key in value:
-                    raise ValueError('Duplicate JSON key: ' + key)
-                value[key] = item
-            return value
-        def invalid_constant(value):
-            raise ValueError('Invalid JSON constant: ' + value)
-        document = json.loads(data.decode('utf-8'), object_pairs_hook=unique,
-                              parse_constant=invalid_constant)
+        _, document = self.read_json()
         if role is None:
             validate_workflow(document, chunk, WORKFLOW_SCHEMAS, checksum(source))
         else:
