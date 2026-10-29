@@ -51,6 +51,8 @@ Use field descriptions in the supplied schema as the authoritative field-craftin
 Scan both subject and body for explicit candidate IDs before researching.
 When configured search is available, verify candidates against authoritative CVE
 or vulnerability records using the ID, full commit hash and relevant technical details.
+Examples include NVD and MITRE/CVE records; use record evidence, not search snippets
+alone, to confirm the candidate relationship under the source-message-only policy.
 Subject keywords may help locate records but similarity alone does not establish a match.
 Distinguish direct commit references from references to a different fix or backport;
 do not assume different hashes identify unrelated or equivalent changes without evidence.

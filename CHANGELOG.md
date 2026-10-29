@@ -15,6 +15,11 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Complete legacy instruction coverage with named metadata hints, generic hardening
+  examples, qualified recommendation scenarios, authoritative CVE record examples
+  and a 20-word effort-rationale guideline. Document preserved and replaced rules
+  and extend regressions without changing validation constraints.
+
 - Centralize assessment field semantics in schema descriptions and keep matching
   role/final definitions consistent without changing validation constraints.
   Adapt useful legacy assessment guidance into vendor-neutral role procedures;

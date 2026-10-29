@@ -48,6 +48,9 @@ Preserve the source-message-only CVE policy unless the operator changes it.
 Review CVE probabilities as integer percentages, with one value per supported ID.
 
 Use field descriptions in the supplied schemas as the authoritative field-crafting guide.
+Treat meta.has_cve, meta.is_fix and meta.has_stable_cc as hints, not proof.
+Check claimed SELinux Enforcing policies, seccomp allow-list filters, capability
+dropping and compile-time hardening against supplied configuration and attack paths.
 Check supplied product_evidence, files[], stats.lines_changed, stats.files_changed,
 stats.hunks and dependency references together; size is not effort ground truth.
 Check vulnerability-fix versus hardening classifications and the consequences of omission.

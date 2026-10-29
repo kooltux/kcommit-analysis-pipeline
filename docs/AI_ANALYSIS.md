@@ -131,6 +131,40 @@ The legacy assessment policy is distributed by responsibility, not discarded:
 | Trusted identities, full SHA joins, exact value preservation and coverage | All roles; Assembler joins |
 | Batch selection, pagination, POST/GET verification and export | Shared server guide; workflow orchestration |
 
+### Legacy instruction coverage
+
+This mapping covers substantive instructions from the temporary legacy prompts.
+The temporary directory is not a runtime dependency; copied transport instructions
+and platform-specific assumptions are excluded. Adaptations below preserve the
+current evidence policy rather than restoring conflicting legacy rules.
+
+| Legacy instruction | Current destination or deliberate adaptation |
+| --- | --- |
+| Upstream kernel assessment for product backports; omission impact; human decisions | Analyst scope/procedure; analyst/result impact and recommendation descriptions |
+| Separate Analyst and CVE responsibilities | Analyst scope; CVE expert owns CVE fields; no placeholder fields |
+| Assess every commit independently; never merge commits | Analyst scope and role coverage envelopes; omissions remain explicit partial results |
+| Full commit identity and source-file identity | Full SHA result keys and trusted source_chunk metadata; never fabricate unknown identities |
+| Classification flags and risk/impact/effort/recommendation values | Typed role/final schema properties and enums; none is used alone |
+| Product security context | Generic evidence-dependent secure boot, trusted execution, encryption, integrity, access controls and debug restrictions |
+| Detailed hardening controls | Analyst/Reviewer explicitly consider SELinux Enforcing, seccomp allow-lists, capability dropping and compile-time hardening only when evidenced |
+| Automatic mitigation downgrade; all kernel memory bugs high/critical | Replaced by attack-path and product-exposure reasoning; neither automatic downgrades nor blanket severity floors |
+| Impact description 1-2 sentences; summary 2-3 sentences | Matching analyst/result field descriptions |
+| Effort reason maximum 20 words; dependency references | Matching analyst/result ai_backport_effort_reason descriptions; guidance only, no new validation constraint |
+| Six recommendation scenarios | Analyst illustrative recommendation scenarios plus schema safeguards; breaking changes require evidenced risk |
+| Conservative classification defaults | Preserve evidence discipline and maybe for uncertainty; do not equate uncertainty with false or low impact |
+| meta.has_cve, meta.is_fix and meta.has_stable_cc | Named in Analyst/Reviewer as hints, not proof |
+| Product evidence, files, changed lines, file counts and hunks | Analyst/Reviewer procedures; supplied evidence, not assumed exposure or effort ground truth |
+| Fixed line-count effort thresholds | Replaced by engineering effort, integration and dependency reasoning |
+| CVE subject/body scan, authoritative lookup and conservative reporting | CVE verification procedure; NVD and MITRE/CVE examples; no speculative association as fact |
+| Web-discovered CVE IDs absent from source messages | Not retained: source-message-only candidates; web search verifies candidates only |
+| body_match/web_search provenance fields | Legacy fields not retained; orchestrator may supply separate captured research evidence to Reviewer |
+| Independent review of every assessment against original input | Reviewer procedure and coverage rules; specialist claims are not authoritative evidence |
+| Genuine vulnerability fixes versus hardening; evidence-backed disagreements | Security-fix schema descriptions and Reviewer procedure; supported corrections need not change the final recommendation |
+| Review agreement, correction identifiers and printable ASCII | reviewer/result schemas and Reviewer field instructions; JSON arrays/null replace legacy delimiters/placeholders |
+| Preserve assessments exactly; join CVE data by commit identity | Assembler full-SHA joins, field ownership and exact preservation; review proposals are not applied |
+| Missing lookup becomes an empty placeholder | Not retained: distinguish explicit empty findings from missing contributions; report partial coverage |
+| File discovery, fixed chunk size, CSV quoting/headers and workflow variables | Excluded; supplied inputs, server orchestration and JSON schemas remain authoritative |
+
 Stage 08 packages every selected prompt and serves `/prompt/<name>`.
 `/contract` lists assets; the bare prompt URL is removed. Do not upload specialist
 intermediate JSON to the final-result endpoint.

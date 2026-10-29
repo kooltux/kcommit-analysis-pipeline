@@ -95,3 +95,38 @@ def test_refinements_remain_generic_and_schema_driven(role):
     text = (ROOT / 'prompts' / (role + '.md')).read_text(encoding='utf-8')
     assert not LEGACY_PROMPT_MARKER.search(text)
     assert 'description' in text.lower()
+
+
+@pytest.mark.parametrize('role', ['analyst', 'reviewer'])
+def test_explicit_evidence_hints_and_generic_hardening(role):
+    text = (ROOT / 'prompts' / (role + '.md')).read_text(encoding='utf-8')
+    for name in ('meta.has_cve', 'meta.is_fix', 'meta.has_stable_cc',
+                 'SELinux Enforcing', 'seccomp allow-list', 'capability',
+                 'compile-time hardening'):
+        assert name in text
+
+
+def test_legacy_recommendation_scenarios_are_qualified():
+    text = (ROOT / 'prompts/analyst.md').read_text(encoding='utf-8')
+    section = text.split('Illustrative recommendation scenarios,', 1)[1].split(
+        '## Intermediate output', 1)[0]
+    assert len(re.findall(r'^- ', section, re.M)) == 6
+    for value in ('strong_yes', 'yes', 'maybe', 'no', 'strong_no'):
+        assert 'favor ' + value in section
+    assert 'not automatic rules' in section
+    assert 'breaking change requires an evidenced compatibility-risk assessment' in section
+
+
+@pytest.mark.parametrize('role', ['analyst', 'result'])
+def test_effort_reason_word_limit_is_guidance_only(role):
+    field = schema(role)['$defs']['assessment']['properties']['ai_backport_effort_reason']
+    assert 'at most 20 words' in field['description']
+    assert 'Fixes:' in field['description'] and 'Depends-on:' in field['description']
+    assert without_descriptions(field) == {'type': 'string'}
+
+
+def test_cve_record_examples_do_not_expand_candidate_policy():
+    text = (ROOT / 'prompts/cve.md').read_text(encoding='utf-8')
+    assert 'NVD and MITRE/CVE records' in text
+    assert 'source-message-only policy' in text
+    assert 'Search results cannot introduce IDs absent from the source commit message' in text
