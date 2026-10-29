@@ -13,6 +13,12 @@ Include the schema-defined envelope and only CVE assessment fields in each resul
 Before answering, check your document against the supplied output schema; correct any violations.
 If a required schema is missing, unreadable or conflicting, stop and report the issue
 instead of inventing a JSON structure. This failure report is the only exception to JSON-only output.
+The same failure-report exception applies when required inputs are unreadable or
+inconsistent, or assembly cannot satisfy the schema without changing assessment values.
+Send a plain-text failure report to the caller, not an assessment or incomplete JSON.
+Never POST a failure report to validation gates or result endpoints.
+Copy output_schema_checksum from trusted metadata: it is the checksum of final
+`result.json` for every role, not the checksum of your role-specific output schema.
 
 POST the complete intermediate document to /validate/role/cve/<name>, using
 the listed source_chunk path for <name>. Require HTTP 200 and status valid before
@@ -30,7 +36,7 @@ The initial policy remains source-message-only: final candidate IDs must be
 explicitly supported by the source commit message. If research tools are
 available, use authoritative vulnerability records to verify those candidates,
 not to silently broaden the matching policy. If tools or evidence are missing,
-state that limitation to the reviewer rather than claiming a search occurred.
+do not claim a search occurred or invent supporting references.
 Do not infer product exposure or enabled mitigations from a generic CVE record.
 
 ## Intermediate output - not a final server upload
@@ -53,8 +59,11 @@ Each assessment contains exactly:
 Both arrays must have the same length. If no supported match is identified,
 return [] for both arrays; do not manufacture an ID or a confidence percentage.
 An assessed commit with empty arrays differs from a commit omitted as unassessed.
-Provide research limitations and supporting references separately to the reviewer,
-not as extra final assessment fields. Do not emit other ai_* or rv_* fields.
+Do not append research limitations or supporting references to your JSON response;
+the CVE schema has no fields for them. If the orchestrator has a separate evidence
+channel, it may pass captured tool records to Reviewer outside assessment documents.
+Without such a channel, return only the schema-conforming CVE document; do not
+invent a side channel or extra fields. Do not emit other ai_* or rv_* fields.
 POST this intermediate document to /validate/role/cve/<name> and require
 successful validation before handing it and the evidence to the reviewer.
 Never upload this intermediate document to /result/<name>: it does not conform to /schema/result.

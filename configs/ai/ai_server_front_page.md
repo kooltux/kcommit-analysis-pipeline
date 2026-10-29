@@ -33,7 +33,8 @@ Result URLs exist in discovery even before upload. Totals remain full-collection
 
 ### Access and scope
 
-GET requests are read-only. POST replaces the stored result for a chunk.
+GET requests are read-only. POST to `/result/<name>` replaces the stored result;
+POST to validation gates checks documents without storing them.
 When authentication is enabled, use the operator-provided credentials; browsers
 can use the HTTP login prompt. Assessments remain advisory. This server is an
 exchange interface, not an autonomous reviewer or a backport approval system.
@@ -71,6 +72,8 @@ and `total_commits` into role/result documents. Add your `results`,
 `analyzed_commits`, `analysis_status` and intermediate `role` as appropriate.
 The input checksum hashes exact archived bytes; never ask an LLM to calculate it.
 `/schema/result` is the final contract; the redundant output-schema URL is removed.
+For every intermediate role and final result, output_schema_checksum refers to
+the final result.json schema, never the role-specific schema.
 
 `GET /api/version` reports `tool_version`, captured from the generating tool's
 `MANIFEST.json`, with `version_source` and `captured_at` provenance. The version
@@ -84,8 +87,10 @@ bundle's `pipeline_version`; normal authentication applies and it is not paginat
 
 You are the analysis client, not the server. Your task is to assess the supplied
 kernel commits under the selected `/prompt/<name>` instructions, using available
-evidence, and return results conforming to `/schema/result`. This API guide
-explains access and submission; it does not replace those assessment instructions.
+evidence. Analyst returns `/schema/analyst`, CVE expert returns `/schema/cve`,
+and Reviewer returns `/schema/reviewer`; only Assembler returns `/schema/result`.
+This API guide explains access and submission; it does not replace those
+assessment instructions.
 Do not infer that a missing result is a negative assessment.
 
 ### Role workflow
@@ -114,6 +119,9 @@ assets and validates documents; it does not run AI models or invoke the roles.
    documents to `/validate/workflow/<name>`. All gates require HTTP 200 and
    `status: valid` and store nothing. Only after workflow validation, POST the
    unchanged final result to `/result/<name>` and GET that URL to verify acceptance.
+
+If required schemas or inputs are missing, unreadable or inconsistent, stop and
+report the failure to the caller. Never POST a failure report as an assessment.
 
 ### Using this server
 

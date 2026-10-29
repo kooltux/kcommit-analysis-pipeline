@@ -15,6 +15,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Resolve role-output and CVE evidence-handoff instruction conflicts. Clarify
+  shared final-schema checksums, proposed review corrections, fragment examples
+  and failure reporting without changing schema acceptance rules.
+
 - Align batch, contract, upload, logging and smoke regressions with directory
   package identities. Preserve POST validation and export checks, verify rejected
   PUT uploads cannot overwrite results, and exercise declared body-size limits.

@@ -15,6 +15,12 @@ Before answering, check your document against the supplied output schema; correc
 without changing assessment values. Report inconsistent inputs rather than repairing their meaning.
 If a required schema is missing, unreadable or conflicting, stop and report the issue
 instead of inventing a JSON structure. This failure report is the only exception to JSON-only output.
+The same failure-report exception applies when required inputs are unreadable or
+inconsistent, or assembly cannot satisfy the schema without changing assessment values.
+Send a plain-text failure report to the caller, not an assessment or incomplete JSON.
+Never POST a failure report to validation gates or result endpoints.
+Copy output_schema_checksum from trusted metadata: it is the checksum of final
+`result.json` for every role, not the checksum of your role-specific output schema.
 
 POST an object with exactly analyst, cve, reviewer and result documents to
 /validate/workflow/<name>. Require HTTP 200 and status valid before final upload.

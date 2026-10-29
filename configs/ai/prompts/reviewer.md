@@ -14,6 +14,12 @@ Include the schema-defined envelope and only rv_* review fields in each result e
 Before answering, check your document against the supplied output schema; correct any violations.
 If a required schema is missing, unreadable or conflicting, stop and report the issue
 instead of inventing a JSON structure. This failure report is the only exception to JSON-only output.
+The same failure-report exception applies when required inputs are unreadable or
+inconsistent, or assembly cannot satisfy the schema without changing assessment values.
+Send a plain-text failure report to the caller, not an assessment or incomplete JSON.
+Never POST a failure report to validation gates or result endpoints.
+Copy output_schema_checksum from trusted metadata: it is the checksum of final
+`result.json` for every role, not the checksum of your role-specific output schema.
 
 POST the complete intermediate document to /validate/role/reviewer/<name>, using
 the listed source_chunk path for <name>. Require HTTP 200 and status valid before
@@ -46,11 +52,11 @@ covers every source commit. The Assembler preserves the original specialist valu
 ## Review fields - one set per SHA
 
 rv_agreement is agree if you accept the combined baseline without corrections;
-it is disagree if you correct any field. This is not a vote between the models.
+it is disagree if you propose a correction to any field. This is not a vote between the models.
 
 When rv_agreement is agree, rv_notes and rv_recommendation must both be null.
 
-When rv_agreement is disagree, both arrays must be nonempty. For every corrected
+When rv_agreement is disagree, both arrays must be nonempty. For every proposed correction to a
 field, add one note and one recommendation referring to the same field name.
 Use plain ASCII only in those strings, with no embedded newlines.
 The note format is exactly:
@@ -63,6 +69,8 @@ incorrect. Recommendation format: field_name: use value
 Render scalar strings as in the example; render arrays, numbers and booleans
 as compact JSON. Escape non-ASCII characters in value representations.
 
+Per-commit fragment for results[SHA], not a complete reviewer.json response.
+The actual response must include the role envelope and SHA-keyed results object.
 Example formatting only, not assumptions about the product:
 
 ```json

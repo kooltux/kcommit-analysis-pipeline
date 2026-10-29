@@ -21,6 +21,11 @@ def test_role_prompts_direct_model_to_exact_output_contract(role, output, inputs
     assert 'Do not reproduce the schema itself' in contract
     assert 'missing, unreadable or conflicting, stop and report' in contract
     assert 'Before answering, check your document against the supplied output schema' in contract
+    assert 'Copy output_schema_checksum from trusted metadata' in contract
+    assert '`result.json` for every role, not the checksum of your role-specific output schema' in contract
+    assert 'Send a plain-text failure report to the caller' in contract
+    assert 'Never POST a failure report to validation gates or result endpoints' in contract
+    assert 'required inputs are unreadable or' in contract
     for name in (*inputs, output):
         assert f'`{name}.json`' in contract
         assert (root / 'schemas' / (name + '.json')).is_file()
@@ -58,6 +63,19 @@ def test_intermediate_validation_is_not_prohibited(role):
     assert '/validate/role/' + role + '/<name>' in text
     assert 'Never upload this intermediate document to /result/<name>' in text
     assert 'Do not POST or PUT this' not in text
+
+
+def test_research_handoff_and_review_examples_match_json_only_contracts():
+    root = Path(__file__).resolve().parents[1] / 'configs/ai/prompts'
+    cve = (root / 'cve.md').read_text(encoding='utf-8')
+    assert 'Do not append research limitations or supporting references to your JSON response' in cve
+    assert 'Without such a channel, return only the schema-conforming CVE document' in cve
+    assert 'Provide research limitations and supporting references separately' not in cve
+    reviewer = (root / 'reviewer.md').read_text(encoding='utf-8')
+    assert 'disagree if you propose a correction to any field' in reviewer
+    assert 'disagree if you correct any field' not in reviewer
+    assert 'Per-commit fragment for results[SHA], not a complete reviewer.json response' in reviewer
+    assert 'actual response must include the role envelope and SHA-keyed results object' in reviewer
 
 
 def test_sorted_flat_snapshots(tmp_path):

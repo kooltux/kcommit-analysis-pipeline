@@ -12,9 +12,11 @@ def test_front_page_is_shared_api_reference():
     for required in ('human reviewers', 'AI clients', 'CI jobs', '### Using this server',
                      '/schema/input', '/schema/result', '/chunks', '/result/<name>',
                      '/export', 'curl --fail-with-body', 'Content-Length',
-                     'HTTP 400', 'HTTP 401', 'HTTP 404', 'HTTP 405', 'POST replaces',
+                     'HTTP 400', 'HTTP 401', 'HTTP 404', 'HTTP 405',
+                     'POST to `/result/<name>` replaces the stored result',
                      '/prompt/<name>', '/schema/<name>', 'POST /result/<name>'):
         assert required in text
+    assert 'POST to validation gates checks documents without storing them.' in text
     for excluded in ('kcommit_pipeline.py', 'ai-import', 'pipeline machine',
                      'Stage 08', '## About this page', '## If you are an AI client'):
         assert excluded not in text
@@ -46,6 +48,10 @@ def test_front_page_explains_role_handoffs_and_validation():
                      'partial', 'store nothing', 'does not run AI models'):
         assert fragment in workflow
     assert workflow.index('3. Reviewer') < workflow.index('4. Assembler') < workflow.index('5. POST')
+    for role in ('analyst', 'cve', 'reviewer', 'result'):
+        assert f'/schema/{role}' in text[text.index('### Context and task'):start]
+    assert 'only Assembler returns `/schema/result`' in text
+    assert 'Never POST a failure report as an assessment' in text
 
 
 def test_front_page_chapters_are_ordered_and_examples_are_technical():

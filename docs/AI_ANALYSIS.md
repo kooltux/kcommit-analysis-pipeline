@@ -94,6 +94,11 @@ Reviewer uses `reviewer.json`, and Assembler uses `result.json`. Supply the rele
 input and output schemas as attachments or quoted content after the prompt.
 Intermediate outputs must not use the final-result schema. A missing, unreadable
 or conflicting required schema stops the task instead of producing guessed JSON.
+The same failure path covers inconsistent or unreadable required inputs: report
+to the caller, never submit the report as an assessment. Every role copies the
+final result.json output_schema_checksum from trusted metadata, not its own schema hash.
+CVE JSON contains no research-reference fields; only an orchestrator-managed,
+separate evidence channel may carry captured tool records to Reviewer.
 
 The legacy assessment policy is distributed by responsibility, not discarded:
 
