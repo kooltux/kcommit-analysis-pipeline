@@ -15,6 +15,16 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Align role prompts with the supplied schemas: remove invented fields
+  (`likely_has_cve`, `cve_match_status`, reviewer corrections and rejected CVE
+  lists), keep the Assembler a pure copier of specialist values, restrict CVE
+  verification to source-message candidates and reword coverage rules to match
+  partial-status behaviour. Add prompt/schema consistency tests.
+
+- Describe success and error responses in the live /api catalog using executable
+  route metadata, shared body schemas, examples, content types and applicable
+  statuses. Preserve existing wire responses and add generated-server contract tests.
+
 - Complete legacy instruction coverage with named metadata hints, generic hardening
   examples, qualified recommendation scenarios, authoritative CVE record examples
   and a 20-word effort-rationale guideline. Document preserved and replaced rules

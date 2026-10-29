@@ -84,6 +84,9 @@ Basic role prompts are in `configs/ai/prompts/`: Analyst (`analyst.md`), CVE
 expert (`cve.md`), Reviewer (`reviewer.md`) and Assembler (`assembler.md`).
 The Reviewer emits only review fields; the Assembler preserves the validated
 specialist and review values in the final document without applying corrections.
+Prompt rules must only name fields defined in the supplied schemas and must not
+add behaviour the workflow validator rejects (for example altering specialist
+values); `tests/test_ai_prompt_consistency.py` enforces this.
 The obsolete single-prompt and result-schema configuration files have been removed;
 use the selected `prompts/` and `schemas/` directories. Generated package snapshots
 retain their existing filenames and checksums for package/import validation;
@@ -315,6 +318,21 @@ path parameters, descriptions from handler docstrings, content types, schema
 links, effective upload limits and runtime authentication status (no secrets).
 The same registry dispatches requests. Rebuild Stage 08 to update an existing
 zipapp; the front page explains how clients use `/api` without duplicating it.
+
+Each route advertises `responses`, keyed by HTTP status strings. Success entries
+specify description, content_type and schema, plus representative examples for
+validation/upload acknowledgements. Shared `response_schemas` define JSON body
+contracts, including the common error envelope; shared `error_responses` describe
+statuses, examples and relevant headers. Catalog-local `$ref` values resolve
+against the whole `/api` document, while `/schema/...` links resolve on the server.
+`protocol_responses` lists shared routing/protocol failures; route entries include
+applicable 400/404/500 responses and 401 only when authentication is enabled.
+New extension routes without an explicit schema advertise an unconstrained JSON
+schema, not an invented body structure. Markdown responses describe text; ZIP
+success bodies are binary. Errors remain JSON regardless of success content type.
+Examples are illustrative and cannot authorize storage or supply trusted identities.
+This is additive discovery metadata: response bodies, validation rules and storage
+behavior do not change. Regenerate the zipapp to expose the new response contracts.
 
 API entries are sorted by discovery/guide, contract assets, sources, validation,
 and results/export, independent of decorator registration order. Per-route `group`

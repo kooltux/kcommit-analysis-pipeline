@@ -18,7 +18,7 @@ WORKFLOW_SCHEMAS = {role: json.loads(ARCHIVE.read('ai_contract/schemas/' + role 
                     for role in ROLES + ('result',)}
 
 
-@route('GET', '/contract', group='contract', order=0)
+@route('GET', '/contract', group='contract', order=0, response_schema='#/response_schemas/contract')
 def contract_index(self):
     """Discover immutable contract assets and trusted source metadata URLs."""
     assets = {}
@@ -33,7 +33,7 @@ def contract_index(self):
         'chunks': {name: '/metadata/' + name for name in NAMES}}, sort_keys=True).encode())
 
 
-@route('GET', '/metadata/<name>', group='sources', order=4, parameter_sources={'name': 'chunks'})
+@route('GET', '/metadata/<name>', group='sources', order=4, parameter_sources={'name': 'chunks'}, response_schema='#/response_schemas/metadata')
 def source_metadata(self, name):
     """Copy trusted envelope fields into role/results; do not calculate hashes with an LLM.
 
@@ -59,11 +59,17 @@ def source_metadata(self, name):
 @route('POST', '/validate/workflow/<name>', request_content_type='application/json', group='validation', order=1, parameter_sources={'name': 'chunks'},
        description='Validate the analyst, cve, reviewer and result documents supplied together in the POST body, including coverage and exact value preservation. The URL selects the source chunk; nothing is stored.',
        min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
-       document_roles=['analyst', 'cve', 'reviewer', 'result'], writes_results=False)
+       document_roles=['analyst', 'cve', 'reviewer', 'result'], writes_results=False,
+       response_schema='#/response_schemas/validation_ack',
+       response_description='Submitted documents are valid; nothing is stored or corrected.',
+       response_example={'status': 'valid', 'run_id': '0' * 64, 'source_chunk': 'batch_001/001.json'})
 @route('POST', '/validate/role/<role>/<name>', request_content_type='application/json', group='validation', order=0, parameter_sources={'role': 'roles', 'name': 'chunks'},
        description='Validate one complete role document supplied in the POST body. The URL selects the role and source chunk; nothing is stored and other roles are not cross-checked.',
        request_schema='/schema/<role>', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
-       roles=['analyst', 'cve', 'reviewer'], writes_results=False)
+       roles=['analyst', 'cve', 'reviewer'], writes_results=False,
+       response_schema='#/response_schemas/validation_ack',
+       response_description='Submitted documents are valid; nothing is stored or corrected.',
+       response_example={'status': 'valid', 'run_id': '0' * 64, 'source_chunk': 'batch_001/001.json'})
 def validate_contributions(self, name, role=None):
     """Validate role JSON or four workflow documents without storing results.
 

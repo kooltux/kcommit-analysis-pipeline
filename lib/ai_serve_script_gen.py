@@ -115,6 +115,68 @@ def listing_page(target, values):
 
 
 
+def response_object(**properties):
+    return dict(type='object', required=list(properties), properties=properties,
+                additionalProperties=False)
+
+
+def response_array(items):
+    return dict(type='array', items=items)
+
+
+ERROR_CODES = {400: 'invalid_request', 401: 'authentication_failed', 404: 'not_found',
+               405: 'method_not_allowed', 408: 'timeout', 414: 'request_line_too_long',
+               431: 'headers_too_large', 500: 'internal_error', 501: 'unsupported_method'}
+RESPONSE_SCHEMAS = {
+    'error': response_object(error=response_object(
+        code={'type': 'string'}, status={'type': 'integer'}, message={'type': 'string'})),
+    'validation_ack': response_object(status={'const': 'valid'},
+        run_id={'type': 'string'}, source_chunk={'type': 'string'}),
+    'upload_ack': response_object(status={'const': 'ok'}),
+    'version': response_object(tool_version={'type': 'string'},
+        version_source={'const': 'MANIFEST.json'}, captured_at={'const': 'zipapp_generation'}),
+    'chunks': response_object(run_id={'type': 'string'},
+        chunks=response_array({'type': 'string'})),
+    'metadata': response_object(schema_version={'const': '1.0'}, run_id={'type': 'string'},
+        source_chunk={'type': 'string'}, input_checksum={'type': 'string'},
+        input_schema_checksum={'type': 'string'}, output_schema_checksum={'type': 'string'},
+        total_commits={'type': 'integer', 'minimum': 0}),
+    'contract': response_object(run_id={'type': 'string'},
+        assets={'type': 'object', 'additionalProperties': response_object(
+            checksum={'type': 'string'}, url={'type': 'string'})},
+        input_schema_checksum={'type': 'string'}, output_schema_checksum={'type': 'string'},
+        chunks={'type': 'object', 'additionalProperties': {'type': 'string'}}),
+    'batch': response_object(batch_id={'type': 'string'}, batch_number={'type': 'integer'},
+        total_commits={'type': 'integer'}, run_id={'type': 'string'},
+        chunks=response_array(response_object(chunk={'type': 'string'}, result={'type': 'string'}))),
+    'batches': response_object(run_id={'type': 'string'}, batch_size={'type': ['integer', 'null']},
+        total_batches={'type': 'integer'}, batches=response_array(response_object(
+            batch_id={'type': 'string'}, batch_number={'type': 'integer'},
+            total_commits={'type': 'integer'}, chunks=response_array({'type': 'string'}),
+            url={'type': 'string'}))),
+    'catalog': response_object(run_id={'type': 'string'}, groups=response_array({'type': 'string'}),
+        routes=response_array({'type': 'object', 'required': ['method', 'path', 'responses']}),
+        authentication=response_object(required={'type': 'boolean'}, scheme={'type': ['string', 'null']}),
+        response_schemas={'type': 'object'}, error_responses={'type': 'object'},
+        protocol_responses={'type': 'object'}),
+}
+
+
+def error_responses():
+    responses = {}
+    for status, code in ERROR_CODES.items():
+        message = http.server.BaseHTTPRequestHandler.responses[status][0]
+        entry = dict(description=message, content_type='application/json',
+            schema={'$ref': '#/response_schemas/error'},
+            example={'error': {'code': code, 'status': status, 'message': message}})
+        if status == 401:
+            entry['headers'] = {'WWW-Authenticate': {'description': 'HTTP Basic challenge.'}}
+        elif status == 405:
+            entry['headers'] = {'Allow': {'description': 'Allowed methods for the matched path.'}}
+        responses[str(status)] = entry
+    return responses
+
+
 def route(method, path, content_type='application/json', **contract):
     """Register an executable route and its machine-readable contract together."""
     parameters = re.findall(r'<([a-z_]+)>', path)
@@ -125,7 +187,24 @@ def route(method, path, content_type='application/json', **contract):
     def register(handler):
         if any(item['method'] == method and item['path'] == path for item in ROUTES):
             raise ValueError('Duplicate API route: ' + method + ' ' + path)
-        ROUTES.append(dict(contract, method=method, path=path,
+        success = dict(description=contract.pop('response_description', 'Successful response.'),
+                       content_type=content_type)
+        if contract.get('response_schema'):
+            success['schema'] = {'$ref': contract['response_schema']}
+        elif content_type.startswith('application/json'):
+            success['schema'] = {}
+        else:
+            success['schema'] = {'type': 'string'}
+            if content_type == 'application/zip':
+                success['body_encoding'] = 'binary'
+        if 'response_example' in contract:
+            success['example'] = contract.pop('response_example')
+        responses = {'200': success, '500': {'$ref': '#/error_responses/500'}}
+        if parameters:
+            responses['404'] = {'$ref': '#/error_responses/404'}
+        if contract.get('request_content_type') or contract.get('query_parameters'):
+            responses['400'] = {'$ref': '#/error_responses/400'}
+        ROUTES.append(dict(contract, method=method, path=path, responses=responses,
                            response_content_type=content_type, parameters=parameters,
                            handler=handler, matcher=re.compile(pattern)))
         return handler
@@ -215,9 +294,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def send_error(self, code, message=None, explain=None):
         self.close_connection = True
-        names = {400: 'invalid_request', 401: 'authentication_failed', 404: 'not_found',
-                 405: 'method_not_allowed', 408: 'timeout', 414: 'request_line_too_long',
-                 431: 'headers_too_large', 500: 'internal_error', 501: 'unsupported_method'}
+        names = ERROR_CODES
         message = self.responses.get(code, ('Request failed',))[0] if message is None or code >= 500 else str(message)
         data = json.dumps({'error': {'code': names.get(code, 'http_error'),
                                    'status': code, 'message': message}}, sort_keys=True).encode('utf-8')
@@ -285,7 +362,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.allowed_methods = sorted({item['method'] for item in ROUTES if item['matcher'].fullmatch(path)})
         self.send_error(405 if self.allowed_methods else 404)
 
-    @route('GET', '/api', group='discovery', order=0)
+    @route('GET', '/api', group='discovery', order=0, response_schema='#/response_schemas/catalog')
     def api(self):
         """Describe routes from the executable registry, not a packaged document."""
         groups = ['discovery', 'contract', 'sources', 'validation', 'results', 'other']
@@ -295,6 +372,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not callable(getattr(type(self), 'do_' + item['method'], None)):
                 continue
             entry = {key: value for key, value in item.items() if key not in ('handler', 'matcher')}
+            entry['responses'] = dict(item['responses'])
+            if self.server.auth_credentials is not None:
+                entry['responses']['401'] = {'$ref': '#/error_responses/401'}
             entry.setdefault('group', 'other')
             entry.setdefault('order', 0)
             entry['description'] = entry.get('description') or (item['handler'].__doc__ or '').strip()
@@ -340,10 +420,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     entry['order'], entry['path'], {'GET': 0, 'POST': 1}.get(entry['method'], 9)))
         required = self.server.auth_credentials is not None
         self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'], 'groups': groups, 'routes': routes,
-            'authentication': {'required': required, 'scheme': 'Basic' if required else None}},
+            'authentication': {'required': required, 'scheme': 'Basic' if required else None},
+            'response_schemas': RESPONSE_SCHEMAS, 'error_responses': error_responses(),
+            'protocol_responses': {str(code): {'$ref': '#/error_responses/' + str(code)}
+                                   for code in (404, 405, 408, 414, 431, 501)}},
             sort_keys=True).encode())
 
-    @route('GET', '/api/version', group='discovery', order=1)
+    @route('GET', '/api/version', group='discovery', order=1, response_schema='#/response_schemas/version')
     def version(self):
         """Report the tool manifest version captured when this zipapp was generated."""
         self.send_bytes(json.dumps(SERVER_VERSION, sort_keys=True).encode())
@@ -363,7 +446,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         self.send_bytes(ARCHIVE.read('ai_contract/' + asset))
 
-    @route('GET', '/schema/<name>', group='contract', order=2,
+    @route('GET', '/schema/<name>', group='contract', order=2, response_schema='https://json-schema.org/draft/2020-12/schema',
            parameter_sources={'name': 'schemas'})
     def schema_asset(self, name):
         """Retrieve one selected schema: input, a specialist/reviewer, result, or an additional asset."""
@@ -373,7 +456,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         self.send_bytes(ARCHIVE.read('ai_contract/' + asset))
 
-    @route('GET', '/batches', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=0)
+    @route('GET', '/batches', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=0, response_schema='#/response_schemas/batches')
     def batches(self):
         """List batch assignments, member chunk paths and discovery URLs."""
         self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
@@ -381,7 +464,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             'batches': [dict(batch, url='/batch/' + key)
                         for key, batch in listing_page(self.path, BATCHES.items())]}, sort_keys=True).encode())
 
-    @route('GET', '/batch/<batch_id>', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=1, parameter_sources={'batch_id': 'batches'})
+    @route('GET', '/batch/<batch_id>', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=1, parameter_sources={'batch_id': 'batches'}, response_schema='#/response_schemas/batch')
     def batch(self, batch_id):
         """List paired chunk/result URLs in chunks for a batch ID returned by /batches."""
         if batch_id not in BATCHES:
@@ -393,7 +476,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             chunks=[{'chunk': '/chunk/' + name, 'result': '/result/' + name}
                     for name in names]), sort_keys=True).encode())
 
-    @route('GET', '/chunks', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=2)
+    @route('GET', '/chunks', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=2, response_schema='#/response_schemas/chunks')
     def chunks(self):
         """List the run identity and all available source-chunk URLs."""
         self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
@@ -438,7 +521,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_bytes(buf.getvalue())
 
     @route('POST', '/result/<name>', request_content_type='application/json', group='results', order=0, parameter_sources={'name': 'chunks'},
-           request_schema='/schema/result', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES)
+           request_schema='/schema/result', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
+           response_schema='#/response_schemas/upload_ack', response_description='Result validated and atomically stored.',
+           response_example={'status': 'ok'})
     def post_result(self, name):
         """Validate and atomically replace a result for a manifest-listed source_chunk path."""
         if name not in NAMES or not SAFE.fullmatch(name):

@@ -47,6 +47,16 @@ dispatches requests, using handler docstrings and effective route contracts.
 It describes methods, paths, parameters, content types, schema links and upload
 limits. Authentication status comes from the running server; no credentials
 are exposed. `/api` requires authentication whenever the server enables it.
+Each route's `responses` maps HTTP status strings to descriptions, content types,
+schemas and illustrative examples when provided. Resolve catalog-local `$ref`
+values against this `/api` document: `#/response_schemas/...` defines shared body
+schemas and `#/error_responses/...` defines shared error responses. Existing
+`/schema/...` references still identify assessment/input schemas, not acknowledgements.
+`protocol_responses` lists shared routing/protocol errors. Authentication errors
+appear on routes only when enabled; errors always use application/json, including
+for Markdown/ZIP endpoints. ZIP success bodies are marked binary, not JSON.
+Validation returns status valid without storing anything; upload returns status ok.
+Examples are illustrative, not real validation tickets or trusted source metadata.
 This guide explains usage; it does not maintain a second endpoint catalog.
 
 The catalog orders routes by discovery/guide, contract assets, source work,
