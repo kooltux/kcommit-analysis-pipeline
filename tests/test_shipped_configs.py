@@ -20,7 +20,9 @@ def _files(pattern):
 def test_shipped_config_dirs_are_not_empty():
     assert _files('conf.d/*.json')
     assert _files('profiles/*.json')
-    assert _files('ai/*.json')
+    assert {p.name for p in _files('ai/schemas/*.json')} == {
+        'input.json', 'analyst.json', 'cve.json', 'reviewer.json', 'result.json'}
+    assert {p.name for p in _files('ai/prompts/*.md')} == {'analyst.md', 'cve.md', 'reviewer.md', 'assembler.md'}
     assert (CONFIGS / 'example-arm-embedded-full.json').is_file()
 
 
@@ -35,7 +37,7 @@ def test_shipped_profile_parses(path):
     assert isinstance(data, dict) and data.get('rules')
 
 
-@pytest.mark.parametrize('path', _files('ai/*.json'), ids=lambda p: p.name)
+@pytest.mark.parametrize('path', _files('ai/schemas/*.json'), ids=lambda p: p.name)
 def test_shipped_ai_json_parses(path):
     assert isinstance(load_json(str(path)), dict)
 

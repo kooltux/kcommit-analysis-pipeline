@@ -4,6 +4,62 @@ import pytest
 from lib.ai_prompts import read_prompts
 
 
+@pytest.mark.parametrize('role,output,inputs', [
+    ('analyst', 'analyst', ('input',)),
+    ('cve', 'cve', ('input',)),
+    ('reviewer', 'reviewer', ('input', 'analyst', 'cve')),
+    ('assembler', 'result', ('input', 'analyst', 'cve', 'reviewer')),
+])
+def test_role_prompts_direct_model_to_exact_output_contract(role, output, inputs):
+    root = Path(__file__).resolve().parents[1] / 'configs/ai'
+    text = (root / 'prompts' / (role + '.md')).read_text(encoding='utf-8')
+    contract = text.split('## Output contract\n', 1)[1].split('\n\nPOST', 1)[0]
+    assert 'Your response must be a single valid JSON document conforming exactly to' in contract
+    assert f'`{output}.json` (`/schema/{output}`)' in contract
+    assert 'supplied as an attachment or quoted after this prompt' in contract
+    assert 'Return JSON only: no Markdown fences, commentary, explanations' in contract
+    assert 'Do not reproduce the schema itself' in contract
+    assert 'missing, unreadable or conflicting, stop and report' in contract
+    assert 'Before answering, check your document against the supplied output schema' in contract
+    for name in (*inputs, output):
+        assert f'`{name}.json`' in contract
+        assert (root / 'schemas' / (name + '.json')).is_file()
+    if role != 'assembler':
+        assert 'do not use `result.json` as your output schema' in contract
+    else:
+        assert 'without an intermediate role field' in contract
+
+
+@pytest.mark.parametrize('filename,required', [
+    ('analyst.md', ('prefilter-kept commits', 'not pipeline-scored', 'independently',
+                    'Secure Boot', 'SELinux', 'DAC', 'seccomp', 'namespaces',
+                    'locked debug', 'concise and evidence-based', 'rankings',
+                    'cherry-pickability', 'Use maybe', 'not line count alone',
+                    'Treat meta flags as hints', 'Use ["none"] alone')),
+    ('cve.md', ('source-message-only', 'source commit message',
+                'JSON integers from 0 to 100', 'return [] for both arrays')),
+    ('reviewer.md', ('Secure Boot', 'SELinux', 'DAC', 'seccomp', 'namespaces',
+                     'locked debug', 'line count alone', 'source rankings',
+                     'Do not rewrite specialist ai_* values')),
+    ('assembler.md', ('operator-selected batches, chunks and limit/offset',
+                      'full source_chunk path', 'one final result per source chunk',
+                      'Do not apply recommendations from rv_recommendation strings.')),
+])
+def test_legacy_policy_has_explicit_role_owners(filename, required):
+    root = Path(__file__).resolve().parents[1] / 'configs/ai/prompts'
+    text = (root / filename).read_text(encoding='utf-8')
+    assert all(fragment in text for fragment in required)
+
+
+@pytest.mark.parametrize('role', ['analyst', 'cve'])
+def test_intermediate_validation_is_not_prohibited(role):
+    root = Path(__file__).resolve().parents[1] / 'configs/ai/prompts'
+    text = (root / (role + '.md')).read_text(encoding='utf-8')
+    assert '/validate/role/' + role + '/<name>' in text
+    assert 'Never upload this intermediate document to /result/<name>' in text
+    assert 'Do not POST or PUT this' not in text
+
+
 def test_sorted_flat_snapshots(tmp_path):
     (tmp_path / 'z.md').write_bytes(b'# Z\n')
     (tmp_path / 'analyst.md').write_bytes(b'# Analyst\n')

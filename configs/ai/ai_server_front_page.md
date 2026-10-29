@@ -88,6 +88,33 @@ evidence, and return results conforming to `/schema/result`. This API guide
 explains access and submission; it does not replace those assessment instructions.
 Do not infer that a missing result is a negative assessment.
 
+### Role workflow
+
+The client orchestrates this workflow for each selected chunk. The server serves
+assets and validates documents; it does not run AI models or invoke the roles.
+
+1. Analyst and CVE expert independently read the same original chunk and metadata.
+   Analyst assesses non-CVE classifications, product impact, backport effort and
+   recommendations under `/prompt/analyst` and `/schema/analyst`. Validate its
+   complete intermediate document at `/validate/role/analyst/<name>`.
+2. CVE expert owns supported CVE IDs and their probabilities under `/prompt/cve`
+   and `/schema/cve`; it does not rewrite Analyst assessments. Validate its
+   complete intermediate document at `/validate/role/cve/<name>`. Both specialist
+   outputs must pass their gates before being passed to Reviewer.
+3. Reviewer reads the original chunk and both validated specialist outputs. It
+   checks evidence, identities, coverage and uncertainty under `/prompt/reviewer`
+   and `/schema/reviewer`, recording agreement or proposed corrections in `rv_*`
+   without rewriting specialist values. Validate the complete review document at
+   `/validate/role/reviewer/<name>` before passing all three outputs to Assembler.
+4. Assembler mechanically joins validated contributions by full commit SHA under
+   `/prompt/assembler`, preserving values exactly. Do not apply review recommendations.
+   Produce one `/schema/result` document per chunk. Mark missing contributions as
+   partial; never fabricate assessments or merge different chunks.
+5. POST an object containing exactly `analyst`, `cve`, `reviewer` and `result`
+   documents to `/validate/workflow/<name>`. All gates require HTTP 200 and
+   `status: valid` and store nothing. Only after workflow validation, POST the
+   unchanged final result to `/result/<name>` and GET that URL to verify acceptance.
+
 ### Using this server
 
 1. Retrieve `/api` and `/contract`, then the listed `/prompt/<name>` and `/schema/<name>` assets.
@@ -95,13 +122,8 @@ Do not infer that a missing result is a negative assessment.
    `offset`. Use its run ID and URLs exactly; do not guess filenames or replace
    a debug subset or single-batch retry with the unrestricted global listing.
 3. Download a listed chunk and `/metadata/<name>`. Copy authoritative identity and
-   checksum fields from that metadata, never from LLM calculations. Execute Analyst
-   and CVE separately, then Reviewer, then Assembler. Preserve specialist/reviewer
-   values without applying recommendations. POST each intermediate document to
-   `/validate/role/<role>/<name>` and the object containing exactly analyst, cve,
-   reviewer and result documents to `/validate/workflow/<name>`. Require HTTP 200
-   and `{"status":"valid", ...}` before proceeding. Gates store no results; the
-   workflow gate checks cross-role coverage and exact assembly preservation.
+   checksum fields from that metadata, never from LLM calculations. Follow the role
+   workflow above, including every validation gate, without expanding selected work.
 4. Build a schema-conforming result. Use partial status if only a subset was
    assessed; do not fabricate results or unsupported CVE IDs.
 5. When authorized, submit to `POST /result/<name>`.

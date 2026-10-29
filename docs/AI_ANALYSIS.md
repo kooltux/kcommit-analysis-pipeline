@@ -84,7 +84,28 @@ Basic role prompts are in `configs/ai/prompts/`: Analyst (`analyst.md`), CVE
 expert (`cve.md`), Reviewer (`reviewer.md`) and Assembler (`assembler.md`).
 The Reviewer emits only review fields; the Assembler preserves the validated
 specialist and review values in the final document without applying corrections.
-The legacy `configs/ai/ai_analysis_prompt.md` is not the selected role contract.
+The obsolete single-prompt and result-schema configuration files have been removed;
+use the selected `prompts/` and `schemas/` directories. Generated package snapshots
+retain their existing filenames and checksums for package/import validation;
+they are derived from the selected assets, not the removed configuration files.
+Each role prompt directly instructs the model to return one JSON document matching
+its supplied output schema: Analyst uses `analyst.json`, CVE uses `cve.json`,
+Reviewer uses `reviewer.json`, and Assembler uses `result.json`. Supply the relevant
+input and output schemas as attachments or quoted content after the prompt.
+Intermediate outputs must not use the final-result schema. A missing, unreadable
+or conflicting required schema stops the task instead of producing guessed JSON.
+
+The legacy assessment policy is distributed by responsibility, not discarded:
+
+| Policy | Owner |
+| --- | --- |
+| Prefilter-kept inputs, independent product assessment, evidence and uncertainty | Analyst |
+| Explicit mitigation safeguards, concise rationales, effort beyond line counts | Analyst; Reviewer checks |
+| Source-message-only CVEs, empty unsupported matches, aligned integer percentages | CVE expert; Reviewer checks |
+| Preserve source metadata, scores, rankings and cherry-pickability | Analyst and Reviewer |
+| Risk `none` alone, advisory decisions and `maybe` for insufficient evidence | Analyst |
+| Trusted identities, full SHA joins, exact value preservation and coverage | All roles; Assembler joins |
+| Batch selection, pagination, POST/GET verification and export | Shared server guide; workflow orchestration |
 
 Stage 08 packages every selected prompt and serves `/prompt/<name>`.
 `/contract` lists assets; the bare prompt URL is removed. Do not upload specialist

@@ -23,7 +23,7 @@ def test_front_page_is_shared_api_reference():
 def test_current_client_docs_do_not_advertise_removed_api():
     root = PAGE.parents[2]
     paths = [PAGE, root / 'README.md', root / 'docs/AI_ANALYSIS.md',
-             root / 'docs/CONFIGURATION.md', root / 'configs/ai/ai_analysis_prompt.md',
+             root / 'docs/CONFIGURATION.md',
              root / 'configs/ai/prompts/assembler.md']
     for path in paths:
         text = path.read_text(encoding='utf-8')
@@ -32,6 +32,20 @@ def test_current_client_docs_do_not_advertise_removed_api():
                          '--upload-file', '/prompt/<role>'):
             assert obsolete not in text, (path, obsolete)
     assert '--data-binary @result.json' in PAGE.read_text(encoding='utf-8')
+
+
+def test_front_page_explains_role_handoffs_and_validation():
+    text = PAGE.read_text(encoding='utf-8')
+    start = text.index('### Role workflow')
+    end = text.index('### Using this server')
+    workflow = text[start:end]
+    for fragment in ('Analyst and CVE expert', 'Reviewer', 'Assembler',
+                     '/validate/role/analyst/<name>', '/validate/role/cve/<name>',
+                     '/validate/role/reviewer/<name>', '/validate/workflow/<name>',
+                     'rv_*', 'full commit SHA', 'Do not apply review recommendations',
+                     'partial', 'store nothing', 'does not run AI models'):
+        assert fragment in workflow
+    assert workflow.index('3. Reviewer') < workflow.index('4. Assembler') < workflow.index('5. POST')
 
 
 def test_front_page_chapters_are_ordered_and_examples_are_technical():

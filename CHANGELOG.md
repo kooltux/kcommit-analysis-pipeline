@@ -9,6 +9,9 @@ All notable changes to this project are documented in this file.
 - Consolidate server clients on named `/prompt/<name>` and `/schema/<name>`
   assets and POST-only result uploads. The usage guide is served at `/`;
   removed aliases are not advertised by the API catalog.
+- Remove obsolete `configs/ai/ai_analysis_prompt.md` and
+  `configs/ai/ai_analysis_result_schema.json` after migrating policy and fields
+  to role prompts/schemas. Retain generated package snapshots and import checks.
 
 ### Fixed
 
