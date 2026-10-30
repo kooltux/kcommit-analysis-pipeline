@@ -1,16 +1,20 @@
 #!/bin/bash
 #
-# run_tests - run the unit tests (extra arguments are passed to pytest).
+# run_tests - run the unit tests in parallel (pytest-xdist, one worker per logical
+# CPU). Extra arguments are passed to pytest unchanged, and a later -n option wins:
+#   ./run_tests -n 4          four workers
+#   ./run_tests -n 0 --pdb    serial run, e.g. for interactive debugging
 #
 #   * colored output on the terminal (when stdout is a terminal)
-#   * uncolored log in $KCAP_TEST_LOG (default: /tmp/kcommit-analysis-pipeline.log)
+#   * uncolored log in $KCAP_TEST_LOG (default: /tmp/kcommit-analysis-pipeline.log),
+#     starting with the invocation, the pytest command line and the directory
 #   * copy of that log in the clipboard (xclip -selection clipboard), when xclip
 #     is installed and a display is available
 #
 # Where the output goes is announced before the tests start and repeated at the
 # end (the beginning of a long output is easily missed).
 #
-# The exit status is the one of pytest.
+# The exit status is the one of pytest; each invocation runs pytest exactly once.
 
 # we must be in top dir...
 cd "$(dirname "$0")" || exit 1
@@ -39,10 +43,21 @@ fi
 echo "run_tests: this output is also available (uncolored) in the file $LOG"
 echo "run_tests: the log $CLIP_PLAN"
 
-# to run pytest correctly . path matters :)
-# (our --color comes first: an explicit --color given by the caller wins)
-python3 -m pytest --color="$COLOR" "$@" 2>&1 | tee "$RAW"
+# The default options come first: an explicit --color or -n given by the caller wins.
+PYTEST_ARGS=(--color="$COLOR" -n logical "$@")
+
+# The invocation is recorded first, so that the log holds everything.
+printf -v INVOKED '%q ' "$0" "$@"
+printf -v PYTEST_CMD '%q ' python3 -m pytest "${PYTEST_ARGS[@]}"
+{
+    echo "run_tests: invoked as: $INVOKED"
+    echo "run_tests: pytest command: $PYTEST_CMD"
+    echo "run_tests: working directory: $WORKSPACE"
+} | tee "$RAW"
+
+python3 -m pytest "${PYTEST_ARGS[@]}" 2>&1 | tee -a "$RAW"
 STATUS=${PIPESTATUS[0]}
+
 
 # uncolored log: strip ANSI escape sequences and carriage returns
 sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\r$//' "$RAW" > "$LOG"

@@ -492,8 +492,18 @@ utilities, and integration scenarios.
 ./run_tests
 ```
 
+See [test runner details](docs/TEST_RUNNER.md).
+
 The `run_tests` script automatically sets the `WORKSPACE` environment variable
 to the current directory and invokes `python3 -m pytest` with the correct paths.
+`./run_tests` runs the tests in parallel (`-n logical`, one `pytest-xdist` worker per
+logical CPU; `pytest-xdist[psutil]` is in `requirements-dev.txt`). Extra arguments are
+passed to pytest unchanged and a later `-n` wins (`./run_tests -n 4`). For a serial run,
+in particular for debugging with `--pdb`, use `./run_tests -n 0 --pdb`. Tests must stay
+independent: use `tmp_path`, `monkeypatch` and port 0, never fixed paths or ports.
+
+Pytest runs exactly once, even on failure; its output is logged and copied to the
+clipboard and its exit status is preserved. `./run_tests -h` shows pytest help.
 
 **Manual invocation:**
 
