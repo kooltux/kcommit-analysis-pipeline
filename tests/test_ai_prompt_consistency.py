@@ -37,6 +37,21 @@ def test_prompts_do_not_use_invented_fields_or_stale_wording(role):
     assert [phrase for phrase in STALE_PHRASES if phrase in text] == []
 
 
+@pytest.mark.parametrize('role', ROLES)
+def test_prompts_require_unfenced_json_responses(role):
+    text = prompt(role)
+    assert 'its first character must be `{` and its last character `}`' in text
+    assert 'Never wrap the document in a Markdown code fence' in text
+    assert 'no Markdown code fences of any kind' in text
+
+
+def test_fenced_examples_are_marked_for_readability_only():
+    text = prompt('reviewer')
+    assert '```json' in text and 'never fence your response' in text
+    for role in ('analyst', 'cve', 'assembler'):
+        assert '```' not in prompt(role).replace('`{`', '').replace('`}`', '')
+
+
 def test_assembler_never_alters_specialist_values():
     text = prompt('assembler')
     assert 'unchanged' in text

@@ -343,6 +343,11 @@ Negotiable responses carry `Vary: Accept`, and their catalog 200 entry lists
 (always `application/json`) are never negotiated. The alternative changes only the
 media type, not the schema or content.
 
+JSON bodies must be raw JSON. A 400 whose message ends with "a Markdown code fence
+starts at this position" means the body, or one embedded document such as `result`,
+was wrapped in a fence; remove it. The hint changes no acceptance rule. Role prompts
+require the first character of every response to be `{` and forbid fences.
+
 ### Saving POSTs for diagnostics
 
 `serve_ai.pyz -s` (`--save-posts`, independent of `-d`) keeps the latest POST per

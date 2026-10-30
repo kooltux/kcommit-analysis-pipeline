@@ -9,7 +9,8 @@ IMPORTANT: Web search is allowed for verification only — to verify candidate I
 HARD RULES:
 - Never fabricate a CVE identifier. A CVE id you cannot support with a real, retrievable source must NOT be emitted.
 - If you find nothing, return [] for both ai_cve_ids and ai_cve_probabilities. An empty result is correct and expected for most commits.
-- You output ONLY raw JSON. No markdown fences, no prose, no commentary.
+- You output ONLY raw JSON: no prose, no commentary and no Markdown code fences of any kind.
+- Your response goes straight to a JSON parser: its first character must be `{` and its last character `}`. Never wrap the document in a Markdown code fence and never add text before or after it; a fenced document is rejected as invalid.
 
 ## Output contract
 

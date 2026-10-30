@@ -55,7 +55,13 @@ def decode_json(data):
         return value
     def invalid_constant(value):
         raise ValueError('Invalid JSON constant: ' + value)
-    return json.loads(data.decode('utf-8'), object_pairs_hook=unique, parse_constant=invalid_constant)
+    text = data.decode('utf-8')
+    try:
+        return json.loads(text, object_pairs_hook=unique, parse_constant=invalid_constant)
+    except json.JSONDecodeError as exc:
+        if text.startswith('```', exc.pos):
+            raise ValueError('%s; a Markdown code fence starts at this position, send raw JSON without fences' % exc) from None
+        raise
 
 def validate(name, value):
     if name not in NAMES or not SAFE.fullmatch(name):

@@ -28,6 +28,12 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Stop fenced model output: every role prompt now requires a response that starts
+  with `{` and ends with `}` and forbids Markdown code fences (the assembler had
+  wrapped `result` in a fence, which the server rejected). A rejected body whose
+  JSON error position starts a fence now says so in the 400 message; acceptance
+  rules are unchanged.
+
 - Align role prompts with the supplied schemas: remove invented fields
   (`likely_has_cve`, `cve_match_status`, reviewer corrections and rejected CVE
   lists), keep the Assembler a pure copier of specialist values, restrict CVE
