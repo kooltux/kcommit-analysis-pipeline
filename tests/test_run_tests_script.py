@@ -9,17 +9,18 @@ SCRIPT = Path(__file__).resolve().parents[1] / 'run_tests'
 DEFAULT = ['-m', 'pytest', '--color=no', '-n', 'logical']
 
 
-def invoke(tmp_path, status=0, args=(), display=False):
+def invoke(tmp_path, status=0, args=(), display=False, xdist=True):
     bindir = tmp_path / 'bin'
     bindir.mkdir()
     python = bindir / 'python3'
-    python.write_text('#!/bin/bash\nprintf "ARG:%s\\n" "$@"\necho "FAILED tests/x.py::test_it"\nexit "$STATUS"\n')
+    python.write_text('#!/bin/bash\nif [ "$1" = -c ]; then [ "$FAKE_XDIST" = yes ]; exit; fi\nprintf "ARG:%s\\n" "$@"\necho "FAILED tests/x.py::test_it"\nexit "$STATUS"\n')
     python.chmod(0o700)
     clip = bindir / 'xclip'
     clip.write_text('#!/bin/bash\ncat > "$CLIP"\necho copied >> "$CLIP_COUNT"\n')
     clip.chmod(0o700)
     env = {key: value for key, value in os.environ.items() if key != 'DISPLAY'}
     env.update(PATH=str(bindir) + os.pathsep + env['PATH'], STATUS=str(status),
+               FAKE_XDIST='yes' if xdist else 'no',
                CLIP=str(tmp_path / 'clip'), CLIP_COUNT=str(tmp_path / 'clip-count'),
                KCAP_TEST_LOG=str(tmp_path / 'run.log'))
     if display:
@@ -39,6 +40,18 @@ def test_arguments_are_forwarded_unchanged_and_later_n_wins(tmp_path):
     args = ('-n', '4', '-k', 'alpha or beta', '--', '-n8', 'a b')
     result, forwarded, log = invoke(tmp_path, args=args)
     assert forwarded == [*DEFAULT, *args]
+
+
+def test_serial_run_without_xdist(tmp_path):
+    result, forwarded, log = invoke(tmp_path, args=('tests/x.py',), xdist=False)
+    assert forwarded == ['-m', 'pytest', '--color=no', 'tests/x.py']
+    assert 'run_tests: tests run by default serially (pytest-xdist not available)' in log
+    assert result.returncode == 0
+
+
+def test_log_announces_the_parallel_default(tmp_path):
+    result, forwarded, log = invoke(tmp_path)
+    assert 'run_tests: tests run by default in parallel (-n logical)' in log
 
 
 def test_serial_run_can_be_requested(tmp_path):

@@ -1,7 +1,8 @@
 #!/bin/bash
 #
 # run_tests - run the unit tests in parallel (pytest-xdist, one worker per logical
-# CPU). Extra arguments are passed to pytest unchanged, and a later -n option wins:
+# CPU; serial run when pytest-xdist is not installed). Extra arguments are passed to
+# pytest unchanged, and a later -n option wins:
 #   ./run_tests -n 4          four workers
 #   ./run_tests -n 0 --pdb    serial run, e.g. for interactive debugging
 #
@@ -43,8 +44,16 @@ fi
 echo "run_tests: this output is also available (uncolored) in the file $LOG"
 echo "run_tests: the log $CLIP_PLAN"
 
-# The default options come first: an explicit --color or -n given by the caller wins.
-PYTEST_ARGS=(--color="$COLOR" -n logical "$@")
+# Default options: parallel run when pytest-xdist is installed, serial otherwise.
+# They come first: an explicit --color or -n given by the caller wins.
+DEFAULTS=(--color="$COLOR")
+PLAN="in parallel (-n logical)"
+if python3 -c 'import xdist' >/dev/null 2>&1; then
+    DEFAULTS+=(-n logical)
+else
+    PLAN="serially (pytest-xdist not available)"
+fi
+PYTEST_ARGS=("${DEFAULTS[@]}" "$@")
 
 # The invocation is recorded first, so that the log holds everything.
 printf -v INVOKED '%q ' "$0" "$@"
@@ -53,11 +62,11 @@ printf -v PYTEST_CMD '%q ' python3 -m pytest "${PYTEST_ARGS[@]}"
     echo "run_tests: invoked as: $INVOKED"
     echo "run_tests: pytest command: $PYTEST_CMD"
     echo "run_tests: working directory: $WORKSPACE"
+    echo "run_tests: tests run by default $PLAN"
 } | tee "$RAW"
 
 python3 -m pytest "${PYTEST_ARGS[@]}" 2>&1 | tee -a "$RAW"
 STATUS=${PIPESTATUS[0]}
-
 
 # uncolored log: strip ANSI escape sequences and carriage returns
 sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\r$//' "$RAW" > "$LOG"

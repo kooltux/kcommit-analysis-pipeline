@@ -4,16 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v21.3.1 — Parallel test runner (2026-10-30)
+
 ### Changed
 
-- `run_tests` stays a single simple pytest wrapper: it runs pytest with `-n logical`
-  (parallel on all logical CPUs) before the caller's arguments, which are forwarded
-  unchanged, so a later `-n` wins (`./run_tests -n 0 --pdb` for a serial debugging
-  run). `pytest-xdist[psutil]` is added to `requirements-dev.txt`. Pytest runs
-  exactly once even on failure, with the complete report captured in the log and
-  clipboard and the exit status preserved. The log starts with the invocation as
-  typed, the resulting pytest command line and the working directory. Tests are in
-  `tests/test_run_tests_script.py`.
+- `run_tests` now runs the tests in parallel by default: it adds `-n logical` (one
+  `pytest-xdist` worker per logical CPU, faster than `-n auto` on hyperthreaded
+  machines) before the caller's arguments, which are forwarded unchanged, so a later
+  `-n` wins (`./run_tests -n 0 --pdb` for a serial debugging run). The option is only
+  added when `pytest-xdist` is importable; otherwise the tests run serially and the
+  log says so. `pytest-xdist[psutil]` is added to `requirements-dev.txt`.
+- Pytest runs exactly once even on failure, with the complete report captured in the
+  log and clipboard and the exit status preserved. The log now starts with the
+  invocation as typed, the resulting pytest command line, the working directory and
+  the default worker plan.
+
+### Added
+
+- `docs/TEST_RUNNER.md` and `tests/test_run_tests_script.py` (stubbed `python3`:
+  default options, serial fallback, argument forwarding, log, clipboard, invocation
+  lines and exit status).
 
 ## v21.3.0 — Accept negotiation, POST capture and response-aware API catalog (2026-10-30)
 

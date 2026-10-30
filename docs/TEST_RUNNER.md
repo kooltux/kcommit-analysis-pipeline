@@ -17,6 +17,11 @@ options come first, so yours win:
 Interactive debugging (`--pdb`, `-s`, `--trace`) does not work with parallel workers:
 add `-n 0`. The script does not detect these options on purpose.
 
+The default `-n logical` is only added when `pytest-xdist` can be imported by
+`python3`. Without it the tests run serially, the log says so
+(`run_tests: tests run by default serially (pytest-xdist not available)`) and an
+explicit `-n` of yours is rejected by pytest as an unknown option.
+
 `pytest-xdist[psutil]` is listed in `requirements-dev.txt`. Tests must stay
 independent: use `tmp_path`, `monkeypatch` and port 0, never fixed paths or ports.
 
@@ -35,5 +40,6 @@ lines are printed on the terminal.
 ## Tests
 
 `tests/test_run_tests_script.py` checks, with a stubbed `python3`, the `-n logical`
-default, argument forwarding (a later `-n` wins), the single run, the log, the
+default, the serial fallback without `pytest-xdist`, argument forwarding (a later `-n`
+wins), the single run, the log, the
 clipboard copy, the invocation lines and the exit status.
