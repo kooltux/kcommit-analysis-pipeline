@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v21.3.0 — Accept negotiation, POST capture and response-aware API catalog (2026-10-30)
+
 ### Migration
 
 - Consolidate server clients on named `/prompt/<name>` and `/schema/<name>`

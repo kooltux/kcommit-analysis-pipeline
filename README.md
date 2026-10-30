@@ -10,7 +10,7 @@ folders through `--results-bundle PATH`; commit SHA, run identity and schema
 validation are independent of file grouping. See
 [AI import details](docs/AI_ANALYSIS.md#import-grouping-and-progress).
 
-Current release: `v21.2.0` — directory-based AI contracts, portable role/workflow validation, trusted metadata, and structured API discovery. See [AI workflow and configuration migration](docs/AI_ANALYSIS.md#directory-only-integration).
+Current release: `v21.3.0` — `Accept: text/plain` negotiation, `--save-posts` diagnostics, a response-aware API catalog, and fence-safe role prompts. See [AI workflow and configuration migration](docs/AI_ANALYSIS.md#directory-only-integration).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
