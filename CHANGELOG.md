@@ -13,6 +13,14 @@ All notable changes to this project are documented in this file.
   `configs/ai/ai_analysis_result_schema.json` after migrating policy and fields
   to role prompts/schemas. Retain generated package snapshots and import checks.
 
+### Added
+
+- Honor `Accept: text/plain` on JSON and Markdown responses: the same body is
+  returned as `text/plain; charset=utf-8` with `Vary: Accept` when text/plain is
+  explicitly preferred over the route's default type. ZIP downloads and error
+  bodies are never negotiated, wildcards and missing headers keep the default,
+  and the `/api` catalog lists `alternative_content_types` on eligible routes.
+
 ### Fixed
 
 - Align role prompts with the supplied schemas: remove invented fields

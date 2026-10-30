@@ -57,6 +57,10 @@ appear on routes only when enabled; errors always use application/json, includin
 for Markdown/ZIP endpoints. ZIP success bodies are marked binary, not JSON.
 Validation returns status valid without storing anything; upload returns status ok.
 Examples are illustrative, not real validation tickets or trusted source metadata.
+JSON and Markdown responses can be requested as plain text with `Accept: text/plain`
+(listed as `alternative_content_types` in the catalog): the body is identical and only
+the media type changes. A default-type entry with an equal or higher q keeps the default;
+ZIP downloads and errors are never converted.
 This guide explains usage; it does not maintain a second endpoint catalog.
 
 The catalog orders routes by discovery/guide, contract assets, source work,

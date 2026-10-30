@@ -95,8 +95,10 @@ def running(app, flag='--no-daemon', auth=None, daemon=False, file_logging=True)
                     raise
 
 
-def request(port, path, method='GET', authorization=None, body=None):
+def request(port, path, method='GET', authorization=None, body=None, accept=None):
     headers = {} if authorization is None else {'Authorization': authorization}
+    if accept is not None:
+        headers['Accept'] = accept
     if body is not None and method == 'POST':
         headers['Content-Type'] = 'application/json'
     connection = http.client.HTTPConnection('127.0.0.1', port, timeout=3)

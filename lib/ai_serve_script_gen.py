@@ -177,6 +177,45 @@ def error_responses():
     return responses
 
 
+NEGOTIABLE = ('application/json', 'text/markdown')
+PLAIN_TEXT = 'text/plain; charset=utf-8'
+
+
+def base_type(kind):
+    return kind.split(';', 1)[0].strip().lower()
+
+
+def accept_ranges(header):
+    """Parse Accept media ranges into {range: q}; malformed items are ignored."""
+    ranges = {}
+    for item in (header or '').split(','):
+        parts = [part.strip() for part in item.split(';')]
+        media = parts[0].lower()
+        if '/' not in media:
+            continue
+        quality = 1.0
+        for parameter in parts[1:]:
+            name, _, value = parameter.partition('=')
+            if name.strip().lower() == 'q':
+                try:
+                    quality = float(value.strip())
+                except ValueError:
+                    quality = -1.0
+        if 0 <= quality <= 1:
+            ranges[media] = max(quality, ranges.get(media, 0.0))
+    return ranges
+
+
+def negotiate(header, default):
+    """Return text/plain only for JSON/Markdown routes when explicitly preferred."""
+    base = base_type(default)
+    if base not in NEGOTIABLE:
+        return default
+    ranges = accept_ranges(header)
+    plain = ranges.get('text/plain', 0.0)
+    return PLAIN_TEXT if plain > 0 and plain > ranges.get(base, 0.0) else default
+
+
 def route(method, path, content_type='application/json', **contract):
     """Register an executable route and its machine-readable contract together."""
     parameters = re.findall(r'<([a-z_]+)>', path)
@@ -197,6 +236,8 @@ def route(method, path, content_type='application/json', **contract):
             success['schema'] = {'type': 'string'}
             if content_type == 'application/zip':
                 success['body_encoding'] = 'binary'
+        if base_type(content_type) in NEGOTIABLE:
+            success['alternative_content_types'] = ['text/plain']
         if 'response_example' in contract:
             success['example'] = contract.pop('response_example')
         responses = {'200': success, '500': {'$ref': '#/error_responses/500'}}
@@ -330,8 +371,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def send_bytes(self, data, kind=None):
         kind = kind or getattr(self, 'active_route', {}).get('response_content_type', 'application/json')
+        negotiable = base_type(kind) in NEGOTIABLE
+        if negotiable:
+            headers = getattr(self, 'headers', None)
+            kind = negotiate(headers.get('Accept') if headers is not None else None, kind)
         self.send_response(200)
         self.send_header('Content-Type', kind)
+        if negotiable:
+            self.send_header('Vary', 'Accept')
         self.send_header('Content-Length', str(len(data)))
         self.end_headers()
         self.wfile.write(data)

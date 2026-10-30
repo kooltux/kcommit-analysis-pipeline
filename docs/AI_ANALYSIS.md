@@ -334,6 +334,15 @@ Examples are illustrative and cannot authorize storage or supply trusted identit
 This is additive discovery metadata: response bodies, validation rules and storage
 behavior do not change. Regenerate the zipapp to expose the new response contracts.
 
+JSON and Markdown routes honor `Accept: text/plain`: the identical body is returned
+as `text/plain; charset=utf-8` when `text/plain` is listed with q > 0 and with a
+higher q than the route's default type (an equal q keeps the default). Wildcards,
+malformed items and a missing header keep the default; a 406 is never returned.
+Negotiable responses carry `Vary: Accept`, and their catalog 200 entry lists
+`alternative_content_types: ["text/plain"]`. ZIP downloads and error bodies
+(always `application/json`) are never negotiated. The alternative changes only the
+media type, not the schema or content.
+
 API entries are sorted by discovery/guide, contract assets, sources, validation,
 and results/export, independent of decorator registration order. Per-route `group`
 and `order` metadata remain in the executable registry. `path_parameters` describe
