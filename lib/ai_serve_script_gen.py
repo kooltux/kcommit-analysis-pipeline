@@ -177,6 +177,100 @@ def error_responses():
     return responses
 
 
+NL = chr(10)
+SAVE_DIR = os.path.abspath(sys.argv[0]) + '.debug'
+SAVE_PART = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*')
+REDACTED_HEADERS = ('authorization', 'proxy-authorization', 'cookie')
+
+
+def fenced(text, language=''):
+    """Fence text with more backticks than any run it contains."""
+    longest = max([len(run) for run in re.findall(r'`+', text)] + [2])
+    fence = '`' * (longest + 1)
+    return fence + language + NL + text + NL + fence + NL
+
+
+def write_atomic(path, data):
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, temp = tempfile.mkstemp(dir=directory, prefix='.save-')
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(data)
+        os.replace(temp, path)
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
+
+def exchange_report(handler, route, status, outcome, note):
+    """Render request context, request headers, response headers and body as Markdown."""
+    shown = handler.path.replace('`', '%60')
+    request_lines = [handler.requestline]
+    for key, value in handler.headers.items():
+        if key.lower() in REDACTED_HEADERS:
+            scheme = value.split(None, 1)[0] if key.lower() != 'cookie' and value.split() else ''
+            value = (scheme + ' ***').strip()
+        request_lines.append(key + ': ' + value)
+    response_headers = getattr(handler, '_resp_headers', [])
+    reason = handler.responses.get(status, ('',))[0]
+    response_lines = ['%s %s %s' % (handler.protocol_version, status, reason)]
+    response_lines += [key + ': ' + value for key, value in response_headers]
+    kinds = dict((key.lower(), value) for key, value in response_headers)
+    language = 'json' if kinds.get('content-type', '').startswith('application/json') else ''
+    response_body = getattr(handler, '_resp_body', b'').decode('utf-8', 'replace')
+    context = ['- Time (UTC): ' + time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+               '- Client: ' + str(handler.client_address[0]),
+               '- Method: ' + handler.command,
+               '- Target: `' + shown + '`',
+               '- Route: `' + route['path'] + '`',
+               '- Outcome: ' + outcome + ' (HTTP ' + str(status) + ')',
+               '- Body: ' + note]
+    sections = ['# ' + handler.command + ' `' + shown.split('?', 1)[0] + '`', '',
+                '## Request context', ''] + context + [
+                '', '## Request headers', '', fenced(NL.join(request_lines), 'http'),
+                '## Response headers', '', fenced(NL.join(response_lines), 'http'),
+                '## Response body', '', fenced(response_body, language)]
+    return NL.join(sections).encode('utf-8')
+
+
+def save_post(handler, directory):
+    """Keep the latest POST body and Markdown exchange report for diagnostics."""
+    route = handler.__dict__.get('active_route')
+    status = getattr(handler, '_resp_status', None)
+    if (route is None or route['method'] != 'POST' or not route.get('request_content_type')
+            or status is None or status == 404):
+        return
+    parts = [part for part in handler.path.split('?', 1)[0].split('/') if part]
+    if len(parts) < 2 or not all(SAVE_PART.fullmatch(part) for part in parts):
+        return
+    outcome = 'ok' if status == 200 else 'error'
+    base = os.path.join(directory, parts[0], outcome, *parts[1:])
+    body = getattr(handler, '_req_body', None)
+    duplicate = None
+    if body is not None and status == 200 and parts[0] == 'result':
+        duplicate = os.path.join(RESULTS, *parts[1:])
+        try:
+            with open(duplicate, 'rb') as stream:
+                if stream.read() != body:
+                    duplicate = None
+        except OSError:
+            duplicate = None
+    if body is None:
+        note = 'not read; the request was rejected before its body was read.'
+    else:
+        facts = '%d bytes, sha256 %s' % (len(body), checksum(body))
+        if duplicate:
+            note = 'not duplicated; byte-identical to the stored result `%s` (%s).' % (duplicate, facts)
+        else:
+            note = 'saved as `%s` (%s).' % (os.path.basename(base), facts)
+    if body is not None and duplicate is None:
+        write_atomic(base, body)
+    elif os.path.exists(base):
+        os.unlink(base)
+    write_atomic(base + '.md', exchange_report(handler, route, status, outcome, note))
+
+
 NEGOTIABLE = ('application/json', 'text/markdown')
 PLAIN_TEXT = 'text/plain; charset=utf-8'
 
@@ -271,6 +365,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.command = None
         self.path = ''
         self.request_version = 'HTTP/1.0'
+        self.__dict__.pop('active_route', None)
+        self._req_body = None
+        self._resp_status = None
+        self._resp_headers = []
+        self._resp_body = b''
         try:
             super().handle_one_request()
         except ConnectionError:
@@ -286,6 +385,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     pass
         finally:
             self._handling = False
+            self.save_exchange()
             if self.raw_requestline or self._reason:
                 self.log_request(self._status if self._status is not None else '-')
 
@@ -339,6 +439,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         message = self.responses.get(code, ('Request failed',))[0] if message is None or code >= 500 else str(message)
         data = json.dumps({'error': {'code': names.get(code, 'http_error'),
                                    'status': code, 'message': message}}, sort_keys=True).encode('utf-8')
+        self._resp_body = data
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(data)))
@@ -365,11 +466,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if len(types) != 1 or types[0].split(';', 1)[0].strip().lower() != 'application/json':
             raise ValueError('One application/json Content-Type is required')
         data = self.rfile.read(length)
+        self._req_body = data
         if len(data) != length:
             raise ValueError('Truncated JSON body')
         return data, decode_json(data)
 
+    def send_response(self, code, message=None):
+        self._resp_status = code
+        self._resp_headers = []
+        super().send_response(code, message)
+
+    def send_header(self, keyword, value):
+        headers = getattr(self, '_resp_headers', None)
+        if headers is not None:
+            headers.append((keyword, str(value)))
+        super().send_header(keyword, value)
+
+    def save_exchange(self):
+        directory = getattr(getattr(self, 'server', None), 'save_dir', None)
+        if directory is None:
+            return
+        try:
+            save_post(self, directory)
+        except Exception as exc:
+            self.server.access_logger.warning('SERVER save_posts failed reason=%s', type(exc).__name__)
+
     def send_bytes(self, data, kind=None):
+        self._resp_body = data
         kind = kind or getattr(self, 'active_route', {}).get('response_content_type', 'application/json')
         negotiable = base_type(kind) in NEGOTIABLE
         if negotiable:
@@ -607,6 +730,8 @@ def build_parser():
     parser.add_argument('-l', '--log-file', metavar='PATH',
                         help='Log only to this file; required in daemon mode')
     parser.add_argument('--auth', metavar='USER:PASSWORD', help='Require HTTP Basic authentication')
+    parser.add_argument('-s', '--save-posts', action='store_true',
+                        help='Save the latest POST body and a Markdown exchange report per path under <zipapp>.debug')
     return parser
 
 
@@ -670,6 +795,14 @@ def main(argv=None):
         parser.error('-l/--log-file PATH must not be empty')
     if not args.no_daemon and not hasattr(os, 'fork'):
         parser.error('Background operation requires Unix; use --no-daemon')
+    save_dir = None
+    if args.save_posts:
+        save_dir = SAVE_DIR
+        try:
+            os.makedirs(save_dir, mode=0o700, exist_ok=True)
+            os.chmod(save_dir, 0o700)
+        except OSError:
+            parser.error('Cannot create the --save-posts directory ' + save_dir)
     log_path = os.path.abspath(args.log_file) if args.log_file is not None else None
     logger = logging.getLogger('kcommit-ai-server')
     logger.setLevel(logging.INFO)
@@ -693,12 +826,15 @@ def main(argv=None):
         server = http.server.HTTPServer((args.host, args.port), Handler)
         server.access_logger = logger
         server.auth_credentials = credentials
+        server.save_dir = save_dir
         signal.signal(signal.SIGTERM, stop_server)
         signal.signal(signal.SIGINT, stop_server)
         host, port = server.server_address[:2]
         url = connection_url(host, port)
         if credentials is None:
             logger.warning('SERVER WARNING: authentication disabled; all endpoints allow unauthenticated access')
+        if save_dir is not None:
+            logger.warning('SERVER WARNING: --save-posts enabled; POST bodies and headers are saved under %s', save_dir)
         if not args.no_daemon:
             daemon_pid = detach()
             if daemon_pid is not None:

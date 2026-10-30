@@ -15,6 +15,11 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Add `-s`/`--save-posts` to the generated server (independent of `-d`): keep the
+  latest POST body and a Markdown exchange report per path under
+  `serve_ai.pyz.debug/<verb>/<ok|error>/...`. Credentials are redacted, successful
+  `/result` calls save only the report, and failed writes never alter responses.
+
 - Honor `Accept: text/plain` on JSON and Markdown responses: the same body is
   returned as `text/plain; charset=utf-8` with `Vary: Accept` when text/plain is
   explicitly preferred over the route's default type. ZIP downloads and error

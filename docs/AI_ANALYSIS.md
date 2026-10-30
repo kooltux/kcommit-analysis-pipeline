@@ -343,6 +343,29 @@ Negotiable responses carry `Vary: Accept`, and their catalog 200 entry lists
 (always `application/json`) are never negotiated. The alternative changes only the
 media type, not the schema or content.
 
+### Saving POSTs for diagnostics
+
+`serve_ai.pyz -s` (`--save-posts`, independent of `-d`) keeps the latest POST per
+path under `serve_ai.pyz.debug/<verb>/<ok|error>/<rest of the path>`, for example
+`validate/ok/role/analyst/batch_001/001.json` or `result/error/batch_001/001.json`.
+`ok` means HTTP 200; anything else is `error`. The first level comes from the route
+path, so future POST routes are covered automatically. Each capture is the posted
+body plus `<name>.md`, a Markdown report with request context, request headers,
+response headers and response body. `Authorization`, `Proxy-Authorization` and
+`Cookie` values are redacted. A repeat POST to the same path overwrites the capture.
+
+Successful `/result` calls save only the report: the body is byte-identical to the
+file in `serve_ai.pyz.results/`, and the report shows its size and SHA-256 (it is
+saved normally if the stored file differs). When a request is rejected before its
+body is read (for example a wrong `Content-Type`), the report says so and no body
+file is kept. Only authenticated requests that match a known route, chunk and role
+are saved: 401, 404, 405 and unknown names or roles are not. A failed write is
+logged as `SERVER save_posts failed` and never changes the response.
+
+The directory (mode 0700) is created at startup and startup fails if it cannot be
+created. The server warns that content is being saved: it may be sensitive, and
+nothing is purged automatically, so delete the directory when finished.
+
 API entries are sorted by discovery/guide, contract assets, sources, validation,
 and results/export, independent of decorator registration order. Per-route `group`
 and `order` metadata remain in the executable registry. `path_parameters` describe

@@ -53,10 +53,10 @@ def wait_until(predicate, timeout=5):
 
 
 @contextmanager
-def running(app, flag='--no-daemon', auth=None, daemon=False, file_logging=True):
+def running(app, flag='--no-daemon', auth=None, daemon=False, file_logging=True, extra=()):
     stderr = app.parent / 'stderr.log'
     log = app.parent / 'access.log' if file_logging else stderr
-    args = [sys.executable, str(app), '0', '127.0.0.1']
+    args = [sys.executable, str(app), '0', '127.0.0.1', *extra]
     if file_logging:
         args += ['-l', str(log)]
     if not daemon:

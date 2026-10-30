@@ -149,8 +149,10 @@ Without a log-file option, `./serve_ai.pyz -d` logs only to stderr. An explicit
 file causes startup to fail without fallback. Enable the shared access
 password with `--auth 'user:password'`. Basic authentication does not encrypt
 traffic: use a trusted network or TLS termination. Without `--auth`, the server
-warns that all endpoints are unauthenticated. Existing generated zipapps must
-be regenerated through Stage 08 to receive these changes.
+warns that all endpoints are unauthenticated. For diagnostics, `-s` or
+`--save-posts` (independent of `-d`) keeps the latest POST body and a Markdown
+exchange report per path under `serve_ai.pyz.debug/`; see `docs/AI_ANALYSIS.md`.
+Existing generated zipapps must be regenerated through Stage 08 to receive these changes.
 
 ## Scoring model
 
