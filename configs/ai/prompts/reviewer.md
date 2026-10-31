@@ -121,6 +121,7 @@ Return JSON conforming to `reviewer.json`, with role set to reviewer and the
 original source identity, counts, status and SHA-keyed results. Copy input_checksum
 and schema checksums from trusted server metadata supplied by the caller; never calculate or invent them.
 Each assessment contains exactly rv_agreement, rv_notes and rv_recommendation.
+Respect the hard length limits in the output schema: at most 15 entries in each of rv_notes and rv_recommendation, each entry within its maximum length. Values over a limit are rejected by validation, so keep notes concise.
 Do not emit ai_* fields or a final-result document. Return the review to the caller.
 The orchestrator validates it before supplying it to Assembler with the specialists.
 If the caller supplies validation feedback, repair only the reported issues using

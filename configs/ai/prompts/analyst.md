@@ -97,6 +97,8 @@ Include total_commits, analyzed_commits, analysis_status and a results object
 keyed by full source commit SHA. Mark partial when any source commit is omitted.
 Do not copy input-only fields such as pipeline_version, chunk_info or commits.
 
+Respect the hard length limits in the output schema (maximum characters for each text value). Values over a limit are rejected by validation, so write concisely.
+
 Each assessment contains exactly these non-CVE fields, using the deployed
 output schema's field types and enums:
 

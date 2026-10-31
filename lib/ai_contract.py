@@ -189,6 +189,8 @@ def validate_result(result, chunk, schema, input_checksum):
             if kind == 'string' and (not isinstance(value, str)
                                      or ('enum' in spec and value not in spec['enum'])):
                 raise ValueError('Invalid string: ' + key)
+            if kind == 'string' and 'maxLength' in spec and len(value) > spec['maxLength']:
+                raise ValueError('String too long: ' + key)
             if kind == 'array':
                 item_spec = spec['items']
                 if (not isinstance(value, list) or any(
@@ -199,6 +201,9 @@ def validate_result(result, chunk, schema, input_checksum):
                         or ('pattern' in item_spec and not re.fullmatch(item_spec['pattern'], v))
                         for v in value)):
                     raise ValueError('Invalid array: ' + key)
+                if (item_spec.get('type') == 'string' and 'maxLength' in item_spec
+                        and any(len(v) > item_spec['maxLength'] for v in value)):
+                    raise ValueError('Array item too long: ' + key)
                 if (len(value) < spec.get('minItems', 0)
                         or ('maxItems' in spec and len(value) > spec['maxItems'])
                         or (spec.get('uniqueItems') and len(value) != len(set(value)))):

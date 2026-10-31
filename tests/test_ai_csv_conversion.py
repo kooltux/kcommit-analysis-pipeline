@@ -64,7 +64,7 @@ def test_csv_duplicates_first_wins(package, tmp_path, capsys):
     assert '1 identical duplicates skipped; 1 conflicting duplicates rejected' in stderr
 
 
-@pytest.mark.parametrize('problem', ['rationale', 'probabilities', 'unknown_sha', 'boolean', 'column', 'short_row'])
+@pytest.mark.parametrize('problem', ['rationale', 'probabilities', 'unknown_sha', 'boolean', 'column', 'short_row', 'too_long'])
 def test_invalid_csv_fails_before_output(package, tmp_path, problem):
     cfg, out, source = package
     row = row_for(source, next(iter(source.by_sha)))
@@ -79,6 +79,8 @@ def test_invalid_csv_fails_before_output(package, tmp_path, problem):
         row['ai_is_bug_fix'] = 'maybe'
     elif problem == 'column':
         row['invented'] = 'yes'
+    elif problem == 'too_long':
+        row['ai_summary'] = 'x' * 451
     path, dest = tmp_path / 'bad.csv', tmp_path / 'converted'
     write_csv(path, [row])
     if problem == 'short_row':

@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Hard output size limits in `analyst.json`, `cve.json`, `reviewer.json` and `result.json`:
+  `maxLength` 600 (`ai_categorisation_rationale`), 450 (`ai_impact_description`,
+  `ai_summary`) and 250 (`ai_backport_effort_reason`); `maxItems` 10 for `ai_cve_ids` and
+  `ai_cve_probabilities`; `maxItems` 15 for `rv_notes` and `rv_recommendation` with
+  `maxLength` 1500 and 700 per entry. Descriptions state the limits, so role outputs, and
+  the Reviewer and Assembler inputs built from them, are bounded.
+- `tests/test_ai_output_limits.py`: schema consistency, validator boundaries and the role
+  gate; plus an over-limit case in the CSV conversion tests.
+
+### Changed
+
+- `validate_result` (role and workflow gates, `POST /result`, import, CSV converter and the
+  `serve_ai.pyz` copy) enforces string and array-item `maxLength`; over-limit values are
+  rejected ("String too long", "Array item too long"), never truncated.
+- Analyst, CVE and Reviewer prompts tell the model to respect the length limits.
+- Schema checksums change: regenerate packages with Stage 08. Exported packages keep their
+  schema snapshots and import unchanged.
+
 ## v21.3.1 — Parallel test runner (2026-10-30)
 
 ### Changed

@@ -78,6 +78,16 @@ disagree requires nonempty, ASCII-formatted arrays naming known assessment field
 `output_schema_checksum` identifies the shared final result schema for all roles.
 Runtime packaging, role discovery and HTTP validation use these selected assets.
 
+Assessment text and lists have hard size limits (v21.4.0) so that every role output,
+and therefore the Reviewer and Assembler inputs, stays bounded: `maxLength` 600 for
+`ai_categorisation_rationale`, 450 for `ai_impact_description` and `ai_summary`, 250 for
+`ai_backport_effort_reason`; `maxItems` 10 for `ai_cve_ids` and `ai_cve_probabilities`;
+`maxItems` 15 for `rv_notes` and `rv_recommendation`, with `maxLength` 1500 and 700 per
+entry. Each description repeats its limit, while prose limits such as 20 words stay
+guidance. The shared validator enforces them in the role gates, the workflow gate,
+`POST /result`, import and the CSV converter: over-limit values are rejected, never
+truncated (HTTP 400 on the server).
+
 ## Multi-role prompt preparation
 
 Basic role prompts are in `configs/ai/prompts/`: Analyst (`analyst.md`), CVE
@@ -152,7 +162,7 @@ current evidence policy rather than restoring conflicting legacy rules.
 | Detailed hardening controls | Analyst/Reviewer explicitly consider SELinux Enforcing, seccomp allow-lists, capability dropping and compile-time hardening only when evidenced |
 | Automatic mitigation downgrade; all kernel memory bugs high/critical | Replaced by attack-path and product-exposure reasoning; neither automatic downgrades nor blanket severity floors |
 | Impact description 1-2 sentences; summary 2-3 sentences | Matching analyst/result field descriptions |
-| Effort reason maximum 20 words; dependency references | Matching analyst/result ai_backport_effort_reason descriptions; guidance only, no new validation constraint |
+| Effort reason maximum 20 words; dependency references | Matching analyst/result ai_backport_effort_reason descriptions; the word limit is guidance, backed by a 250-character hard cap |
 | Six recommendation scenarios | Analyst illustrative recommendation scenarios plus schema safeguards; breaking changes require evidenced risk |
 | Conservative classification defaults | Preserve evidence discipline and maybe for uncertainty; do not equate uncertainty with false or low impact |
 | meta.has_cve, meta.is_fix and meta.has_stable_cc | Named in Analyst/Reviewer as hints, not proof |
@@ -179,7 +189,7 @@ and file symlinks, validating UTF-8 and preserving entry filenames and exact byt
 POST each Analyst, CVE and Reviewer document to `/validate/role/<role>/<name>`.
 `role` is `analyst`, `cve` or `reviewer`; `name` is the manifest-listed chunk path,
 such as `batch_001/001.json`. A role gate checks that document's identity, source
-membership, counts and fields; it does not cross-check specialist contributions.
+membership, counts, fields and size limits; it does not cross-check specialist contributions.
 
 After assembly, POST an object with exactly `analyst`, `cve`, `reviewer` and
 `result` documents to `/validate/workflow/<name>`. It validates every document,

@@ -1,4 +1,4 @@
-"""Field semantics stay consistent without changing assessment constraints."""
+"""Field semantics and output size limits stay consistent across the role schemas."""
 import json
 from pathlib import Path
 import re
@@ -30,14 +30,14 @@ def test_role_fields_match_final_definitions(role):
         assert definition == final[name], name
 
 
-def test_assessment_field_constraints_remain_unchanged():
+def test_assessment_field_constraints_match_output_limits():
     fields = without_descriptions(schema('result')['$defs']['assessment']['properties'])
     expected = {name: {'type': 'boolean'} for name in (
         'ai_is_security_fix', 'ai_is_bug_fix', 'ai_is_performance_enhancement',
         'ai_is_new_feature', 'ai_is_new_security_feature')}
-    expected.update({name: {'type': 'string'} for name in (
-        'ai_categorisation_rationale', 'ai_impact_description',
-        'ai_backport_effort_reason', 'ai_summary')})
+    expected.update({name: {'type': 'string', 'maxLength': limit} for name, limit in (
+        ('ai_categorisation_rationale', 600), ('ai_impact_description', 450),
+        ('ai_backport_effort_reason', 250), ('ai_summary', 450))})
     for name, values in (
         ('ai_impact_on_product', ['critical', 'high', 'medium', 'low', 'none']),
         ('ai_backport_effort', ['very_easy', 'easy', 'moderate', 'hard', 'very_hard']),
@@ -48,17 +48,19 @@ def test_assessment_field_constraints_remain_unchanged():
         'type': 'array', 'uniqueItems': True, 'items': {'type': 'string', 'enum': [
             'security_vulnerability', 'system_stability', 'data_corruption',
             'performance_degradation', 'missing_feature', 'compliance_violation', 'none']}}
-    expected['ai_cve_ids'] = {'type': 'array', 'items': {
+    expected['ai_cve_ids'] = {'type': 'array', 'maxItems': 10, 'items': {
         'type': 'string', 'pattern': '^CVE-[0-9]{4}-[0-9]{4,}$'}}
-    expected['ai_cve_probabilities'] = {'type': 'array', 'items': {
+    expected['ai_cve_probabilities'] = {'type': 'array', 'maxItems': 10, 'items': {
         'type': 'integer', 'minimum': 0, 'maximum': 100}}
     names = '|'.join(name for name in fields if name.startswith('ai_'))
     patterns = {
         'rv_notes': r'^(?:' + names + r'): \[(?:minor|moderate|strong|complete)\] - [ -~]+ -> [ -~]+ \([ -~]+\)(?![\s\S])',
         'rv_recommendation': r'^(?:' + names + r'): use [ -~]+(?![\s\S])'}
     for name, pattern in patterns.items():
-        expected[name] = {'type': ['array', 'null'], 'minItems': 1,
-                          'uniqueItems': True, 'items': {'type': 'string', 'pattern': pattern}}
+        expected[name] = {'type': ['array', 'null'], 'minItems': 1, 'maxItems': 15,
+                          'uniqueItems': True, 'items': {
+                              'type': 'string', 'maxLength': 1500 if name == 'rv_notes' else 700,
+                              'pattern': pattern}}
     assert fields == expected
 
 
@@ -118,11 +120,11 @@ def test_legacy_recommendation_scenarios_are_qualified():
 
 
 @pytest.mark.parametrize('role', ['analyst', 'result'])
-def test_effort_reason_word_limit_is_guidance_only(role):
+def test_effort_reason_word_limit_has_hard_character_cap(role):
     field = schema(role)['$defs']['assessment']['properties']['ai_backport_effort_reason']
     assert 'at most 20 words' in field['description']
     assert 'Fixes:' in field['description'] and 'Depends-on:' in field['description']
-    assert without_descriptions(field) == {'type': 'string'}
+    assert without_descriptions(field) == {'type': 'string', 'maxLength': 250}
 
 
 def test_cve_record_examples_do_not_expand_candidate_policy():

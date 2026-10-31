@@ -79,6 +79,8 @@ Include total_commits, analyzed_commits, analysis_status and a results object
 keyed by full source commit SHA. Mark partial when any source commit is omitted.
 Do not copy input-only fields such as pipeline_version, chunk_info or commits.
 
+Respect the hard length limits in the output schema: at most 10 CVE IDs per commit, with the same number of probabilities. Values over a limit are rejected by validation.
+
 Each assessment contains exactly:
 
 - ai_cve_ids: an array of supported IDs matching CVE-YYYY-NNNN or a longer
