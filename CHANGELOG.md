@@ -14,6 +14,10 @@ All notable changes to this project are documented in this file.
   the Reviewer and Assembler inputs built from them, are bounded.
 - `tests/test_ai_output_limits.py`: schema consistency, validator boundaries and the role
   gate; plus an over-limit case in the CSV conversion tests.
+- `lib/ai_prompt_body.py`: complete static role prompts. `GET /prompt/analyst`, `/prompt/cve`
+  and `/prompt/reviewer` return the stored prompt followed by the schemas the role reads,
+  identical for every chunk; `/contract` adds `body` (`bytes`, `checksum`) to these entries.
+  `tests/test_ai_prompt_body.py` covers composition and the served routes.
 
 ### Changed
 
@@ -23,6 +27,9 @@ All notable changes to this project are documented in this file.
 - Analyst, CVE and Reviewer prompts tell the model to respect the length limits.
 - Schema checksums change: regenerate packages with Stage 08. Exported packages keep their
   schema snapshots and import unchanged.
+- **Behavior change:** `/prompt/analyst`, `/prompt/cve` and `/prompt/reviewer` no longer return
+  the stored file alone. The asset `checksum` in `/contract` still identifies the stored
+  file; use `body.checksum` to verify the downloaded bytes. Other prompt assets are unchanged.
 
 ## v21.3.1 — Parallel test runner (2026-10-30)
 

@@ -20,13 +20,16 @@ WORKFLOW_SCHEMAS = {role: json.loads(ARCHIVE.read('ai_contract/schemas/' + role 
 
 @route('GET', '/contract', group='contract', order=0, response_schema='#/response_schemas/contract')
 def contract_index(self):
-    """Discover immutable contract assets and trusted source metadata URLs."""
+    """Discover contract assets (the body field of a role prompt describes the bytes its URL serves) and trusted source metadata URLs."""
     assets = {}
     for name, expected in CONTRACT.items():
         group, filename = name.split('/')
         stem = filename.rsplit('.', 1)[0]
         url = ('/prompt/' if group == 'prompts' else '/schema/') + stem
         assets[name] = {'checksum': expected, 'url': url}
+        if group == 'prompts' and stem in BODY_SCHEMAS:
+            body = build_prompt_body(stem, lambda path: ARCHIVE.read('ai_contract/' + path))
+            assets[name]['body'] = {'bytes': len(body), 'checksum': checksum(body)}
     self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'], 'assets': assets,
         'input_schema_checksum': MANIFEST['input_schema_checksum'],
         'output_schema_checksum': MANIFEST['output_schema_checksum'],

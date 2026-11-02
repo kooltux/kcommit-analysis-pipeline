@@ -148,6 +148,8 @@ report the failure to the caller. Never POST a failure report as an assessment.
 ### Using this server
 
 1. Retrieve `/api` and `/contract`, then the listed `/prompt/<name>` and `/schema/<name>` assets.
+   A role prompt (`/prompt/analyst`, `/prompt/cve`, `/prompt/reviewer`) already contains the
+   schemas that role reads; append only the metadata, the chunk and prior validated outputs.
 2. Retrieve the selected batch or chunk listing, preserving any `limit` and
    `offset`. Use its run ID and URLs exactly; do not guess filenames or replace
    a debug subset or single-batch retry with the unrestricted global listing.

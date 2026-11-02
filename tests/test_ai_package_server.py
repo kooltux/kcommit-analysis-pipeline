@@ -10,6 +10,7 @@ import pytest
 from lib.ai_contract import digest, encode, result_properties
 from lib.ai_package_server import generate_ai_package_server
 from lib.ai_preparation import build_package
+from lib.ai_prompt_body import BODY_SCHEMAS, build_prompt_body
 from lib.manifest import VERSION
 from test_ai_preparation import snapshots
 from test_ai_server_runtime import basic, request, running
@@ -56,8 +57,16 @@ def test_contract_discovery_and_trusted_metadata(app, package, auth):
         assert index['run_id'] == manifest['run_id']
         for name, entry in index['assets'].items():
             data = get(entry['url'])
-            assert data == package['files']['ai_contract/' + name]
-            assert digest(data) == entry['checksum'] == manifest['contract_assets'][name]
+            assert entry['checksum'] == manifest['contract_assets'][name]
+            stem = name.split('/')[1].rsplit('.', 1)[0]
+            if name.startswith('prompts/') and stem in BODY_SCHEMAS:
+                expected = build_prompt_body(stem, lambda path: package['files']['ai_contract/' + path])
+                assert data == expected
+                assert entry['body'] == {'bytes': len(expected), 'checksum': digest(expected)}
+            else:
+                assert 'body' not in entry
+                assert data == package['files']['ai_contract/' + name]
+                assert digest(data) == entry['checksum']
         name = next(iter(manifest['chunks']))
         metadata = json.loads(get(index['chunks'][name]))
         assert metadata['input_checksum'] == digest(package['files']['ai_analysis_input/' + name])

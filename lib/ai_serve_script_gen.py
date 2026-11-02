@@ -1,9 +1,11 @@
 """Generate a self-contained AI exchange zipapp with validated result uploads."""
 import inspect
 from lib.ai_contract import result_properties, validate_result
+from lib.ai_prompt_body import BODY_SCHEMAS, build_prompt_body
 import os
 
 _RESULT_VALIDATION_SOURCE = '\n\n'.join(inspect.getsource(fn) for fn in (result_properties, validate_result))
+_BODY_SOURCE = 'BODY_SCHEMAS = ' + repr(BODY_SCHEMAS) + '\n\n\n' + inspect.getsource(build_prompt_body)
 
 TOOL_MANIFEST_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'MANIFEST.json')
 
@@ -148,8 +150,11 @@ RESPONSE_SCHEMAS = {
         input_schema_checksum={'type': 'string'}, output_schema_checksum={'type': 'string'},
         total_commits={'type': 'integer', 'minimum': 0}),
     'contract': response_object(run_id={'type': 'string'},
-        assets={'type': 'object', 'additionalProperties': response_object(
-            checksum={'type': 'string'}, url={'type': 'string'})},
+        assets={'type': 'object', 'additionalProperties': {
+            'type': 'object', 'required': ['checksum', 'url'], 'additionalProperties': False,
+            'properties': {'checksum': {'type': 'string'}, 'url': {'type': 'string'},
+                           'body': response_object(bytes={'type': 'integer', 'minimum': 0},
+                                                   checksum={'type': 'string'})}}},
         input_schema_checksum={'type': 'string'}, output_schema_checksum={'type': 'string'},
         chunks={'type': 'object', 'additionalProperties': {'type': 'string'}}),
     'batch': response_object(batch_id={'type': 'string'}, batch_number={'type': 'integer'},
@@ -615,10 +620,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     @route('GET', '/prompt/<name>', 'text/markdown; charset=utf-8', group='contract', order=1,
            parameter_sources={'name': 'prompts'})
     def prompt_asset(self, name):
-        """Retrieve one selected prompt; execute roles separately, never a combined catalog."""
+        """Retrieve one prompt; analyst, cve and reviewer return the complete static role prompt (instructions plus the schemas it reads), other prompts are returned as stored."""
         asset = 'prompts/' + name + '.md'
         if asset not in CONTRACT:
             self.send_error(404)
+            return
+        if name in BODY_SCHEMAS:
+            self.send_bytes(build_prompt_body(name, lambda path: ARCHIVE.read('ai_contract/' + path)))
             return
         self.send_bytes(ARCHIVE.read('ai_contract/' + asset))
 
@@ -875,5 +883,5 @@ if __name__ == '__main__':
     sys.exit(main())
 '''
 
-_MAIN_SOURCE = _RESULT_VALIDATION_SOURCE + '\n' + _MAIN_SOURCE
+_MAIN_SOURCE = _RESULT_VALIDATION_SOURCE + '\n' + _BODY_SOURCE + '\n' + _MAIN_SOURCE
 

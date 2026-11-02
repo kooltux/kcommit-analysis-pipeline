@@ -184,6 +184,17 @@ intermediate JSON to the final-result endpoint.
 The new prompt loader snapshots immediate `*.md` files, dereferencing directory
 and file symlinks, validating UTF-8 and preserving entry filenames and exact bytes.
 
+`/prompt/analyst`, `/prompt/cve` and `/prompt/reviewer` return the complete static
+prompt for the role, not only the stored file: the prompt text, then `## Artefacts`
+with the schemas the role reads in fenced `json` blocks (Analyst: input and
+analyst; CVE: input and cve; Reviewer: input, analyst, cve and reviewer, with
+the output schema last). The bytes are identical for every chunk, so their size
+is fixed and known. The orchestrator appends only per-chunk data: `/metadata/<name>`,
+`/chunk/<name>` and, for the Reviewer, the validated specialist outputs. Any other
+prompt asset is returned exactly as stored. `/contract` keeps the stored file's
+checksum as the asset identity and adds `body` (`bytes` and `checksum`) to these
+three entries, describing what the URL returns.
+
 ## Remote validation gates
 
 POST each Analyst, CVE and Reviewer document to `/validate/role/<role>/<name>`.
