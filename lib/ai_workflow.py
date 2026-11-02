@@ -3,6 +3,34 @@ from lib.ai_contract import validate_result
 
 ROLES = ('analyst', 'cve', 'reviewer')
 
+def assemble(documents, chunk, schemas, input_checksum):
+    """Mechanically assemble validated role contributions; store nothing."""
+    if not isinstance(documents, dict) or set(documents) != set(ROLES):
+        raise ValueError('Assembly requires exactly analyst, cve and reviewer documents')
+    for role in ROLES:
+        validate_role(role, documents[role], chunk, schemas, input_checksum)
+    source = {item['commit'] for item in chunk['commits']}
+    results = {}
+    for sha in sorted(source):
+        if not all(sha in documents[role]['results'] for role in ROLES):
+            continue
+        combined = {}
+        for role in ROLES:
+            contribution = documents[role]['results'][sha]
+            if set(combined) & set(contribution):
+                raise ValueError('Overlapping role fields for ' + sha)
+            combined.update(contribution)
+        results[sha] = combined
+    final = dict(schema_version='1.0', run_id=chunk['run_id'],
+                 source_chunk=chunk['source_chunk'], input_checksum=input_checksum,
+                 input_schema_checksum=chunk['input_schema_checksum'],
+                 output_schema_checksum=chunk['output_schema_checksum'],
+                 total_commits=chunk['total_commits'], analyzed_commits=len(results),
+                 analysis_status='complete' if set(results) == source else 'partial', results=results)
+    validate_workflow(dict(documents, result=final), chunk, schemas, input_checksum)
+    return final
+
+
 
 def validate_role(role, document, chunk, schemas, input_checksum):
     if role not in ROLES:

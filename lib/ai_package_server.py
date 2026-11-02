@@ -59,6 +59,15 @@ def source_metadata(self, name):
         total_commits=chunk['total_commits']), sort_keys=True).encode())
 
 
+@route('POST', '/assemble/<name>', request_content_type='application/json',
+       group='validation', order=2, parameter_sources={'name': 'chunks'},
+       description='Validate three role documents and return deterministic assembly without storing results or applying review proposals.',
+       min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
+       document_roles=['analyst', 'cve', 'reviewer'], writes_results=False,
+       response_schema='/schema/result',
+       response_description='Validated final result; submit separately to /result/<name>.')
+def assemble_contributions(self, name):
+    return validate_contributions(self, name, assembly=True)
 @route('POST', '/validate/workflow/<name>', request_content_type='application/json', group='validation', order=1, parameter_sources={'name': 'chunks'},
        description='Validate the analyst, cve, reviewer and result documents supplied together in the POST body, including coverage and exact value preservation. The URL selects the source chunk; nothing is stored.',
        min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
@@ -73,7 +82,7 @@ def source_metadata(self, name):
        response_schema='#/response_schemas/validation_ack',
        response_description='Submitted documents are valid; nothing is stored or corrected.',
        response_example={'status': 'valid', 'run_id': '0' * 64, 'source_chunk': 'batch_001/001.json'})
-def validate_contributions(self, name, role=None):
+def validate_contributions(self, name, role=None, assembly=False):
     """Validate role JSON or four workflow documents without storing results.
 
     Use archived source bytes, manifest identities and packaged schemas only.
@@ -93,6 +102,9 @@ def validate_contributions(self, name, role=None):
                  total_commits=len(chunk['commits']))
     try:
         _, document = self.read_json()
+        if assembly:
+            self.send_bytes(json.dumps(assemble(document, chunk, WORKFLOW_SCHEMAS, checksum(source)), sort_keys=True).encode())
+            return
         if role is None:
             validate_workflow(document, chunk, WORKFLOW_SCHEMAS, checksum(source))
         else:
@@ -178,7 +190,7 @@ def generate_ai_package_server(package, front_page_bytes, output_path):
         raise ValueError('Portable server entry point is not unique')
     workflow_source = 'ROLES = ' + repr(ai_workflow.ROLES) + '\n\n'
     workflow_source += '\n\n'.join(inspect.getsource(fn) for fn in
-                                    (ai_workflow.validate_role, ai_workflow.validate_workflow))
+                                    (ai_workflow.validate_role, ai_workflow.validate_workflow, ai_workflow.assemble))
     source = server._MAIN_SOURCE.replace(
         marker, '\n' + workflow_source + '\n' + _CONTRACT_ROUTES + '\n' + marker, 1)
     compile(source, '__main__.py', 'exec')

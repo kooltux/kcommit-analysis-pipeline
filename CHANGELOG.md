@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Add `POST /assemble/<name>`: deterministic assembly of three validated role
+  documents, trusted identities, exact preservation and workflow validation.
+  Nothing is stored; review proposals are not applied. Add route regression tests.
+
 ### Added
 
 - Hard output size limits in `analyst.json`, `cve.json`, `reviewer.json` and `result.json`:

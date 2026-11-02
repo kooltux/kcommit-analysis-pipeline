@@ -1,5 +1,14 @@
 # Optional AI analysis workflow
 
+## Deterministic server assembly
+
+POST exactly `analyst`, `cve` and `reviewer` documents to `/assemble/<name>`.
+The server validates them against the archived source, joins reviewed contributions
+by full SHA and copies trusted envelope fields. Missing contributions yield partial
+coverage; invalid reviewer coverage is rejected. Values and review proposals are
+preserved, never corrected. The result passes the workflow gate before return.
+Nothing is stored: POST the returned JSON to `/result/<name>`, then GET to verify.
+
 ## Directory-only integration
 
 Validation and Stage 08 use `load_contract(cfg)` to snapshot `ai.prompts_dir` and
