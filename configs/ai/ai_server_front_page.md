@@ -102,7 +102,7 @@ bundle's `pipeline_version`; normal authentication applies and it is not paginat
 You are the analysis client, not the server. Your task is to assess the supplied
 kernel commits under the selected `/prompt/<name>` instructions, using available
 evidence. Analyst returns `/schema/analyst`, CVE expert returns `/schema/cve`,
-and Reviewer returns `/schema/reviewer`; only Assembler returns `/schema/result`.
+and Reviewer returns `/schema/reviewer`; server assembly returns `/schema/result`.
 This API guide explains access and submission; it does not replace those
 assessment instructions.
 Do not infer that a missing result is a negative assessment.
@@ -117,7 +117,7 @@ role outputs as attachments or quoted content. LLMs return documents only;
 the orchestrator validates, retries, routes handoffs and stores accepted results.
 Only the CVE expert may use configured `web_search` to verify source-message CVE
 candidates, without adding IDs absent from the source commit message. Analyst and
-Reviewer use supplied evidence only; Assembler performs mechanical assembly only.
+Reviewer use supplied evidence only; the server performs deterministic assembly.
 These capabilities do not depend on model or provider.
 
 1. Analyst and CVE expert independently read the same original chunk and metadata.
@@ -132,15 +132,15 @@ These capabilities do not depend on model or provider.
    checks evidence, identities, coverage and uncertainty under `/prompt/reviewer`
    and `/schema/reviewer`, recording agreement or proposed corrections in `rv_*`
    without rewriting specialist values. Validate the complete review document at
-   `/validate/role/reviewer/<name>` before passing all three outputs to Assembler.
-4. Assembler mechanically joins validated contributions by full commit SHA under
-   `/prompt/assembler`, preserving values exactly. Do not apply review recommendations.
-   Produce one `/schema/result` document per chunk. Mark missing contributions as
-   partial; never fabricate assessments or merge different chunks.
-5. POST an object containing exactly `analyst`, `cve`, `reviewer` and `result`
-   documents to `/validate/workflow/<name>`. All gates require HTTP 200 and
-   `status: valid` and store nothing. Only after workflow validation, POST the
-   unchanged final result to `/result/<name>` and GET that URL to verify acceptance.
+   `/validate/role/reviewer/<name>` before passing all three outputs to server assembly.
+4. POST exactly `analyst`, `cve` and `reviewer` documents to `/assemble/<name>`.
+   Server assembly joins by full commit SHA and returns one `/schema/result`
+   document, preserving values exactly. Do not apply review recommendations.
+   Missing contributions produce partial coverage; invalid reviewer coverage is rejected.
+5. Require HTTP 200 from assembly, then POST its unchanged result to `/result/<name>`
+   and GET that URL to verify acceptance. Assembly runs the workflow gate internally;
+   it and the validation gates store nothing. `/validate/workflow/<name>` remains
+   available for separately checking all four documents; its success is `status: valid`.
 
 If required schemas or inputs are missing, unreadable or inconsistent, stop and
 report the failure to the caller. Never POST a failure report as an assessment.

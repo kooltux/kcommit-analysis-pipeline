@@ -6,7 +6,7 @@ from lib.ai_prompts import ROLE, read_prompts
 from lib.ai_schema_validation import parse_schema
 from lib.resources import resource_path
 
-PROMPT_ROLES = ('analyst', 'cve', 'reviewer', 'assembler')
+PROMPT_ROLES = ('analyst', 'cve', 'reviewer')
 SCHEMA_ROLES = ('input', 'analyst', 'cve', 'reviewer', 'result')
 REVIEW_FIELDS = {'rv_agreement', 'rv_notes', 'rv_recommendation'}
 

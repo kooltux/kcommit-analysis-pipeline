@@ -12,7 +12,7 @@ from lib.ai_preparation import build_package
 from lib.manifest import VERSION
 
 SAMPLES = Path(__file__).resolve().parents[1] / 'configs' / 'ai'
-ASSETS = ['prompts/' + role + '.md' for role in ('analyst', 'cve', 'reviewer', 'assembler')]
+ASSETS = ['prompts/' + role + '.md' for role in ('analyst', 'cve', 'reviewer')]
 ASSETS += ['schemas/' + role + '.json' for role in ('input', 'analyst', 'cve', 'reviewer', 'result')]
 
 

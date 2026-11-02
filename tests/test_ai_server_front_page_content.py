@@ -25,8 +25,7 @@ def test_front_page_is_shared_api_reference():
 def test_current_client_docs_do_not_advertise_removed_api():
     root = PAGE.parents[2]
     paths = [PAGE, root / 'README.md', root / 'docs/AI_ANALYSIS.md',
-             root / 'docs/CONFIGURATION.md',
-             root / 'configs/ai/prompts/assembler.md']
+             root / 'docs/CONFIGURATION.md']
     for path in paths:
         text = path.read_text(encoding='utf-8')
         for obsolete in ('PUT /result/', 'POST or PUT /result/', 'PUT and POST replace',
@@ -41,16 +40,16 @@ def test_front_page_explains_role_handoffs_and_validation():
     start = text.index('### Role workflow')
     end = text.index('### Using this server')
     workflow = text[start:end]
-    for fragment in ('Analyst and CVE expert', 'Reviewer', 'Assembler',
+    for fragment in ('Analyst and CVE expert', 'Reviewer', '/assemble/<name>',
                      '/validate/role/analyst/<name>', '/validate/role/cve/<name>',
                      '/validate/role/reviewer/<name>', '/validate/workflow/<name>',
                      'rv_*', 'full commit SHA', 'Do not apply review recommendations',
                      'partial', 'store nothing', 'does not run AI models'):
         assert fragment in workflow
-    assert workflow.index('3. Reviewer') < workflow.index('4. Assembler') < workflow.index('5. POST')
+    assert workflow.index('3. Reviewer') < workflow.index('4. POST') < workflow.index('5. Require')
     for role in ('analyst', 'cve', 'reviewer', 'result'):
         assert f'/schema/{role}' in text[text.index('### Context and task'):start]
-    assert 'only Assembler returns `/schema/result`' in text
+    assert 'server assembly returns `/schema/result`' in text
     assert 'Never POST a failure report as an assessment' in text
 
 

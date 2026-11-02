@@ -4,7 +4,7 @@ import re
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1] / 'configs/ai'
-ROLES = ('analyst', 'cve', 'reviewer', 'assembler')
+ROLES = ('analyst', 'cve', 'reviewer')
 SCHEMAS = ('input', 'analyst', 'cve', 'reviewer', 'result')
 INVENTED = ('likely_has_cve', 'cve_match_status', 'corrected_severity',
             'corrected_is_security_relevant', 'rejected_cve_ids')
@@ -48,15 +48,14 @@ def test_prompts_require_unfenced_json_responses(role):
 def test_fenced_examples_are_marked_for_readability_only():
     text = prompt('reviewer')
     assert '```json' in text and 'never fence your response' in text
-    for role in ('analyst', 'cve', 'assembler'):
+    for role in ('analyst', 'cve'):
         assert '```' not in prompt(role).replace('`{`', '').replace('`}`', '')
 
 
-def test_assembler_never_alters_specialist_values():
-    text = prompt('assembler')
-    assert 'unchanged' in text
-    assert 'Never apply, merge or resolve review recommendations' in text
-    assert not re.search(r'(?i)reviewer corrections|overrides if', text)
+def test_only_analysis_roles_require_prompts():
+    from lib.ai_assets import PROMPT_ROLES
+    assert PROMPT_ROLES == ROLES
+    assert not (ROOT / 'prompts/assembler.md').exists()
 
 
 def test_roles_keep_cve_ownership_separate():

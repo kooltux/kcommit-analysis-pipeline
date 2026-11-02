@@ -9,7 +9,6 @@ from lib.ai_prompts import read_prompts
     ('analyst', 'analyst', ('input',)),
     ('cve', 'cve', ('input',)),
     ('reviewer', 'reviewer', ('input', 'analyst', 'cve')),
-    ('assembler', 'result', ('input', 'analyst', 'cve', 'reviewer')),
 ])
 def test_role_prompts_direct_model_to_exact_output_contract(role, output, inputs):
     root = Path(__file__).resolve().parents[1] / 'configs/ai'
@@ -30,10 +29,7 @@ def test_role_prompts_direct_model_to_exact_output_contract(role, output, inputs
     for name in (*inputs, output):
         assert f'`{name}.json`' in contract
         assert (root / 'schemas' / (name + '.json')).is_file()
-    if role != 'assembler':
-        assert 'do not use `result.json` as your output schema' in contract
-    else:
-        assert 'without an intermediate role field' in contract
+    assert 'do not use `result.json` as your output schema' in contract
 
 
 @pytest.mark.parametrize('filename,required', [
@@ -47,9 +43,6 @@ def test_role_prompts_direct_model_to_exact_output_contract(role, output, inputs
     ('reviewer.md', ('Secure Boot', 'SELinux', 'DAC', 'seccomp', 'namespaces',
                      'locked debug', 'line count alone', 'source rankings',
                      'Do not rewrite specialist ai_* values')),
-    ('assembler.md', ('operator-selected batches, chunks and limit/offset',
-                      'full source_chunk path', 'one final result per source chunk',
-                      'Do not apply recommendations from rv_recommendation strings.')),
 ])
 def test_legacy_policy_has_explicit_role_owners(filename, required):
     root = Path(__file__).resolve().parents[1] / 'configs/ai/prompts'
@@ -57,7 +50,7 @@ def test_legacy_policy_has_explicit_role_owners(filename, required):
     assert all(fragment in text for fragment in required)
 
 
-@pytest.mark.parametrize('role', ['analyst', 'cve', 'reviewer', 'assembler'])
+@pytest.mark.parametrize('role', ['analyst', 'cve', 'reviewer'])
 def test_role_prompts_delegate_server_operations(role):
     root = Path(__file__).resolve().parents[1] / 'configs/ai/prompts'
     text = (root / (role + '.md')).read_text(encoding='utf-8')
@@ -71,7 +64,7 @@ def test_role_prompts_delegate_server_operations(role):
     assert 'supplied' in text
 
 
-@pytest.mark.parametrize('role', ['analyst', 'reviewer', 'assembler'])
+@pytest.mark.parametrize('role', ['analyst', 'reviewer'])
 def test_non_research_roles_prohibit_web_search(role):
     root = Path(__file__).resolve().parents[1] / 'configs/ai/prompts'
     text = (root / (role + '.md')).read_text(encoding='utf-8')
@@ -89,7 +82,7 @@ def test_cve_search_verifies_only_source_message_candidates():
     assert 'External research belongs to the orchestrator' not in text
 
 
-@pytest.mark.parametrize('role', ['analyst', 'cve', 'reviewer', 'assembler'])
+@pytest.mark.parametrize('role', ['analyst', 'cve', 'reviewer'])
 def test_role_prompts_do_not_pin_providers_or_models(role):
     root = Path(__file__).resolve().parents[1] / 'configs/ai/prompts'
     text = (root / (role + '.md')).read_text(encoding='utf-8')
@@ -171,9 +164,9 @@ def test_invalid_directories_rejected(tmp_path, kind):
 def test_basic_role_prompts_have_separate_responsibilities():
     root = Path(__file__).resolve().parents[1] / 'configs' / 'ai' / 'prompts'
     prompts = read_prompts(root)
-    assert set(prompts) == {'analyst.md', 'cve.md', 'reviewer.md', 'assembler.md'}
-    analyst, cve, reviewer, assembler = [prompts[name].decode('utf-8') for name in
-        ('analyst.md', 'cve.md', 'reviewer.md', 'assembler.md')]
+    assert set(prompts) == {'analyst.md', 'cve.md', 'reviewer.md'}
+    analyst, cve, reviewer = [prompts[name].decode('utf-8') for name in
+        ('analyst.md', 'cve.md', 'reviewer.md')]
     assert 'Do not use web search' in analyst and 'do not perform CVE matching' in analyst
     assert 'ai_cve_ids' in cve and 'ai_cve_probabilities' in cve
     assert 'source-message-only' in cve and 'JSON integers from 0 to 100' in cve
@@ -181,6 +174,4 @@ def test_basic_role_prompts_have_separate_responsibilities():
         assert name in reviewer
     assert 'both be null' in reviewer and 'plain ASCII only' in reviewer
     assert 'Do not emit ai_* fields' in reviewer and '`reviewer.json`' in reviewer
-    assert 'Do not include role, pipeline_version, chunk_info, commits or another wrapper.' in assembler
-    assert 'Do not apply recommendations from rv_recommendation strings.' in assembler
-    assert all('trusted server metadata' in text for text in (analyst, cve, reviewer, assembler))
+    assert all('trusted server metadata' in text for text in (analyst, cve, reviewer))

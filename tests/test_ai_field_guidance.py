@@ -92,7 +92,7 @@ def test_legacy_prompt_marker_distinguishes_prose_from_placeholders(text, reject
     assert bool(LEGACY_PROMPT_MARKER.search(text)) is rejected
 
 
-@pytest.mark.parametrize('role', ['analyst', 'cve', 'reviewer', 'assembler'])
+@pytest.mark.parametrize('role', ['analyst', 'cve', 'reviewer'])
 def test_refinements_remain_generic_and_schema_driven(role):
     text = (ROOT / 'prompts' / (role + '.md')).read_text(encoding='utf-8')
     assert not LEGACY_PROMPT_MARKER.search(text)

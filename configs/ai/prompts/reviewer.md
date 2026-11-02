@@ -74,7 +74,7 @@ withhold a supported correction merely because the final recommendation stays un
 Do not rewrite specialist ai_* values. Record proposed corrections in rv_* fields.
 Do not merge missing specialist assessments silently; omit those SHAs and mark
 partial. Report uncertainty rather than inventing assessments. A complete review
-covers every source commit. The Assembler preserves the original specialist values.
+covers every source commit. Deterministic server assembly preserves the original specialist values.
 
 ## Review fields - one set per SHA
 
@@ -123,7 +123,7 @@ and schema checksums from trusted server metadata supplied by the caller; never 
 Each assessment contains exactly rv_agreement, rv_notes and rv_recommendation.
 Respect the hard length limits in the output schema: at most 15 entries in each of rv_notes and rv_recommendation, each entry within its maximum length. Values over a limit are rejected by validation, so keep notes concise.
 Do not emit ai_* fields or a final-result document. Return the review to the caller.
-The orchestrator validates it before supplying it to Assembler with the specialists.
+The orchestrator validates it before supplying it to server assembly with the specialists.
 If the caller supplies validation feedback, repair only the reported issues using
 the original inputs; never claim external validation occurred without its supplied result.
 

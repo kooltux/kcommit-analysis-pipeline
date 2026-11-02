@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Fix stale nine-asset test expectations after removing the Assembler prompt.
+  Snapshot and Stage 08 publication tests now assert the exact three-prompt,
+  five-schema asset set, catching missing or unexpected assets.
+
+- Remove the bundled Assembler LLM prompt and its required-asset checks. Update
+  role handoffs, shipped configuration tests and client docs for server assembly.
+  Rebuild packages and replace the Assembler LLM node with `/assemble/<name>`.
+  Existing zipapps retain their snapshots; additional custom prompt files remain
+  supported. Keep the release within v21 as requested.
+
 - Add `POST /assemble/<name>`: deterministic assembly of three validated role
   documents, trusted identities, exact preservation and workflow validation.
   Nothing is stored; review proposals are not applied. Add route regression tests.

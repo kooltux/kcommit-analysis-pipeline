@@ -22,7 +22,7 @@ def test_shipped_config_dirs_are_not_empty():
     assert _files('profiles/*.json')
     assert {p.name for p in _files('ai/schemas/*.json')} == {
         'input.json', 'analyst.json', 'cve.json', 'reviewer.json', 'result.json'}
-    assert {p.name for p in _files('ai/prompts/*.md')} == {'analyst.md', 'cve.md', 'reviewer.md', 'assembler.md'}
+    assert {p.name for p in _files('ai/prompts/*.md')} == {'analyst.md', 'cve.md', 'reviewer.md'}
     assert (CONFIGS / 'example-arm-embedded-full.json').is_file()
 
 

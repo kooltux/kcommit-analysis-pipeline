@@ -21,7 +21,9 @@ def selected(tmp_path):
 
 def test_snapshots_are_exact_and_detached(selected, tmp_path):
     contract = load_contract(selected)
-    assert len(contract['files']) == 9
+    expected = {'prompts/' + role + '.md' for role in ('analyst', 'cve', 'reviewer')}
+    expected |= {'schemas/' + name + '.json' for name in ('input', 'analyst', 'cve', 'reviewer', 'result')}
+    assert set(contract['files']) == expected
     path = tmp_path / 'ai/prompts/analyst.md'
     before = path.read_bytes()
     assert contract['files']['prompts/analyst.md'] == before
@@ -31,7 +33,7 @@ def test_snapshots_are_exact_and_detached(selected, tmp_path):
 
 
 @pytest.mark.parametrize('path', [
-    'prompts/analyst.md', 'prompts/cve.md', 'prompts/reviewer.md', 'prompts/assembler.md',
+    'prompts/analyst.md', 'prompts/cve.md', 'prompts/reviewer.md',
     'schemas/input.json', 'schemas/analyst.json', 'schemas/cve.json',
     'schemas/reviewer.json', 'schemas/result.json',
 ])

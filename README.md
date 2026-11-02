@@ -44,6 +44,12 @@ tree. POST role documents to `/validate/role/<role>/<name>` and the four-documen
 assembly to `/validate/workflow/<name>` before final upload. These gates store
 nothing; `/result/<name>` alone does not enforce the complete role chain.
 
+The Analyst, CVE expert and Reviewer prompts include their required schemas.
+Append only chunk-specific metadata, source data and prior role outputs in the
+external workflow. Replace the Assembler LLM with `POST /assemble/<name>` containing
+exactly the three role documents; the server validates and merges them, without
+applying review proposals or storing results. Upload the returned JSON separately.
+
 `/api` lists routes in logical workflow order with parameter descriptions, selected
 role values, concrete package-derived URLs and request examples. Use `/schema/result`
 for final results and `/metadata/<name>` for trusted per-chunk envelope fields.

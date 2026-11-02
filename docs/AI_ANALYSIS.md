@@ -88,7 +88,7 @@ disagree requires nonempty, ASCII-formatted arrays naming known assessment field
 Runtime packaging, role discovery and HTTP validation use these selected assets.
 
 Assessment text and lists have hard size limits (v21.4.0) so that every role output,
-and therefore the Reviewer and Assembler inputs, stays bounded: `maxLength` 600 for
+and therefore the Reviewer and server-assembly inputs, stays bounded: `maxLength` 600 for
 `ai_categorisation_rationale`, 450 for `ai_impact_description` and `ai_summary`, 250 for
 `ai_backport_effort_reason`; `maxItems` 10 for `ai_cve_ids` and `ai_cve_probabilities`;
 `maxItems` 15 for `rv_notes` and `rv_recommendation`, with `maxLength` 1500 and 700 per
@@ -100,8 +100,8 @@ truncated (HTTP 400 on the server).
 ## Multi-role prompt preparation
 
 Basic role prompts are in `configs/ai/prompts/`: Analyst (`analyst.md`), CVE
-expert (`cve.md`), Reviewer (`reviewer.md`) and Assembler (`assembler.md`).
-The Reviewer emits only review fields; the Assembler preserves the validated
+expert (`cve.md`) and Reviewer (`reviewer.md`). No Assembler LLM prompt is required.
+The Reviewer emits only review fields; deterministic server assembly preserves the validated
 specialist and review values in the final document without applying corrections.
 Prompt rules must only name fields defined in the supplied schemas and must not
 add behaviour the workflow validator rejects (for example altering specialist
@@ -112,11 +112,11 @@ retain their existing filenames and checksums for package/import validation;
 they are derived from the selected assets, not the removed configuration files.
 Each role prompt directly instructs the model to return one JSON document matching
 its supplied output schema: Analyst uses `analyst.json`, CVE uses `cve.json`,
-Reviewer uses `reviewer.json`, and Assembler uses `result.json`. Supply the relevant
+Reviewer uses `reviewer.json`; server assembly produces `result.json`. Supply the relevant
 input and output schemas as attachments or quoted content after the prompt.
 Roles receive original chunks, trusted metadata and prior role outputs the same way.
 Capabilities are role-specific and independent of model or provider: Analyst and
-Reviewer use supplied evidence only; Assembler performs mechanical assembly only.
+Reviewer use supplied evidence only; the server performs mechanical assembly only.
 Only the CVE expert may use configured `web_search` to verify source-message CVE
 candidates; search cannot add IDs absent from the source commit message. Tool
 availability is configured externally. Server API access, validation gates, bounded
@@ -133,7 +133,7 @@ Field-crafting semantics live in schema descriptions; role prompts define eviden
 policy, tool permissions and analysis procedures. Matching assessment fields in role
 schemas and `result.json` must have identical definitions. Descriptions guide models
 but are annotations, not additional validation constraints or proof of factual accuracy.
-The Assembler copies values; it must not reinterpret descriptions as assessment work.
+Server assembly copies values without reinterpreting descriptions as assessment work.
 Legacy workflow guidance is adapted only for evidence-based classification, omission
 impact, mitigation applicability, dependencies and independent review. It introduces no
 vendor assumptions, fixed effort thresholds, placeholder values or legacy file discovery.
@@ -150,7 +150,7 @@ The legacy assessment policy is distributed by responsibility, not discarded:
 | Source-message-only CVEs, empty unsupported matches, aligned integer percentages | CVE expert; Reviewer checks |
 | Preserve source metadata, scores, rankings and cherry-pickability | Analyst and Reviewer |
 | Risk `none` alone, advisory decisions and `maybe` for insufficient evidence | Analyst |
-| Trusted identities, full SHA joins, exact value preservation and coverage | All roles; Assembler joins |
+| Trusted identities, full SHA joins, exact value preservation and coverage | All roles; server assembly joins |
 | Batch selection, pagination, POST/GET verification and export | Shared server guide; workflow orchestration |
 
 ### Legacy instruction coverage
@@ -183,7 +183,7 @@ current evidence policy rather than restoring conflicting legacy rules.
 | Independent review of every assessment against original input | Reviewer procedure and coverage rules; specialist claims are not authoritative evidence |
 | Genuine vulnerability fixes versus hardening; evidence-backed disagreements | Security-fix schema descriptions and Reviewer procedure; supported corrections need not change the final recommendation |
 | Review agreement, correction identifiers and printable ASCII | reviewer/result schemas and Reviewer field instructions; JSON arrays/null replace legacy delimiters/placeholders |
-| Preserve assessments exactly; join CVE data by commit identity | Assembler full-SHA joins, field ownership and exact preservation; review proposals are not applied |
+| Preserve assessments exactly; join CVE data by commit identity | Server assembly full-SHA joins, field ownership and exact preservation; review proposals are not applied |
 | Missing lookup becomes an empty placeholder | Not retained: distinguish explicit empty findings from missing contributions; report partial coverage |
 | File discovery, fixed chunk size, CSV quoting/headers and workflow variables | Excluded; supplied inputs, server orchestration and JSON schemas remain authoritative |
 

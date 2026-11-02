@@ -101,7 +101,9 @@ def test_selected_assets_published_and_embedded(tmp_path):
     cfg, cache, out = setup_source(tmp_path, [{'commit': 'a' * 40}])
     run(cfg, str(cache))
     manifest = json.loads((out / 'ai_analysis_bundle_manifest.json').read_bytes())
-    assert len(manifest['contract_assets']) >= 9
+    expected_assets = {'prompts/' + role + '.md' for role in ('analyst', 'cve', 'reviewer')}
+    expected_assets |= {'schemas/' + name + '.json' for name in ('input', 'analyst', 'cve', 'reviewer', 'result')}
+    assert set(manifest['contract_assets']) == expected_assets
     with zipfile.ZipFile(out / 'serve_ai.pyz') as app:
         for name, expected in manifest['contract_assets'].items():
             group, filename = name.split('/')
