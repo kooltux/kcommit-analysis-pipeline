@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v21.4.0 — Bounded AI outputs and deterministic assembly (2026-11-03)
+
+### Migration
+
+- This release remains within v21 by explicit project decision despite changed
+  prompt-response semantics and removal of the bundled Assembler LLM prompt.
+- Rebuild Stage 08 packages and restart the generated server. Role prompts already
+  include their schemas; remove duplicate schema blocks from workflow templates.
+  Replace the Assembler LLM with `/assemble/<name>`, then upload its result separately.
+
 - Fix stale nine-asset test expectations after removing the Assembler prompt.
   Snapshot and Stage 08 publication tests now assert the exact three-prompt,
   five-schema asset set, catching missing or unexpected assets.
@@ -25,7 +35,7 @@ All notable changes to this project are documented in this file.
   `ai_summary`) and 250 (`ai_backport_effort_reason`); `maxItems` 10 for `ai_cve_ids` and
   `ai_cve_probabilities`; `maxItems` 15 for `rv_notes` and `rv_recommendation` with
   `maxLength` 1500 and 700 per entry. Descriptions state the limits, so role outputs, and
-  the Reviewer and Assembler inputs built from them, are bounded.
+  the Reviewer and server-assembly inputs built from them, are bounded.
 - `tests/test_ai_output_limits.py`: schema consistency, validator boundaries and the role
   gate; plus an over-limit case in the CSV conversion tests.
 - `lib/ai_prompt_body.py`: complete static role prompts. `GET /prompt/analyst`, `/prompt/cve`

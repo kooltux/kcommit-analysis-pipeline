@@ -10,7 +10,7 @@ folders through `--results-bundle PATH`; commit SHA, run identity and schema
 validation are independent of file grouping. See
 [AI import details](docs/AI_ANALYSIS.md#import-grouping-and-progress).
 
-Current release: `v21.3.1` — parallel `run_tests` (`-n logical`) with an invocation-aware log, on top of `v21.3.0`'s `Accept: text/plain` negotiation, `--save-posts` diagnostics, a response-aware API catalog, and fence-safe role prompts. See [AI workflow and configuration migration](docs/AI_ANALYSIS.md#directory-only-integration).
+Current release: `v21.4.0` — bounded AI role outputs, complete static role prompts including schemas, and deterministic server-side assembly through `POST /assemble/<name>`, replacing the Assembler LLM. Rebuild Stage 08 packages and update workflow templates for the changed prompt responses. See [AI workflow and configuration migration](docs/AI_ANALYSIS.md#directory-only-integration).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
