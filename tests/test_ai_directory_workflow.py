@@ -72,7 +72,8 @@ def assessment(selected):
     for role in ('analyst', 'cve', 'reviewer'):
         fields = result_properties(schemas[role])
         contribution = {key: copy.deepcopy(record[key]) for key in fields}
-        documents[role] = dict(result, role=role, results={'a' * 40: contribution})
+        documents[role] = dict(run_id=chunk['run_id'], source_chunk=chunk['source_chunk'],
+                               role=role, results={'a' * 40: contribution})
     return documents, chunk, schemas
 
 
@@ -92,18 +93,18 @@ def test_workflow_preserves_specialists_and_review(assessment):
 
 @pytest.mark.parametrize('role', ['analyst', 'cve', 'reviewer', 'result'])
 def test_workflow_identity_is_checked_for_every_document(assessment, role):
-    assessment[0][role]['input_checksum'] = 'f' * 64
+    assessment[0][role]['run_id'] = 'f' * 64
     with pytest.raises(ValueError, match='identity'):
         check(assessment)
 
 
 def test_reviewer_cannot_cover_missing_specialists(assessment):
-    assessment[0]['analyst'].update(results={}, analyzed_commits=0, analysis_status='partial')
+    assessment[0]['analyst']['results'] = {}
     with pytest.raises(ValueError, match='specialist contributions'):
         check(assessment)
 
 
 def test_final_cannot_cover_unreviewed_commits(assessment):
-    assessment[0]['reviewer'].update(results={}, analyzed_commits=0, analysis_status='partial')
+    assessment[0]['reviewer']['results'] = {}
     with pytest.raises(ValueError, match='reviewed contribution'):
         check(assessment)

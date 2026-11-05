@@ -8,6 +8,7 @@ from lib.commands.cmd_ai_import import import_results
 from lib.stages.st08_prepare_ai import run
 from test_st08_prepare_ai import setup_source
 from test_ai_server_runtime import basic, request, running
+from ai_submission_helpers import role_body
 
 
 def prepare(tmp_path, count=9, batch_size=2):
@@ -73,8 +74,8 @@ def test_http_export_import(tmp_path, monkeypatch):
                   'total_commits': len(chunk['commits']), 'analyzed_commits': 0, 'results': {}}
         bad = dict(result, source_chunk=name.split('/')[1])
         assert req('/result/' + name, method='POST', body=json.dumps(bad).encode())[0] == 400
-        payload = json.dumps(result).encode()
-        assert req('/result/' + name, method='POST', body=payload)[0] == 200
+        payload = (json.dumps(result, sort_keys=True, separators=(',', ':')) + '\n').encode()
+        assert req('/result/' + name, method='POST', body=role_body(out / 'serve_ai.pyz', result))[0] == 200
         assert req('/result/' + name)[2] == payload
         for path in ['/batch/batch_999', '/chunk/batch_999/001.json', '/chunk/batch_001/../001.json']:
             assert req(path)[0] == 404

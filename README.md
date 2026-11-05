@@ -10,7 +10,7 @@ folders through `--results-bundle PATH`; commit SHA, run identity and schema
 validation are independent of file grouping. See
 [AI import details](docs/AI_ANALYSIS.md#import-grouping-and-progress).
 
-Current release: `v21.4.0` — bounded AI role outputs, complete static role prompts including schemas, and deterministic server-side assembly through `POST /assemble/<name>`, replacing the Assembler LLM. Rebuild Stage 08 packages and update workflow templates for the changed prompt responses. See [AI workflow and configuration migration](docs/AI_ANALYSIS.md#directory-only-integration).
+Current release: `v21.4.0`. Unreleased breaking API migration: compact role outputs, combined `/context/<name>` retrieval and contribution-only `POST /result/<name>` with server assembly, atomic storage and an exact-byte checksum receipt. Rebuild packages and update workflows; old final-result uploads and separate metadata/assembly routes are no longer supported. See [AI workflow and configuration migration](docs/AI_ANALYSIS.md#directory-only-integration).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
@@ -38,21 +38,21 @@ prefilter-kept commits separately without changing pipeline scores.
 
 Stage 08 selects `ai.prompts_dir` and `ai.schemas_dir`, snapshots every selected
 asset into `ai_contract/`, and embeds the directory contract in `serve_ai.pyz`.
-Removed single-file settings must be migrated. `/contract` and `/metadata/<name>`
-provide exact assets and trusted identities. Import verifies the retained asset
-tree. POST role documents to `/validate/role/<role>/<name>` and the four-document
-assembly to `/validate/workflow/<name>` before final upload. These gates store
-nothing; `/result/<name>` alone does not enforce the complete role chain.
+Removed single-file settings must be migrated. `/contract` and `/context/<name>`
+provide exact assets, trusted identities and source context. Import verifies the
+retained asset tree. Validation gates store nothing; result submission independently
+enforces the complete role chain before assembly and atomic storage.
 
 The Analyst, CVE expert and Reviewer prompts include their required schemas.
 Append only chunk-specific metadata, source data and prior role outputs in the
-external workflow. Replace the Assembler LLM with `POST /assemble/<name>` containing
-exactly the three role documents; the server validates and merges them, without
-applying review proposals or storing results. Upload the returned JSON separately.
+external workflow. Submit exactly `analyst`, `cve` and `reviewer` documents to
+`POST /result/<name>`. The server validates, assembles and stores the final result
+without applying review proposals, then returns `status: stored`, `source_chunk`,
+`run_id` and `result_checksum`. GET retrieves the unchanged final-result format.
 
 `/api` lists routes in logical workflow order with parameter descriptions, selected
 role values, concrete package-derived URLs and request examples. Use `/schema/result`
-for final results and `/metadata/<name>` for trusted per-chunk envelope fields.
+for stored final results and `/context/<name>` for trusted envelope plus source.
 The redundant output-schema alias has been removed.
 
 ## Pipeline stages

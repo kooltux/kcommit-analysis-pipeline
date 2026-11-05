@@ -19,6 +19,7 @@ from lib.manifest import VERSION
 from pathlib import Path
 from test_ai_review_runtime import payload, SHA, NOTE, RECOMMENDATION
 from test_ai_server_runtime import request, running
+from ai_submission_helpers import role_body
 
 
 @pytest.fixture
@@ -88,10 +89,10 @@ def test_live_upload_validation_preserves_accepted_result(contract_app, method):
     with running(app) as (port, log, errors):
         for candidate in candidates:
             data = encode(candidate)
-            assert request(port, '/result/' + name, method=method, body=data)[0] == 200
+            assert request(port, '/result/' + name, method=method, body=role_body(app, data))[0] == 200
             bad = copy.deepcopy(candidate)
             bad['results'][SHA]['rv_notes'] = []
-            assert request(port, '/result/' + name, method=method, body=encode(bad))[0] == 400
+            assert request(port, '/result/' + name, method=method, body=role_body(app, bad))[0] == 400
             assert request(port, '/result/' + name)[2] == data
         status, _, exported = request(port, '/export')
         assert status == 200

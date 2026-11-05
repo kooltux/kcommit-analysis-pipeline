@@ -4,17 +4,10 @@
   "description": "One source-bound document per chunk. Cross-document identity, coverage, array-length and assembly-preservation checks are additional validation gates.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version","run_id","source_chunk","input_checksum","input_schema_checksum","output_schema_checksum","analysis_status","total_commits","analyzed_commits","role","results"],
+  "required": ["run_id","source_chunk","role","results"],
   "properties": {
-    "schema_version": {"type": "string","const": "1.0"},
     "run_id": {"type": "string","pattern": "^[0-9a-f]{64}$"},
     "source_chunk": {"type": "string","pattern": "^(?:batch_[0-9]{3,}/)?[0-9]+[.]json$"},
-    "input_checksum": {"type": "string","pattern": "^[0-9a-f]{64}$","description": "Exact source-byte SHA-256 supplied by trusted server metadata."},
-    "input_schema_checksum": {"type": "string","pattern": "^[0-9a-f]{64}$"},
-    "output_schema_checksum": {"type": "string","pattern": "^[0-9a-f]{64}$","description": "Shared final result.json checksum, not the role-specific schema checksum."},
-    "analysis_status": {"type": "string","enum": ["complete","partial"]},
-    "total_commits": {"type": "integer","minimum": 0},
-    "analyzed_commits": {"type": "integer","minimum": 0},
     "role": {"type": "string","const": "reviewer"},
     "results": {
       "type": "object",

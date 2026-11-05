@@ -1,5 +1,5 @@
 """Source-bound role and assembly gates; only standard-library dependencies."""
-from lib.ai_contract import validate_result
+from lib.ai_contract import AssessmentValidationError, validate_result
 
 ROLES = ('analyst', 'cve', 'reviewer')
 
@@ -37,7 +37,32 @@ def validate_role(role, document, chunk, schemas, input_checksum):
         raise ValueError('Unknown intermediate role')
     if not isinstance(document, dict) or document.get('role') != role:
         raise ValueError('Intermediate role identity mismatch: ' + role)
-    validate_result(document, chunk, schemas[role], input_checksum)
+    schema = schemas[role]
+    compact_fields = {'run_id', 'source_chunk', 'role', 'results'}
+    if set(schema['required']) == compact_fields:
+        if set(document) != compact_fields:
+            raise AssessmentValidationError('Invalid compact role envelope', role=role)
+        if (document['run_id'] != chunk['run_id']
+                or document['source_chunk'] != chunk['source_chunk']):
+            raise AssessmentValidationError('Role source identity mismatch', role=role)
+        results = document['results']
+        if not isinstance(results, dict):
+            raise AssessmentValidationError('Results must be keyed by full commit SHA', role=role)
+        source = {item['commit'] for item in chunk['commits']}
+        document = dict(schema_version='1.0', run_id=chunk['run_id'],
+                        source_chunk=chunk['source_chunk'], role=role,
+                        input_checksum=input_checksum,
+                        input_schema_checksum=chunk['input_schema_checksum'],
+                        output_schema_checksum=chunk['output_schema_checksum'],
+                        total_commits=chunk['total_commits'], analyzed_commits=len(results),
+                        analysis_status='complete' if set(results) == source else 'partial',
+                        results=results)
+        schema = dict(schema, required=list(schemas['result']['required']) + ['role'])
+    try:
+        validate_result(document, chunk, schema, input_checksum)
+    except AssessmentValidationError as exc:
+        exc.details['role'] = role
+        raise
     return True
 
 

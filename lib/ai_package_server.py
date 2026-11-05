@@ -17,10 +17,42 @@ _CONTRACT_ROUTES = '''\
 WORKFLOW_SCHEMAS = {role: json.loads(ARCHIVE.read('ai_contract/schemas/' + role + '.json'))
                     for role in ROLES + ('result',)}
 
+RESPONSE_SCHEMAS['context'] = response_object(
+    envelope=RESPONSE_SCHEMAS['metadata'], chunk={'$ref': '/schema/input'})
+
+RESPONSE_SCHEMAS['upload_ack'] = response_object(status={'const': 'stored'},
+    source_chunk={'type': 'string'}, run_id={'type': 'string', 'pattern': '^[0-9a-f]{64}$'},
+    result_checksum={'type': 'string', 'pattern': '^[0-9a-f]{64}$'})
+for entry in ROUTES:
+    if entry['method'] == 'POST' and entry['path'] == '/result/<name>':
+        entry.pop('request_schema', None)
+        entry.update(document_roles=list(ROLES), writes_results=True,
+            description='Validate three role contributions, assemble and atomically store the final result without applying review proposals.')
+        entry['responses']['200'].update(description='Final result atomically stored; checksum identifies exact stored bytes.',
+            example=dict(status='stored', source_chunk='batch_001/001.json',
+                         run_id='0' * 64, result_checksum='0' * 64))
+
+
+@route('GET', '/context/<name>', group='sources', order=4,
+       parameter_sources={'name': 'chunks'}, response_schema='#/response_schemas/context')
+def source_context(self, name):
+    """Return trusted envelope and parsed chunk; input_checksum identifies archived bytes."""
+    if name not in NAMES or not SAFE.fullmatch(name):
+        self.send_error(404)
+        return
+    source = ARCHIVE.read('ai_analysis_input/' + name)
+    if checksum(source) != NAMES[name]:
+        raise ValueError('Source chunk checksum mismatch')
+    chunk = json.loads(source)
+    envelope = dict(schema_version='1.0', run_id=MANIFEST['run_id'], source_chunk=name,
+        input_checksum=NAMES[name], input_schema_checksum=MANIFEST['input_schema_checksum'],
+        output_schema_checksum=MANIFEST['output_schema_checksum'], total_commits=chunk['total_commits'])
+    self.send_bytes(json.dumps(dict(envelope=envelope, chunk=chunk), sort_keys=True).encode())
+
 
 @route('GET', '/contract', group='contract', order=0, response_schema='#/response_schemas/contract')
 def contract_index(self):
-    """Discover contract assets (the body field of a role prompt describes the bytes its URL serves) and trusted source metadata URLs."""
+    """Discover contract assets and combined trusted source context URLs."""
     assets = {}
     for name, expected in CONTRACT.items():
         group, filename = name.split('/')
@@ -33,41 +65,26 @@ def contract_index(self):
     self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'], 'assets': assets,
         'input_schema_checksum': MANIFEST['input_schema_checksum'],
         'output_schema_checksum': MANIFEST['output_schema_checksum'],
-        'chunks': {name: '/metadata/' + name for name in NAMES}}, sort_keys=True).encode())
+        'chunks': {name: '/context/' + name for name in NAMES}}, sort_keys=True).encode())
 
 
-@route('GET', '/metadata/<name>', group='sources', order=4, parameter_sources={'name': 'chunks'}, response_schema='#/response_schemas/metadata')
-def source_metadata(self, name):
-    """Copy trusted envelope fields into role/results; do not calculate hashes with an LLM.
-
-    Returns schema_version, run_id, source_chunk, the exact-byte input_checksum,
-    input_schema_checksum, output_schema_checksum and total_commits. Add your
-    results, analyzed_commits and analysis_status separately. There is no bare
-    /metadata endpoint; /contract lists valid per-chunk metadata URLs.
-    """
-    if name not in NAMES or not SAFE.fullmatch(name):
-        self.send_error(404)
-        return
+def prepare_upload(name, data, document):
+    """Assemble trusted contributions before the handler creates storage."""
     source = ARCHIVE.read('ai_analysis_input/' + name)
     if checksum(source) != NAMES[name]:
         raise ValueError('Source chunk checksum mismatch')
     chunk = json.loads(source)
-    self.send_bytes(json.dumps(dict(schema_version='1.0', run_id=MANIFEST['run_id'],
-        source_chunk=name, input_checksum=NAMES[name],
+    chunk.update(run_id=MANIFEST['run_id'], source_chunk=name,
         input_schema_checksum=MANIFEST['input_schema_checksum'],
-        output_schema_checksum=MANIFEST['output_schema_checksum'],
-        total_commits=chunk['total_commits']), sort_keys=True).encode())
+        output_schema_checksum=MANIFEST['output_schema_checksum'], total_commits=len(chunk['commits']))
+    final = assemble(document, chunk, WORKFLOW_SCHEMAS, checksum(source))
+    validate(name, final)
+    stored = (json.dumps(final, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+              + chr(10)).encode('utf-8')
+    return stored, dict(status='stored', source_chunk=name, run_id=MANIFEST['run_id'],
+                        result_checksum=checksum(stored))
 
 
-@route('POST', '/assemble/<name>', request_content_type='application/json',
-       group='validation', order=2, parameter_sources={'name': 'chunks'},
-       description='Validate three role documents and return deterministic assembly without storing results or applying review proposals.',
-       min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
-       document_roles=['analyst', 'cve', 'reviewer'], writes_results=False,
-       response_schema='/schema/result',
-       response_description='Validated final result; submit separately to /result/<name>.')
-def assemble_contributions(self, name):
-    return validate_contributions(self, name, assembly=True)
 @route('POST', '/validate/workflow/<name>', request_content_type='application/json', group='validation', order=1, parameter_sources={'name': 'chunks'},
        description='Validate the analyst, cve, reviewer and result documents supplied together in the POST body, including coverage and exact value preservation. The URL selects the source chunk; nothing is stored.',
        min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
@@ -82,7 +99,7 @@ def assemble_contributions(self, name):
        response_schema='#/response_schemas/validation_ack',
        response_description='Submitted documents are valid; nothing is stored or corrected.',
        response_example={'status': 'valid', 'run_id': '0' * 64, 'source_chunk': 'batch_001/001.json'})
-def validate_contributions(self, name, role=None, assembly=False):
+def validate_contributions(self, name, role=None):
     """Validate role JSON or four workflow documents without storing results.
 
     Use archived source bytes, manifest identities and packaged schemas only.
@@ -102,9 +119,6 @@ def validate_contributions(self, name, role=None, assembly=False):
                  total_commits=len(chunk['commits']))
     try:
         _, document = self.read_json()
-        if assembly:
-            self.send_bytes(json.dumps(assemble(document, chunk, WORKFLOW_SCHEMAS, checksum(source)), sort_keys=True).encode())
-            return
         if role is None:
             validate_workflow(document, chunk, WORKFLOW_SCHEMAS, checksum(source))
         else:
@@ -113,7 +127,7 @@ def validate_contributions(self, name, role=None, assembly=False):
                                         source_chunk=name), sort_keys=True).encode())
     except (ValueError, UnicodeError, RecursionError) as exc:
         self.close_connection = True
-        self.send_error(400, str(exc))
+        self.send_error(400, exc)
 '''
 
 

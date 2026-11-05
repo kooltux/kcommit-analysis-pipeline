@@ -3,6 +3,14 @@ import hashlib
 import json
 import re
 
+class AssessmentValidationError(ValueError):
+    """Validation failure with safe machine-readable context, never assessment text."""
+
+    def __init__(self, message, **details):
+        super().__init__(message)
+        self.details = details
+
+
 SHA = re.compile(r'^[0-9a-f]{40}$')
 NAME = re.compile(r'^(?:batch_[0-9]{3,}/)?[0-9]+[.]json$')
 FIELDS = ('commit', 'subject', 'author_name', 'author_email', 'author_org',
@@ -172,7 +180,7 @@ def validate_result(result, chunk, schema, input_checksum):
     if result['analysis_status'] == 'complete' and set(results) != source:
         raise ValueError('Incomplete result marked complete')
     props = result_properties(schema)
-    for item in results.values():
+    for commit, item in results.items():
         if not isinstance(item, dict) or set(item) != set(props):
             raise ValueError('Invalid per-commit result fields')
         for key, spec in props.items():
@@ -190,7 +198,8 @@ def validate_result(result, chunk, schema, input_checksum):
                                      or ('enum' in spec and value not in spec['enum'])):
                 raise ValueError('Invalid string: ' + key)
             if kind == 'string' and 'maxLength' in spec and len(value) > spec['maxLength']:
-                raise ValueError('String too long: ' + key)
+                raise AssessmentValidationError('String too long: ' + key,
+                    commit=commit, field=key, limit=spec['maxLength'], actual=len(value))
             if kind == 'array':
                 item_spec = spec['items']
                 if (not isinstance(value, list) or any(
@@ -203,7 +212,9 @@ def validate_result(result, chunk, schema, input_checksum):
                     raise ValueError('Invalid array: ' + key)
                 if (item_spec.get('type') == 'string' and 'maxLength' in item_spec
                         and any(len(v) > item_spec['maxLength'] for v in value)):
-                    raise ValueError('Array item too long: ' + key)
+                    raise AssessmentValidationError('Array item too long: ' + key,
+                        commit=commit, field=key, limit=item_spec['maxLength'],
+                        actual=max(len(v) for v in value))
                 if (len(value) < spec.get('minItems', 0)
                         or ('maxItems' in spec and len(value) > spec['maxItems'])
                         or (spec.get('uniqueItems') and len(value) != len(set(value)))):

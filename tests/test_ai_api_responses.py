@@ -33,6 +33,9 @@ def check_response(catalog, contract, response, port, token=None):
     if definition.get('$ref') == 'https://json-schema.org/draft/2020-12/schema':
         Draft202012Validator.check_schema(json.loads(body))
     elif spec['content_type'] == 'application/json':
+        if 'chunk' in definition.get('properties', {}):
+            definition = dict(definition, properties=dict(definition['properties'],
+                chunk=json.loads(request(port, '/schema/input', authorization=token)[2])))
         Draft202012Validator(definition).validate(json.loads(body))
     elif spec.get('body_encoding') == 'binary':
         assert body.startswith(b'PK')
@@ -69,7 +72,7 @@ def test_generated_api_response_contracts(app, workflow, auth):
                  ('/schema/input', '/schema/<name>'), ('/batches', '/batches'),
                  ('/batch/' + name.split('/')[0], '/batch/<batch_id>'),
                  ('/chunks', '/chunks'), ('/chunk/' + name, '/chunk/<name>'),
-                 ('/metadata/' + name, '/metadata/<name>')]
+                 ('/context/' + name, '/context/<name>')]
         for path, pattern in paths:
             entry = entries['GET', pattern]
             response = request(port, path, authorization=token)
@@ -89,7 +92,7 @@ def test_generated_api_response_contracts(app, workflow, auth):
         assert request(port, '/result/' + name, authorization=token)[0] == 404
         assert not app.with_name(app.name + '.results').exists()
         response = request(port, '/result/' + name, method='POST',
-                           body=encode(documents['result']), authorization=token)
+                           body=encode({role: documents[role] for role in ('analyst', 'cve', 'reviewer')}), authorization=token)
         assert response[0] == 200
         check_response(catalog, entries['POST', '/result/<name>']['responses']['200'], response, port, token)
         for path, pattern in [('/result/' + name, '/result/<name>'), ('/export', '/export')]:

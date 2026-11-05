@@ -47,6 +47,7 @@ def document(item, role=None):
              'total_commits': 1, 'analyzed_commits': 1, 'results': {SHA: item}}
     if role:
         value['role'] = role
+        value = {key: value[key] for key in ('run_id', 'source_chunk', 'role', 'results')}
     return value
 
 

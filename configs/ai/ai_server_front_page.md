@@ -79,15 +79,13 @@ GET result examples may return 404 until an assessment has been uploaded.
 
 ### Trusted metadata
 
-Use `/metadata/<name>` for the source chunk selected from `/chunks` or `/contract`.
-There is no bare `/metadata` endpoint. Copy its `schema_version`, `run_id`,
-`source_chunk`, `input_checksum`, `input_schema_checksum`, `output_schema_checksum`
-and `total_commits` into role/result documents. Add your `results`,
-`analyzed_commits`, `analysis_status` and intermediate `role` as appropriate.
-The input checksum hashes exact archived bytes; never ask an LLM to calculate it.
-`/schema/result` is the final contract; the redundant output-schema URL is removed.
-For every intermediate role and final result, output_schema_checksum refers to
-the final result.json schema, never the role-specific schema.
+Use `/context/<name>` for the source chunk selected from `/chunks` or `/contract`.
+It returns trusted `envelope` fields and the parsed `chunk`. Compact role documents
+contain exactly `run_id`, `source_chunk`, `role` and `results`; do not add transport
+checksums, counts or status. The server derives the full final envelope.
+The input checksum hashes exact archived bytes from `/chunk/<name>`, not context JSON.
+`/schema/result` describes the stored final document. Its output schema checksum
+identifies the final result schema, never a role-specific schema.
 
 `GET /api/version` reports `tool_version`, captured from the generating tool's
 `MANIFEST.json`, with `version_source` and `captured_at` provenance. The version
@@ -133,14 +131,14 @@ These capabilities do not depend on model or provider.
    and `/schema/reviewer`, recording agreement or proposed corrections in `rv_*`
    without rewriting specialist values. Validate the complete review document at
    `/validate/role/reviewer/<name>` before passing all three outputs to server assembly.
-4. POST exactly `analyst`, `cve` and `reviewer` documents to `/assemble/<name>`.
-   Server assembly joins by full commit SHA and returns one `/schema/result`
+4. POST exactly `analyst`, `cve` and `reviewer` documents to `/result/<name>`.
+   Server assembly joins by full commit SHA and stores one `/schema/result`
    document, preserving values exactly. Do not apply review recommendations.
    Missing contributions produce partial coverage; invalid reviewer coverage is rejected.
-5. Require HTTP 200 from assembly, then POST its unchanged result to `/result/<name>`
-   and GET that URL to verify acceptance. Assembly runs the workflow gate internally;
-   it and the validation gates store nothing. `/validate/workflow/<name>` remains
-   available for separately checking all four documents; its success is `status: valid`.
+5. Require HTTP 200 and `status: stored`, then GET that URL to verify acceptance
+   and compare `result_checksum` with the SHA-256 of exact retrieved bytes. Submission
+   runs the workflow gate internally. Validation gates store nothing;
+   `/validate/workflow/<name>` can separately check all four documents.
 
 If required schemas or inputs are missing, unreadable or inconsistent, stop and
 report the failure to the caller. Never POST a failure report as an assessment.
@@ -153,15 +151,15 @@ report the failure to the caller. Never POST a failure report as an assessment.
 2. Retrieve the selected batch or chunk listing, preserving any `limit` and
    `offset`. Use its run ID and URLs exactly; do not guess filenames or replace
    a debug subset or single-batch retry with the unrestricted global listing.
-3. Download a listed chunk and `/metadata/<name>`. Copy authoritative identity and
-   checksum fields from that metadata, never from LLM calculations. Follow the role
-   workflow above, including every validation gate, without expanding selected work.
-4. Build a schema-conforming result. Use partial status if only a subset was
-   assessed; do not fabricate results or unsupported CVE IDs.
-5. When authorized, submit to `POST /result/<name>`.
-   POST validates and atomically replaces the result for that source chunk.
-6. Check for HTTP 200 and `{"status":"ok"}`, then GET the same result URL to
-   verify acceptance. A rejected upload is not a completed submission.
+3. Retrieve `/context/<name>` and supply its envelope and chunk to the roles.
+   Copy authoritative identities, never calculate hashes with an LLM. Follow the
+   role workflow without expanding selected work.
+4. Collect three schema-conforming compact role documents. Do not fabricate missing
+   assessments or unsupported CVE IDs; the server derives coverage and status.
+5. When authorized, submit the three documents together to `POST /result/<name>`.
+   POST validates, assembles and atomically replaces the final result.
+6. Require HTTP 200 with `status: stored`, `source_chunk`, `run_id` and
+   `result_checksum`; GET the result and compare its exact-byte SHA-256. Rejected uploads are not complete.
 
 ### Result contract
 
@@ -185,7 +183,8 @@ results as a connectivity test.
 
 - POST bodies must be 1 byte to 10 MiB with one `Content-Length` and one
   `Content-Type: application/json` header, without `Transfer-Encoding`.
-- Successful uploads return HTTP 200 and `{"status":"ok"}`.
+- Successful uploads return HTTP 200 with `status: stored`, `source_chunk`, `run_id`
+  and `result_checksum` (SHA-256 of exact stored bytes).
 - HTTP 400 rejects an invalid upload; read the error and correct the submission.
 - HTTP 401 indicates missing or incorrect authentication.
 - HTTP 404 indicates an unknown path or chunk, or an absent stored result.
@@ -220,12 +219,12 @@ JSON against the supplied schemas, rather than assuming a response is valid.
 
 ### Submit and verify a real result
 
-Use an authorized, schema-conforming `result.json` for the selected chunk.
+Use authorized `contributions.json` with exactly the three complete role documents.
 The upload changes server state; the verification and export requests do not.
 
 ```sh
 curl --fail-with-body --silent --show-error --user "$AUTH" \
-  -H 'Content-Type: application/json' --data-binary @result.json "$BASE/result/$CHUNK"
+  -H 'Content-Type: application/json' --data-binary @contributions.json "$BASE/result/$CHUNK"
 curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/result/$CHUNK"
 curl --fail-with-body --silent --show-error --user "$AUTH" \
   "$BASE/export" --output results.zip

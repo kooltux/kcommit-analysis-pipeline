@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from lib.ai_contract import encode
+from ai_submission_helpers import role_body
 from test_ai_package_server import app, package, workflow
 from test_ai_preparation import snapshots
 from test_ai_server_runtime import basic, namespace, request, running, wait_until
@@ -83,16 +84,17 @@ def test_invalid_validate_post_is_saved_and_latest_wins(app, workflow):
         assert not (debug_dir(app) / 'validate/ok').exists()
 
 
-def test_valid_result_saves_report_only_and_matches_stored_result(app, workflow):
+def test_valid_submission_saves_contributions_and_stored_checksum_receipt(app, workflow):
     name, documents = workflow
-    body = encode(documents['result'])
+    body = role_body(app, documents['result'])
     target = debug_dir(app) / 'result/ok' / name
     with running(app, extra=('-s',)) as (port, log, errors):
         assert request(port, '/result/' + name, method='POST', body=body)[0] == 200
         text = report(target)
     stored = app.with_name(app.name + '.results') / name
-    assert stored.read_bytes() == body and not target.exists()
-    assert 'not duplicated; byte-identical' in text
+    assert stored.read_bytes() == encode(documents['result'])
+    assert target.read_bytes() == body
+    assert 'saved as' in text
     assert hashlib.sha256(stored.read_bytes()).hexdigest() in text
 
 

@@ -1,4 +1,5 @@
 """POST validates and replaces results; removed PUT cannot mutate stored data."""
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -7,6 +8,7 @@ from email.message import Message
 
 import pytest
 from test_ai_server_runtime import app, namespace, basic, request, running
+from ai_submission_helpers import role_body
 
 
 def test_only_post_is_registered_for_upload(namespace):
@@ -32,14 +34,15 @@ def test_post_replaces_validates_and_exports(app, auth):
     token = basic(auth) if auth else None
     with running(app, auth=auth) as (port, log, errors):
         for index in range(2):
-            result['analysis_status'] = 'partial' if index or chunk['commits'] else 'complete'
-            payload = json.dumps(result, sort_keys=True).encode()
+            result['analysis_status'] = 'partial' if chunk['commits'] else 'complete'
+            payload = (json.dumps(result, sort_keys=True, separators=(',', ':')) + '\n').encode()
             if auth:
                 assert request(port, path, method='POST', body=payload)[0] == 401
             code, headers, body = request(port, path, method='POST',
-                                         authorization=token, body=payload)
+                                         authorization=token, body=role_body(app, result))
             assert code == 200 and headers['Content-Type'] == 'application/json'
-            assert json.loads(body) == {'status': 'ok'}
+            assert json.loads(body) == dict(status='stored', source_chunk=name,
+                run_id=manifest['run_id'], result_checksum=hashlib.sha256(payload).hexdigest())
             assert request(port, path, authorization=token)[2] == payload
             assert request(port, path, method='POST',
                            authorization=token, body=b'{}')[0] == 400
@@ -70,6 +73,7 @@ def test_post_enforces_body_limits(namespace, length):
     handler.send_error = lambda code, message=None, explain=None: errors.append((code, message))
     handler.do_POST()
     assert len(errors) == 1
-    assert 'size limits' in errors[0][1]
+    assert isinstance(errors[0][1], ValueError)
+    assert 'size limits' in str(errors[0][1])
     assert errors[0][0] == 400
     assert not Path(namespace['RESULTS']).exists()

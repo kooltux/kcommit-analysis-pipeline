@@ -258,9 +258,19 @@ def smoke(app):
                     'analysis_status': 'partial' if chunk['commits'] else 'complete',
                     'total_commits': len(chunk['commits']), 'analyzed_commits': 0, 'results': {},
                 }
-                payload = json.dumps(result, sort_keys=True).encode()
-                reply = json.loads(expect(base, '/result/' + name, method='POST', data=payload))
-                check(reply == {'status': 'ok'}, 'Unexpected POST response')
+                context = json.loads(expect(base, '/context/' + name))
+                check(context['chunk'] == chunk, 'Context source differs')
+                check(context['envelope']['input_checksum'] == hashlib.sha256(source).hexdigest(),
+                      'Context checksum differs from archived bytes')
+                expect(base, '/metadata/' + name, 404, reason='metadata route removed')
+                expect(base, '/assemble/' + name, 404, method='POST', data=b'{}', reason='assembly route removed')
+                payload = (json.dumps(result, sort_keys=True, separators=(',', ':')) + '\n').encode()
+                expect(base, '/result/' + name, 400, method='POST', data=payload, reason='legacy upload rejected')
+                inputs = {role: dict(run_id=listing['run_id'], source_chunk=name, role=role, results={})
+                          for role in ('analyst', 'cve', 'reviewer')}
+                reply = json.loads(expect(base, '/result/' + name, method='POST', data=json.dumps(inputs).encode()))
+                check(reply == dict(status='stored', source_chunk=name, run_id=listing['run_id'],
+                    result_checksum=hashlib.sha256(payload).hexdigest()), 'Unexpected storage receipt')
                 check(expect(base, '/result/' + name) == payload, 'Result round trip differs')
                 expect(base, '/result/' + name, 405, method='PUT', data=b'{}',
                        reason='PUT cannot overwrite an accepted result')

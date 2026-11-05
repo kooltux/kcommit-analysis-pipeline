@@ -14,8 +14,40 @@ from lib.ai_prompt_body import BODY_SCHEMAS, build_prompt_body
 from lib.manifest import VERSION
 from test_ai_preparation import snapshots
 from test_ai_server_runtime import basic, request, running
+from ai_submission_helpers import role_body
 
 PAGE = b'# Portable role workflow guide'
+
+
+@pytest.mark.parametrize('auth', [None, 'reviewer:secret'])
+def test_combined_context_preserves_archived_chunk(app, package, auth):
+    from jsonschema import Draft202012Validator
+    with running(app, auth=auth) as (port, log, errors):
+        token = basic(auth) if auth else None
+        name = next(iter(package['manifest']['chunks']))
+        path = '/context/' + name
+        if auth:
+            assert request(port, path)[0] == 401
+        status, _, data = request(port, path, authorization=token)
+        assert status == 200
+        context = json.loads(data)
+        assert set(context) == {'envelope', 'chunk'}
+        source = package['files']['ai_analysis_input/' + name]
+        assert context['chunk'] == json.loads(source)
+        assert request(port, '/chunk/' + name, authorization=token)[2] == source
+        assert context['envelope']['run_id'] == package['manifest']['run_id']
+        assert context['envelope']['source_chunk'] == name
+        assert context['envelope']['total_commits'] == len(context['chunk']['commits'])
+        assert context['envelope']['input_checksum'] == digest(source)
+        catalog = json.loads(request(port, '/api', authorization=token)[2])
+        entry = next(item for item in catalog['routes'] if item['path'] == '/context/<name>')
+        assert entry['responses']['200']['schema'] == {'$ref': '#/response_schemas/context'}
+        schema = dict(catalog['response_schemas']['context'])
+        schema['properties'] = dict(schema['properties'], chunk=json.loads(
+            package['files']['ai_contract/schemas/input.json']))
+        Draft202012Validator(schema).validate(context)
+        for invalid in ('/context', '/context/batch_999/999.json', '/context/../001.json'):
+            assert request(port, invalid, authorization=token)[0] == 404
 
 
 @pytest.fixture
@@ -68,12 +100,13 @@ def test_contract_discovery_and_trusted_metadata(app, package, auth):
                 assert data == package['files']['ai_contract/' + name]
                 assert digest(data) == entry['checksum']
         name = next(iter(manifest['chunks']))
-        metadata = json.loads(get(index['chunks'][name]))
+        assert index['chunks'][name] == '/context/' + name
+        metadata = json.loads(get(index['chunks'][name]))['envelope']
         assert metadata['input_checksum'] == digest(package['files']['ai_analysis_input/' + name])
         assert metadata['output_schema_checksum'] == manifest['output_schema_checksum']
         assert metadata['total_commits'] == 1
         routes = json.loads(get('/api'))['routes']
-        assert {'/contract', '/metadata/<name>', '/prompt/<name>', '/schema/<name>'} <= {
+        assert {'/contract', '/context/<name>', '/prompt/<name>', '/schema/<name>'} <= {
             item['path'] for item in routes}
         assert get('/') == PAGE
         for path in ['/prompt/unknown', '/schema/unknown', '/metadata/batch_999/999.json']:
@@ -102,9 +135,9 @@ def test_metadata_can_drive_final_upload_and_export(app, package):
     record.update(rv_agreement='agree', ai_risks_if_not_backported=['none'])
     with running(app) as (port, log, errors):
         name = next(iter(package['manifest']['chunks']))
-        metadata = json.loads(request(port, '/metadata/' + name)[2])
+        metadata = json.loads(request(port, '/context/' + name)[2])['envelope']
         result = dict(metadata, analysis_status='complete', analyzed_commits=1, results={'a' * 40: record})
-        assert request(port, '/result/' + name, method='POST', body=encode(result))[0] == 200
+        assert request(port, '/result/' + name, method='POST', body=role_body(app, result))[0] == 200
         status, _, data = request(port, '/export')
         assert status == 200
         with zipfile.ZipFile(io.BytesIO(data)) as exported:
@@ -131,7 +164,8 @@ def workflow(package):
     documents = {'result': final}
     for role in ('analyst', 'cve', 'reviewer'):
         fields = result_properties(json.loads(package['files']['ai_contract/schemas/' + role + '.json']))
-        documents[role] = dict(final, role=role, results={sha: {key: item[key] for key in fields}})
+        documents[role] = dict(run_id=chunk['run_id'], source_chunk=name, role=role,
+                               results={sha: {key: item[key] for key in fields}})
     return name, documents
 
 
@@ -184,7 +218,7 @@ def test_workflow_rejects_invalid_contributions_without_replacing_results(app, w
     sha = next(iter(documents['result']['results']))
     with running(app) as (port, log, errors):
         original = encode(documents['result'])
-        assert request(port, '/result/' + name, method='POST', body=original)[0] == 200
+        assert request(port, '/result/' + name, method='POST', body=role_body(app, original))[0] == 200
         if problem == 'assembly':
             documents['result']['results'][sha]['ai_summary'] = 'rewritten'
         elif problem in ('specialist', 'review'):
@@ -207,7 +241,8 @@ def test_workflow_accepts_partial_and_preserves_advisory_review(app, workflow, m
     name, documents = workflow
     if mode == 'partial':
         for document in documents.values():
-            document.update(results={}, analyzed_commits=0, analysis_status='partial')
+            document['results'] = {}
+        documents['result'].update(analyzed_commits=0, analysis_status='partial')
     else:
         for role in ('reviewer', 'result'):
             for record in documents[role]['results'].values():
@@ -266,12 +301,13 @@ def test_api_examples_are_live_and_metadata_usage_is_explicit(app, package):
             expected = sorted(name.split('/')[1].rsplit('.', 1)[0]
                               for name in package['manifest']['contract_assets'] if name.startswith(group + '/'))
             assert entries[path]['path_parameters']['name']['enum'] == expected
-        metadata = entries['/metadata/<name>']
+        assert '/metadata/<name>' not in entries and '/assemble/<name>' not in entries
+        metadata = entries['/context/<name>']
         name = metadata['path_parameters']['name']['example']
         assert name in package['manifest']['chunks']
         assert 'trusted envelope' in metadata['description']
         data = json.loads(request(port, metadata['examples'][0]['url'])[2])
-        assert data['input_checksum'] == package['manifest']['chunks'][name]
+        assert data['envelope']['input_checksum'] == package['manifest']['chunks'][name]
         for entry in catalog['routes']:
             for example in entry['examples']:
                 assert set(example) == {'method', 'url'}

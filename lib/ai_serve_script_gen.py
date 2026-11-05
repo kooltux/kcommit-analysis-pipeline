@@ -1,10 +1,10 @@
 """Generate a self-contained AI exchange zipapp with validated result uploads."""
 import inspect
-from lib.ai_contract import result_properties, validate_result
+from lib.ai_contract import AssessmentValidationError, result_properties, validate_result
 from lib.ai_prompt_body import BODY_SCHEMAS, build_prompt_body
 import os
 
-_RESULT_VALIDATION_SOURCE = '\n\n'.join(inspect.getsource(fn) for fn in (result_properties, validate_result))
+_RESULT_VALIDATION_SOURCE = '\n\n'.join(inspect.getsource(fn) for fn in (AssessmentValidationError, result_properties, validate_result))
 _BODY_SOURCE = 'BODY_SCHEMAS = ' + repr(BODY_SCHEMAS) + '\n\n\n' + inspect.getsource(build_prompt_body)
 
 TOOL_MANIFEST_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'MANIFEST.json')
@@ -40,6 +40,12 @@ RESULTS = os.path.abspath(sys.argv[0]) + '.results'
 
 def checksum(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def prepare_upload(name, data, document):
+    """Prepare stored bytes and receipt; validation must finish before writing."""
+    validate(name, document)
+    return data, {'status': 'ok'}
 
 
 for asset_name, expected in CONTRACT.items():
@@ -172,6 +178,13 @@ RESPONSE_SCHEMAS = {
         protocol_responses={'type': 'object'}),
 }
 
+
+RESPONSE_SCHEMAS['error']['properties']['error']['properties']['details'] = {
+    'type': 'object', 'additionalProperties': False,
+    'properties': {'role': {'type': 'string'}, 'commit': {'type': 'string'},
+                   'field': {'type': 'string'}, 'limit': {'type': 'integer'},
+                   'actual': {'type': 'integer'}},
+}
 
 def error_responses():
     responses = {}
@@ -447,9 +460,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def send_error(self, code, message=None, explain=None):
         self.close_connection = True
         names = ERROR_CODES
+        details = message.details if code == 400 and isinstance(message, AssessmentValidationError) else None
         message = self.responses.get(code, ('Request failed',))[0] if message is None or code >= 500 else str(message)
-        data = json.dumps({'error': {'code': names.get(code, 'http_error'),
-                                   'status': code, 'message': message}}, sort_keys=True).encode('utf-8')
+        error = {'code': names.get(code, 'http_error'), 'status': code, 'message': message}
+        if details:
+            error['details'] = details
+        data = json.dumps({'error': error}, sort_keys=True).encode('utf-8')
         self._resp_body = data
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
@@ -565,7 +581,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     documents = entry['document_roles']
                     body['schema'] = dict(type='object', required=list(documents), additionalProperties=False,
                         properties={role: {'$ref': '/schema/' + role} for role in documents})
-                    body['description'] = 'An object containing complete JSON documents, not filenames or chunk names; the assembled document is nested under result.'
+                    body['description'] = 'An object containing exactly the listed complete JSON documents, not filenames or chunk names.'
                 elif entry.get('request_schema'):
                     body['schema'] = {'$ref': entry['request_schema']}
                     body['description'] = 'A complete JSON document conforming to the referenced schema, not the source chunk or its name. Replace <role> in the schema reference with the URL role when present.'
@@ -715,7 +731,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         try:
             data, document = self.read_json()
-            validate(name, document)
+            data, receipt = prepare_upload(name, data, document)
             result_dir = os.path.dirname(os.path.join(RESULTS, name))
             os.makedirs(result_dir, exist_ok=True)
             fd, temp = tempfile.mkstemp(dir=result_dir, prefix='.upload-')
@@ -726,9 +742,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             finally:
                 if os.path.exists(temp):
                     os.unlink(temp)
-            self.send_bytes(b'{"status":"ok"}')
+            self.send_bytes(json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode())
         except (ValueError, UnicodeError, RecursionError) as exc:
-            self.send_error(400, str(exc))
+            self.send_error(400, exc)
 
 def connection_url(host, port):
     connect_host = '127.0.0.1' if host == '0.0.0.0' else host

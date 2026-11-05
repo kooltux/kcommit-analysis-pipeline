@@ -78,8 +78,12 @@ def test_repository_role_payloads(name):
                  total_commits=1, analyzed_commits=1, results={'a' * 40: record})
     if name != 'result':
         value['role'] = name
+        legacy = dict(value)
+        value = {key: value[key] for key in ('run_id', 'source_chunk', 'role', 'results')}
     validator = Draft202012Validator(schema)
     validator.validate(value)
+    if name != 'result':
+        assert not validator.is_valid(legacy)
     value['unexpected'] = True
     assert not validator.is_valid(value)
     del value['unexpected']

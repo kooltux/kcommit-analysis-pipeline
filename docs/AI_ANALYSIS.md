@@ -1,13 +1,50 @@
 # Optional AI analysis workflow
 
+## Upload storage boundary
+
+The embedded handler prepares validated storage bytes and a receipt before creating
+result directories or temporary files. It sends the receipt only after atomic
+replacement succeeds. Directory packages validate exactly three role documents,
+assemble the final result, and return `status: stored`, `source_chunk`, `run_id`
+and the SHA-256 `result_checksum` of exact stored bytes. Legacy result uploads are rejected.
+
+## Combined source context
+
+`GET /context/<name>` returns `{"envelope": {...}, "chunk": {...}}` in one
+request. The envelope contains trusted identity/checksum fields; the chunk is the
+parsed archived input document. `/contract` lists the combined context URLs.
+`GET /chunk/<name>` remains byte-identical to the archive, and `input_checksum`
+always identifies those original bytes, not a serialization of the context response.
+The `/api` catalog describes the context response and links its chunk to `/schema/input`.
+
+The former metadata and assembly routes return 404. Rebuild packages and update
+workflows for this breaking API migration. Stored results and offline import are unchanged.
+
+## Compact role output contract
+
+The shared role validator supports contracts requiring exactly `run_id`,
+`source_chunk`, `role` and `results`. For these contracts it derives checksums,
+counts and coverage status from trusted source context in an internal validation
+view; models must not supply those fields. This does not change stored final-result
+documents or CSV/import. Shipped analyst, cve and reviewer schemas now require
+only these four fields; old role envelopes are rejected by regenerated packages.
+Submit the three compact role documents together; do not synthesize a final envelope.
+
+## Structured validation diagnostics
+
+Length-limit failures include optional `error.details` in HTTP 400 responses:
+`commit`, `field`, `limit`, `actual`, and `role` when known. The shared validator
+preserves its readable error message. Details contain identifiers and sizes, not
+assessment text. Other failures can omit details; clients must not require them.
+
 ## Deterministic server assembly
 
-POST exactly `analyst`, `cve` and `reviewer` documents to `/assemble/<name>`.
-The server validates them against the archived source, joins reviewed contributions
-by full SHA and copies trusted envelope fields. Missing contributions yield partial
-coverage; invalid reviewer coverage is rejected. Values and review proposals are
-preserved, never corrected. The result passes the workflow gate before return.
-Nothing is stored: POST the returned JSON to `/result/<name>`, then GET to verify.
+POST exactly `analyst`, `cve` and `reviewer` documents to `/result/<name>`.
+The server validates against archived source, joins reviewed contributions by full
+SHA, derives the final envelope and runs the workflow gate before atomic storage.
+Missing contributions yield partial coverage; invalid reviewer coverage is rejected.
+Values and review proposals are preserved, never corrected. HTTP 200 returns the
+storage receipt, not the assembled document. GET the same URL to verify stored bytes.
 
 ## Directory-only integration
 
@@ -23,14 +60,14 @@ The complete package and zipapp are prepared before live assets are replaced.
 Validation/generation failures preserve existing outputs. Publication is per-file/
 per-tree replacement, not a transaction across filesystem failures.
 
-`lib.ai_workflow` validators are embedded in the portable server for role and
-assembly HTTP gates. Final-result upload alone does not enforce the role chain.
+`lib.ai_workflow` validators are embedded in the portable server. Result submission
+independently enforces the complete role chain before any storage write.
 
 ## Directory-contract portable server
 
 `lib.ai_package_server.generate_ai_package_server` consumes the new in-memory
 package, verifies contract/root/source checksums and atomically publishes a zipapp.
-Its `/contract`, `/prompt/<name>`, `/schema/<name>` and `/metadata/<name>` routes
+Its `/contract`, `/prompt/<name>`, `/schema/<name>` and `/context/<name>` routes
 provide exact assets and trusted identity fields through the executable registry.
 The zipapp has no repository or third-party runtime imports. Stage 08 selects
 this entry point, including the validation-only POST gates described below.
@@ -124,8 +161,8 @@ retries, handoffs and final storage belong to the operator or external orchestra
 Intermediate outputs must not use the final-result schema. A missing, unreadable
 or conflicting required schema stops the task instead of producing guessed JSON.
 The same failure path covers inconsistent or unreadable required inputs: report
-to the caller, never submit the report as an assessment. Every role copies the
-final result.json output_schema_checksum from trusted metadata, not its own schema hash.
+to the caller, never submit the report as an assessment. Roles copy only run_id
+and source_chunk; the server supplies checksums and counts in the final result.
 CVE JSON contains no research-reference fields; only an orchestrator-managed,
 separate evidence channel may carry captured tool records to Reviewer.
 
@@ -188,8 +225,8 @@ current evidence policy rather than restoring conflicting legacy rules.
 | File discovery, fixed chunk size, CSV quoting/headers and workflow variables | Excluded; supplied inputs, server orchestration and JSON schemas remain authoritative |
 
 Stage 08 packages every selected prompt and serves `/prompt/<name>`.
-`/contract` lists assets; the bare prompt URL is removed. Do not upload specialist
-intermediate JSON to the final-result endpoint.
+`/contract` lists assets and context URLs; the bare prompt URL is removed. Submit
+all three specialist/reviewer documents together, never one role alone.
 The new prompt loader snapshots immediate `*.md` files, dereferencing directory
 and file symlinks, validating UTF-8 and preserving entry filenames and exact bytes.
 
@@ -198,8 +235,8 @@ prompt for the role, not only the stored file: the prompt text, then `## Artefac
 with the schemas the role reads in fenced `json` blocks (Analyst: input and
 analyst; CVE: input and cve; Reviewer: input, analyst, cve and reviewer, with
 the output schema last). The bytes are identical for every chunk, so their size
-is fixed and known. The orchestrator appends only per-chunk data: `/metadata/<name>`,
-`/chunk/<name>` and, for the Reviewer, the validated specialist outputs. Any other
+is fixed and known. The orchestrator appends only the envelope and chunk from
+`/context/<name>` and, for Reviewer, validated specialist outputs. Any other
 prompt asset is returned exactly as stored. `/contract` keeps the stored file's
 checksum as the asset identity and adds `body` (`bytes` and `checksum`) to these
 three entries, describing what the URL returns.
@@ -227,10 +264,10 @@ limits and role contracts from the executable registry. Validation uses archived
 source bytes, manifest checksums and packaged schemas, never supplied context.
 
 These are validation-only operations: they neither create nor replace stored
-results and return no reusable validation ticket. Submit the unchanged validated
-`result` separately to `/result/<name>`. That endpoint remains available for manual
-CSV results and does not itself enforce the multi-role chain. Keep the package
-unchanged during delayed remote analysis/import; no history database is introduced.
+results and return no reusable validation ticket. Submit the three role documents
+together to `/result/<name>`, which revalidates and assembles them before storage.
+Manual CSV results remain supported through offline import, not HTTP submission.
+Keep the package unchanged during delayed remote analysis/import.
 
 ## Convert manual CSV assessments
 
@@ -249,9 +286,9 @@ Inputs may be CSV files or recursively scanned batch directories. `commit_hash`
 is authoritative; CSV filenames and folder names do not determine identity.
 Output uses the original `batch_NNN/NNN.json` paths and server-compatible result
 envelopes, including original identities, exact-byte checksums and complete or
-partial status. Chunks without assessments are omitted. These JSONs can also
-be submitted to `POST /result/<source_chunk>`;
-the tool itself never contacts a server.
+partial status. Chunks without assessments are omitted. Import these JSONs using
+`ai-import --results-bundle`; they are not contribution-only HTTP request bodies.
+The tool itself never contacts a server.
 
 Boolean cells accept TRUE/FALSE, case-insensitively. Array cells accept JSON
 arrays or one scalar item; blank/EMPTY arrays become `[]`. Numeric probabilities
@@ -419,9 +456,9 @@ requests or upload anything; add authentication credentials separately when need
 
 `/schema/result` is the sole final-result schema URL; the former output alias is
 removed. Root package artifact names and the `output_schema_checksum` envelope
-field are unchanged. `/metadata/<name>` supplies trusted per-chunk envelope fields;
-bare `/metadata` is not an endpoint. Copy identities/checksums from it, then add
-assessment fields, counts and status rather than calculating hashes with an LLM.
+field are unchanged. `/context/<name>` supplies trusted envelope fields and parsed
+source. Models return compact role documents; the server derives final checksums,
+counts and status rather than asking an LLM to calculate them.
 
 AI assessment is advisory. The ordinary pipeline runs stages 00–07 and does not
 require an AI service. Stage 08 prepares an independent work package from the
@@ -463,7 +500,7 @@ with `batch_id`, `batch_number`, `chunks` and `total_commits`. Checksums use ful
 relative chunk paths. Chunk metadata includes `batch_number`, `total_batches`
 and `chunk_in_batch`. Batch size contributes to the run identity.
 Use `/batches` and `/batch/<id>` to discover work; `/chunks` still lists all inputs.
-Submit one result per chunk to `/result/<source_chunk>`. Result storage and ZIP
+Submit three role documents per chunk to `/result/<source_chunk>`. Result storage and ZIP
 export/import preserve subfolders. Regenerate packages after configuration migration.
 Rerun Stage 08 with `--force` to replace old flat outputs. Update custom prompts
 and front pages to describe batch paths; do not manually move existing chunks.
@@ -555,11 +592,12 @@ produces a startup warning. This is minimal shared-password access control,
 not a production-hardened public web service. Connections have a 10-second
 socket timeout; the server processes requests serially.
 
-Use `GET /contract`, its listed `/prompt/<name>` assets, `GET /schema/input`, `GET /schema/result`,
-`GET /chunks`, and `GET /chunk/<name>` to inspect the work. Return one schema-
-conforming result document per chunk using `POST /result/<name>`.
-POST enforces authentication, size limits, validation and atomic replacement,
-returning HTTP 200 with `{"status":"ok"}`. PUT returns HTTP 405; use `/` for the guide.
+Use `GET /contract`, its listed prompts, schemas, chunk listings and
+`GET /context/<name>` to inspect work. Submit exactly the `analyst`, `cve` and
+`reviewer` documents to `POST /result/<name>`. POST enforces authentication,
+size limits, role-chain validation, assembly and atomic replacement. HTTP 200
+returns `status: stored`, `source_chunk`, `run_id` and `result_checksum` for exact
+stored bytes. PUT returns HTTP 405; use `/` for the guide.
 Regenerate and restart the zipapp after changing server code or assets. Results may
 be partial; a complete result must cover every source SHA. `GET /result/<name>`
 retrieves an uploaded result. `GET /export` returns a ZIP containing the source

@@ -22,6 +22,8 @@ from lib.ai_preparation import build_package
 from lib.ai_package_server import generate_ai_package_server
 from lib.manifest import VERSION
 
+from ai_submission_helpers import role_body
+
 
 @pytest.fixture
 def app(tmp_path):
@@ -187,10 +189,11 @@ def test_valid_upload_and_export(app):
     payload = json.dumps({'schema_version': '1.0', 'run_id': manifest['run_id'],
         'source_chunk': 'batch_001/001.json', 'input_checksum': manifest['chunks']['batch_001/001.json'],
         'input_schema_checksum': manifest['input_schema_checksum'], 'output_schema_checksum': manifest['output_schema_checksum'],
-        'total_commits': 0, 'analyzed_commits': 0, 'analysis_status': 'complete', 'results': {}}).encode()
+        'total_commits': 0, 'analyzed_commits': 0, 'analysis_status': 'complete', 'results': {}},
+        sort_keys=True, separators=(',', ':')).encode() + b'\n'
     with running(app, auth='user:password') as (port, log, stderr):
         authorization = basic('user:password')
-        assert request(port, '/result/batch_001/001.json', method='POST', body=payload,
+        assert request(port, '/result/batch_001/001.json', method='POST', body=role_body(app, payload),
                        authorization=authorization)[0] == 200
         assert request(port, '/result/batch_001/001.json', authorization=authorization)[2] == payload
         assert request(port, '/export', authorization=authorization)[0] == 200

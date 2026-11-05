@@ -32,7 +32,10 @@ def test_current_client_docs_do_not_advertise_removed_api():
                          'GET /prompt`', '`/prompt` is a catalog', '`/README.md`',
                          '--upload-file', '/prompt/<role>'):
             assert obsolete not in text, (path, obsolete)
-    assert '--data-binary @result.json' in PAGE.read_text(encoding='utf-8')
+    assert '--data-binary @contributions.json' in PAGE.read_text(encoding='utf-8')
+    for path in paths:
+        assert '/metadata/<name>' not in path.read_text(encoding='utf-8')
+        assert 'POST /assemble/' not in path.read_text(encoding='utf-8')
 
 
 def test_front_page_explains_role_handoffs_and_validation():
@@ -40,7 +43,7 @@ def test_front_page_explains_role_handoffs_and_validation():
     start = text.index('### Role workflow')
     end = text.index('### Using this server')
     workflow = text[start:end]
-    for fragment in ('Analyst and CVE expert', 'Reviewer', '/assemble/<name>',
+    for fragment in ('Analyst and CVE expert', 'Reviewer', '/result/<name>',
                      '/validate/role/analyst/<name>', '/validate/role/cve/<name>',
                      '/validate/role/reviewer/<name>', '/validate/workflow/<name>',
                      'rv_*', 'full commit SHA', 'Do not apply review recommendations',

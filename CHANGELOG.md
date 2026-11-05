@@ -4,6 +4,43 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Break the portable submission API: POST exactly three role documents to result;
+  validate and assemble before atomic storage, then return an exact-byte checksum
+  receipt. Remove metadata/assembly routes and publish combined context URLs.
+  Update API, integration, debug-save, smoke and client-documentation checks.
+  Stored final results, source bytes and offline CSV/import remain unchanged.
+  Regenerate zipapps and migrate workflows before use; no version bump in this step.
+
+- Extract the upload preparation policy without changing the public HTTP contract.
+  Validate before creating storage and send its receipt only after atomic replacement.
+  Add byte-preservation, validation-failure, prepared-byte storage and receipt-order
+  regressions as the prerequisite for contribution-only result submission.
+
+- Add `/context/<name>` with trusted envelope and parsed source chunk, without
+  changing archived input bytes or checksum semantics. Describe its response in
+  `/api` and add authenticated integration and schema-validation regressions.
+
+- Fix the schema-runtime payload fixture to use compact role envelopes while
+  retaining the full final-result envelope. Explicitly test rejection of the old
+  role envelopes by the shipped JSON Schema validator.
+
+- Switch shipped Analyst, CVE and Reviewer schemas and prompts to the compact
+  four-field envelope. Update workflow fixtures, coverage tests and prompt assertions.
+  Final-result documents remain unchanged; regenerate packages before using compact outputs.
+
+- Prepare compact role validation selected by the packaged schema: accept exactly
+  run_id, source_chunk, role and results, derive transport fields from trusted source
+  context, and preserve final-result semantics. Add identity, coverage, empty-input,
+  exact-preservation and structured-error regressions. Public contracts remain unchanged.
+
+- Update the upload body-limit regression test for exception-preserving error
+  handling: inspect the exception's message while retaining HTTP 400 and
+  no-storage assertions for both empty and oversized bodies.
+
+- Add structured length-limit validation errors, carrying commit, field, limit,
+  actual length and role when known. Embed the exception in the portable server,
+  advertise optional error details in `/api`, and preserve readable messages.
+
 ## v21.4.0 — Bounded AI outputs and deterministic assembly (2026-11-03)
 
 ### Migration
