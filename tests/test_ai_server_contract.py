@@ -43,7 +43,7 @@ def contract_app(payload, tmp_path):
 
 def test_embedded_functions_match_shared_source(contract_app):
     with zipfile.ZipFile(contract_app[0]) as archive:
-        tree = ast.parse(archive.read('__main__.py'))
+        tree = ast.parse(archive.read('kcap_ai_runtime/server.py'))
     definitions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
     for function in (result_properties, validate_result):
         expected = ast.parse(inspect.getsource(function)).body[0]

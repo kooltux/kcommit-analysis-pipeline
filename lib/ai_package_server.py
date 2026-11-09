@@ -12,123 +12,8 @@ from lib import ai_serve_script_gen as server
 from lib import ai_workflow
 from lib.ai_assets import PROMPT_ROLES, SCHEMA_ROLES
 from lib.ai_contract import NAME, digest, encode, validate_chunk
+from lib.ai_code_assets import read_embedded_source
 
-_CONTRACT_ROUTES = '''\
-WORKFLOW_SCHEMAS = {role: json.loads(ARCHIVE.read('ai_contract/schemas/' + role + '.json'))
-                    for role in ROLES + ('result',)}
-
-RESPONSE_SCHEMAS['context'] = response_object(
-    envelope=RESPONSE_SCHEMAS['metadata'], chunk={'$ref': '/schema/input'})
-
-RESPONSE_SCHEMAS['upload_ack'] = response_object(status={'const': 'stored'},
-    source_chunk={'type': 'string'}, run_id={'type': 'string', 'pattern': '^[0-9a-f]{64}$'},
-    result_checksum={'type': 'string', 'pattern': '^[0-9a-f]{64}$'})
-for entry in ROUTES:
-    if entry['method'] == 'POST' and entry['path'] == '/result/<name>':
-        entry.pop('request_schema', None)
-        entry.update(document_roles=list(ROLES), writes_results=True,
-            description='Validate three role contributions, assemble and atomically store the final result without applying review proposals.')
-        entry['responses']['200'].update(description='Final result atomically stored; checksum identifies exact stored bytes.',
-            example=dict(status='stored', source_chunk='batch_001/001.json',
-                         run_id='0' * 64, result_checksum='0' * 64))
-
-
-@route('GET', '/context/<name>', group='sources', order=4,
-       parameter_sources={'name': 'chunks'}, response_schema='#/response_schemas/context')
-def source_context(self, name):
-    """Return trusted envelope and parsed chunk; input_checksum identifies archived bytes."""
-    if name not in NAMES or not SAFE.fullmatch(name):
-        self.send_error(404)
-        return
-    source = ARCHIVE.read('ai_analysis_input/' + name)
-    if checksum(source) != NAMES[name]:
-        raise ValueError('Source chunk checksum mismatch')
-    chunk = json.loads(source)
-    envelope = dict(schema_version='1.0', run_id=MANIFEST['run_id'], source_chunk=name,
-        input_checksum=NAMES[name], input_schema_checksum=MANIFEST['input_schema_checksum'],
-        output_schema_checksum=MANIFEST['output_schema_checksum'], total_commits=chunk['total_commits'])
-    self.send_bytes(json.dumps(dict(envelope=envelope, chunk=chunk), sort_keys=True).encode())
-
-
-@route('GET', '/contract', group='contract', order=0, response_schema='#/response_schemas/contract')
-def contract_index(self):
-    """Discover contract assets and combined trusted source context URLs."""
-    assets = {}
-    for name, expected in CONTRACT.items():
-        group, filename = name.split('/')
-        stem = filename.rsplit('.', 1)[0]
-        url = ('/prompt/' if group == 'prompts' else '/schema/') + stem
-        assets[name] = {'checksum': expected, 'url': url}
-        if group == 'prompts' and stem in BODY_SCHEMAS:
-            body = build_prompt_body(stem, lambda path: ARCHIVE.read('ai_contract/' + path))
-            assets[name]['body'] = {'bytes': len(body), 'checksum': checksum(body)}
-    self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'], 'assets': assets,
-        'input_schema_checksum': MANIFEST['input_schema_checksum'],
-        'output_schema_checksum': MANIFEST['output_schema_checksum'],
-        'chunks': {name: '/context/' + name for name in NAMES}}, sort_keys=True).encode())
-
-
-def prepare_upload(name, data, document):
-    """Assemble trusted contributions before the handler creates storage."""
-    source = ARCHIVE.read('ai_analysis_input/' + name)
-    if checksum(source) != NAMES[name]:
-        raise ValueError('Source chunk checksum mismatch')
-    chunk = json.loads(source)
-    chunk.update(run_id=MANIFEST['run_id'], source_chunk=name,
-        input_schema_checksum=MANIFEST['input_schema_checksum'],
-        output_schema_checksum=MANIFEST['output_schema_checksum'], total_commits=len(chunk['commits']))
-    final = assemble(document, chunk, WORKFLOW_SCHEMAS, checksum(source))
-    validate(name, final)
-    stored = (json.dumps(final, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
-              + chr(10)).encode('utf-8')
-    return stored, dict(status='stored', source_chunk=name, run_id=MANIFEST['run_id'],
-                        result_checksum=checksum(stored))
-
-
-@route('POST', '/validate/workflow/<name>', request_content_type='application/json', group='validation', order=1, parameter_sources={'name': 'chunks'},
-       description='Validate the analyst, cve, reviewer and result documents supplied together in the POST body, including coverage and exact value preservation. The URL selects the source chunk; nothing is stored.',
-       min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
-       document_roles=['analyst', 'cve', 'reviewer', 'result'], writes_results=False,
-       response_schema='#/response_schemas/validation_ack',
-       response_description='Submitted documents are valid; nothing is stored or corrected.',
-       response_example={'status': 'valid', 'run_id': '0' * 64, 'source_chunk': 'batch_001/001.json'})
-@route('POST', '/validate/role/<role>/<name>', request_content_type='application/json', group='validation', order=0, parameter_sources={'role': 'roles', 'name': 'chunks'},
-       description='Validate one complete role document supplied in the POST body. The URL selects the role and source chunk; nothing is stored and other roles are not cross-checked.',
-       request_schema='/schema/<role>', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
-       roles=['analyst', 'cve', 'reviewer'], writes_results=False,
-       response_schema='#/response_schemas/validation_ack',
-       response_description='Submitted documents are valid; nothing is stored or corrected.',
-       response_example={'status': 'valid', 'run_id': '0' * 64, 'source_chunk': 'batch_001/001.json'})
-def validate_contributions(self, name, role=None):
-    """Validate role JSON or four workflow documents without storing results.
-
-    Use archived source bytes, manifest identities and packaged schemas only.
-    A role gate checks one document; the workflow gate also checks coverage and
-    exact assembly preservation. Neither gate applies review recommendations.
-    """
-    if name not in NAMES or not SAFE.fullmatch(name) or (role is not None and role not in ROLES):
-        self.send_error(404)
-        return
-    source = ARCHIVE.read('ai_analysis_input/' + name)
-    if checksum(source) != NAMES[name]:
-        raise ValueError('Source chunk checksum mismatch')
-    chunk = json.loads(source)
-    chunk.update(run_id=MANIFEST['run_id'], source_chunk=name,
-                 input_schema_checksum=MANIFEST['input_schema_checksum'],
-                 output_schema_checksum=MANIFEST['output_schema_checksum'],
-                 total_commits=len(chunk['commits']))
-    try:
-        _, document = self.read_json()
-        if role is None:
-            validate_workflow(document, chunk, WORKFLOW_SCHEMAS, checksum(source))
-        else:
-            validate_role(role, document, chunk, WORKFLOW_SCHEMAS, checksum(source))
-        self.send_bytes(json.dumps(dict(status='valid', run_id=MANIFEST['run_id'],
-                                        source_chunk=name), sort_keys=True).encode())
-    except (ValueError, UnicodeError, RecursionError) as exc:
-        self.close_connection = True
-        self.send_error(400, exc)
-'''
 
 
 def _checked_files(package):
@@ -205,9 +90,13 @@ def generate_ai_package_server(package, front_page_bytes, output_path):
     workflow_source = 'ROLES = ' + repr(ai_workflow.ROLES) + '\n\n'
     workflow_source += '\n\n'.join(inspect.getsource(fn) for fn in
                                     (ai_workflow.validate_role, ai_workflow.validate_workflow, ai_workflow.assemble))
+    contract_routes = read_embedded_source('contract_routes').decode('utf-8')
     source = server._MAIN_SOURCE.replace(
-        marker, '\n' + workflow_source + '\n' + _CONTRACT_ROUTES + '\n' + marker, 1)
-    compile(source, '__main__.py', 'exec')
+        marker, '\n' + workflow_source + '\n' + contract_routes + '\n' + marker, 1)
+    entrypoint = read_embedded_source('entrypoint')
+    package_init = read_embedded_source('package')
+    runtime_name = 'kcap_ai_runtime/server.py'
+    compile(source, runtime_name, 'exec')
     with open(server.TOOL_MANIFEST_PATH, encoding='utf-8') as stream:
         tool_manifest = json.load(stream)
     version = tool_manifest.get('version') if isinstance(tool_manifest, dict) else None
@@ -216,7 +105,9 @@ def generate_ai_package_server(package, front_page_bytes, output_path):
     metadata = dict(tool_version=version, version_source='MANIFEST.json', captured_at='zipapp_generation')
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        archive.writestr('__main__.py', source)
+        archive.writestr('__main__.py', entrypoint)
+        archive.writestr('kcap_ai_runtime/__init__.py', package_init)
+        archive.writestr(runtime_name, source)
         archive.writestr('ai_server_version.json', encode(metadata))
         archive.writestr('ai_server_front_page.md', front_page_bytes)
         for name, data in sorted(files.items()):

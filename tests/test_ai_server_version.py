@@ -16,7 +16,8 @@ def metadata(path):
 def package(app):
     with zipfile.ZipFile(app) as archive:
         files = {name: archive.read(name) for name in archive.namelist()
-                 if name not in ('__main__.py', 'ai_server_version.json', 'ai_server_front_page.md')}
+                 if name not in ('__main__.py', 'ai_server_version.json', 'ai_server_front_page.md')
+                 and not name.startswith('kcap_ai_runtime/')}
     return {'manifest': json.loads(files['ai_analysis_bundle_manifest.json']), 'files': files}
 
 

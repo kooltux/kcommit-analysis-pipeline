@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Extract the unchanged portable contract routes into a syntax-checked `.py.src`
+  asset, loaded afresh at generation rather than held in the host module. Extend
+  asset, verbatim-source, fresh-generation and publication-failure regressions;
+  preserve API contracts and generated runtime behavior.
+
+- Begin modular embedded-runtime packaging: use syntax-checked static `.py.src`
+  entrypoint/package assets and import the generated server module from the zipapp.
+  Add loader, isolated-import, basic-API and publication-failure regressions;
+  update archive-inspection/version fixtures. HTTP and analysis contracts are unchanged.
+
 - Break batch-detail entry naming to separate canonical `name` from `path` and
   `result_path`, replacing `chunk`/`result`. Update API schemas, parameter guidance,
   clients, pagination and smoke checks; add authenticated context-resolution and

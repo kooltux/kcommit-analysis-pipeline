@@ -1,0 +1,6 @@
+"""Start the AI server from its embedded runtime package."""
+import sys
+from kcap_ai_runtime.server import main
+
+if __name__ == '__main__':
+    sys.exit(main())

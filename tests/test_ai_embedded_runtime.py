@@ -1,0 +1,89 @@
+"""Generated zipapps import their own runtime and retain basic API behavior."""
+import json
+import subprocess
+import sys
+import zipfile
+
+import pytest
+
+import lib.ai_code_assets as assets
+from lib.ai_package_server import generate_ai_package_server
+from test_ai_package_server import app, package, snapshots, PAGE
+from test_ai_server_runtime import request, running
+
+
+def test_generated_archive_contains_static_entrypoint_and_runtime(app):
+    with zipfile.ZipFile(app) as archive:
+        assert archive.read('__main__.py') == assets.read_embedded_source('entrypoint')
+        assert archive.read('kcap_ai_runtime/__init__.py') == assets.read_embedded_source('package')
+        source = archive.read('kcap_ai_runtime/server.py')
+        compile(source, 'kcap_ai_runtime/server.py', 'exec')
+        assert assets.read_embedded_source('contract_routes') in source
+
+
+def test_isolated_archive_imports_runtime_without_repository(app, tmp_path):
+    unrelated = tmp_path / 'unrelated'
+    unrelated.mkdir()
+    result = subprocess.run([sys.executable, '-I', '-S', str(app), '--help'],
+                            cwd=unrelated, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert 'Serve portable AI' in result.stdout
+
+
+def test_basic_apis_and_role_validation_after_runtime_import(app, package):
+    manifest = package['manifest']
+    name = next(iter(manifest['chunks']))
+    with running(app) as (port, log, errors):
+        for path in ('/api', '/api/version', '/chunks', '/context/' + name):
+            status, _, body = request(port, path)
+            assert status == 200
+            assert isinstance(json.loads(body), dict)
+        assert request(port, '/')[2] == PAGE
+        assert request(port, '/missing-route')[0] == 404
+        document = dict(run_id=manifest['run_id'], source_chunk=name, role='analyst', results={})
+        status, _, raw = request(port, '/validate/role/analyst/' + name,
+                                 method='POST', body=json.dumps(document).encode())
+        assert status == 200
+        assert json.loads(raw) == dict(status='valid', run_id=manifest['run_id'], source_chunk=name)
+        assert request(port, '/validate/role/analyst/' + name, method='POST', body=b'{}')[0] == 400
+        assert request(port, '/result/' + name)[0] == 404
+    assert not app.with_name(app.name + '.results').exists()
+
+
+@pytest.mark.parametrize('name', ['entrypoint', 'package', 'contract_routes'])
+@pytest.mark.parametrize('data', [None, b'\xff', b'if:\n'])
+def test_asset_failure_preserves_existing_zipapp(package, tmp_path, monkeypatch, name, data):
+    originals = {key: assets.read_embedded_source(key) for key in assets.ASSET_FILES}
+    asset_dir = tmp_path / 'assets'
+    asset_dir.mkdir()
+    for key, source in originals.items():
+        if key != name:
+            (asset_dir / assets.ASSET_FILES[key]).write_bytes(source)
+    monkeypatch.setattr(assets, 'ASSET_DIR', str(asset_dir))
+    if data is not None:
+        (asset_dir / assets.ASSET_FILES[name]).write_bytes(data)
+    output = tmp_path / 'existing.pyz'
+    output.write_bytes(b'unchanged')
+    with pytest.raises(ValueError, match='embedded Python asset'):
+        generate_ai_package_server(package, PAGE, output)
+    assert output.read_bytes() == b'unchanged'
+    assert not list(tmp_path.glob('.serve-ai-*'))
+
+
+def test_contract_route_source_is_read_fresh_for_each_generation(package, tmp_path, monkeypatch):
+    originals = {key: assets.read_embedded_source(key) for key in assets.ASSET_FILES}
+    asset_dir = tmp_path / 'assets'
+    asset_dir.mkdir()
+    for key, source in originals.items():
+        (asset_dir / assets.ASSET_FILES[key]).write_bytes(source)
+    monkeypatch.setattr(assets, 'ASSET_DIR', str(asset_dir))
+    first, second = tmp_path / 'first.pyz', tmp_path / 'second.pyz'
+    generate_ai_package_server(package, PAGE, first)
+    marker = b'\n# Fresh static contract source probe.\n'
+    path = asset_dir / assets.ASSET_FILES['contract_routes']
+    path.write_bytes(originals['contract_routes'] + marker)
+    generate_ai_package_server(package, PAGE, second)
+    with zipfile.ZipFile(first) as archive:
+        assert marker not in archive.read('kcap_ai_runtime/server.py')
+    with zipfile.ZipFile(second) as archive:
+        assert originals['contract_routes'] + marker in archive.read('kcap_ai_runtime/server.py')

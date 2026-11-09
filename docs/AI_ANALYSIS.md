@@ -1,5 +1,17 @@
 # Optional AI analysis workflow
 
+## Embedded runtime modules
+
+The portable server starts through a static `lib/ai_embedded/entrypoint.py.src`
+asset and imports `kcap_ai_runtime.server` from inside the zipapp. The generator
+reads `.py.src` assets as UTF-8 data and syntax-checks them without execution;
+there is no template substitution. These assets must be distributed with `lib`.
+Contract routes are read afresh from `lib/ai_embedded/contract_routes.py.src`
+at each generation and included verbatim in the runtime module. Asset failures
+are checked before publication. The base HTTP runtime is still an embedded string
+pending extraction. This refactor preserves API behavior, identities and result
+paths; API versioning and plan-based delivery are not enabled by this increment.
+
 ## Analyst output safeguards
 
 The Analyst prompt includes a final literal-key checklist, distinguishes missing
