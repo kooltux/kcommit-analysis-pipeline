@@ -19,6 +19,10 @@ def test_generated_archive_contains_static_entrypoint_and_runtime(app):
         source = archive.read('kcap_ai_runtime/server.py')
         compile(source, 'kcap_ai_runtime/server.py', 'exec')
         assert assets.read_embedded_source('contract_routes') in source
+        marker = b"\nif __name__ == '__main__':\n"
+        before, after = assets.read_embedded_source('server').split(marker)
+        assert before in source
+        assert source.endswith(marker + after)
 
 
 def test_isolated_archive_imports_runtime_without_repository(app, tmp_path):
@@ -50,7 +54,7 @@ def test_basic_apis_and_role_validation_after_runtime_import(app, package):
     assert not app.with_name(app.name + '.results').exists()
 
 
-@pytest.mark.parametrize('name', ['entrypoint', 'package', 'contract_routes'])
+@pytest.mark.parametrize('name', ['entrypoint', 'package', 'contract_routes', 'server'])
 @pytest.mark.parametrize('data', [None, b'\xff', b'if:\n'])
 def test_asset_failure_preserves_existing_zipapp(package, tmp_path, monkeypatch, name, data):
     originals = {key: assets.read_embedded_source(key) for key in assets.ASSET_FILES}
@@ -70,7 +74,8 @@ def test_asset_failure_preserves_existing_zipapp(package, tmp_path, monkeypatch,
     assert not list(tmp_path.glob('.serve-ai-*'))
 
 
-def test_contract_route_source_is_read_fresh_for_each_generation(package, tmp_path, monkeypatch):
+@pytest.mark.parametrize('name', ['contract_routes', 'server'])
+def test_runtime_sources_are_read_fresh_for_each_generation(package, tmp_path, monkeypatch, name):
     originals = {key: assets.read_embedded_source(key) for key in assets.ASSET_FILES}
     asset_dir = tmp_path / 'assets'
     asset_dir.mkdir()
@@ -79,11 +84,11 @@ def test_contract_route_source_is_read_fresh_for_each_generation(package, tmp_pa
     monkeypatch.setattr(assets, 'ASSET_DIR', str(asset_dir))
     first, second = tmp_path / 'first.pyz', tmp_path / 'second.pyz'
     generate_ai_package_server(package, PAGE, first)
-    marker = b'\n# Fresh static contract source probe.\n'
-    path = asset_dir / assets.ASSET_FILES['contract_routes']
-    path.write_bytes(originals['contract_routes'] + marker)
+    marker = b'\n# Fresh static ' + name.encode('ascii') + b' source probe.\n'
+    path = asset_dir / assets.ASSET_FILES[name]
+    path.write_bytes(originals[name] + marker)
     generate_ai_package_server(package, PAGE, second)
     with zipfile.ZipFile(first) as archive:
         assert marker not in archive.read('kcap_ai_runtime/server.py')
     with zipfile.ZipFile(second) as archive:
-        assert originals['contract_routes'] + marker in archive.read('kcap_ai_runtime/server.py')
+        assert marker in archive.read('kcap_ai_runtime/server.py')

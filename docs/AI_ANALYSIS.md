@@ -8,9 +8,14 @@ reads `.py.src` assets as UTF-8 data and syntax-checks them without execution;
 there is no template substitution. These assets must be distributed with `lib`.
 Contract routes are read afresh from `lib/ai_embedded/contract_routes.py.src`
 at each generation and included verbatim in the runtime module. Asset failures
-are checked before publication. The base HTTP runtime is still an embedded string
-pending extraction. This refactor preserves API behavior, identities and result
-paths; API versioning and plan-based delivery are not enabled by this increment.
+are checked before publication. The base HTTP runtime is read afresh from
+`lib/ai_embedded/server.py.src` for each generation. Shared result-validation and
+prompt-body prefixes retain their existing assembly order, and contract routes
+are inserted at the checked entry-point boundary without rewriting the base code.
+`_MAIN_SOURCE` remains an import-time compatibility snapshot for existing callers;
+zipapp generation uses `build_main_source()` instead of that cached snapshot.
+This refactor preserves API behavior, identities and result paths; API versioning
+and plan-based delivery are not enabled by this increment.
 
 ## Analyst output safeguards
 

@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Extract the base HTTP runtime into a syntax-checked static source asset read
+  afresh for each zipapp generation. Preserve shared-prefix assembly and the
+  compatibility source snapshot; extend source, freshness and failure regressions.
+
 - Extract the unchanged portable contract routes into a syntax-checked `.py.src`
   asset, loaded afresh at generation rather than held in the host module. Extend
   asset, verbatim-source, fresh-generation and publication-failure regressions;

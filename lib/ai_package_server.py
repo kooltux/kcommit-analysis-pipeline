@@ -85,13 +85,14 @@ def generate_ai_package_server(package, front_page_bytes, output_path):
         raise ValueError('Front page must be nonempty UTF-8 Markdown bytes')
     files = _checked_files(package)
     marker = "\nif __name__ == '__main__':\n"
-    if server._MAIN_SOURCE.count(marker) != 1:
+    base_source = server.build_main_source()
+    if base_source.count(marker) != 1:
         raise ValueError('Portable server entry point is not unique')
     workflow_source = 'ROLES = ' + repr(ai_workflow.ROLES) + '\n\n'
     workflow_source += '\n\n'.join(inspect.getsource(fn) for fn in
                                     (ai_workflow.validate_role, ai_workflow.validate_workflow, ai_workflow.assemble))
     contract_routes = read_embedded_source('contract_routes').decode('utf-8')
-    source = server._MAIN_SOURCE.replace(
+    source = base_source.replace(
         marker, '\n' + workflow_source + '\n' + contract_routes + '\n' + marker, 1)
     entrypoint = read_embedded_source('entrypoint')
     package_init = read_embedded_source('package')
