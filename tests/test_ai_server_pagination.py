@@ -34,8 +34,9 @@ def check_page(full, page, fields, offset, limit):
     if 'batch_id' in page:
         assert 'results' not in page
         for item in page['chunks']:
-            assert set(item) == {'chunk', 'result'}
-            assert item['chunk'].removeprefix('/chunk/') == item['result'].removeprefix('/result/')
+            assert set(item) == {'name', 'path', 'result_path'}
+            assert item['path'] == '/chunk/' + item['name']
+            assert item['result_path'] == '/result/' + item['name']
 
 
 @pytest.mark.parametrize('endpoint,fields', ENDPOINTS)

@@ -165,7 +165,11 @@ RESPONSE_SCHEMAS = {
         chunks={'type': 'object', 'additionalProperties': {'type': 'string'}}),
     'batch': response_object(batch_id={'type': 'string'}, batch_number={'type': 'integer'},
         total_commits={'type': 'integer'}, run_id={'type': 'string'},
-        chunks=response_array(response_object(chunk={'type': 'string'}, result={'type': 'string'}))),
+        chunks=response_array(response_object(
+            name={'type': 'string', 'pattern': SAFE.pattern,
+                  'description': 'Canonical source_chunk name; no endpoint prefix.'},
+            path={'type': 'string', 'description': 'Original archived chunk URL path; use directly.'},
+            result_path={'type': 'string', 'description': 'Result submission/retrieval URL path; use directly.'}))),
     'batches': response_object(run_id={'type': 'string'}, batch_size={'type': ['integer', 'null']},
         total_batches={'type': 'integer'}, batches=response_array(response_object(
             batch_id={'type': 'string'}, batch_number={'type': 'integer'},
@@ -589,7 +593,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             choices = {'chunks': sorted(NAMES), 'batches': sorted(BATCHES), 'roles': list(entry.get('roles', []))}
             for group in ('prompts', 'schemas'):
                 choices[group] = sorted(name.split('/')[1].rsplit('.', 1)[0] for name in assets if name.startswith(group + '/'))
-            descriptions = {'chunks': 'Source chunk path from /chunks, including its batch folder.',
+            descriptions = {'chunks': 'Canonical source_chunk name (batch entry name), including its batch folder; not an endpoint URL path.',
                             'batches': 'Batch identifier from /batches.', 'roles': 'Intermediate validation role.',
                             'prompts': 'Selected prompt name from /contract.', 'schemas': 'Selected schema name from /contract.'}
             sources = entry.pop('parameter_sources', {})
@@ -666,14 +670,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     @route('GET', '/batch/<batch_id>', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=1, parameter_sources={'batch_id': 'batches'}, response_schema='#/response_schemas/batch')
     def batch(self, batch_id):
-        """List paired chunk/result URLs in chunks for a batch ID returned by /batches."""
+        """List canonical chunk names, source paths and result paths for a batch from /batches."""
         if batch_id not in BATCHES:
             self.send_error(404)
             return
         batch = BATCHES[batch_id]
         names = listing_page(self.path, batch['chunks'])
         self.send_bytes(json.dumps(dict(batch, run_id=MANIFEST['run_id'],
-            chunks=[{'chunk': '/chunk/' + name, 'result': '/result/' + name}
+            chunks=[{'name': name, 'path': '/chunk/' + name, 'result_path': '/result/' + name}
                     for name in names]), sort_keys=True).encode())
 
     @route('GET', '/chunks', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=2, response_schema='#/response_schemas/chunks')

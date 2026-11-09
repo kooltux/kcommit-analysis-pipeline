@@ -1,5 +1,18 @@
 # Optional AI analysis workflow
 
+## Analyst output safeguards
+
+The Analyst prompt includes a final literal-key checklist, distinguishes missing
+configuration/exposure evidence from established non-applicability, and qualifies
+dependency and target-kernel compatibility claims. It uses trusted product context
+alongside source evidence; final assembly remains a server responsibility.
+These are instruction safeguards, not a replacement for server validation or a
+schema/API change. Regenerate the package and restart its server to expose the
+updated prompt; existing zipapps retain their original prompt snapshots.
+
+Invented field identifiers stay in regression fixtures, not Analyst instructions.
+The closing rules retain an explicit raw-JSON-only reminder.
+
 ## Upload storage boundary
 
 The embedded handler prepares validated storage bytes and a receipt before creating
@@ -367,9 +380,18 @@ its uploads affect only the temporary copy, not the original server results.
 Empty, malformed, negative, repeated and unknown parameters return HTTP 400 rather
 than expanding the selected work. Offset skips items before limit caps the result;
 order and full-collection totals are preserved. Beyond-end offsets return empty
-lists. Batch detail returns `chunks: [{"chunk": "...", "result": "..."}]`,
-without a separate `results` array. Pagination selects complete pairs; full-batch
-metadata stays unchanged. A result URL does not imply a stored result exists.
+lists. Batch detail returns `chunks` entries with exactly `name`, `path` and
+`result_path`, without a separate `results` array. For example:
+
+```json
+{"name":"batch_001/002.json","path":"/chunk/batch_001/002.json","result_path":"/result/batch_001/002.json"}
+```
+
+Use `name` for `source_chunk` and `"/context/" + item.name` for combined context.
+Use `path` and `result_path` directly as endpoint paths; neither is a chunk name.
+The old `chunk` and `result` keys are removed: update workflows and regenerate/
+restart zipapps. Pagination selects whole entries and leaves batch metadata unchanged.
+A result path does not imply a stored result exists.
 `/batches` retains complete membership and `/chunks` remains a list of chunk URLs.
 `/api` is never paginated.
 

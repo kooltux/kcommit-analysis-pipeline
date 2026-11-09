@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Break batch-detail entry naming to separate canonical `name` from `path` and
+  `result_path`, replacing `chunk`/`result`. Update API schemas, parameter guidance,
+  clients, pagination and smoke checks; add authenticated context-resolution and
+  strict-shape regressions. Batch metadata, ordering, manifests, global listings
+  and result formats remain unchanged. Regenerate zipapps and migrate workflows.
+
+- Fix Analyst prompt consistency: avoid invented field names even in negative
+  examples and retain the closing JSON-only rule. Strengthen the new regression
+  checks without relaxing the existing consistency tests.
+
+- Clarify Analyst literal field-name self-checks, unknown versus negative findings,
+  dependency claims and trusted product-context use; remove downstream assembly
+  from Analyst failure conditions and consolidate repeated JSON-only wording.
+  Add prompt/body and strict-schema regressions; retain existing schemas and API.
+
 - Break the portable submission API: POST exactly three role documents to result;
   validate and assemble before atomic storage, then return an exact-byte checksum
   receipt. Remove metadata/assembly routes and publish combined context URLs.

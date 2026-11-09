@@ -54,7 +54,7 @@ def fake_discovery(size):
                '/batches': {'run_id': 'r', 'total_batches': len(batches), 'batches': batches}}
     for batch in batches:
         replies[batch['url']] = dict(batch, run_id='r',
-            chunks=[{'chunk': '/chunk/' + n, 'result': '/result/' + n}
+            chunks=[{'name': n, 'path': '/chunk/' + n, 'result_path': '/result/' + n}
                     for n in batch['chunks']])
     return replies
 
@@ -84,7 +84,9 @@ def fake_expect(replies, fault=None):
         if query and fault == 'metadata' and (path in ('/chunks', '/batches') or path.startswith('/batch/')):
             result['run_id'] = 'wrong'
         if query and fault == 'misalign' and path.startswith('/batch/'):
-            result['chunks'] = [dict(item, result='/result/wrong.json') for item in result['chunks']]
+            result['chunks'] = [dict(item, result_path='/result/wrong.json') for item in result['chunks']]
+        if query and fault == 'name_as_path' and path.startswith('/batch/'):
+            result['chunks'] = [dict(item, name='/chunk/' + item['name']) for item in result['chunks']]
         if query and fault == 'paginate_api' and path == '/api':
             result['routes'] = result['routes'][:1]
         return json.dumps(result).encode()
@@ -102,6 +104,7 @@ def test_discovery_handles_empty_single_and_multiple_listings(tool, monkeypatch,
     ('ignore_pagination', 'Pagination or metadata mismatch: /chunks'),
     ('metadata', 'Pagination or metadata mismatch: /chunks'),
     ('misalign', 'Pagination or metadata mismatch: /batch/'),
+    ('name_as_path', 'Pagination or metadata mismatch: /batch/'),
     ('paginate_api', 'API catalog was paginated'),
     ('accept_invalid', 'Pagination HTTP status mismatch'),
 ])

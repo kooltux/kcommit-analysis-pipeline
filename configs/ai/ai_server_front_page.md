@@ -11,8 +11,8 @@ instructions live in `/prompt/<name>` assets listed by `/contract`; schemas defi
 
 ### Batch navigation
 
-`GET /batches` lists batches and `/batch/<batch_id>` lists their chunk/result
-URLs. `/chunks` remains the complete listing. `ai.batch_size` counts chunks per
+`GET /batches` lists batches and `/batch/<batch_id>` lists their canonical chunk
+names and endpoint paths. `/chunks` remains the complete URL listing. `ai.batch_size` counts chunks per
 folder (default 10); `ai.chunk_size` counts commits per chunk (default 100).
 Preserve paths such as `batch_002/011.json` in `source_chunk` and result URLs.
 Process every chunk in an assigned batch, submitting a separate result per chunk.
@@ -26,8 +26,16 @@ order; out-of-range offsets return empty lists. No source work is changed.
 `/batches?limit=2` selects two complete batches; `/chunks?limit=5&offset=10`
 selects five chunks after skipping ten. `/batch/batch_002?limit=3` selects three
 chunks in that batch; omit both parameters to retry the complete batch.
-Each `/batch/<batch_id>` entry in `chunks` is a `{"chunk": "...", "result": "..."}`
-object; there is no separate `results` array. Pagination keeps each pair together.
+Each `/batch/<batch_id>` entry in `chunks` contains exactly:
+- `name`: canonical identity, for example `batch_001/002.json`.
+- `path`: original-byte URL path, for example `/chunk/batch_001/002.json`.
+- `result_path`: submission/retrieval URL path, for example `/result/batch_001/002.json`.
+
+Build context requests as `"/context/" + item.name`. Use `item.path` and
+`item.result_path` directly; never prepend `/context/` to `item.path`.
+Use `item.name` as `source_chunk` in role documents. This replaces the old
+`chunk` and `result` keys; migrate clients and regenerate/restart the package.
+There is no separate `results` array. Pagination keeps each complete entry together.
 Result URLs exist in discovery even before upload. Totals remain full-collection values, and
 `/api` always returns the complete catalog, even with pagination parameters.
 

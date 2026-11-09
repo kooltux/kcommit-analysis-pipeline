@@ -55,6 +55,11 @@ role values, concrete package-derived URLs and request examples. Use `/schema/re
 for stored final results and `/context/<name>` for trusted envelope plus source.
 The redundant output-schema alias has been removed.
 
+Batch detail entries now expose `name`, `path` and `result_path`, replacing
+`chunk` and `result`. Build context requests from `"/context/" + item.name`, not
+from the chunk URL path. `/batches` memberships, `/chunks` URL listings, manifests
+and stored results are unchanged. Regenerate/restart zipapps and migrate clients.
+
 ## Pipeline stages
 
 | # | Key | Stage module | Purpose |

@@ -146,8 +146,8 @@ def check_discovery(base, expected_version=None):
             detail = json.loads(expect(base, endpoint))
             check(detail['run_id'] == chunks['run_id'], 'Batch run ID differs')
             check('results' not in detail, 'Batch detail must not expose parallel result arrays')
-            expected = [{'chunk': '/chunk/' + n, 'result': '/result/' + n} for n in batch['chunks']]
-            check(detail['chunks'] == expected, 'Batch chunk/result pairs differ')
+            expected = [{'name': n, 'path': '/chunk/' + n, 'result_path': '/result/' + n} for n in batch['chunks']]
+            check(detail['chunks'] == expected, 'Batch chunk names/paths differ')
             check_pages(base, endpoint, detail, ('chunks',))
     check(json.loads(expect(base, '/api?limit=1&offset=999999')) == api, 'API catalog was paginated')
     return chunks
