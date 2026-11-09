@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Package workflow validation and contract routes as separate static runtime
+  modules with explicit startup imports and an idempotent upload-hook installer.
+  Remove workflow source inspection and entry-point insertion from generation;
+  extend module, registration, isolation, freshness and source-parity regressions
+  without changing HTTP or analysis contracts.
+
 - Extract the base HTTP runtime into a syntax-checked static source asset read
   afresh for each zipapp generation. Preserve shared-prefix assembly and the
   compatibility source snapshot; extend source, freshness and failure regressions.

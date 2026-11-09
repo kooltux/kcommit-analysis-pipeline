@@ -1,6 +1,12 @@
 """Start the AI server from its embedded runtime package."""
 import sys
-from kcap_ai_runtime.server import main
+from kcap_ai_runtime import server
+from kcap_ai_runtime import contract_routes
+
+
+def main():
+    contract_routes.install()
+    return server.main()
 
 if __name__ == '__main__':
     sys.exit(main())

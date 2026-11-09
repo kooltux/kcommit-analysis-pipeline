@@ -6,12 +6,19 @@ The portable server starts through a static `lib/ai_embedded/entrypoint.py.src`
 asset and imports `kcap_ai_runtime.server` from inside the zipapp. The generator
 reads `.py.src` assets as UTF-8 data and syntax-checks them without execution;
 there is no template substitution. These assets must be distributed with `lib`.
-Contract routes are read afresh from `lib/ai_embedded/contract_routes.py.src`
-at each generation and included verbatim in the runtime module. Asset failures
-are checked before publication. The base HTTP runtime is read afresh from
-`lib/ai_embedded/server.py.src` for each generation. Shared result-validation and
-prompt-body prefixes retain their existing assembly order, and contract routes
-are inserted at the checked entry-point boundary without rewriting the base code.
+Workflow and contract routes are read afresh from `workflow.py.src` and
+`contract_routes.py.src` and packaged verbatim as separate runtime modules.
+The entrypoint imports the base server first, then the contract module, which
+registers its routes once against explicit shared server dependencies. It calls
+`contract_routes.install()` to bind the upload hook before starting the server;
+repeating installation does not duplicate routes. Workflow validation imports the
+base server's validation helpers, preserving exception identity and avoiding a
+circular import. No workflow source inspection or entry-point source insertion
+remains in the package generator. Asset failures are checked before publication.
+The base HTTP runtime is read afresh from `lib/ai_embedded/server.py.src` for each
+generation; shared result-validation and prompt-body prefixes retain their order.
+The static workflow functions must stay in sync with `lib/ai_workflow.py`;
+AST-parity tests enforce their source consistency.
 `_MAIN_SOURCE` remains an import-time compatibility snapshot for existing callers;
 zipapp generation uses `build_main_source()` instead of that cached snapshot.
 This refactor preserves API behavior, identities and result paths; API versioning

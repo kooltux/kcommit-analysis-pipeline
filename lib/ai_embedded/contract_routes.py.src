@@ -1,3 +1,12 @@
+"""Register contract routes against explicit base-runtime dependencies at startup."""
+import json
+
+from . import server
+from .server import (ARCHIVE, BODY_SCHEMAS, CONTRACT, MANIFEST, MAX_RESULT_BYTES,
+                     NAMES, RESPONSE_SCHEMAS, ROUTES, SAFE, build_prompt_body,
+                     checksum, response_object, route, validate)
+from .workflow import ROLES, assemble, validate_role, validate_workflow
+
 WORKFLOW_SCHEMAS = {role: json.loads(ARCHIVE.read('ai_contract/schemas/' + role + '.json'))
                     for role in ROLES + ('result',)}
 
@@ -112,3 +121,8 @@ def validate_contributions(self, name, role=None):
     except (ValueError, UnicodeError, RecursionError) as exc:
         self.close_connection = True
         self.send_error(400, exc)
+
+
+def install():
+    """Bind the upload hook before serving; repeated calls do not register routes."""
+    server.prepare_upload = prepare_upload

@@ -18,11 +18,11 @@ def test_generated_archive_contains_static_entrypoint_and_runtime(app):
         assert archive.read('kcap_ai_runtime/__init__.py') == assets.read_embedded_source('package')
         source = archive.read('kcap_ai_runtime/server.py')
         compile(source, 'kcap_ai_runtime/server.py', 'exec')
-        assert assets.read_embedded_source('contract_routes') in source
-        marker = b"\nif __name__ == '__main__':\n"
-        before, after = assets.read_embedded_source('server').split(marker)
-        assert before in source
-        assert source.endswith(marker + after)
+        assert source.endswith(assets.read_embedded_source('server'))
+        for name in ('workflow', 'contract_routes'):
+            data = archive.read('kcap_ai_runtime/' + name + '.py')
+            assert data == assets.read_embedded_source(name)
+            compile(data, name + '.py', 'exec')
 
 
 def test_isolated_archive_imports_runtime_without_repository(app, tmp_path):
@@ -54,7 +54,7 @@ def test_basic_apis_and_role_validation_after_runtime_import(app, package):
     assert not app.with_name(app.name + '.results').exists()
 
 
-@pytest.mark.parametrize('name', ['entrypoint', 'package', 'contract_routes', 'server'])
+@pytest.mark.parametrize('name', list(assets.ASSET_FILES))
 @pytest.mark.parametrize('data', [None, b'\xff', b'if:\n'])
 def test_asset_failure_preserves_existing_zipapp(package, tmp_path, monkeypatch, name, data):
     originals = {key: assets.read_embedded_source(key) for key in assets.ASSET_FILES}
@@ -74,7 +74,7 @@ def test_asset_failure_preserves_existing_zipapp(package, tmp_path, monkeypatch,
     assert not list(tmp_path.glob('.serve-ai-*'))
 
 
-@pytest.mark.parametrize('name', ['contract_routes', 'server'])
+@pytest.mark.parametrize('name', ['contract_routes', 'server', 'workflow'])
 def test_runtime_sources_are_read_fresh_for_each_generation(package, tmp_path, monkeypatch, name):
     originals = {key: assets.read_embedded_source(key) for key in assets.ASSET_FILES}
     asset_dir = tmp_path / 'assets'
@@ -88,7 +88,8 @@ def test_runtime_sources_are_read_fresh_for_each_generation(package, tmp_path, m
     path = asset_dir / assets.ASSET_FILES[name]
     path.write_bytes(originals[name] + marker)
     generate_ai_package_server(package, PAGE, second)
+    member = 'kcap_ai_runtime/' + name + '.py'
     with zipfile.ZipFile(first) as archive:
-        assert marker not in archive.read('kcap_ai_runtime/server.py')
+        assert marker not in archive.read(member)
     with zipfile.ZipFile(second) as archive:
-        assert marker in archive.read('kcap_ai_runtime/server.py')
+        assert marker in archive.read(member)

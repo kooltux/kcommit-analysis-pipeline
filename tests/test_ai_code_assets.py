@@ -4,7 +4,7 @@ import pytest
 import lib.ai_code_assets as assets
 
 
-@pytest.mark.parametrize('name', ['entrypoint', 'package', 'contract_routes', 'server'])
+@pytest.mark.parametrize('name', list(assets.ASSET_FILES))
 def test_static_embedded_sources_are_python_bytes(name):
     data = assets.read_embedded_source(name)
     assert isinstance(data, bytes)

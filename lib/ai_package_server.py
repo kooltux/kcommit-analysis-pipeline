@@ -1,6 +1,5 @@
 """Publish an in-memory directory-contract package as a standalone AI server."""
 import io
-import inspect
 import json
 import os
 import re
@@ -9,7 +8,6 @@ import zipapp
 import zipfile
 
 from lib import ai_serve_script_gen as server
-from lib import ai_workflow
 from lib.ai_assets import PROMPT_ROLES, SCHEMA_ROLES
 from lib.ai_contract import NAME, digest, encode, validate_chunk
 from lib.ai_code_assets import read_embedded_source
@@ -88,12 +86,9 @@ def generate_ai_package_server(package, front_page_bytes, output_path):
     base_source = server.build_main_source()
     if base_source.count(marker) != 1:
         raise ValueError('Portable server entry point is not unique')
-    workflow_source = 'ROLES = ' + repr(ai_workflow.ROLES) + '\n\n'
-    workflow_source += '\n\n'.join(inspect.getsource(fn) for fn in
-                                    (ai_workflow.validate_role, ai_workflow.validate_workflow, ai_workflow.assemble))
-    contract_routes = read_embedded_source('contract_routes').decode('utf-8')
-    source = base_source.replace(
-        marker, '\n' + workflow_source + '\n' + contract_routes + '\n' + marker, 1)
+    workflow_source = read_embedded_source('workflow')
+    contract_routes = read_embedded_source('contract_routes')
+    source = base_source
     entrypoint = read_embedded_source('entrypoint')
     package_init = read_embedded_source('package')
     runtime_name = 'kcap_ai_runtime/server.py'
@@ -109,6 +104,8 @@ def generate_ai_package_server(package, front_page_bytes, output_path):
         archive.writestr('__main__.py', entrypoint)
         archive.writestr('kcap_ai_runtime/__init__.py', package_init)
         archive.writestr(runtime_name, source)
+        archive.writestr('kcap_ai_runtime/workflow.py', workflow_source)
+        archive.writestr('kcap_ai_runtime/contract_routes.py', contract_routes)
         archive.writestr('ai_server_version.json', encode(metadata))
         archive.writestr('ai_server_front_page.md', front_page_bytes)
         for name, data in sorted(files.items()):
