@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Package result-validation and prompt-body helpers as separate static modules,
+  removing the remaining AI runtime source inspection and helper prefixes.
+  Preserve helper definitions, exception identity and prompt bytes; add helper
+  parity tests and isolated package-context fixtures, and update documentation.
+
 - Package workflow validation and contract routes as separate static runtime
   modules with explicit startup imports and an idempotent upload-hook installer.
   Remove workflow source inspection and entry-point insertion from generation;

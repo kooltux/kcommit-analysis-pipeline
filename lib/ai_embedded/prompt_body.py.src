@@ -1,0 +1,16 @@
+"""Portable prompt-body composition; keep in sync with lib.ai_prompt_body."""
+BODY_SCHEMAS = {
+    'analyst': (('input', 'Input schema'), ('analyst', 'Output schema')),
+    'cve': (('input', 'Input schema'), ('cve', 'Output schema')),
+    'reviewer': (('input', 'Input schema'), ('analyst', 'Analyst schema'),
+                 ('cve', 'CVE expert schema'), ('reviewer', 'Output schema')),
+}
+
+
+def build_prompt_body(name, read):
+    """Return the role prompt plus its schemas; read(path) returns contract bytes."""
+    parts = [read('prompts/' + name + '.md').decode('utf-8').rstrip('\n'), '', '## Artefacts']
+    for schema, title in BODY_SCHEMAS[name]:
+        text = read('schemas/' + schema + '.json').decode('utf-8').rstrip('\n')
+        parts += ['', '### %s (%s.json)' % (title, schema), '```json', text, '```']
+    return ('\n'.join(parts) + '\n').encode('utf-8')

@@ -88,6 +88,7 @@ def generate_ai_package_server(package, front_page_bytes, output_path):
         raise ValueError('Portable server entry point is not unique')
     workflow_source = read_embedded_source('workflow')
     contract_routes = read_embedded_source('contract_routes')
+    helpers = {name: read_embedded_source(name) for name in ('validation', 'prompt_body')}
     source = base_source
     entrypoint = read_embedded_source('entrypoint')
     package_init = read_embedded_source('package')
@@ -106,6 +107,8 @@ def generate_ai_package_server(package, front_page_bytes, output_path):
         archive.writestr(runtime_name, source)
         archive.writestr('kcap_ai_runtime/workflow.py', workflow_source)
         archive.writestr('kcap_ai_runtime/contract_routes.py', contract_routes)
+        for name, data in helpers.items():
+            archive.writestr('kcap_ai_runtime/' + name + '.py', data)
         archive.writestr('ai_server_version.json', encode(metadata))
         archive.writestr('ai_server_front_page.md', front_page_bytes)
         for name, data in sorted(files.items()):

@@ -1,0 +1,129 @@
+"""Portable result validation; keep definitions in sync with lib.ai_contract."""
+import re
+
+
+class AssessmentValidationError(ValueError):
+    """Validation failure with safe machine-readable context, never assessment text."""
+
+    def __init__(self, message, **details):
+        super().__init__(message)
+        self.details = details
+
+
+def result_properties(schema):
+    """Read inline or local-pointer assessment properties without mutating schemas.
+
+    This is contract layout resolution, not general JSON Schema validation.
+    Reference siblings are rejected rather than silently losing constraints.
+    """
+    try:
+        node = schema['properties']['results']['additionalProperties']
+        seen = set()
+        while isinstance(node, dict) and '$ref' in node:
+            ref = node['$ref']
+            if (set(node) != {'$ref'} or not isinstance(ref, str)
+                    or not ref.startswith('#/') or ref in seen):
+                raise ValueError('Unsupported or cyclic assessment reference')
+            seen.add(ref)
+            node = schema
+            for part in ref[2:].split('/'):
+                if re.search(r'~(?:[^01]|$)', part):
+                    raise ValueError('Invalid assessment JSON Pointer escape')
+                part = part.replace('~1', '/').replace('~0', '~')
+                if not isinstance(node, dict):
+                    raise ValueError('Assessment reference must traverse objects')
+                node = node[part]
+        if not isinstance(node, dict) or not isinstance(node.get('properties'), dict):
+            raise ValueError('Assessment schema must define object properties')
+        if node.get('type', 'object') != 'object':
+            raise ValueError('Assessment schema must describe an object')
+        return node['properties']
+    except (KeyError, TypeError) as exc:
+        raise ValueError('Invalid assessment schema layout or unresolved reference') from exc
+
+
+def validate_result(result, chunk, schema, input_checksum):
+    """Validate identity, completeness, and every field of every result."""
+    if not isinstance(result, dict) or set(result) != set(schema['required']):
+        raise ValueError('Invalid result envelope')
+    expected = {'schema_version': '1.0', 'run_id': chunk['run_id'],
+                'source_chunk': chunk['source_chunk'], 'input_checksum': input_checksum,
+                'input_schema_checksum': chunk['input_schema_checksum'],
+                'output_schema_checksum': chunk['output_schema_checksum']}
+    if any(result.get(key) != value for key, value in expected.items()):
+        raise ValueError('Result identity mismatch')
+    if type(result['total_commits']) is not int or result['total_commits'] != chunk['total_commits']:
+        raise ValueError('Result source count mismatch')
+    if result['analysis_status'] not in ('complete', 'partial'):
+        raise ValueError('Invalid analysis status')
+    results = result['results']
+    if not isinstance(results, dict):
+        raise ValueError('Results must be keyed by full commit SHA')
+    source = {item['commit'] for item in chunk['commits']}
+    if not set(results).issubset(source):
+        raise ValueError('Result contains an unknown SHA')
+    if type(result['analyzed_commits']) is not int or result['analyzed_commits'] != len(results):
+        raise ValueError('Analyzed count mismatch')
+    if result['analysis_status'] == 'complete' and set(results) != source:
+        raise ValueError('Incomplete result marked complete')
+    props = result_properties(schema)
+    for commit, item in results.items():
+        if not isinstance(item, dict) or set(item) != set(props):
+            raise ValueError('Invalid per-commit result fields')
+        for key, spec in props.items():
+            value = item[key]
+            kind = spec['type']
+            if isinstance(kind, list):
+                if set(kind) != {'array', 'null'}:
+                    raise ValueError('Unsupported nullable type: ' + key)
+                if value is None:
+                    continue
+                kind = 'array'
+            if kind == 'boolean' and type(value) is not bool:
+                raise ValueError('Invalid boolean: ' + key)
+            if kind == 'string' and (not isinstance(value, str)
+                                     or ('enum' in spec and value not in spec['enum'])):
+                raise ValueError('Invalid string: ' + key)
+            if kind == 'string' and 'maxLength' in spec and len(value) > spec['maxLength']:
+                raise AssessmentValidationError('String too long: ' + key,
+                    commit=commit, field=key, limit=spec['maxLength'], actual=len(value))
+            if kind == 'array':
+                item_spec = spec['items']
+                if (not isinstance(value, list) or any(
+                        (type(v) is not int if item_spec['type'] == 'integer' else not isinstance(v, str))
+                        or ('enum' in item_spec and v not in item_spec['enum'])
+                        or ('minimum' in item_spec and v < item_spec['minimum'])
+                        or ('maximum' in item_spec and v > item_spec['maximum'])
+                        or ('pattern' in item_spec and not re.fullmatch(item_spec['pattern'], v))
+                        for v in value)):
+                    raise ValueError('Invalid array: ' + key)
+                if (item_spec.get('type') == 'string' and 'maxLength' in item_spec
+                        and any(len(v) > item_spec['maxLength'] for v in value)):
+                    raise AssessmentValidationError('Array item too long: ' + key,
+                        commit=commit, field=key, limit=item_spec['maxLength'],
+                        actual=max(len(v) for v in value))
+                if (len(value) < spec.get('minItems', 0)
+                        or ('maxItems' in spec and len(value) > spec['maxItems'])
+                        or (spec.get('uniqueItems') and len(value) != len(set(value)))):
+                    raise ValueError('Invalid array constraints: ' + key)
+        if 'rv_agreement' in props:
+            review = (item.get('rv_notes'), item.get('rv_recommendation'))
+            if item['rv_agreement'] == 'agree':
+                if any(value is not None for value in review):
+                    raise ValueError('Review agreement requires null notes and recommendations')
+            elif item['rv_agreement'] == 'disagree':
+                if any(not isinstance(value, list) or not value for value in review):
+                    raise ValueError('Review disagreement requires nonempty review arrays')
+            else:
+                raise ValueError('Invalid review agreement')
+        risks = item.get('ai_risks_if_not_backported')
+        if risks is not None and (len(risks) != len(set(risks))
+                                  or ('none' in risks and len(risks) != 1)):
+            raise ValueError('Invalid risk combination')
+        ids = item.get('ai_cve_ids')
+        probabilities = item.get('ai_cve_probabilities')
+        if ids is not None and probabilities is not None and len(ids) != len(probabilities):
+            raise ValueError('CVE ID and probability counts differ')
+    if len(results) > result['total_commits']:
+        raise ValueError('Too many results')
+    return True

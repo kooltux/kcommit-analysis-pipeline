@@ -18,8 +18,8 @@ def test_generated_archive_contains_static_entrypoint_and_runtime(app):
         assert archive.read('kcap_ai_runtime/__init__.py') == assets.read_embedded_source('package')
         source = archive.read('kcap_ai_runtime/server.py')
         compile(source, 'kcap_ai_runtime/server.py', 'exec')
-        assert source.endswith(assets.read_embedded_source('server'))
-        for name in ('workflow', 'contract_routes'):
+        assert source == assets.read_embedded_source('server')
+        for name in ('workflow', 'contract_routes', 'validation', 'prompt_body'):
             data = archive.read('kcap_ai_runtime/' + name + '.py')
             assert data == assets.read_embedded_source(name)
             compile(data, name + '.py', 'exec')
@@ -74,7 +74,7 @@ def test_asset_failure_preserves_existing_zipapp(package, tmp_path, monkeypatch,
     assert not list(tmp_path.glob('.serve-ai-*'))
 
 
-@pytest.mark.parametrize('name', ['contract_routes', 'server', 'workflow'])
+@pytest.mark.parametrize('name', ['contract_routes', 'server', 'workflow', 'validation', 'prompt_body'])
 def test_runtime_sources_are_read_fresh_for_each_generation(package, tmp_path, monkeypatch, name):
     originals = {key: assets.read_embedded_source(key) for key in assets.ASSET_FILES}
     asset_dir = tmp_path / 'assets'

@@ -16,11 +16,16 @@ base server's validation helpers, preserving exception identity and avoiding a
 circular import. No workflow source inspection or entry-point source insertion
 remains in the package generator. Asset failures are checked before publication.
 The base HTTP runtime is read afresh from `lib/ai_embedded/server.py.src` for each
-generation; shared result-validation and prompt-body prefixes retain their order.
-The static workflow functions must stay in sync with `lib/ai_workflow.py`;
-AST-parity tests enforce their source consistency.
-`_MAIN_SOURCE` remains an import-time compatibility snapshot for existing callers;
-zipapp generation uses `build_main_source()` instead of that cached snapshot.
+generation and imports static `validation.py` and `prompt_body.py` modules.
+All runtime modules are syntax-checked and packaged without source inspection,
+helper prefixes or template substitution. Static helpers and workflow functions
+must stay in sync with their shared host definitions; AST-parity, constant and
+prompt-byte tests enforce consistency. Validation exceptions retain one shared
+class identity across server, workflow and contract routes.
+`_MAIN_SOURCE` remains an import-time snapshot of the package-module source;
+executing it requires package context. Tests import the packaged server under a
+unique temporary package name and clean up its modules and archive afterward.
+Zipapp generation uses fresh `build_main_source()` reads instead of that snapshot.
 This refactor preserves API behavior, identities and result paths; API versioning
 and plan-based delivery are not enabled by this increment.
 

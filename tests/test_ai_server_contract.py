@@ -11,7 +11,7 @@ import zipfile
 import pytest
 
 from lib.ai_contract import digest, encode, input_schema, result_properties, validate_result
-from lib.ai_serve_script_gen import _MAIN_SOURCE
+from ai_runtime_helpers import runtime_namespace
 from lib.ai_assets import load_contract
 from lib.ai_preparation import build_package
 from lib.ai_package_server import generate_ai_package_server
@@ -43,7 +43,7 @@ def contract_app(payload, tmp_path):
 
 def test_embedded_functions_match_shared_source(contract_app):
     with zipfile.ZipFile(contract_app[0]) as archive:
-        tree = ast.parse(archive.read('kcap_ai_runtime/server.py'))
+        tree = ast.parse(archive.read('kcap_ai_runtime/validation.py'))
     definitions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
     for function in (result_properties, validate_result):
         expected = ast.parse(inspect.getsource(function)).body[0]
@@ -62,19 +62,15 @@ def test_isolated_zipapp_needs_no_repository_or_site_packages(contract_app, tmp_
     assert 'Serve portable AI' in result.stdout
 
 
-def test_direct_source_execution_uses_shared_validation(contract_app, monkeypatch):
+def test_packaged_source_execution_uses_shared_validation(contract_app, monkeypatch):
     app, result = contract_app
     monkeypatch.setattr(sys, 'argv', [str(app)])
-    namespace = {'__name__': 'server_contract_test'}
-    exec(compile(_MAIN_SOURCE, '__main__.py', 'exec'), namespace)
-    try:
+    with runtime_namespace(app) as namespace:
         assert namespace['validate'](result['source_chunk'], result)
         bad = copy.deepcopy(result)
         bad['results'][SHA]['ai_is_security_fix'] = 1
         with pytest.raises(ValueError):
             namespace['validate'](result['source_chunk'], bad)
-    finally:
-        namespace['ARCHIVE'].close()
 
 
 @pytest.mark.parametrize('method', ['POST'])

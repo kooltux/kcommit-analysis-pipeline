@@ -16,7 +16,7 @@ import zipfile
 
 import pytest
 
-from lib.ai_serve_script_gen import _MAIN_SOURCE
+from ai_runtime_helpers import runtime_namespace
 from lib.ai_assets import load_contract
 from lib.ai_preparation import build_package
 from lib.ai_package_server import generate_ai_package_server
@@ -39,10 +39,8 @@ def app(tmp_path):
 @pytest.fixture
 def namespace(app, monkeypatch):
     monkeypatch.setattr(sys, 'argv', [str(app)])
-    values = {'__name__': 'embedded_server_test'}
-    exec(compile(_MAIN_SOURCE, '__main__.py', 'exec'), values)
-    yield values
-    values['ARCHIVE'].close()
+    with runtime_namespace(app) as values:
+        yield values
 
 
 def wait_until(predicate, timeout=5):

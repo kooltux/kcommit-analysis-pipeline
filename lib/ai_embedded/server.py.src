@@ -16,6 +16,9 @@ import tempfile
 import zipfile
 import hashlib
 
+from .validation import AssessmentValidationError, result_properties, validate_result
+from .prompt_body import BODY_SCHEMAS, build_prompt_body
+
 ARCHIVE = zipfile.ZipFile(sys.argv[0], 'r')
 MANIFEST = json.loads(ARCHIVE.read('ai_analysis_bundle_manifest.json'))
 SERVER_VERSION = json.loads(ARCHIVE.read('ai_server_version.json'))

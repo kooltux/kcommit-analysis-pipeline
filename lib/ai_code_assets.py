@@ -4,7 +4,8 @@ import os
 ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ai_embedded')
 ASSET_FILES = {'entrypoint': 'entrypoint.py.src', 'package': 'package.py.src',
                'contract_routes': 'contract_routes.py.src',
-               'server': 'server.py.src', 'workflow': 'workflow.py.src'}
+               'server': 'server.py.src', 'workflow': 'workflow.py.src',
+               'validation': 'validation.py.src', 'prompt_body': 'prompt_body.py.src'}
 
 
 def read_embedded_source(name):
