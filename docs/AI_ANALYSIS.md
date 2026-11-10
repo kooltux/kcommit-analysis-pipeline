@@ -6,6 +6,12 @@ The portable server starts through a static `lib/ai_embedded/entrypoint.py.src`
 asset and imports `kcap_ai_runtime.server` from inside the zipapp. The generator
 reads `.py.src` assets as UTF-8 data and syntax-checks them without execution;
 there is no template substitution. These assets must be distributed with `lib`.
+`ASSET_LAYOUT` in `lib/ai_code_assets.py` is the single source-to-ZIP registry;
+`ASSET_FILES` is derived from it for source-reader compatibility. Each generation
+validates registry coverage and unique destinations before reading every asset
+once, syntax-checking it once and packaging its original bytes. No insertion
+marker check or second server compilation remains. Archive-membership, all-asset
+freshness and publication-failure tests cover this packaging boundary.
 Workflow and contract routes are read afresh from `workflow.py.src` and
 `contract_routes.py.src` and packaged verbatim as separate runtime modules.
 The entrypoint imports the base server first, then the contract module, which
@@ -25,7 +31,7 @@ class identity across server, workflow and contract routes.
 `_MAIN_SOURCE` remains an import-time snapshot of the package-module source;
 executing it requires package context. Tests import the packaged server under a
 unique temporary package name and clean up its modules and archive afterward.
-Zipapp generation uses fresh `build_main_source()` reads instead of that snapshot.
+Zipapp generation uses fresh registry-driven reads instead of that snapshot.
 This refactor preserves API behavior, identities and result paths; API versioning
 and plan-based delivery are not enabled by this increment.
 

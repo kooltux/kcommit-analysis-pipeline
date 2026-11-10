@@ -12,17 +12,17 @@ from test_ai_package_server import app, package, snapshots, PAGE
 from test_ai_server_runtime import request, running
 
 
-def test_generated_archive_contains_static_entrypoint_and_runtime(app):
+def test_generated_archive_contains_static_entrypoint_and_runtime(app, package):
     with zipfile.ZipFile(app) as archive:
-        assert archive.read('__main__.py') == assets.read_embedded_source('entrypoint')
-        assert archive.read('kcap_ai_runtime/__init__.py') == assets.read_embedded_source('package')
-        source = archive.read('kcap_ai_runtime/server.py')
-        compile(source, 'kcap_ai_runtime/server.py', 'exec')
-        assert source == assets.read_embedded_source('server')
-        for name in ('workflow', 'contract_routes', 'validation', 'prompt_body'):
-            data = archive.read('kcap_ai_runtime/' + name + '.py')
+        members = archive.namelist()
+        expected = (set(package['files']) | {target for source, target in assets.ASSET_LAYOUT.values()}
+                    | {'ai_server_version.json', 'ai_server_front_page.md'})
+        assert len(members) == len(set(members))
+        assert set(members) == expected
+        for name, (source, target) in assets.ASSET_LAYOUT.items():
+            data = archive.read(target)
             assert data == assets.read_embedded_source(name)
-            compile(data, name + '.py', 'exec')
+            compile(data, target, 'exec')
 
 
 def test_isolated_archive_imports_runtime_without_repository(app, tmp_path):
@@ -74,7 +74,7 @@ def test_asset_failure_preserves_existing_zipapp(package, tmp_path, monkeypatch,
     assert not list(tmp_path.glob('.serve-ai-*'))
 
 
-@pytest.mark.parametrize('name', ['contract_routes', 'server', 'workflow', 'validation', 'prompt_body'])
+@pytest.mark.parametrize('name', list(assets.ASSET_FILES))
 def test_runtime_sources_are_read_fresh_for_each_generation(package, tmp_path, monkeypatch, name):
     originals = {key: assets.read_embedded_source(key) for key in assets.ASSET_FILES}
     asset_dir = tmp_path / 'assets'
@@ -88,8 +88,35 @@ def test_runtime_sources_are_read_fresh_for_each_generation(package, tmp_path, m
     path = asset_dir / assets.ASSET_FILES[name]
     path.write_bytes(originals[name] + marker)
     generate_ai_package_server(package, PAGE, second)
-    member = 'kcap_ai_runtime/' + name + '.py'
+    member = assets.ASSET_LAYOUT[name][1]
     with zipfile.ZipFile(first) as archive:
         assert marker not in archive.read(member)
     with zipfile.ZipFile(second) as archive:
         assert marker in archive.read(member)
+
+
+def test_generation_reads_every_registered_asset_once(package, tmp_path, monkeypatch):
+    calls = []
+    original = assets.read_embedded_source
+    def read(name):
+        calls.append(name)
+        return original(name)
+    monkeypatch.setattr(assets, 'read_embedded_source', read)
+    generate_ai_package_server(package, PAGE, tmp_path / 'once.pyz')
+    assert calls == list(assets.ASSET_LAYOUT)
+
+
+@pytest.mark.parametrize('fault', ['missing', 'duplicate'])
+def test_registry_failure_preserves_existing_zipapp(package, tmp_path, monkeypatch, fault):
+    layout = dict(assets.ASSET_LAYOUT)
+    if fault == 'missing':
+        layout.pop('package')
+    else:
+        layout['package'] = (layout['package'][0], layout['entrypoint'][1])
+    monkeypatch.setattr(assets, 'ASSET_LAYOUT', layout)
+    output = tmp_path / 'existing.pyz'
+    output.write_bytes(b'unchanged')
+    with pytest.raises(ValueError, match='embedded Python asset registry'):
+        generate_ai_package_server(package, PAGE, output)
+    assert output.read_bytes() == b'unchanged'
+    assert not list(tmp_path.glob('.serve-ai-*'))

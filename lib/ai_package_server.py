@@ -10,7 +10,7 @@ import zipfile
 from lib import ai_serve_script_gen as server
 from lib.ai_assets import PROMPT_ROLES, SCHEMA_ROLES
 from lib.ai_contract import NAME, digest, encode, validate_chunk
-from lib.ai_code_assets import read_embedded_source
+from lib.ai_code_assets import read_embedded_archive
 
 
 
@@ -82,18 +82,7 @@ def generate_ai_package_server(package, front_page_bytes, output_path):
     if not isinstance(front_page_bytes, bytes) or not front_page_bytes.decode('utf-8').strip():
         raise ValueError('Front page must be nonempty UTF-8 Markdown bytes')
     files = _checked_files(package)
-    marker = "\nif __name__ == '__main__':\n"
-    base_source = server.build_main_source()
-    if base_source.count(marker) != 1:
-        raise ValueError('Portable server entry point is not unique')
-    workflow_source = read_embedded_source('workflow')
-    contract_routes = read_embedded_source('contract_routes')
-    helpers = {name: read_embedded_source(name) for name in ('validation', 'prompt_body')}
-    source = base_source
-    entrypoint = read_embedded_source('entrypoint')
-    package_init = read_embedded_source('package')
-    runtime_name = 'kcap_ai_runtime/server.py'
-    compile(source, runtime_name, 'exec')
+    runtime_files = read_embedded_archive()
     with open(server.TOOL_MANIFEST_PATH, encoding='utf-8') as stream:
         tool_manifest = json.load(stream)
     version = tool_manifest.get('version') if isinstance(tool_manifest, dict) else None
@@ -102,13 +91,8 @@ def generate_ai_package_server(package, front_page_bytes, output_path):
     metadata = dict(tool_version=version, version_source='MANIFEST.json', captured_at='zipapp_generation')
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        archive.writestr('__main__.py', entrypoint)
-        archive.writestr('kcap_ai_runtime/__init__.py', package_init)
-        archive.writestr(runtime_name, source)
-        archive.writestr('kcap_ai_runtime/workflow.py', workflow_source)
-        archive.writestr('kcap_ai_runtime/contract_routes.py', contract_routes)
-        for name, data in helpers.items():
-            archive.writestr('kcap_ai_runtime/' + name + '.py', data)
+        for name, data in runtime_files.items():
+            archive.writestr(name, data)
         archive.writestr('ai_server_version.json', encode(metadata))
         archive.writestr('ai_server_front_page.md', front_page_bytes)
         for name, data in sorted(files.items()):

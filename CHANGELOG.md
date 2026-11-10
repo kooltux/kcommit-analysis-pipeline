@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Centralize all seven portable runtime assets in one source-to-ZIP registry.
+  Read and syntax-check each asset once per generation, reject incomplete or
+  duplicate mappings, and remove obsolete source-insertion checks and redundant
+  compilation. Extend exact-membership, freshness and publication regressions.
+
 - Package result-validation and prompt-body helpers as separate static modules,
   removing the remaining AI runtime source inspection and helper prefixes.
   Preserve helper definitions, exception identity and prompt bytes; add helper
