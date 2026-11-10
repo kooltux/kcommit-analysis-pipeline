@@ -12,7 +12,8 @@ from test_ai_package_server import app, package, snapshots
 def test_packaged_helper_definitions_match_shared_sources(app):
     groups = {
         'validation': (ai_contract.AssessmentValidationError,
-                       ai_contract.result_properties, ai_contract.validate_result),
+                       ai_contract.result_properties, ai_contract.validate_result,
+                       ai_contract.validate_assessment, ai_contract._validate_assessments),
         'prompt_body': (ai_prompt_body.build_prompt_body,),
     }
     with zipfile.ZipFile(app) as archive:

@@ -505,8 +505,11 @@ utilities, and integration scenarios.
 
 See [test runner details](docs/TEST_RUNNER.md).
 
-The `run_tests` script automatically sets the `WORKSPACE` environment variable
-to the current directory and invokes `python3 -m pytest` with the correct paths.
+The `run_tests` script changes into the repository directory, sets `WORKSPACE`
+and invokes `python3 -m pytest -c ./setup.cfg --confcutdir=.`. The explicit
+configuration and conftest boundary avoid upward discovery into parent autofs
+directories. These defaults precede caller arguments, allowing explicit overrides;
+no positional test directory is forced, so specific test selections still work.
 `./run_tests` runs the tests in parallel (`-n logical`, one `pytest-xdist` worker per
 logical CPU; `pytest-xdist[psutil]` is in `requirements-dev.txt`). Extra arguments are
 passed to pytest unchanged and a later `-n` wins (`./run_tests -n 4`); without

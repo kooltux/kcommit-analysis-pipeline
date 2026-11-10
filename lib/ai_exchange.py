@@ -7,7 +7,8 @@ import sys
 import time
 import zipfile
 
-from lib.ai_contract import NAME, SHA, digest, validate_chunk, validate_result
+from lib.ai_contract import digest, validate_assessment, validate_result
+from lib.ai_source import SourceIndex
 from lib.ai_assets import PROMPT_ROLES, SCHEMA_ROLES
 
 
@@ -115,30 +116,18 @@ class WorkPackage:
                                    ('ai_analysis_result_schema.json', 'result.json')]:
             if (self.root / filename).read_bytes() != (self.root / 'ai_contract/schemas' / selected).read_bytes():
                 raise ValueError('Root schema differs from selected contract: ' + filename)
-        self.chunks, self.raw, self.by_sha = {}, {}, {}
-        for index, (name, expected) in enumerate(sorted(self.manifest['chunks'].items()), 1):
-            if not NAME.fullmatch(name):
-                raise ValueError('Invalid chunk path in AI manifest')
-            data = (self.root / 'ai_analysis_input' / name).read_bytes()
-            if digest(data) != expected:
-                raise ValueError('Local source chunk checksum mismatch: ' + name)
-            chunk = decode(data)
-            validate_chunk(chunk, self.manifest['input_schema_checksum'],
-                           self.manifest['output_schema_checksum'], self.manifest['run_id'], name)
-            self.chunks[name], self.raw[name] = chunk, data
-            for item in chunk['commits']:
-                sha = item['commit']
-                if sha in self.by_sha:
-                    raise ValueError('Duplicate source SHA across chunks: ' + sha)
-                self.by_sha[sha] = name
-            progress.say(f'Validated source chunk {index}/{len(self.manifest["chunks"])}: {name}', False)
+        self.index = SourceIndex(self.manifest,
+            lambda name: (self.root / 'ai_analysis_input' / name).read_bytes(),
+            lambda number, total, name: progress.say(
+                f'Validated source chunk {number}/{total}: {name}', False))
+        self.chunks, self.raw, self.by_sha = self.index.chunks, self.index.raw, self.index.by_sha
         progress.say(f'Source run {self.manifest["run_id"]}: '
                      f'{len(self.chunks)} chunks, {len(self.by_sha)} commits')
 
     def envelope(self, name, results):
         chunk = self.chunks[name]
         return dict(schema_version='1.0', run_id=self.manifest['run_id'], source_chunk=name,
-                    input_checksum=digest(self.raw[name]),
+                    input_checksum=self.index.checksums[name],
                     input_schema_checksum=self.manifest['input_schema_checksum'],
                     output_schema_checksum=self.manifest['output_schema_checksum'],
                     total_commits=chunk['total_commits'], analyzed_commits=len(results),
@@ -146,11 +135,8 @@ class WorkPackage:
                     results=results)
 
     def validate_item(self, sha, item):
-        if not isinstance(sha, str) or not SHA.fullmatch(sha) or sha not in self.by_sha:
-            raise ValueError('Unknown result SHA: ' + str(sha))
-        name = self.by_sha[sha]
-        value = self.envelope(name, {sha: item})
-        validate_result(value, self.chunks[name], self.schema, digest(self.raw[name]))
+        self.index.chunk_for(sha)
+        validate_assessment(sha, item, self.schema)
 
     def accept_document(self, value, origin, accepted):
         if not isinstance(value, dict):
@@ -159,7 +145,7 @@ class WorkPackage:
             name = value['source_chunk']
             if not isinstance(name, str) or name not in self.chunks:
                 raise ValueError('Unknown source chunk')
-            validate_result(value, self.chunks[name], self.schema, digest(self.raw[name]))
+            validate_result(value, self.chunks[name], self.schema, self.index.checksums[name])
         else:
             keys = {'schema_version', 'run_id', 'input_schema_checksum',
                     'output_schema_checksum', 'results'}

@@ -3,12 +3,25 @@ from .server import AssessmentValidationError, validate_result
 
 ROLES = ('analyst', 'cve', 'reviewer')
 
-def assemble(documents, chunk, schemas, input_checksum):
-    """Mechanically assemble validated role contributions; store nothing."""
-    if not isinstance(documents, dict) or set(documents) != set(ROLES):
-        raise ValueError('Assembly requires exactly analyst, cve and reviewer documents')
+
+def validate_contribution_set(documents, chunk, schemas, input_checksum, include_result=False):
+    """Validate exact document-set shape and each document; coverage is checked separately."""
+    if type(include_result) is not bool:
+        raise AssessmentValidationError('Invalid contribution set mode', field='documents')
+    expected = set(ROLES) | ({'result'} if include_result else set())
+    if not isinstance(documents, dict) or set(documents) != expected:
+        message = ('Workflow requires analyst, cve, reviewer and result documents' if include_result
+                   else 'Assembly requires exactly analyst, cve and reviewer documents')
+        raise AssessmentValidationError(message, field='documents')
     for role in ROLES:
         validate_role(role, documents[role], chunk, schemas, input_checksum)
+    if include_result:
+        validate_result(documents['result'], chunk, schemas['result'], input_checksum)
+    return True
+
+def assemble(documents, chunk, schemas, input_checksum):
+    """Mechanically assemble validated role contributions; store nothing."""
+    validate_contribution_set(documents, chunk, schemas, input_checksum)
     source = {item['commit'] for item in chunk['commits']}
     results = {}
     for sha in sorted(source):
@@ -72,12 +85,8 @@ def validate_workflow(documents, chunk, schemas, input_checksum):
     The caller supplies authoritative chunk bytes/checksums and packaged schemas.
     Recommendations remain advisory; this gate does not apply their corrections.
     """
-    if not isinstance(documents, dict) or set(documents) != set(ROLES) | {'result'}:
-        raise ValueError('Workflow requires analyst, cve, reviewer and result documents')
-    for role in ROLES:
-        validate_role(role, documents[role], chunk, schemas, input_checksum)
+    validate_contribution_set(documents, chunk, schemas, input_checksum, include_result=True)
     final = documents['result']
-    validate_result(final, chunk, schemas['result'], input_checksum)
     analyst = documents['analyst']['results']
     cve = documents['cve']['results']
     reviewer = documents['reviewer']['results']

@@ -158,45 +158,65 @@ def result_properties(schema):
 def validate_result(result, chunk, schema, input_checksum):
     """Validate identity, completeness, and every field of every result."""
     if not isinstance(result, dict) or set(result) != set(schema['required']):
-        raise ValueError('Invalid result envelope')
+        raise AssessmentValidationError('Invalid result envelope', field='results')
     expected = {'schema_version': '1.0', 'run_id': chunk['run_id'],
                 'source_chunk': chunk['source_chunk'], 'input_checksum': input_checksum,
                 'input_schema_checksum': chunk['input_schema_checksum'],
                 'output_schema_checksum': chunk['output_schema_checksum']}
-    if any(result.get(key) != value for key, value in expected.items()):
-        raise ValueError('Result identity mismatch')
+    for key, value in expected.items():
+        if result.get(key) != value:
+            raise AssessmentValidationError('Result identity mismatch', field=key)
     if type(result['total_commits']) is not int or result['total_commits'] != chunk['total_commits']:
-        raise ValueError('Result source count mismatch')
+        raise AssessmentValidationError('Result source count mismatch', field='total_commits')
     if result['analysis_status'] not in ('complete', 'partial'):
-        raise ValueError('Invalid analysis status')
+        raise AssessmentValidationError('Invalid analysis status', field='analysis_status')
     results = result['results']
     if not isinstance(results, dict):
-        raise ValueError('Results must be keyed by full commit SHA')
+        raise AssessmentValidationError('Results must be keyed by full commit SHA', field='results')
     source = {item['commit'] for item in chunk['commits']}
     if not set(results).issubset(source):
-        raise ValueError('Result contains an unknown SHA')
+        raise AssessmentValidationError('Result contains an unknown SHA', field='results')
     if type(result['analyzed_commits']) is not int or result['analyzed_commits'] != len(results):
-        raise ValueError('Analyzed count mismatch')
+        raise AssessmentValidationError('Analyzed count mismatch', field='analyzed_commits')
     if result['analysis_status'] == 'complete' and set(results) != source:
-        raise ValueError('Incomplete result marked complete')
+        raise AssessmentValidationError('Incomplete result marked complete', field='analysis_status')
+    _validate_assessments(results, schema)
+    if len(results) > result['total_commits']:
+        raise AssessmentValidationError('Too many results', field='results')
+    return True
+
+
+def validate_assessment(commit, item, schema):
+    """Validate one per-commit assessment without constructing a document envelope.
+
+    Source membership is the caller's responsibility; this checks SHA syntax and
+    the same field/cross-field rules used by full result-document validation.
+    """
+    if not isinstance(commit, str) or not re.fullmatch(r'[0-9a-f]{40}', commit):
+        raise AssessmentValidationError('Invalid result SHA', field='results')
+    return _validate_assessments({commit: item}, schema)
+
+
+def _validate_assessments(results, schema):
+    """Share the schema-property resolution and assessment rules across callers."""
     props = result_properties(schema)
     for commit, item in results.items():
         if not isinstance(item, dict) or set(item) != set(props):
-            raise ValueError('Invalid per-commit result fields')
+            raise AssessmentValidationError('Invalid per-commit result fields', commit=commit, field='results')
         for key, spec in props.items():
             value = item[key]
             kind = spec['type']
             if isinstance(kind, list):
                 if set(kind) != {'array', 'null'}:
-                    raise ValueError('Unsupported nullable type: ' + key)
+                    raise AssessmentValidationError('Unsupported nullable type: ' + key, commit=commit, field=key)
                 if value is None:
                     continue
                 kind = 'array'
             if kind == 'boolean' and type(value) is not bool:
-                raise ValueError('Invalid boolean: ' + key)
+                raise AssessmentValidationError('Invalid boolean: ' + key, commit=commit, field=key)
             if kind == 'string' and (not isinstance(value, str)
                                      or ('enum' in spec and value not in spec['enum'])):
-                raise ValueError('Invalid string: ' + key)
+                raise AssessmentValidationError('Invalid string: ' + key, commit=commit, field=key)
             if kind == 'string' and 'maxLength' in spec and len(value) > spec['maxLength']:
                 raise AssessmentValidationError('String too long: ' + key,
                     commit=commit, field=key, limit=spec['maxLength'], actual=len(value))
@@ -209,7 +229,7 @@ def validate_result(result, chunk, schema, input_checksum):
                         or ('maximum' in item_spec and v > item_spec['maximum'])
                         or ('pattern' in item_spec and not re.fullmatch(item_spec['pattern'], v))
                         for v in value)):
-                    raise ValueError('Invalid array: ' + key)
+                    raise AssessmentValidationError('Invalid array: ' + key, commit=commit, field=key)
                 if (item_spec.get('type') == 'string' and 'maxLength' in item_spec
                         and any(len(v) > item_spec['maxLength'] for v in value)):
                     raise AssessmentValidationError('Array item too long: ' + key,
@@ -218,25 +238,23 @@ def validate_result(result, chunk, schema, input_checksum):
                 if (len(value) < spec.get('minItems', 0)
                         or ('maxItems' in spec and len(value) > spec['maxItems'])
                         or (spec.get('uniqueItems') and len(value) != len(set(value)))):
-                    raise ValueError('Invalid array constraints: ' + key)
+                    raise AssessmentValidationError('Invalid array constraints: ' + key, commit=commit, field=key)
         if 'rv_agreement' in props:
             review = (item.get('rv_notes'), item.get('rv_recommendation'))
             if item['rv_agreement'] == 'agree':
                 if any(value is not None for value in review):
-                    raise ValueError('Review agreement requires null notes and recommendations')
+                    raise AssessmentValidationError('Review agreement requires null notes and recommendations', commit=commit, field='rv_agreement')
             elif item['rv_agreement'] == 'disagree':
                 if any(not isinstance(value, list) or not value for value in review):
-                    raise ValueError('Review disagreement requires nonempty review arrays')
+                    raise AssessmentValidationError('Review disagreement requires nonempty review arrays', commit=commit, field='rv_agreement')
             else:
-                raise ValueError('Invalid review agreement')
+                raise AssessmentValidationError('Invalid review agreement', commit=commit, field='rv_agreement')
         risks = item.get('ai_risks_if_not_backported')
         if risks is not None and (len(risks) != len(set(risks))
                                   or ('none' in risks and len(risks) != 1)):
-            raise ValueError('Invalid risk combination')
+            raise AssessmentValidationError('Invalid risk combination', commit=commit, field='ai_risks_if_not_backported')
         ids = item.get('ai_cve_ids')
         probabilities = item.get('ai_cve_probabilities')
         if ids is not None and probabilities is not None and len(ids) != len(probabilities):
-            raise ValueError('CVE ID and probability counts differ')
-    if len(results) > result['total_commits']:
-        raise ValueError('Too many results')
+            raise AssessmentValidationError('CVE ID and probability counts differ', commit=commit, field='ai_cve_ids')
     return True

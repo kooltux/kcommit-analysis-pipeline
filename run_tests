@@ -44,9 +44,9 @@ fi
 echo "run_tests: this output is also available (uncolored) in the file $LOG"
 echo "run_tests: the log $CLIP_PLAN"
 
-# Default options: parallel run when pytest-xdist is installed, serial otherwise.
-# They come first: an explicit --color or -n given by the caller wins.
-DEFAULTS=(--color="$COLOR")
+# Pin configuration and conftest discovery to the repository (avoid autofs parents).
+# Defaults come first so explicit caller options can override them.
+DEFAULTS=(-c ./setup.cfg --confcutdir=. --color="$COLOR")
 PLAN="in parallel (-n logical)"
 if python3 -c 'import xdist' >/dev/null 2>&1; then
     DEFAULTS+=(-n logical)

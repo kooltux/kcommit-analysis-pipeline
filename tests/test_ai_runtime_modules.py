@@ -14,7 +14,8 @@ def test_packaged_workflow_functions_match_shared_source(app):
         tree = ast.parse(archive.read('kcap_ai_runtime/workflow.py'))
         base = ast.parse(archive.read('kcap_ai_runtime/server.py'))
     definitions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
-    for function in (ai_workflow.assemble, ai_workflow.validate_role, ai_workflow.validate_workflow):
+    for function in (ai_workflow.assemble, ai_workflow.validate_role, ai_workflow.validate_workflow,
+                     ai_workflow.validate_contribution_set):
         expected = ast.parse(inspect.getsource(function)).body[0]
         assert ast.dump(definitions[function.__name__]) == ast.dump(expected)
     roles = next(node.value for node in tree.body if isinstance(node, ast.Assign)

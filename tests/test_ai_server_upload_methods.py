@@ -58,7 +58,7 @@ def test_post_replaces_validates_and_exports(app, auth):
             assert archive.read('results/' + name) == payload
     assert log.read_text().count(f'method="POST" path="{path}" status=400') == 2
     assert log.read_text().count('reason=invalid_result') == 2
-    assert not list(Path(str(app) + '.results').rglob('.upload-*'))
+    assert not list(Path(str(app) + '.results').rglob('.result-*'))
 
 
 @pytest.mark.parametrize('length', [0, 10 * 1024 * 1024 + 1])

@@ -29,26 +29,61 @@ def test_default_upload_policy_propagates_validation_failure(namespace, monkeypa
     assert not Path(namespace['RESULTS']).exists()
 
 
-def test_handler_stores_prepared_bytes_before_sending_receipt(namespace, monkeypatch):
+def test_handler_publishes_before_receipt_and_checksums_published_bytes(namespace, monkeypatch):
     name = next(iter(namespace['NAMES']))
-    stored = Path(namespace['RESULTS']) / name
-    prepared = b'prepared result bytes\n'
-    receipt = {'status': 'stored', 'result_checksum': namespace['checksum'](prepared)}
-    observed = []
+    prepared = b'{ "results": {} }\n'
+    published = b'{"results":{}}\n'
+    prepared_checksum = namespace['checksum'](prepared)
+    receipt = {'status': 'stored', 'result_checksum': prepared_checksum}
+    events, observed = [], []
     def prepare(actual_name, raw, document):
         assert (actual_name, raw, document) == (name, b'{}', {})
-        assert not stored.exists()
+        assert events == []
+        events.append('prepare')
         return prepared, receipt
+    class Store:
+        def write_chunk(self, actual_name, document):
+            assert actual_name == name and document == json.loads(prepared)
+            assert events == ['prepare']
+            events.append('publish')
+            return published
     def respond(raw):
-        assert stored.read_bytes() == prepared
+        assert events == ['prepare', 'publish']
+        events.append('respond')
         observed.append(json.loads(raw))
     monkeypatch.setitem(namespace, 'prepare_upload', prepare)
+    monkeypatch.setitem(namespace, 'RESULT_STORE', Store())
     handler = namespace['Handler'].__new__(namespace['Handler'])
     handler.read_json = lambda: (b'{}', {})
     handler.send_bytes = respond
     handler.post_result(name)
-    assert observed == [receipt]
-    assert not list(stored.parent.glob('.upload-*'))
+    assert events == ['prepare', 'publish', 'respond']
+    assert observed == [{'status': 'stored', 'result_checksum': namespace['checksum'](published)}]
+    assert observed[0]['result_checksum'] != prepared_checksum
+    assert not Path(namespace['RESULTS']).exists()
+
+
+@pytest.mark.parametrize('failure', [OSError, ValueError])
+def test_handler_propagates_publication_failure_without_receipt(namespace, monkeypatch, failure):
+    name = next(iter(namespace['NAMES']))
+    prepared = b'{"results":{}}\n'
+    calls, responses = [], []
+    class Store:
+        def write_chunk(self, actual_name, document):
+            calls.append((actual_name, document))
+            raise failure('publication failed')
+    monkeypatch.setitem(namespace, 'prepare_upload',
+                        lambda *args: (prepared, {'status': 'stored'}))
+    monkeypatch.setitem(namespace, 'RESULT_STORE', Store())
+    handler = namespace['Handler'].__new__(namespace['Handler'])
+    handler.read_json = lambda: (b'{}', {})
+    handler.send_bytes = lambda raw: responses.append(('success', raw))
+    handler.send_error = lambda *args: responses.append(('error', args))
+    with pytest.raises(failure, match='publication failed'):
+        handler.post_result(name)
+    assert calls == [(name, json.loads(prepared))]
+    assert responses == []
+    assert not Path(namespace['RESULTS']).exists()
 
 
 def test_handler_does_not_create_storage_when_preparation_fails(namespace, monkeypatch):

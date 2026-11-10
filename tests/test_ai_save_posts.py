@@ -91,11 +91,12 @@ def test_valid_submission_saves_contributions_and_stored_checksum_receipt(app, w
     with running(app, extra=('-s',)) as (port, log, errors):
         assert request(port, '/result/' + name, method='POST', body=body)[0] == 200
         text = report(target)
-    stored = app.with_name(app.name + '.results') / name
-    assert stored.read_bytes() == encode(documents['result'])
+        code, _, stored = request(port, '/result/' + name)
+        assert code == 200
+    assert stored == encode(documents['result'])
     assert target.read_bytes() == body
     assert 'saved as' in text
-    assert hashlib.sha256(stored.read_bytes()).hexdigest() in text
+    assert hashlib.sha256(stored).hexdigest() in text
 
 
 def test_invalid_result_saves_body_and_stores_nothing(app, workflow):

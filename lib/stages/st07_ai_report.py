@@ -17,8 +17,8 @@ def _write_json(path, data):
 
 def run(cfg, cache, outdir):
     """Produce standard reports without regenerating the Stage 08 AI bundle."""
-    stats = st07_report.run(cfg, cache, outdir)
     results = load_ai_results(outdir)
+    stats = st07_report.run(cfg, cache, outdir)
     if not results:
         return stats
     top_n = st07_report._top_n(cfg)

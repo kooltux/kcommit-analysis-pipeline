@@ -1,11 +1,17 @@
 # Test runner behaviour
 
-`./run_tests [pytest options]` is a single script, a thin wrapper around
-`python3 -m pytest`. It runs the tests in parallel by default: it starts pytest with
-`--color=<auto> -n logical`, i.e. one `pytest-xdist` worker per logical CPU (`-n auto`
-only counts physical cores, which is slower for this I/O-bound suite). All other
-arguments are forwarded unchanged and the script does not interpret them. The default
-options come first, so yours win:
+`./run_tests [pytest options]` is a thin wrapper around `python3 -m pytest`.
+It first changes into the repository directory, then supplies
+`-c ./setup.cfg --confcutdir=.` to select the local configuration and bound
+conftest discovery. This avoids upward discovery into parent autofs directories.
+No positional test directory is forced, so explicit test selections still work.
+
+When `pytest-xdist` is available, tests run in parallel by default with
+`--color=<yes|no> -n logical`, one worker per logical CPU. Color is enabled when
+stdout is a terminal. `-n auto` only counts physical cores, which is slower for
+this I/O-bound suite. Additional arguments are forwarded unchanged; the script
+does not interpret them. Default options come first, so explicit configuration,
+conftest-boundary, color and worker-count options supplied later take precedence:
 
 ```bash
 ./run_tests                         # all logical CPUs
@@ -39,7 +45,8 @@ lines are printed on the terminal.
 
 ## Tests
 
-`tests/test_run_tests_script.py` checks, with a stubbed `python3`, the `-n logical`
-default, the serial fallback without `pytest-xdist`, argument forwarding (a later `-n`
-wins), the single run, the log, the
-clipboard copy, the invocation lines and the exit status.
+`tests/test_run_tests_script.py` checks, with a stubbed `python3`, the repository-local
+`-c ./setup.cfg --confcutdir=.` defaults and explicit caller overrides, the
+`-n logical` default, the serial fallback without `pytest-xdist`, unchanged argument
+forwarding, the single run, logging, clipboard copying, invocation lines and
+exit-status preservation.

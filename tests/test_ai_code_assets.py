@@ -45,8 +45,10 @@ def test_archive_layout_covers_exactly_the_runtime_members():
         '__main__.py', 'kcap_ai_runtime/__init__.py', 'kcap_ai_runtime/server.py',
         'kcap_ai_runtime/workflow.py', 'kcap_ai_runtime/contract_routes.py',
         'kcap_ai_runtime/validation.py', 'kcap_ai_runtime/prompt_body.py',
+        'kcap_ai_runtime/source_contract.py', 'kcap_ai_runtime/source.py',
+        'kcap_ai_runtime/result_store.py',
     }
-    assert len(assets.ASSET_LAYOUT) == 7
+    assert len(assets.ASSET_LAYOUT) == 10
 
 
 def test_archive_loader_reads_each_asset_once_without_execution(monkeypatch):

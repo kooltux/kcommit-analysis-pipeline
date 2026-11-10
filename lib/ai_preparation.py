@@ -4,7 +4,8 @@ import re
 from jsonschema import Draft202012Validator
 
 from lib.ai_assets import PROMPT_ROLES, SCHEMA_ROLES
-from lib.ai_contract import SHA, digest, encode, project_commit, validate_chunk
+from lib.ai_contract import digest, encode, project_commit, validate_chunk
+from lib.ai_source import index_source_commits
 from lib.ai_schema_validation import parse_schema
 
 
@@ -42,11 +43,7 @@ def build_package(raw, product_map, snapshots, pipeline_version, chunk_size=100,
         if not isinstance(record, dict):
             raise ValueError('Invalid source commit')
         commits.append(project_commit(record, product_map))
-    shas = [item['commit'] for item in commits]
-    if any(not isinstance(sha, str) or not SHA.fullmatch(sha) for sha in shas):
-        raise ValueError('Invalid source commit SHA')
-    if len(set(shas)) != len(shas):
-        raise ValueError('Duplicate source SHA across the AI source set')
+    index_source_commits(commits)
     hashes = {name: digest(data) for name, data in sorted(snapshots.items())}
     input_hash, output_hash = digest(schema_bytes), digest(output_bytes)
     run_id = digest(encode(dict(pipeline_version=pipeline_version, commits=commits,

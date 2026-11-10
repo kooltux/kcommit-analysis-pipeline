@@ -9,7 +9,8 @@ import zipfile
 
 from lib import ai_serve_script_gen as server
 from lib.ai_assets import PROMPT_ROLES, SCHEMA_ROLES
-from lib.ai_contract import NAME, digest, encode, validate_chunk
+from lib.ai_contract import digest, encode
+from lib.ai_source import SourceIndex
 from lib.ai_code_assets import read_embedded_archive
 
 
@@ -48,22 +49,7 @@ def _checked_files(package):
     if (files['ai_analysis_input_schema.json'] != files['ai_contract/schemas/input.json']
             or files['ai_analysis_result_schema.json'] != files['ai_contract/schemas/result.json']):
         raise ValueError('Root schema differs from selected contract')
-    seen = set()
-    for name, expected in chunks.items():
-        if not isinstance(name, str) or not NAME.fullmatch(name):
-            raise ValueError('Invalid source chunk path')
-        data = files.get('ai_analysis_input/' + name)
-        if not isinstance(data, bytes) or digest(data) != expected:
-            raise ValueError('Source chunk checksum mismatch: ' + name)
-        chunk = json.loads(data)
-        validate_chunk(chunk, manifest['input_schema_checksum'], manifest['output_schema_checksum'],
-                       manifest['run_id'], name)
-        shas = {item['commit'] for item in chunk['commits']}
-        if seen & shas:
-            raise ValueError('Duplicate source SHA across chunks')
-        seen.update(shas)
-    if len(seen) != manifest['total_commits'] or len(chunks) != manifest['total_chunks']:
-        raise ValueError('Prepared package total mismatch')
+    SourceIndex(manifest, lambda name: files.get('ai_analysis_input/' + name))
     allowed = ({'ai_analysis_bundle_manifest.json', 'ai_analysis_prompt.md',
                 'ai_analysis_input_schema.json', 'ai_analysis_result_schema.json'}
                | {'ai_contract/' + name for name in hashes}

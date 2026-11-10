@@ -3,7 +3,7 @@ import json
 
 from . import server
 from .server import (ARCHIVE, BODY_SCHEMAS, CONTRACT, MANIFEST, MAX_RESULT_BYTES,
-                     NAMES, RESPONSE_SCHEMAS, ROUTES, SAFE, build_prompt_body,
+                     NAMES, RESPONSE_SCHEMAS, ROUTES, SAFE, SOURCE_INDEX, build_prompt_body,
                      checksum, response_object, route, validate)
 from .workflow import ROLES, assemble, validate_role, validate_workflow
 
@@ -33,12 +33,9 @@ def source_context(self, name):
     if name not in NAMES or not SAFE.fullmatch(name):
         self.send_error(404)
         return
-    source = ARCHIVE.read('ai_analysis_input/' + name)
-    if checksum(source) != NAMES[name]:
-        raise ValueError('Source chunk checksum mismatch')
-    chunk = json.loads(source)
+    chunk = SOURCE_INDEX.context(name)
     envelope = dict(schema_version='1.0', run_id=MANIFEST['run_id'], source_chunk=name,
-        input_checksum=NAMES[name], input_schema_checksum=MANIFEST['input_schema_checksum'],
+        input_checksum=SOURCE_INDEX.checksums[name], input_schema_checksum=MANIFEST['input_schema_checksum'],
         output_schema_checksum=MANIFEST['output_schema_checksum'], total_commits=chunk['total_commits'])
     self.send_bytes(json.dumps(dict(envelope=envelope, chunk=chunk), sort_keys=True).encode())
 
@@ -63,14 +60,8 @@ def contract_index(self):
 
 def prepare_upload(name, data, document):
     """Assemble trusted contributions before the handler creates storage."""
-    source = ARCHIVE.read('ai_analysis_input/' + name)
-    if checksum(source) != NAMES[name]:
-        raise ValueError('Source chunk checksum mismatch')
-    chunk = json.loads(source)
-    chunk.update(run_id=MANIFEST['run_id'], source_chunk=name,
-        input_schema_checksum=MANIFEST['input_schema_checksum'],
-        output_schema_checksum=MANIFEST['output_schema_checksum'], total_commits=len(chunk['commits']))
-    final = assemble(document, chunk, WORKFLOW_SCHEMAS, checksum(source))
+    chunk = SOURCE_INDEX.context(name)
+    final = assemble(document, chunk, WORKFLOW_SCHEMAS, SOURCE_INDEX.checksums[name])
     validate(name, final)
     stored = (json.dumps(final, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
               + chr(10)).encode('utf-8')
@@ -102,20 +93,14 @@ def validate_contributions(self, name, role=None):
     if name not in NAMES or not SAFE.fullmatch(name) or (role is not None and role not in ROLES):
         self.send_error(404)
         return
-    source = ARCHIVE.read('ai_analysis_input/' + name)
-    if checksum(source) != NAMES[name]:
-        raise ValueError('Source chunk checksum mismatch')
-    chunk = json.loads(source)
-    chunk.update(run_id=MANIFEST['run_id'], source_chunk=name,
-                 input_schema_checksum=MANIFEST['input_schema_checksum'],
-                 output_schema_checksum=MANIFEST['output_schema_checksum'],
-                 total_commits=len(chunk['commits']))
+    chunk = SOURCE_INDEX.context(name)
+    input_checksum = SOURCE_INDEX.checksums[name]
     try:
         _, document = self.read_json()
         if role is None:
-            validate_workflow(document, chunk, WORKFLOW_SCHEMAS, checksum(source))
+            validate_workflow(document, chunk, WORKFLOW_SCHEMAS, input_checksum)
         else:
-            validate_role(role, document, chunk, WORKFLOW_SCHEMAS, checksum(source))
+            validate_role(role, document, chunk, WORKFLOW_SCHEMAS, input_checksum)
         self.send_bytes(json.dumps(dict(status='valid', run_id=MANIFEST['run_id'],
                                         source_chunk=name), sort_keys=True).encode())
     except (ValueError, UnicodeError, RecursionError) as exc:

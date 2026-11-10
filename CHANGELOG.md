@@ -4,6 +4,44 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Accumulate validated local AI imports in a separate run-bound sharded store.
+  Replace reassessments across imports while retaining within-batch first-wins
+  duplicate handling. Preserve validated legacy findings and an atomic JSON
+  compatibility view; make Stage 07 read the store before writing reports.
+  Add import, failure-recovery and report-isolation regressions and documentation.
+
+- Update the upload-policy regression for the result-store boundary instead of
+  flat-file writes. Verify publication precedes acknowledgement, checksums use
+  published bytes and storage failures cannot produce success receipts.
+
+- Integrate the sharded result store into portable upload, retrieval and export.
+  Bind receipts to published merged bytes, retain validated legacy chunk reads,
+  package a parity-checked static store asset and extend persistence, replacement,
+  partial-accumulation and publication-failure regressions.
+
+- Pin the unit-test launcher to repository-local setup.cfg and conftest discovery
+  to avoid parent-directory autofs lookups. Preserve explicit test selections and
+  caller overrides; update launcher regressions and testing documentation.
+
+- Add the run-bound result-store core with SHA-prefix-sharded immutable assessment
+  blobs, atomic chunk-index publication, validated reconstruction and replacement
+  of existing assessments. Add failure, corruption and isolation regressions.
+
+- Integrate the shared source index into portable runtime context, validation,
+  upload and source delivery. Verify the source package at startup and retain
+  one consistent in-memory snapshot. Add static source-contract/index assets,
+  parity and corrupt-startup regressions, and document the startup/memory tradeoff.
+
+- Add reusable per-commit assessment and explicit contribution-set validation.
+  Preserve existing envelopes and workflow gates while sharing assessment rules,
+  adding safe field diagnostics and removing synthetic importer envelopes.
+  Mirror validation helpers in portable assets and extend parity/regression tests.
+
+- Introduce shared source indexing for preparation, package publication and
+  import, with strict source decoding, safe identity diagnostics, deterministic
+  selections and defensive record access. Add source-integrity regressions while
+  preserving existing document envelopes and leaving result-store behavior intact.
+
 - Centralize all seven portable runtime assets in one source-to-ZIP registry.
   Read and syntax-check each asset once per generation, reject incomplete or
   duplicate mappings, and remove obsolete source-insertion checks and redundant

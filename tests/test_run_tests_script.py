@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'run_tests'
-DEFAULT = ['-m', 'pytest', '--color=no', '-n', 'logical']
+DEFAULT = ['-m', 'pytest', '-c', './setup.cfg', '--confcutdir=.', '--color=no', '-n', 'logical']
 
 
 def invoke(tmp_path, status=0, args=(), display=False, xdist=True):
@@ -44,7 +44,7 @@ def test_arguments_are_forwarded_unchanged_and_later_n_wins(tmp_path):
 
 def test_serial_run_without_xdist(tmp_path):
     result, forwarded, log = invoke(tmp_path, args=('tests/x.py',), xdist=False)
-    assert forwarded == ['-m', 'pytest', '--color=no', 'tests/x.py']
+    assert forwarded == ['-m', 'pytest', '-c', './setup.cfg', '--confcutdir=.', '--color=no', 'tests/x.py']
     assert 'run_tests: tests run by default serially (pytest-xdist not available)' in log
     assert result.returncode == 0
 
@@ -84,7 +84,15 @@ def test_log_starts_with_the_invocation(tmp_path):
     lines = log.splitlines()
     assert lines[0].startswith('run_tests: invoked as: ') and str(SCRIPT) in lines[0]
     assert lines[0].strip().endswith('-k alpha\\ or\\ beta tests/x.py')
-    assert lines[1] == ('run_tests: pytest command: python3 -m pytest --color=no -n logical '
-                        '-k alpha\\ or\\ beta tests/x.py ')
+    assert lines[1] == ('run_tests: pytest command: python3 -m pytest -c ./setup.cfg '
+                        '--confcutdir=. --color=no -n logical -k alpha\\ or\\ beta tests/x.py ')
     assert lines[2] == 'run_tests: working directory: ' + str(SCRIPT.parent)
     assert 'run_tests: invoked as:' in result.stdout
+
+
+def test_configuration_defaults_allow_explicit_overrides(tmp_path):
+    args = ('-c', 'custom.cfg', '--confcutdir=tests', 'tests/x.py')
+    result, forwarded, log = invoke(tmp_path, args=args)
+    assert result.returncode == 0
+    assert forwarded == [*DEFAULT, *args]
+    assert 'tests' not in forwarded[:len(DEFAULT)]

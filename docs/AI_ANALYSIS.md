@@ -1,5 +1,75 @@
 # Optional AI analysis workflow
 
+## Result-store core
+
+`lib/ai_result_store.py` provides a run-bound `ResultStore` with an injected
+source index and result validator. Assessments are immutable JSON blobs under
+`runs/<run_id>/commits/<SHA-prefix>/<SHA>/<content-checksum>.json`. A chunk index
+references those blobs and is atomically replaced only after validation and all
+blob writes complete. Valid submissions replace supplied assessments and retain
+other accepted assessments. Reads reconstruct and validate canonical envelopes.
+Missing blobs and checksum failures are errors, not absent results. Failed
+publication can leave unreferenced blobs; there is no automatic garbage collection.
+Use one writer instance per root: its lock does not coordinate separate processes.
+Atomicity covers one chunk, not a multi-chunk import or power-loss durability.
+The portable runtime packages an identical static result-store module. Upload,
+retrieval and ZIP export share one store instance; receipt checksums identify the
+published, merged canonical result bytes. Partial submissions accumulate and a
+valid reassessment replaces its SHA without removing other accepted assessments.
+Invalid requests do not change storage; storage failures are server errors.
+Validated legacy chunk files remain readable when no sharded index exists and
+are carried forward on the next valid upload; published indexes take precedence.
+Legacy files are retained, not deleted. Imported findings use a separate local
+store as described below. Parity, live round-trip, restart and failure tests cover
+the storage boundary. Run only one server writer per results directory.
+Upload-policy unit tests isolate preparation, store publication and response order.
+They verify receipt checksums use published rather than prepared bytes, and that
+publication failures propagate without a success receipt or client-error response.
+
+## Accumulated imports and Stage 07
+
+`ai-import` uses `ai_import_results/` under the output directory, separate from
+`serve_ai.pyz.results/`. Successive partial imports retain previously accepted
+assessments for the current run; a newly validated reassessment replaces its SHA.
+Within one incoming batch, sorted-input first-wins duplicate handling is unchanged.
+The entire incoming batch, prior findings and local cache membership are checked
+before publication. Each chunk publishes atomically; a multi-chunk import or report
+regeneration is not one transaction. An I/O failure may leave earlier chunks updated.
+The compatibility `ai_analysis_results.json` view is atomically refreshed only after
+all chunk publications succeed. Validated legacy findings fill missing chunks,
+including after an interrupted migration; published chunks take precedence.
+Stage 07 validates findings before writing reports and can read the store without
+the sidecar. Reading never migrates data or regenerates Stage 08 assets. Old-run
+findings are ignored; scores, cache records and ranking remain unchanged.
+
+## Shared source indexing foundation
+
+`lib/ai_source.py` provides storage-independent source identity indexing through
+an injected chunk-byte reader. It verifies paths before reads, exact-byte
+checksums, strict JSON, chunk identities and structure, duplicate source SHAs,
+and aggregate counts. Preparation reuses its commit-identity index; publication
+and import reuse `SourceIndex`. Source diagnostics use safe field/commit context
+without echoing malformed payloads. Selections are validated, unique and sorted;
+record/context access returns defensive copies. Existing exchange envelopes,
+role coverage and result storage remain unchanged. The portable runtime uses the
+same index definitions through static `source.py` and `source_contract.py` assets,
+with class/function, constant and schema parity enforced by tests. Startup verifies
+all source chunks and retains their raw bytes and parsed records in memory;
+this adds eager startup work and memory proportional to the source package.
+Context, validation, upload, chunk delivery and export use that verified snapshot
+rather than independently rereading and rebinding archived source documents.
+
+`validate_assessment(commit, item, schema)` validates a single assessment without
+inventing an exchange envelope; source membership remains the caller's duty.
+The importer verifies membership with `SourceIndex` before using this gate.
+Full result validation retains identity, completeness and count checks and shares
+the same assessment rules. Field and cross-field failures carry safe commit/field
+diagnostics; existing length diagnostics retain limit and actual counts.
+`validate_contribution_set` explicitly checks the existing three-role submission
+or four-document workflow shapes, with no new wire format. Cross-role coverage
+and exact assembly preservation remain workflow gates. Portable validation and
+workflow assets mirror these functions, with AST-parity tests covering the helpers.
+
 ## Embedded runtime modules
 
 The portable server starts through a static `lib/ai_embedded/entrypoint.py.src`
@@ -381,8 +451,11 @@ and reject the later assessment as a whole, warning with SHA, both locations,
 and retained/rejected values for every differing field. Fields are never merged.
 Duplicate keys within a JSON object are errors. Invalid assessments, unknown
 SHAs and identity mismatches remain fatal; all input is validated before the
-sidecar or reports change. Import replaces the current sidecar with the accepted
-collection; it does not append assessments from previous import runs.
+store, sidecar or reports change. Imports accumulate for the current run; a valid
+assessment in a later import replaces the existing assessment for that SHA.
+The first-wins rule above applies only to duplicates within one incoming batch.
+Publication is atomic per chunk, not across the whole import. The compatibility
+sidecar is refreshed after successful chunk publication.
 
 Progress and warnings go to stderr, with elapsed time and periodic discovery,
 source-validation, file/commit-processing and final-summary messages. Normal
@@ -483,9 +556,9 @@ body plus `<name>.md`, a Markdown report with request context, request headers,
 response headers and response body. `Authorization`, `Proxy-Authorization` and
 `Cookie` values are redacted. A repeat POST to the same path overwrites the capture.
 
-Successful `/result` calls save only the report: the body is byte-identical to the
-file in `serve_ai.pyz.results/`, and the report shows its size and SHA-256 (it is
-saved normally if the stored file differs). When a request is rejected before its
+Successful `/result` calls save the submitted role-contribution body and report;
+the assembled, possibly accumulated result lives in the sharded store. Its exact
+canonical checksum is recorded in the response receipt. When a request is rejected before its
 body is read (for example a wrong `Content-Type`), the report says so and no body
 file is kept. Only authenticated requests that match a known route, chunk and role
 are saved: 401, 404, 405 and unknown names or roles are not. A failed write is
@@ -673,14 +746,15 @@ python3 kcommit_pipeline.py ai-import --config product.json --results-bundle res
 ```
 
 The importer checks manifest and schema identities, exact chunk bytes, source
-SHA membership, and result fields before writing a result sidecar. The report
-path then decorates report-only commit copies with `ai_analysis` when the
-sidecar `run_id` matches the current bundle. The relevant and filtered JSON
-reports and commit-detail shards can carry this advisory object; the HTML
-commit detail pane shows an advisory card. Existing scoring caches and ranking
-remain unchanged. A later Stage 08 run with a different identity makes the
-old result sidecar inapplicable. A missing result for a commit means no AI
-assessment was returned; it must not be interpreted as a negative finding.
+SHA membership, prior accepted findings and cache membership before publication.
+Stage 07 reads the accumulated run-bound store, with validated legacy sidecar
+fallback for missing chunks, and decorates report-only copies with `ai_analysis`.
+The relevant and filtered JSON reports and commit-detail shards carry this advisory
+object; the HTML commit detail pane shows an advisory card. Existing scoring
+caches and ranking remain unchanged. A later Stage 08 run with a different identity
+isolates earlier findings. Missing assessments mean no AI assessment was returned,
+not a negative finding. The JSON sidecar remains a compatibility view, not the
+only persistence source.
 
 ## QA before committing
 

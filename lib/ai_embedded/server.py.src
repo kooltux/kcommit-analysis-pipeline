@@ -18,6 +18,8 @@ import hashlib
 
 from .validation import AssessmentValidationError, result_properties, validate_result
 from .prompt_body import BODY_SCHEMAS, build_prompt_body
+from .source import SourceIndex
+from .result_store import ResultStore
 
 ARCHIVE = zipfile.ZipFile(sys.argv[0], 'r')
 MANIFEST = json.loads(ARCHIVE.read('ai_analysis_bundle_manifest.json'))
@@ -43,6 +45,8 @@ for asset_name, expected in CONTRACT.items():
     if checksum(ARCHIVE.read('ai_contract/' + asset_name)) != expected:
         raise ValueError('Packaged contract checksum mismatch: ' + asset_name)
 
+SOURCE_INDEX = SourceIndex(MANIFEST, lambda name: ARCHIVE.read('ai_analysis_input/' + name))
+
 
 def decode_json(data):
     def unique(pairs):
@@ -65,25 +69,9 @@ def decode_json(data):
 def validate(name, value):
     if name not in NAMES or not SAFE.fullmatch(name):
         raise ValueError('Unknown chunk')
-    source = ARCHIVE.read('ai_analysis_input/' + name)
-    if checksum(source) != NAMES[name]:
-        raise ValueError('Source chunk checksum mismatch')
-    chunk = json.loads(source)
-    required = set(SCHEMA['required'])
-    if not isinstance(value, dict) or set(value) != required:
-        raise ValueError('Invalid result envelope')
-    for key, expected in (('schema_version', '1.0'), ('run_id', MANIFEST['run_id']),
-                          ('source_chunk', name), ('input_checksum', checksum(source)),
-                          ('input_schema_checksum', MANIFEST['input_schema_checksum']),
-                          ('output_schema_checksum', MANIFEST['output_schema_checksum']),
-                          ('total_commits', len(chunk['commits']))):
-        if value[key] != expected:
-            raise ValueError('Result identity mismatch: ' + key)
-    bound_chunk = dict(chunk, run_id=MANIFEST['run_id'], source_chunk=name,
-                       input_schema_checksum=MANIFEST['input_schema_checksum'],
-                       output_schema_checksum=MANIFEST['output_schema_checksum'],
-                       total_commits=len(chunk['commits']))
-    return validate_result(value, bound_chunk, SCHEMA, checksum(source))
+    return validate_result(value, SOURCE_INDEX.context(name), SCHEMA, SOURCE_INDEX.checksums[name])
+
+RESULT_STORE = ResultStore(RESULTS, SOURCE_INDEX, validate)
 
 ROUTES = []
 MAX_RESULT_BYTES = 10 * 1024 * 1024
@@ -266,24 +254,12 @@ def save_post(handler, directory):
     outcome = 'ok' if status == 200 else 'error'
     base = os.path.join(directory, parts[0], outcome, *parts[1:])
     body = getattr(handler, '_req_body', None)
-    duplicate = None
-    if body is not None and status == 200 and parts[0] == 'result':
-        duplicate = os.path.join(RESULTS, *parts[1:])
-        try:
-            with open(duplicate, 'rb') as stream:
-                if stream.read() != body:
-                    duplicate = None
-        except OSError:
-            duplicate = None
     if body is None:
         note = 'not read; the request was rejected before its body was read.'
     else:
         facts = '%d bytes, sha256 %s' % (len(body), checksum(body))
-        if duplicate:
-            note = 'not duplicated; byte-identical to the stored result `%s` (%s).' % (duplicate, facts)
-        else:
-            note = 'saved as `%s` (%s).' % (os.path.basename(base), facts)
-    if body is not None and duplicate is None:
+        note = 'saved as `%s` (%s).' % (os.path.basename(base), facts)
+    if body is not None:
         write_atomic(base, body)
     elif os.path.exists(base):
         os.unlink(base)
@@ -683,7 +659,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if name not in NAMES or not SAFE.fullmatch(name):
             self.send_error(404)
             return
-        self.send_bytes(ARCHIVE.read('ai_analysis_input/' + name))
+        self.send_bytes(SOURCE_INDEX.raw[name])
 
     @route('GET', '/result/<name>', response_schema='/schema/result', group='results', order=0, parameter_sources={'name': 'chunks'})
     def result(self, name):
@@ -691,11 +667,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if name not in NAMES or not SAFE.fullmatch(name):
             self.send_error(404)
             return
-        try:
-            with open(os.path.join(RESULTS, name), 'rb') as stream:
-                self.send_bytes(stream.read())
-        except FileNotFoundError:
+        data = RESULT_STORE.read_chunk(name)
+        if data is None:
             self.send_error(404)
+            return
+        self.send_bytes(data)
 
     @route('GET', '/export', 'application/zip', group='results', order=1)
     def export(self):
@@ -705,13 +681,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             dest.writestr('ai_analysis_bundle_manifest.json',
                           ARCHIVE.read('ai_analysis_bundle_manifest.json'))
             for name in NAMES:
-                source = ARCHIVE.read('ai_analysis_input/' + name)
+                source = SOURCE_INDEX.raw[name]
                 dest.writestr('ai_analysis_input/' + name, source)
-                file = os.path.join(RESULTS, name)
-                if os.path.isfile(file):
-                    with open(file, 'rb') as stream:
-                        data = stream.read()
-                    validate(name, json.loads(data))
+                data = RESULT_STORE.read_chunk(name)
+                if data is not None:
                     dest.writestr('results/' + name, data)
         self.send_bytes(buf.getvalue())
 
@@ -727,19 +700,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             data, document = self.read_json()
             data, receipt = prepare_upload(name, data, document)
-            result_dir = os.path.dirname(os.path.join(RESULTS, name))
-            os.makedirs(result_dir, exist_ok=True)
-            fd, temp = tempfile.mkstemp(dir=result_dir, prefix='.upload-')
-            try:
-                with os.fdopen(fd, 'wb') as stream:
-                    stream.write(data)
-                os.replace(temp, os.path.join(RESULTS, name))
-            finally:
-                if os.path.exists(temp):
-                    os.unlink(temp)
-            self.send_bytes(json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode())
         except (ValueError, UnicodeError, RecursionError) as exc:
             self.send_error(400, exc)
+            return
+        data = RESULT_STORE.write_chunk(name, decode_json(data))
+        if 'result_checksum' in receipt:
+            receipt['result_checksum'] = checksum(data)
+        self.send_bytes(json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode())
 
 def connection_url(host, port):
     connect_host = '127.0.0.1' if host == '0.0.0.0' else host
