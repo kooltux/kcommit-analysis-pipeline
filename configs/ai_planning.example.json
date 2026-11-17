@@ -1,0 +1,5 @@
+{
+  "ai": {
+    "planning": {"max_commits": 100, "max_bytes": 1048576, "cache_entries": 32}
+  }
+}

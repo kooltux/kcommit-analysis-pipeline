@@ -62,7 +62,7 @@ def test_generated_api_response_contracts(app, workflow, auth):
             Draft202012Validator(resolve(catalog, contract['schema'])).validate(contract['example'])
         for entry in entries.values():
             assert ('401' in entry['responses']) == bool(auth)
-            assert entry['responses']['200']['schema']
+            assert entry['responses']['200']['schema'], (entry['method'], entry['path'])
             for contract in entry['responses'].values():
                 spec = resolve(catalog, contract)
                 if 'example' in spec:
@@ -153,3 +153,57 @@ def test_actual_error_envelopes_match_shared_contract(namespace, status):
     check_response(catalog, contract, (status, headers, handler.wfile.getvalue()), None)
     if status >= 500:
         assert 'diagnostic detail' not in handler.wfile.getvalue().decode()
+
+
+@pytest.mark.parametrize('auth', [None, 'reviewer:secret'])
+def test_versioned_catalogs_publish_and_enforce_response_contracts(app, package, auth):
+    from test_ai_versioned_runtime import contributions
+    from jsonschema import ValidationError
+    documents = contributions(package)
+    with running(app, auth=auth) as (port, log, errors):
+        token = basic(auth) if auth else None
+        for prefix in ('/v1', '/v2'):
+            status, _, raw = request(port, prefix + '/api', authorization=token)
+            assert status == 200
+            catalog = json.loads(raw)
+            entries = {(item['method'], item['path']): item for item in catalog['routes']}
+            for definition in catalog['response_schemas'].values():
+                Draft202012Validator.check_schema(definition)
+            for item in entries.values():
+                assert item['responses']['200']['schema'], (item['method'], item['path'])
+                assert ('401' in item['responses']) == bool(auth)
+            def check(path, pattern, method='GET', value=None):
+                response = request(port, path, method=method,
+                    body=encode(value) if value is not None else None, authorization=token)
+                assert response[0] == 200
+                contract = entries[method, pattern]['responses']['200']
+                check_response(catalog, contract, response, port, token)
+                definition = resolve(catalog, contract['schema'])
+                if definition.get('required'):
+                    invalid = json.loads(response[2])
+                    del invalid[definition['required'][0]]
+                    with pytest.raises(ValidationError):
+                        Draft202012Validator(definition).validate(invalid)
+                return response
+            check(prefix, prefix)
+            check(prefix + '/api', prefix + '/api')
+            check(prefix + '/schema/workflow', prefix + '/schema/<name>')
+            for role in ('analyst', 'cve', 'reviewer'):
+                check(prefix + '/validate/role/' + role, prefix + '/validate/role/<role>',
+                      'POST', documents[role])
+            check(prefix + '/validate/workflow', prefix + '/validate/workflow', 'POST', documents)
+            check(prefix + '/result', prefix + '/result', 'POST', documents)
+            check(prefix + '/export', prefix + '/export')
+            if prefix == '/v1':
+                check(prefix + '/chunks', prefix + '/chunks')
+            else:
+                response = check(prefix + '/plan', prefix + '/plan', 'POST', {})
+                plan_id = json.loads(response[2])['plan_id']
+                check(prefix + '/plan/' + plan_id, prefix + '/plan/<plan_id>')
+            response = request(port, prefix + '/schema/unknown', authorization=token)
+            assert response[0] == 404
+            check_response(catalog, catalog['error_responses']['404'], response, port, token)
+            if auth:
+                response = request(port, prefix + '/api')
+                assert response[0] == 401
+                check_response(catalog, catalog['error_responses']['401'], response, port)

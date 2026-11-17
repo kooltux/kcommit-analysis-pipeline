@@ -32,6 +32,7 @@ from lib.html_report import generate_html_report
 from lib.manifest import CACHE_FILES, NSTAGES
 from lib.run_stats import build_run_stats
 from lib.scoring import fmt_profiles, fmt_evidence, order_commit_details
+from lib.ai_report import attach_ai_results, ai_columns, ai_summary_cells, has_ai_results
 
 
 # Column definitions imported from manifest (single source of truth)
@@ -70,6 +71,7 @@ def _fmt_date(ts):
 
 def _commit_rows(commits, include_reason=False):
     """Build list-of-lists rows for CSV / XLSX / ODS output."""
+    include_ai = has_ai_results(commits)
     rows = []
     for c in commits:
         sc       = (c.get('scoring') or {})
@@ -106,6 +108,8 @@ def _commit_rows(commits, include_reason=False):
         ]
         if include_reason:
             row.append(c.get('_filter_reason', ''))
+        if include_ai:
+            row.extend(ai_summary_cells(c))
         rows.append(row)
     return rows
 
@@ -205,6 +209,8 @@ def _write_table_json(path, commits, include_reason=False):
         }
         if include_reason and c.get('_filter_reason', ''):
             row['_filter_reason'] = c.get('_filter_reason', '')
+        if 'ai_analysis' in c:
+            row['ai_analysis'] = c['ai_analysis']
         rows.append(order_commit_details(row))
     _save_compact_json(path, rows)
 
@@ -485,7 +491,7 @@ def _dump_merged_config(cfg, raw_cfg, outdir):
         return None
 
 
-def run(cfg, cache, outdir):
+def run(cfg, cache, outdir, ai_results=None):
     """Stage 07 entry point: generate all output formats."""
     try:
         from lib.spreadsheet import (
@@ -559,6 +565,9 @@ def run(cfg, cache, outdir):
     prefiltered   = load_json(os.path.join(cache, CACHE_FILES['filtered']), default=[]) or []
     postfiltered  = load_json(os.path.join(cache, CACHE_FILES['postfilter_dropped']), default=[]) or []
     filtered      = list(prefiltered) + list(postfiltered)
+    if ai_results is not None:
+        scored = attach_ai_results(scored, ai_results)
+        filtered = attach_ai_results(filtered, ai_results)
     profile_rules = _load_profile_rules_safe(cfg, cache)
 
     _all_scored  = load_json(os.path.join(cache, CACHE_FILES['scored']), default=[]) or []
@@ -583,6 +592,10 @@ def run(cfg, cache, outdir):
         'evaluation': _build_evaluation_block(
             cfg, outputs, html_detail_mode, top_n, _threshold),
     }
+    if ai_results:
+        report_stats['ai_analyzed_commits'] = len(ai_results)
+        report_stats['ai_reported_commits'] = len({c['commit'] for c in scored + filtered
+                                                 if 'ai_analysis' in c})
     prof_summary      = _profile_summary(scored, profile_rules)
     mat_hdr, mat_rows = _profile_matrix(scored)
     details_root = os.path.join(outdir, 'commits')
@@ -625,7 +638,7 @@ def run(cfg, cache, outdir):
         csv_path = os.path.join(outdir, 'relevant_commits.csv')
         with open(csv_path, 'w', newline='', encoding='utf-8') as fh:
             w = csv.writer(fh)
-            w.writerow(_MC)
+            w.writerow(ai_columns(_MC, scored))
             w.writerows(_commit_rows(scored))
         _emit(csv_path)
         mat_path = os.path.join(outdir, 'profile_matrix.csv')
@@ -648,7 +661,7 @@ def run(cfg, cache, outdir):
             flt_path = os.path.join(outdir, 'filtered_commits.csv')
             with open(flt_path, 'w', newline='', encoding='utf-8') as fh:
                 w = csv.writer(fh)
-                w.writerow(_MCF)
+                w.writerow(ai_columns(_MCF, filtered))
                 w.writerows(_commit_rows(filtered, include_reason=True))
             _emit(flt_path)
 

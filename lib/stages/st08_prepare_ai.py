@@ -43,7 +43,7 @@ def run(cfg, cache, outdir=None):
     if not isinstance(raw, list) or not isinstance(product_map, dict):
         raise ValueError('Invalid AI source cache structure')
     package = build_package(raw, product_map, contract['files'], VERSION,
-                            chunk_size=size, batch_size=batch_size)
+                            chunk_size=size, batch_size=batch_size, planning=ai.get('planning'))
     manifest = package['manifest']
     parent = os.path.dirname(os.path.abspath(outdir))
     os.makedirs(parent, exist_ok=True)

@@ -30,8 +30,9 @@ def test_ai_report_keeps_bundle_and_decorates_json_and_detail(tmp_path, monkeypa
     manifest_before = (out / 'ai_analysis_bundle_manifest.json').read_bytes()
     app_before = (out / 'serve_ai.pyz').read_bytes()
     sidecar_before = sidecar.read_bytes() if sidecar.exists() else None
-    monkeypatch.setattr(st07_report, 'run', lambda *_: {
-        'generated_files': ['relevant_commits.json'], 'total_scored_commits': 1})
+    monkeypatch.setattr(st07_report, '_load_profile_rules_safe', lambda *_: {})
+    monkeypatch.setattr(st07_report, '_copy_helper_scripts', lambda *_: [])
+    monkeypatch.setattr(st07_report, '_dump_merged_config', lambda *_: None)
     cfg['reports'] = {'outputs': []}
     cfg['paths']['templates_dir'] = None
     result = st07_ai_report.run(cfg, str(cache), str(out))

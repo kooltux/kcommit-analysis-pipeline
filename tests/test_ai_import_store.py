@@ -1,9 +1,11 @@
 """Accumulated imports, validated compatibility reads and advisory report isolation."""
 import copy
+from pathlib import Path
 
 import pytest
 
 from lib.ai_import_store import STORE_DIRECTORY, read_imported_results
+from lib.ai_canonical import record_path
 from lib.ai_report import load_ai_results
 from lib.commands.cmd_ai_import import import_results
 from test_ai_import_sources import package, collection, record, write_json
@@ -25,7 +27,7 @@ def test_successive_partial_imports_replace_without_losing_other_shas(package, t
     assert load_ai_results(out) == expected
     (out / 'ai_analysis_results.json').unlink()
     assert load_ai_results(out) == expected
-    assert (out / STORE_DIRECTORY / 'runs' / source.manifest['run_id']).is_dir()
+    assert all((out / STORE_DIRECTORY / record_path(sha)).is_file() for sha in expected)
     assert not (out / 'serve_ai.pyz.results').exists()
 
 
@@ -86,16 +88,16 @@ def test_partial_publication_keeps_previous_assessments(package, tmp_path, monke
     path = tmp_path / 'replacement.json'
     replacement = dict(item, ai_summary='Published replacement')
     write_json(path, collection(source, {first: replacement}))
-    from lib.ai_result_store import ResultStore
-    original = ResultStore.write_chunk
-    def fail_second(self, name, value):
-        if name == source.by_sha[second]:
-            raise OSError('second chunk failed')
-        return original(self, name, value)
-    monkeypatch.setattr(ResultStore, 'write_chunk', fail_second)
-    with pytest.raises(OSError, match='second chunk failed'):
+    from lib import ai_canonical
+    original = ai_canonical._atomic_bytes
+    def fail_second(path, data):
+        if Path(path).name == second + '.json':
+            raise OSError('second record failed')
+        return original(path, data)
+    monkeypatch.setattr(ai_canonical, '_atomic_bytes', fail_second)
+    with pytest.raises(OSError, match='second record failed'):
         import_results(cfg, path)
     assert load_ai_results(out) == {first: replacement, second: item}
-    monkeypatch.setattr(ResultStore, 'write_chunk', original)
+    monkeypatch.setattr(ai_canonical, '_atomic_bytes', original)
     assert import_results(cfg, path)['analyzed_commits'] == 2
     assert read_imported_results(source)[1] == {first: replacement, second: item}

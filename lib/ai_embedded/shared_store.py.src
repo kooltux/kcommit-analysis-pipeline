@@ -1,0 +1,2 @@
+"""Bind shared codec/atomic-write imports to the portable store implementation."""
+from .result_store import _atomic_bytes, _decode, _encode

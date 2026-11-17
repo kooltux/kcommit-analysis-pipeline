@@ -1,6 +1,129 @@
 # Optional AI analysis workflow
 
-## Result-store core
+## Canonical contract implementation status
+
+`lib/ai_canonical.py` defines the next shared contract core: analysis identity
+from source records, product data and contract hashes; role documents without
+physical chunk fields; server-owned three-role assembly; and self-contained
+`run_id`, `commit`, `assessment` records at `<aa>/<bb>/<full-sha>.json`.
+The schemas and validation gates retain the existing assessment-field constraints.
+Record publication validates the whole supplied set before writing, is atomic per
+SHA and leaves other accepted SHAs unchanged. Only one writer per root is supported.
+
+Stage 08 now publishes a grouping-independent `analysis_id` and validated planning
+defaults and checks default-plan feasibility before output publication. The legacy
+`run_id` remains for compatibility; versioned delivery will use `analysis_id` as its
+shared run identity. The versioned HTTP adapters now use that identity for their
+shared canonical contribution/result pipeline. Canonical ZIP import and local-store
+compatibility are integrated, including live-server legacy read-through and migration.
+Reporting/output-scope integration is implemented. Cross-boundary acceptance
+coverage and its execution status are recorded below; full design completion is not claimed.
+
+`ai.planning` accepts positive integers `max_commits` (default 100), `max_bytes`
+(default 1048576) and `cache_entries` (default 32); unknown options are rejected.
+`lib/ai_planning.py` creates deterministic SHA selections and bounded delivery groups,
+with exact input-document byte counts and defensive, bounded LRU caching. Planning
+parameters change plan IDs, not analysis identity or canonical record paths.
+An oversized single commit is rejected rather than silently truncated or omitted.
+Byte limits cover source documents, not model tokens or prompt/output context;
+model-specific context feasibility is not claimed. Merge the planning fragment in
+`configs/ai_planning.example.json` into a product configuration to override defaults.
+
+## Versioned runtime interfaces
+
+Versioned routes advertise typed success responses for catalogs, validation receipts,
+submission receipts, chunk listings and plans. Schema retrieval uses the JSON Schema
+metaschema; ZIP exports retain their binary contract. Each versioned catalog includes
+`response_schemas` so its shared success/error references resolve locally.
+
+New packages expose separate `/v1/api` and `/v2/api` catalogs. Both namespaces use
+`POST /validate/role/<role>`, `POST /validate/workflow`, `POST /result`,
+`GET /result/<sha>`, `GET /schema/<name>` and `GET /export`, prefixed by the namespace.
+Role bodies contain exactly `run_id`, `role`, `results`; workflow validation and
+submission accept exactly the same Analyst/CVE/Reviewer document set. The server
+assembles findings for both gates; only submission writes per-SHA canonical records.
+The receipt maps SHAs to checksums of exact retrievable canonical record bytes.
+
+`/v1/chunks` lists packaged chunk memberships, downloaded using `/v1/chunk/<name>`.
+`POST /v2/plan` accepts optional `max_commits`, `max_bytes` and unique source-bound
+`commits`; retrieve a cached plan at `/v2/plan/<plan_id>` and its source groups at
+`/v2/plan/<plan_id>/<group_id>`. Evicted plans return 404; repeating the same request
+recreates the same plan. Both export routes use one deterministic ZIP implementation
+with provenance and `results/<aa>/<bb>/<full-sha>.json` members.
+
+Shared canonical/planning modules are packaged verbatim, with portable import
+bindings; they are not rewritten or duplicated for each runtime interface.
+Legacy unversioned routes keep their intermediate contracts and storage behavior.
+Canonical ZIP import accepts both versioned exports. Local intermediate stores and
+sidecars are read without writes and migrated on a valid import.
+Versioned retrieval/export prefer canonical records, filling missing SHAs from the
+validated legacy flat/intermediate store for the current packaged legacy run.
+Legacy chunks are read once per selection; corrupt bytes, checksums, identities or
+assessments are errors, never silently absent findings. Reads and validation do not
+publish. A valid versioned submission prevalidates all legacy carry-forward records,
+then publishes missing canonical records and supplied reassessments under one writer
+lock. Already-canonical findings not reassessed are not rewritten; legacy files stay.
+Receipts cover only submitted SHAs. Publication is atomic per SHA, not across a batch.
+After migration canonical records are authoritative; later legacy-only writes cannot
+replace them. Submit reassessments through `/v1/result` or `/v2/result`.
+This is not completion of the full nine-item design.
+
+Restart-test readiness uses a current-PID start record after the pre-launch log byte
+offset, not historical append-only log entries. Tests retain existing log contents,
+graceful-shutdown exit checks and all migration durability assertions.
+
+## Single-pass AI report scope
+
+AI findings are validated before any standard report writes. Stage 07 then attaches
+independent copies once, after the relevant top-N selection, and decorates the
+existing prefilter/postfilter-dropped collections without promoting extra commits.
+The standard report stage emits every format from those same annotated collections;
+there is no second report/HTML/archive generation pass or Stage 08 regeneration.
+JSON/detail and HTML table indexes retain the full baseline assessment, including
+Reviewer proposals without applying them. Missing current findings have no
+`ai_analysis` field; stale cached annotations are removed during attachment.
+`ai_analyzed_commits` counts accepted findings; `ai_reported_commits` counts unique
+assessed SHAs within the displayed relevant/filtered scope. Scoring/profile/rule
+values, ordering, cache bytes and source-package assets remain unchanged.
+CSV and standalone/combined XLSX/ODS commit tables share eight advisory columns:
+AI assessed, security fix, bug fix, product impact, backport effort, recommendation,
+summary and Reviewer agreement. Columns are appended after the existing base/filter
+columns only when that table contains an assessment; unassessed rows have blank AI
+cells, not negative findings. Boolean findings display Yes/No. Formula-like AI text
+is prefixed with an apostrophe in tabular output; stored findings and JSON stay exact.
+Full CVE details and Reviewer correction proposals remain in JSON/detail and HTML
+outputs; proposals never replace baseline recommendations. Profile/rule/matrix score
+tables do not acquire AI columns. Tables without AI retain original headers/rows.
+Report-format integration is implemented; the cross-boundary acceptance tests
+below still require execution.
+
+## Acceptance coverage and execution status
+
+| Boundary | Regression coverage |
+| --- | --- |
+| Identity, canonical records and bounded planning | `test_ai_canonical.py`, `test_ai_planning.py` |
+| Versioned HTTP validation, publication and export | `test_ai_versioned_runtime.py` |
+| Legacy read-through, migration and restart | `test_ai_runtime_migration.py` |
+| Canonical import, regrouping and rejection safety | `test_ai_canonical_exchange.py`, `test_ai_import_store.py` |
+| Report scope, immutable inputs and tabular cells | `test_ai_report_invariants.py`, `test_ai_report_tables.py` |
+| Live /v1 and /v2 export through import to actual reports | `test_ai_end_to_end.py` (execution pending) |
+
+The live integration cases prepare a real five-commit package, submit three role
+contributions for a partial selection, retrieve/check canonical bytes, export a ZIP,
+and import it with real Stage 07 generation enabled. JSON/detail, CSV and standalone/
+combined XLSX/ODS are inspected. Assertions retain baseline recommendations despite
+Reviewer disagreement, distinguish absent findings, keep top-N/filtered membership,
+and preserve scores, cache/package bytes and profile/rule outputs. Only ancillary
+profile/config/helper-copy setup is stubbed; HTTP, storage, import and report writers
+are not replaced. Stage 08 is forbidden during import-driven report refresh.
+
+The user reported the preceding report batch QA passing. The new integration cases
+and full-suite regression run require fresh results; test presence is not a pass.
+These cases do not exercise HTML/browser rendering or model context feasibility,
+and do not establish completion of the full nine-item design. Existing one-writer,
+per-SHA atomicity and nontransactional report-publication limitations still apply.
+
+## Legacy result-store core
 
 `lib/ai_result_store.py` provides a run-bound `ResultStore` with an injected
 source index and result validator. Assessments are immutable JSON blobs under
@@ -33,11 +156,22 @@ publication failures propagate without a success receipt or client-error respons
 assessments for the current run; a newly validated reassessment replaces its SHA.
 Within one incoming batch, sorted-input first-wins duplicate handling is unchanged.
 The entire incoming batch, prior findings and local cache membership are checked
-before publication. Each chunk publishes atomically; a multi-chunk import or report
-regeneration is not one transaction. An I/O failure may leave earlier chunks updated.
-The compatibility `ai_analysis_results.json` view is atomically refreshed only after
-all chunk publications succeed. Validated legacy findings fill missing chunks,
-including after an interrupted migration; published chunks take precedence.
+before publication. Findings use the same canonical record/store implementation as
+the versioned server, at `ai_import_results/<aa>/<bb>/<full-sha>.json`, bound to the
+manifest's grouping-independent `analysis_id`. Changing delivery grouping does not
+change accepted findings or their paths. Publication is atomic per SHA, not across
+the whole import or reports; an I/O failure may leave earlier records updated.
+The compatibility `ai_analysis_results.json` view retains the legacy `run_id` and
+is refreshed only after all canonical publications succeed. Validated same-legacy-run
+intermediate stores and sidecars fill missing findings; canonical records win.
+Reads never migrate files; the next valid import carries legacy findings forward.
+
+Canonical ZIPs require provenance, exact contract hashes, matching analysis identity,
+a source set equal to the local package and filename/record SHA agreement. Their
+physical chunk grouping may differ. Unknown/duplicate members and invalid records
+are rejected before publication. Loose canonical files must be named `<full-sha>.json`;
+legacy collections and chunk documents remain accepted. Duplicate handling within
+one incoming batch remains sorted first-wins, regardless of the input format.
 Stage 07 validates findings before writing reports and can read the store without
 the sidecar. Reading never migrates data or regenerates Stage 08 assets. Old-run
 findings are ignored; scores, cache records and ranking remain unchanged.

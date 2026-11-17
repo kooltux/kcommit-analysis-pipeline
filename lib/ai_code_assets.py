@@ -13,6 +13,12 @@ ASSET_LAYOUT = {
     'source_contract': ('source_contract.py.src', 'kcap_ai_runtime/source_contract.py'),
     'source': ('source.py.src', 'kcap_ai_runtime/source.py'),
     'result_store': ('result_store.py.src', 'kcap_ai_runtime/result_store.py'),
+    'canonical': ('../ai_canonical.py', 'kcap_ai_runtime/canonical.py'),
+    'planning': ('../ai_planning.py', 'kcap_ai_runtime/planning.py'),
+    'shared_contract': ('shared_contract.py.src', 'kcap_ai_runtime/ai_contract.py'),
+    'shared_store': ('shared_store.py.src', 'kcap_ai_runtime/ai_result_store.py'),
+    'shared_source': ('shared_source.py.src', 'kcap_ai_runtime/ai_source.py'),
+    'versioned_routes': ('versioned_routes.py.src', 'kcap_ai_runtime/versioned_routes.py'),
 }
 ASSET_FILES = {name: source for name, (source, target) in ASSET_LAYOUT.items()}
 

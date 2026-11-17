@@ -1,8 +1,9 @@
 """Spreadsheet export for kcommit-analysis-pipeline.
 
 Writes commit data to XLSX, ODS, CSV and related tabular formats.
-Column definitions (COMMIT_COLS, COMMIT_COLS_FILTERED, SUMMARY_COLS,
-MATRIX_COLS, STATS_COLS) are the canonical source in lib.manifest.
+Base column definitions (COMMIT_COLS, COMMIT_COLS_FILTERED, SUMMARY_COLS,
+MATRIX_COLS, STATS_COLS) come from lib.manifest; optional AI summary columns
+are shared with CSV through lib.ai_report.
 
 v18.3.0: Report Stats sheet now shows structured context identical to the
          HTML report's top bar and left pane: tool version, run timestamp,
@@ -16,6 +17,7 @@ v18.3.0: Report Stats sheet now shows structured context identical to the
 """
 import datetime
 from lib.scoring import fmt_profiles, fmt_evidence
+from lib.ai_report import ai_columns, ai_summary_cells, has_ai_results
 import os
 import zipfile
 import xml.sax.saxutils as _sx
@@ -96,7 +98,7 @@ def _trace_rows(scored):
     return rows
 
 
-def _commit_row(c, include_reason=False, native_types=False):
+def _commit_row(c, include_reason=False, native_types=False, include_ai=False):
     """Build a row for a commit record.
 
     When *native_types* is True (XLSX path), the Date cell is a datetime
@@ -140,7 +142,17 @@ def _commit_row(c, include_reason=False, native_types=False):
     ]
     if include_reason:
         row.append(c.get("_filter_reason", ""))
+    if include_ai:
+        row.extend(ai_summary_cells(c))
     return row
+
+
+def _commit_table(commits, include_reason=False):
+    columns = COMMIT_COLS_FILTERED if include_reason else COMMIT_COLS
+    include_ai = has_ai_results(commits)
+    return ai_columns(columns, commits), [
+        _commit_row(c, include_reason, native_types=True, include_ai=include_ai)
+        for c in commits]
 
 
 def _summary_rows(ps, native_types=False):
@@ -401,10 +413,7 @@ def write_xlsx(path: str, scored: list, profile_summary: dict,
     wb = _new_wb()
     ws = wb.active
     ws.title = sheet_name
-    cols = COMMIT_COLS_FILTERED if include_reason else COMMIT_COLS
-    _xlsx_write_sheet(ws, cols,
-                      [_commit_row(c, include_reason, native_types=True)
-                       for c in scored])
+    _xlsx_write_sheet(ws, *_commit_table(scored, include_reason))
     _xlsx_save(wb, path)
 
 
@@ -447,14 +456,11 @@ def write_summary_xlsx(path: str, scored: list, filtered: list,
     _xlsx_write_stats_sheet(ws0, _stats_rows(report_stats, run_stats=run_stats))
 
     ws1 = wb.create_sheet("Relevant Commits")
-    _xlsx_write_sheet(ws1, COMMIT_COLS,
-                      [_commit_row(c, native_types=True) for c in scored])
+    _xlsx_write_sheet(ws1, *_commit_table(scored))
 
     if filtered:
         ws2 = wb.create_sheet("Filtered Commits")
-        _xlsx_write_sheet(ws2, COMMIT_COLS_FILTERED,
-                          [_commit_row(c, include_reason=True, native_types=True)
-                           for c in filtered])
+        _xlsx_write_sheet(ws2, *_commit_table(filtered, include_reason=True))
 
     if profile_summary:
         ws3 = wb.create_sheet("Profile Summary")
@@ -636,12 +642,9 @@ def write_ods(path: str, scored: list, profile_summary: dict,
               sheet_name: str = "Commits",
               include_reason: bool = False) -> None:
     """Write a single-sheet ODS for *scored* commits."""
-    cols = COMMIT_COLS_FILTERED if include_reason else COMMIT_COLS
     content = (
         _ODS_HEAD
-        + _ods_sheet(sheet_name, cols,
-                     [_commit_row(c, include_reason, native_types=True)
-                      for c in scored])
+        + _ods_sheet(sheet_name, *_commit_table(scored, include_reason))
         + _ODS_TAIL
     )
     _ods_save(content, path)
@@ -683,13 +686,9 @@ def write_summary_ods(path: str, scored: list, filtered: list,
                  mirroring the HTML report top bar and left pane.
     """
     sheets  = _ods_stats_sheet(_stats_rows(report_stats, run_stats=run_stats))
-    sheets += _ods_sheet("Relevant Commits", COMMIT_COLS,
-                         [_commit_row(c, native_types=True) for c in scored])
+    sheets += _ods_sheet("Relevant Commits", *_commit_table(scored))
     if filtered:
-        sheets += _ods_sheet("Filtered Commits", COMMIT_COLS_FILTERED,
-                             [_commit_row(c, include_reason=True,
-                                          native_types=True)
-                              for c in filtered])
+        sheets += _ods_sheet("Filtered Commits", *_commit_table(filtered, include_reason=True))
     if profile_summary:
         sheets += _ods_sheet("Profile Summary", SUMMARY_COLS,
                              _summary_rows(profile_summary, native_types=True))

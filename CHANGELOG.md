@@ -4,6 +4,65 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Add live /v1 and /v2 acceptance cases from real package submission/export through
+  canonical import to real JSON/detail, CSV and standalone/combined XLSX/ODS reports.
+  Assert advisory-value, scope, score, cache/package and exact-record preservation.
+  Document boundary coverage and limitations; new integration/full-suite QA is pending.
+
+- Add one shared advisory AI summary to CSV and standalone/combined XLSX/ODS
+  commit tables. Preserve base columns, scores, ordering and no-AI layouts; leave
+  unassessed rows blank and escape formula-like AI text without altering findings.
+  Inspect real workbook/XML/CSV cells in regression tests; full CVE/review details
+  remain in JSON/detail outputs.
+
+- Attach validated AI findings before one standard report-generation pass instead
+  of rewriting selected outputs afterward. Preserve full AI data in HTML indexes,
+  distinguish accepted/displayed counts, and deep-copy nested data without stale
+  annotations. Exercise real Stage 07 JSON/detail generation and scope/cache/bundle
+  invariants. Report coverage and acceptance status are listed in docs/AI_ANALYSIS.md.
+
+- Fix server-test restart readiness: accept only current-process start records
+  written after the pre-launch byte offset, retaining append-only logs. Add
+  deterministic coverage for missing logs, stale PIDs, reused-PID history and
+  byte offsets. Keep migration/restart assertions and zero-exit checks unchanged.
+
+- Bridge versioned retrieval/export to validated legacy flat and intermediate
+  findings without read-time writes. Carry missing findings into canonical storage
+  on valid submission, preserve existing canonical records and legacy files, and
+  scope receipt checksums to submitted SHAs. Serialize migration with submission;
+  add live flat/indexed, authentication, restart, corruption and partial-state tests.
+
+- Fix missing success-response schemas on versioned runtime routes, which caused
+  API response-contract QA failures. Publish typed catalogs, role/workflow/upload
+  acknowledgements, chunk listings and plans, and expose the shared response-schema
+  registry in each catalog. Add authenticated/unauthenticated live contract regressions.
+
+- Import canonical v1/v2 result bundles and per-commit JSON with strict provenance,
+  source/contract identity and filename checks, independently of delivery grouping.
+  Normalize accumulated local findings through the shared canonical per-SHA store;
+  retain read-only intermediate-store/sidecar fallbacks and migrate on valid import.
+  Preserve duplicate/reassessment policies and sidecar-free report reads. Add real
+  export/import, regrouping, legacy migration and rejection regressions; update
+  publication-failure tests for per-SHA atomicity. Full acceptance QA remains pending.
+
+- Add separate v1/v2 runtime catalogs, packaged and deterministic planned source
+  delivery, shared three-role validation/submission, canonical per-SHA retrieval
+  and identical deterministic provenance/result ZIP exports. Package the canonical
+  and planning implementations verbatim with portable import bindings. Add real
+  zipapp runtime regressions and update asset-layout coverage. Complete reporting
+  and the remaining end-to-end acceptance matrix are still pending.
+
+- Add deterministic byte-bounded planning and a defensive bounded plan cache.
+  Publish grouping-independent analysis identity and planning defaults in Stage 08,
+  and reject infeasible default plans before replacing output assets. Preserve the
+  legacy run identity and interfaces pending versioned runtime integration.
+  Add planning, identity, bounds and cache regressions and a configuration example.
+
+- Introduce the canonical result-contract core with source/product/contract
+  identity, chunk-independent role schemas and assembly, self-contained per-SHA
+  records and two-level SHA sharding. Add contract/store regressions. Keep legacy
+  interfaces unchanged pending versioned API and delivery integration.
+
 - Accumulate validated local AI imports in a separate run-bound sharded store.
   Replace reassessments across imports while retaining within-batch first-wins
   duplicate handling. Preserve validated legacy findings and an atomic JSON

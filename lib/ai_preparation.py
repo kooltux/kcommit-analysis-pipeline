@@ -5,17 +5,21 @@ from jsonschema import Draft202012Validator
 
 from lib.ai_assets import PROMPT_ROLES, SCHEMA_ROLES
 from lib.ai_contract import digest, encode, project_commit, validate_chunk
-from lib.ai_source import index_source_commits
+from lib.ai_canonical import analysis_identity
+from lib.ai_planning import PlanCache, planning_defaults
+from lib.ai_source import SourceIndex, index_source_commits
 from lib.ai_schema_validation import parse_schema
 
 
-def build_package(raw, product_map, snapshots, pipeline_version, chunk_size=100, batch_size=10):
+def build_package(raw, product_map, snapshots, pipeline_version, chunk_size=100,
+                  batch_size=10, planning=None):
     """Consume validated exact-byte snapshots returned by load_contract().
 
     This function reads no resource paths and writes no files. A caller may publish
     the returned files only after this construction and validation has succeeded.
     Presentation assets and executable-server generation belong to the caller.
     """
+    planning = planning_defaults(planning)
     for name, value in (('chunk_size', chunk_size), ('batch_size', batch_size)):
         if type(value) is not int or value < 1:
             raise ValueError('ai.' + name + ' must be a positive integer')
@@ -84,5 +88,9 @@ def build_package(raw, product_map, snapshots, pipeline_version, chunk_size=100,
                     total_chunks=count, total_batches=batch_count, batches=batches,
                     input_schema_checksum=input_hash, output_schema_checksum=output_hash,
                     prompt_checksum=digest(prompt), contract_assets=hashes, chunks=chunks)
+    manifest['analysis_id'] = analysis_identity(commits, product_map, hashes)
+    manifest['planning'] = planning
+    source = SourceIndex(manifest, lambda name: files['ai_analysis_input/' + name])
+    PlanCache(source, manifest['analysis_id'], planning).get()
     files['ai_analysis_bundle_manifest.json'] = encode(manifest)
     return {'manifest': manifest, 'files': files}

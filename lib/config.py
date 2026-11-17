@@ -65,7 +65,8 @@ CONFIG_SCHEMA = {
            'front_page_path': {'type': 'path', 'kind': 'file', 'needs': 'ai', 'default': 'ai/ai_server_front_page.md', 'content': 'markdown'},
            'schemas_dir': {'type': 'path', 'kind': 'dir', 'access': 'read', 'needs': 'ai', 'default': 'ai/schemas'},
            'chunk_size': {'type': 'int', 'min': 1},
-           'batch_size': {'type': 'int', 'min': 1}},
+           'batch_size': {'type': 'int', 'min': 1},
+           'planning': {'type': 'dict'}},
 }
 
 

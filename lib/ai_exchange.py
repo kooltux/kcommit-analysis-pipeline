@@ -8,6 +8,8 @@ import time
 import zipfile
 
 from lib.ai_contract import digest, validate_assessment, validate_result
+from lib.ai_canonical import validate_record
+from lib.ai_canonical_exchange import is_canonical_bundle, read_canonical_bundle
 from lib.ai_source import SourceIndex
 from lib.ai_assets import PROMPT_ROLES, SCHEMA_ROLES
 
@@ -33,7 +35,9 @@ def decode(data):
                 raise ValueError(f'Duplicate JSON key: {key}')
             value[key] = item
         return value
-    return json.loads(data, object_pairs_hook=unique)
+    def constant(value):
+        raise ValueError('Non-JSON numeric constant: ' + value)
+    return json.loads(data, object_pairs_hook=unique, parse_constant=constant)
 
 
 def discover(inputs, suffix, progress):
@@ -121,6 +125,9 @@ class WorkPackage:
             lambda number, total, name: progress.say(
                 f'Validated source chunk {number}/{total}: {name}', False))
         self.chunks, self.raw, self.by_sha = self.index.chunks, self.index.raw, self.index.by_sha
+        self.analysis_id = self.manifest.get('analysis_id', self.manifest['run_id'])
+        if not isinstance(self.analysis_id, str) or not re.fullmatch(r'[0-9a-f]{64}', self.analysis_id):
+            raise ValueError('Invalid local analysis identity')
         progress.say(f'Source run {self.manifest["run_id"]}: '
                      f'{len(self.chunks)} chunks, {len(self.by_sha)} commits')
 
@@ -141,6 +148,12 @@ class WorkPackage:
     def accept_document(self, value, origin, accepted):
         if not isinstance(value, dict):
             raise ValueError('Result document must be an object')
+        if 'commit' in value or 'assessment' in value:
+            validate_record(value, self.index, self.schema, self.analysis_id)
+            if Path(origin).name != value['commit'] + '.json':
+                raise ValueError('Canonical result filename identity mismatch')
+            accepted.add(value['commit'], value['assessment'], origin)
+            return
         if 'source_chunk' in value:
             name = value['source_chunk']
             if not isinstance(name, str) or name not in self.chunks:
@@ -168,6 +181,10 @@ def read_assessments(package, source, progress):
         progress.say(f'Validating server export: {path}')
         with zipfile.ZipFile(path) as bundle:
             names = bundle.namelist()
+            if is_canonical_bundle(names):
+                read_canonical_bundle(package, bundle, accepted, progress)
+                progress.say(f'Validated input: {accepted.summary()}')
+                return accepted
             expected = set(package.chunks)
             allowed = ({'ai_analysis_bundle_manifest.json'} |
                        {'ai_analysis_input/' + n for n in expected} |

@@ -1,0 +1,257 @@
+"""Versioned delivery interfaces over one canonical contribution/result pipeline."""
+import copy
+import io
+import json
+import zipfile
+
+from . import server as base
+from .canonical import (ROLES, CanonicalStore, assemble_contributions, record_path,
+                        record_schema, role_schema, validate_role_document, validate_record)
+from .planning import PlanCache, source_document
+from .result_store import _decode, _encode
+
+RUN_ID = base.MANIFEST.get('analysis_id')
+SCHEMAS, EXPOSED = {}, {}
+STORE = PLANS = None
+
+
+def response_schemas():
+    obj, array = base.response_object, base.response_array
+    text = dict(type='string')
+    identity = dict(type='string', pattern='^[0-9a-f]{64}$')
+    sha = dict(type='string', pattern='^[0-9a-f]{40}$')
+    positive = dict(type='integer', minimum=1)
+    selection = dict(array(sha), uniqueItems=True)
+    return {
+        'versioned_catalog': obj(run_id=identity, routes=array(dict(type='object')),
+            planning_defaults=obj(max_commits=positive, max_bytes=positive, cache_entries=positive),
+            authentication=obj(required=dict(type='boolean'), scheme=dict(type=['string', 'null'])),
+            response_schemas=dict(type='object'), error_responses=dict(type='object'),
+            schemas=dict(type='object', additionalProperties=text)),
+        'versioned_role_ack': obj(status=dict(const='valid'), run_id=identity,
+            role=dict(enum=list(ROLES))),
+        'versioned_workflow_ack': obj(status=dict(const='valid'), run_id=identity, commits=selection),
+        'versioned_upload_ack': obj(status=dict(const='stored'), run_id=identity,
+            results=dict(type='object', patternProperties={'^[0-9a-f]{40}$': identity},
+                         additionalProperties=False)),
+        'versioned_chunks': obj(run_id=identity, chunks=array(obj(name=text, url=text))),
+        'versioned_plan': obj(run_id=identity, plan_id=identity,
+            parameters=obj(max_commits=positive, max_bytes=positive, commits=selection),
+            groups=array(obj(group_id=identity, commits=selection, input_bytes=positive))),
+    }
+
+
+def reply(self, value):
+    self.send_bytes(_encode(value))
+
+
+def catalog(self):
+    prefix = '/' + self.path.split('?', 1)[0].split('/')[1]
+    entries = [copy.deepcopy({key: value for key, value in item.items() if key not in ('handler', 'matcher')})
+               for item in base.ROUTES if item['path'] == prefix or item['path'].startswith(prefix + '/')]
+    for entry in entries:
+        if self.server.auth_credentials is not None:
+            entry['responses']['401'] = {'$ref': '#/error_responses/401'}
+        if entry.get('request_content_type'):
+            entry['request_body'] = dict(required=True, content_type=entry['request_content_type'],
+                                         schema={'$ref': entry['request_schema']})
+    reply(self, dict(run_id=RUN_ID, routes=entries, planning_defaults=PLANS.defaults,
+                    authentication=dict(required=self.server.auth_credentials is not None,
+                        scheme='Basic' if self.server.auth_credentials is not None else None),
+                    error_responses=base.error_responses(),
+                    response_schemas=base.RESPONSE_SCHEMAS,
+                    schemas={name: prefix + '/schema/' + name for name in sorted(EXPOSED)}))
+
+
+def schema(self, name):
+    if name not in EXPOSED:
+        self.send_error(404)
+        return
+    value = EXPOSED[name]
+    if name == 'workflow':
+        prefix = '/' + self.path.split('/')[1]
+        value = dict(value, properties={role: {'$ref': prefix + '/schema/' + role} for role in ROLES})
+    reply(self, value)
+
+
+def stored_records(shas=None, legacy_only=False):
+    """Read canonical findings first; validate legacy chunks once per selection."""
+    selected = base.SOURCE_INDEX.select(list(base.SOURCE_INDEX.records) if shas is None else shas)
+    records, missing = {}, {}
+    for sha in selected:
+        data = STORE.get(sha)
+        if data is None:
+            missing.setdefault(base.SOURCE_INDEX.chunk_for(sha), []).append(sha)
+        elif not legacy_only:
+            records[sha] = _decode(data)
+    for name in sorted(missing):
+        data = base.RESULT_STORE.read_chunk(name)
+        if data is None:
+            continue
+        assessments = _decode(data)['results']
+        for sha in missing[name]:
+            if sha in assessments:
+                value = dict(run_id=RUN_ID, commit=sha, assessment=assessments[sha])
+                validate_record(value, base.SOURCE_INDEX, SCHEMAS['result'], RUN_ID, sha)
+                records[sha] = value
+    return records
+
+
+def contributions(self):
+    try:
+        _, document = self.read_json()
+        records = assemble_contributions(document, base.SOURCE_INDEX, SCHEMAS, RUN_ID)
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        self.close_connection = True
+        self.send_error(400, exc)
+        return
+    if self.path.split('?', 1)[0].endswith('/validate/workflow'):
+        reply(self, dict(status='valid', run_id=RUN_ID, commits=sorted(records)))
+    else:
+        with STORE._lock:
+            merged = stored_records(legacy_only=True)
+            merged.update(records)
+            published = STORE.put_many(merged)
+        receipts = {sha: published[sha] for sha in sorted(records)}
+        reply(self, dict(status='stored', run_id=RUN_ID, results=receipts))
+
+
+def validate_role(self, role):
+    if role not in ROLES:
+        self.send_error(404)
+        return
+    try:
+        _, document = self.read_json()
+        validate_role_document(role, document, base.SOURCE_INDEX, SCHEMAS, RUN_ID)
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        self.close_connection = True
+        self.send_error(400, exc)
+        return
+    reply(self, dict(status='valid', run_id=RUN_ID, role=role))
+
+
+def result(self, sha):
+    try:
+        base.SOURCE_INDEX.chunk_for(sha)
+    except ValueError:
+        self.send_error(404)
+        return
+    value = stored_records([sha]).get(sha)
+    if value is None:
+        self.send_error(404)
+        return
+    self.send_bytes(_encode(value))
+
+
+def chunks(self):
+    reply(self, dict(run_id=RUN_ID, chunks=[dict(name=name, url='/v1/chunk/' + name)
+                                          for name in sorted(base.NAMES)]))
+
+
+def chunk(self, name):
+    if name not in base.NAMES:
+        self.send_error(404)
+        return
+    shas = [item['commit'] for item in base.SOURCE_INDEX.context(name)['commits']]
+    reply(self, source_document(base.SOURCE_INDEX, RUN_ID, shas))
+
+
+def plan(self):
+    try:
+        _, document = self.read_json()
+        value = PLANS.get(document)
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        self.close_connection = True
+        self.send_error(400, exc)
+        return
+    reply(self, value)
+
+
+def planned(self, plan_id, group_id=None):
+    value = PLANS.cached(plan_id)
+    if value is not None:
+        if group_id is None:
+            reply(self, value)
+            return
+        for group in value['groups']:
+            if group['group_id'] == group_id:
+                reply(self, source_document(base.SOURCE_INDEX, RUN_ID, group['commits']))
+                return
+    self.send_error(404)
+
+
+def export(self):
+    members = {'ai_analysis_bundle_manifest.json': base.ARCHIVE.read('ai_analysis_bundle_manifest.json')}
+    members.update({'ai_contract/' + name: base.ARCHIVE.read('ai_contract/' + name)
+                    for name in base.CONTRACT})
+    members.update({'ai_analysis_input/' + name: base.SOURCE_INDEX.raw[name] for name in base.NAMES})
+    for sha, value in sorted(stored_records().items()):
+        members['results/' + record_path(sha)] = _encode(value)
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, 'w') as bundle:
+        for name, data in sorted(members.items()):
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o600 << 16
+            bundle.writestr(info, data)
+    self.send_bytes(stream.getvalue())
+
+
+def install():
+    """Install once for new packages; retain legacy-only startup for older packages."""
+    global STORE, PLANS
+    if RUN_ID is None or STORE is not None:
+        return
+    SCHEMAS.update({role: json.loads(base.ARCHIVE.read('ai_contract/schemas/' + role + '.json'))
+                    for role in ROLES + ('result',)})
+    EXPOSED.update({role: role_schema(SCHEMAS[role]) for role in ROLES})
+    EXPOSED['result'] = record_schema(SCHEMAS['result'])
+    EXPOSED['workflow'] = dict(type='object', additionalProperties=False, required=list(ROLES),
+                              properties={role: {} for role in ROLES})
+    EXPOSED['plan'] = dict(type='object', additionalProperties=False, properties={
+        'max_commits': dict(type='integer', minimum=1),
+        'max_bytes': dict(type='integer', minimum=1),
+        'commits': dict(type='array', uniqueItems=True,
+                        items=dict(type='string', pattern='^[0-9a-f]{40}$'))})
+    source = json.loads(base.ARCHIVE.read('ai_contract/schemas/input.json'))
+    source['required'] = ['run_id', 'commits']
+    source['properties'] = {key: source['properties'][key] for key in source['required']}
+    source['additionalProperties'] = False
+    EXPOSED['input'] = source
+    store = CanonicalStore(base.RESULTS, base.SOURCE_INDEX, SCHEMAS['result'], RUN_ID)
+    plans = PlanCache(base.SOURCE_INDEX, RUN_ID, base.MANIFEST.get('planning'))
+    STORE, PLANS = store, plans
+    base.RESPONSE_SCHEMAS.update(response_schemas())
+    post = dict(request_content_type='application/json', min_body_bytes=1,
+                max_body_bytes=base.MAX_RESULT_BYTES)
+    for prefix in ('/v1', '/v2'):
+        base.route('GET', prefix, group='discovery',
+                   response_schema='#/response_schemas/versioned_catalog')(catalog)
+        base.route('GET', prefix + '/api', group='discovery',
+                   response_schema='#/response_schemas/versioned_catalog')(catalog)
+        base.route('GET', prefix + '/schema/<name>', group='contract',
+                   response_schema='https://json-schema.org/draft/2020-12/schema')(schema)
+        base.route('POST', prefix + '/validate/role/<role>', group='validation',
+                   roles=list(ROLES), parameter_sources={'role': 'roles'}, writes_results=False,
+                   request_schema=prefix + '/schema/<role>',
+                   response_schema='#/response_schemas/versioned_role_ack', **post)(validate_role)
+        for suffix in ('/validate/workflow', '/result'):
+            base.route('POST', prefix + suffix, group='validation' if 'validate' in suffix else 'results',
+                       writes_results=suffix == '/result', request_schema=prefix + '/schema/workflow',
+                       response_schema='#/response_schemas/' + (
+                           'versioned_workflow_ack' if 'validate' in suffix else 'versioned_upload_ack'),
+                       **post)(contributions)
+        base.route('GET', prefix + '/result/<sha>', group='results',
+                   response_schema=prefix + '/schema/result')(result)
+        base.route('GET', prefix + '/export', 'application/zip', group='results')(export)
+    base.route('GET', '/v1/chunks', group='sources',
+               response_schema='#/response_schemas/versioned_chunks')(chunks)
+    base.route('GET', '/v1/chunk/<name>', group='sources',
+               response_schema='/v1/schema/input', parameter_sources={'name': 'chunks'})(chunk)
+    base.route('POST', '/v2/plan', group='sources', writes_results=False,
+               request_schema='/v2/schema/plan',
+               response_schema='#/response_schemas/versioned_plan', **post)(plan)
+    base.route('GET', '/v2/plan/<plan_id>/<group_id>', group='sources',
+               response_schema='/v2/schema/input')(planned)
+    base.route('GET', '/v2/plan/<plan_id>', group='sources',
+               response_schema='#/response_schemas/versioned_plan')(planned)

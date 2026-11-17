@@ -52,6 +52,32 @@ def wait_until(predicate, timeout=5):
     raise AssertionError('Timed out waiting for server state')
 
 
+def _server_start_ports(log, offset, pid):
+    try:
+        with log.open('rb') as stream:
+            stream.seek(offset)
+            text = stream.read().decode('utf-8')
+    except FileNotFoundError:
+        return []
+    return re.findall(r'SERVER start pid=%s address=127[.]0[.]0[.]1:(\d+)' % pid, text)
+
+
+def test_start_record_requires_current_pid_and_new_log_bytes(tmp_path):
+    log = tmp_path / 'access.log'
+    assert _server_start_ports(log, 0, 202) == []
+    previous = 'Previous run: λ\nSERVER start pid=101 address=127.0.0.1:40000\n'.encode('utf-8')
+    log.write_bytes(previous)
+    offset = len(previous)
+    assert _server_start_ports(log, 0, 202) == []
+    assert _server_start_ports(log, offset, 101) == []
+    current = (b'SERVER start pid=202 address=127.0.0.1:40001\n'
+               b'SERVER start pid=303 address=127.0.0.1:40002\n')
+    log.write_bytes(previous + current)
+    assert _server_start_ports(log, offset, 202) == ['40001']
+    assert _server_start_ports(log, offset, 101) == []
+    assert _server_start_ports(log, offset + len(current), 202) == []
+
+
 @contextmanager
 def running(app, flag='--no-daemon', auth=None, daemon=False, file_logging=True, extra=()):
     stderr = app.parent / 'stderr.log'
@@ -63,6 +89,7 @@ def running(app, flag='--no-daemon', auth=None, daemon=False, file_logging=True,
         args.append(flag)
     if auth is not None:
         args += ['--auth', auth]
+    log_offset = log.stat().st_size if file_logging and log.exists() else 0
     proc = None
     pid = None
     with stderr.open('wb') as errors, (app.parent / 'stdout.log').open('wb') as output:
@@ -76,8 +103,9 @@ def running(app, flag='--no-daemon', auth=None, daemon=False, file_logging=True,
                 pid = int(match[1])
             else:
                 proc = subprocess.Popen(args, stdout=output, stderr=errors)
-            wait_until(lambda: log.exists() and 'SERVER start ' in log.read_text())
-            match = re.findall(r'SERVER start pid=\d+ address=127[.]0[.]0[.]1:(\d+)', log.read_text())
+            server_pid = pid if daemon else proc.pid
+            wait_until(lambda: _server_start_ports(log, log_offset, server_pid))
+            match = _server_start_ports(log, log_offset, server_pid)
             assert match
             yield int(match[-1]), log, stderr
         finally:
