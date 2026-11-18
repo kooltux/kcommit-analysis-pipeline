@@ -28,12 +28,14 @@ def test_array_item_limit_details():
     assert caught.value.details['actual'] == 1501
 
 
-def test_role_http_error_retains_details(app, workflow):
+def test_role_http_error_retains_details(app, workflow, package):
     name, documents = workflow
+    documents = {role: dict(run_id=package['manifest']['analysis_id'], role=role, results=value['results'])
+                 for role, value in documents.items() if role != 'result'}
     sha = next(iter(documents['analyst']['results']))
     documents['analyst']['results'][sha]['ai_summary'] = 's' * 451
     with running(app) as (port, log, errors):
-        status, headers, body = request(port, '/validate/role/analyst/' + name,
+        status, headers, body = request(port, '/v1/validate/role/analyst',
                                         method='POST', body=encode(documents['analyst']))
         assert status == 400
         assert json.loads(body)['error']['details'] == {

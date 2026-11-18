@@ -1,76 +1,160 @@
 # Optional AI analysis workflow
 
-## Canonical contract implementation status
-
-`lib/ai_canonical.py` defines the next shared contract core: analysis identity
-from source records, product data and contract hashes; role documents without
-physical chunk fields; server-owned three-role assembly; and self-contained
-`run_id`, `commit`, `assessment` records at `<aa>/<bb>/<full-sha>.json`.
-The schemas and validation gates retain the existing assessment-field constraints.
-Record publication validates the whole supplied set before writing, is atomic per
-SHA and leaves other accepted SHAs unchanged. Only one writer per root is supported.
-
-Stage 08 now publishes a grouping-independent `analysis_id` and validated planning
-defaults and checks default-plan feasibility before output publication. The legacy
-`run_id` remains for compatibility; versioned delivery will use `analysis_id` as its
-shared run identity. The versioned HTTP adapters now use that identity for their
-shared canonical contribution/result pipeline. Canonical ZIP import and local-store
-compatibility are integrated, including live-server legacy read-through and migration.
-Reporting/output-scope integration is implemented. Cross-boundary acceptance
-coverage and its execution status are recorded below; full design completion is not claimed.
-
-`ai.planning` accepts positive integers `max_commits` (default 100), `max_bytes`
-(default 1048576) and `cache_entries` (default 32); unknown options are rejected.
-`lib/ai_planning.py` creates deterministic SHA selections and bounded delivery groups,
-with exact input-document byte counts and defensive, bounded LRU caching. Planning
-parameters change plan IDs, not analysis identity or canonical record paths.
-An oversized single commit is rejected rather than silently truncated or omitted.
-Byte limits cover source documents, not model tokens or prompt/output context;
-model-specific context feasibility is not claimed. Merge the planning fragment in
-`configs/ai_planning.example.json` into a product configuration to override defaults.
-
 ## Versioned runtime interfaces
 
-Versioned routes advertise typed success responses for catalogs, validation receipts,
-submission receipts, chunk listings and plans. Schema retrieval uses the JSON Schema
-metaschema; ZIP exports retain their binary contract. Each versioned catalog includes
-`response_schemas` so its shared success/error references resolve locally.
+Version v21.5.0 exposes two self-contained APIs: `/v1/api` for packaged delivery
+and `/v2/api` for bounded planned delivery. `/` is the readable entry guide for
+humans and AI clients. These are the only catalog endpoints. All unversioned API
+paths, bare `/v1` and bare `/v2` return 404 without aliases or redirects.
+Rebuild the pipeline and its packages from scratch. No HTTP migration is provided.
 
-New packages expose separate `/v1/api` and `/v2/api` catalogs. Both namespaces use
-`POST /validate/role/<role>`, `POST /validate/workflow`, `POST /result`,
-`GET /result/<sha>`, `GET /schema/<name>` and `GET /export`, prefixed by the namespace.
-Role bodies contain exactly `run_id`, `role`, `results`; workflow validation and
-submission accept exactly the same Analyst/CVE/Reviewer document set. The server
-assembles findings for both gates; only submission writes per-SHA canonical records.
-The receipt maps SHAs to checksums of exact retrievable canonical record bytes.
+Under each version prefix, the common interface includes `/api`, `/version`,
+`/contract`, `/prompt/<name>`, `/schema/<name>`, `POST /validate/role/<role>`,
+`POST /validate/workflow`, `POST /result`, `GET /result/<sha>`, and `GET /export`.
+V1 adds `GET /v1/chunks` and `GET /v1/chunk/<name>`. V2 adds `POST /v2/plan`,
+`GET /v2/plan/<plan_id>` and `GET /v2/plan/<plan_id>/<group_id>`.
+Catalogs derive from executable routing, contain only their own namespace and
+include all shared-document access, request bodies, responses, authentication,
+size limits, parameter choices and examples. IDs not yet created are never invented.
 
-`/v1/chunks` lists packaged chunk memberships, downloaded using `/v1/chunk/<name>`.
-`POST /v2/plan` accepts optional `max_commits`, `max_bytes` and unique source-bound
-`commits`; retrieve a cached plan at `/v2/plan/<plan_id>` and its source groups at
-`/v2/plan/<plan_id>/<group_id>`. Evicted plans return 404; repeating the same request
-recreates the same plan. Both export routes use one deterministic ZIP implementation
-with provenance and `results/<aa>/<bb>/<full-sha>.json` members.
+Each `/contract` indexes the effective served schemas and complete role prompts.
+URLs stay within the selected API. Checksums and byte counts identify exact served
+bytes, including appended schemas, not the raw prompt file or archive envelope.
+Prompt-embedded schemas match the corresponding effective HTTP schemas. Workflow
+schema references stay in their own version; catalog fragments resolve locally.
+Original archived schemas remain provenance rather than HTTP request definitions.
 
-Shared canonical/planning modules are packaged verbatim, with portable import
-bindings; they are not rewritten or duplicated for each runtime interface.
-Legacy unversioned routes keep their intermediate contracts and storage behavior.
-Canonical ZIP import accepts both versioned exports. Local intermediate stores and
-sidecars are read without writes and migrated on a valid import.
-Versioned retrieval/export prefer canonical records, filling missing SHAs from the
-validated legacy flat/intermediate store for the current packaged legacy run.
-Legacy chunks are read once per selection; corrupt bytes, checksums, identities or
-assessments are errors, never silently absent findings. Reads and validation do not
-publish. A valid versioned submission prevalidates all legacy carry-forward records,
-then publishes missing canonical records and supplied reassessments under one writer
-lock. Already-canonical findings not reassessed are not rewritten; legacy files stay.
-Receipts cover only submitted SHAs. Publication is atomic per SHA, not across a batch.
-After migration canonical records are authoritative; later legacy-only writes cannot
-replace them. Submit reassessments through `/v1/result` or `/v2/result`.
-This is not completion of the full nine-item design.
+## Analysis identity and canonical records
 
-Restart-test readiness uses a current-PID start record after the pre-launch log byte
-offset, not historical append-only log entries. Tests retain existing log contents,
-graceful-shutdown exit checks and all migration durability assertions.
+`lib/ai_canonical.py` hashes source commits, product evidence and contract assets
+into a grouping-independent analysis identity. Stage 08 records `analysis_id`;
+both APIs expose that identity as `run_id`. Physical archive identities are distinct.
+Changing a chunk selection, delivery plan or group never changes record identity.
+
+Both source forms return exactly `run_id`, `commits`. Role documents require
+exactly `run_id`, `role`, `results`, keyed by full source commit SHA. Delivery names,
+plan/group IDs, checksums, counts and status are not contribution-envelope fields.
+The three submitted roles must cover the same selected SHA set. Other commits stay
+unassessed; missing findings are not negative classifications.
+
+The shared gate validates source membership, identities, roles, fields, limits and
+coverage before assembling values. Submit exactly `analyst`, `cve`, `reviewer`;
+there is no fourth client-produced final document. Role validation checks only that
+role. Workflow validation and submission share the deterministic assembly gate.
+Validation is write-free, including against existing accepted findings.
+
+The server preserves specialist values and advisory Reviewer proposals in records
+containing `run_id`, `commit`, `assessment`, stored at `<aa>/<bb>/<full-sha>.json`.
+Successful submission returns `status: stored`, `run_id`, and `results` mapping each
+submitted SHA to the SHA-256 of its exact record bytes. Retrieve records from either
+API to verify. Reassessment replaces supplied SHAs only. GET/export never rewrite,
+create or migrate result files. Canonical records persist across server restarts;
+invalid current-run records fail rather than being silently exported.
+
+Publication prevalidates the submitted set and is atomic per SHA, not across a
+whole batch. One writer per root is supported. Interprocess locks, whole-batch
+rollback, and transactional report publication are not provided.
+
+## Delivery configuration
+
+`ai.chunk_size` counts commits per packaged chunk (default 100); `ai.batch_size`
+counts chunks per archive folder (default 10). Both require positive integers, not
+booleans. Inputs are archived as `ai_analysis_input/batch_001/001.json` etc. Empty
+input retains one empty packaged selection. Archive paths are not result identities.
+
+`/v1/chunks` supports nonnegative integer `limit` and `offset`, applied in stable
+order. Absent/zero limit means unlimited. Invalid, repeated, negative, empty or
+unknown parameters return 400; rejected pagination never expands selected work.
+Catalogs are never paginated. V2 source selection is specified in its plan request.
+
+`ai.planning` accepts positive `max_commits` (default 100), `max_bytes` (1048576),
+and `cache_entries` (32); unknown options are rejected. Use
+`configs/ai_planning.example.json` to override defaults. Stage 08 verifies default
+plan feasibility before publishing assets. Plans select known SHAs deterministically,
+count exact source-document bytes and use a bounded LRU cache. Unknown/evicted plans
+return 404; recreate a plan when needed. An oversized single commit is rejected,
+not truncated or omitted. Byte limits are not model token/context feasibility.
+
+## Directory-only integration
+
+Stage 08 snapshots `ai.prompts_dir`, `ai.schemas_dir`, and `ai.front_page_path`.
+Defaults resolve beneath the initial configuration directory to `ai/prompts`,
+`ai/schemas`, and `ai/ai_server_front_page.md`; there is no implicit fallback to
+installed samples. Select tool resources explicitly through TOOLDIR if required.
+Removed settings `prompt_path` and `result_schema_path` are not supported.
+
+Selected prompts/schemas affect identity; pipeline scores and delivery grouping do
+not. The portable server contains source/product/contract snapshots, a readable
+guide, and pinned tool-version metadata. Generation validates dependencies and
+constructs the archive before replacing live assets. Package publication is per-file/
+per-tree, not a filesystem-wide transaction. Do not transplant old server stores.
+
+## Prepare and serve
+
+AI runs when an `ai` section is declared unless `ai.enabled` is false. A full run
+includes Stage 08 after Stage 07. Configuration validation and Stage 00 check required
+resources. Explicitly requesting disabled Stage 08 is refused.
+
+```sh
+python3 kcommit_pipeline.py run --config product.json
+# Prepare Stage 08 only from coherent source/product caches:
+python3 kcommit_pipeline.py run --config product.json --stage 8
+./output/serve_ai.pyz -d --auth 'user:password'
+```
+
+Defaults are 127.0.0.1:8000. `-d`, `--debug`, `--no-daemon` select foreground mode.
+Background mode requires `-l PATH` or `--log-file PATH`. Foreground logs go only to
+stderr unless a file is selected; explicit file logging never silently falls back.
+Startup prints the bind address, connection URL and log destination. Background
+readiness is reported only after binding succeeds.
+
+`/v1/version` and `/v2/version` return the version captured from MANIFEST.json at
+package generation, separate from the source bundle's `pipeline_version`. They do
+not consult the repository at runtime. `/` serves the snapshotted human/AI guide.
+Normal authentication applies to the entry guide and both APIs. Removed unversioned
+paths return 404 even with authentication enabled. Plain HTTP does not encrypt
+credentials/evidence: use trusted networking or HTTPS termination. Unauthenticated
+operation is unrestricted and emits a warning.
+
+## Prompts, validation and diagnostics
+
+Analyst owns non-CVE fields; CVE expert owns supported source-message CVE candidates
+and probabilities; Reviewer owns advisory `rv_*` proposals. Only CVE expert may use
+configured research tools. The external orchestrator performs HTTP requests,
+validation, retries and handoffs; LLMs return documents, not server operations.
+Use each API's complete role prompts and effective schemas, appending trusted
+sources and prior validated outputs separately. Reconcile specialist SHA selections
+before review/submission. Do not submit a failure report as an assessment.
+
+POST raw JSON with one Content-Length, one application/json Content-Type and no
+Transfer-Encoding. Bodies must be 1 byte to 10 MiB. Duplicate keys, NaN, fenced JSON,
+unknown SHAs and invalid fields are rejected. Structured 400 diagnostics may identify
+role, SHA, field, limit and actual size without echoing rejected assessment text.
+Validation never corrects values. Successful JSON/Markdown may negotiate text/plain
+without changing bytes; errors stay JSON and ZIP stays binary.
+
+`-s` / `--save-posts` saves each recognized POST's latest body and Markdown exchange
+report under `<zipapp>.debug/`, e.g. `v1/ok/validate/workflow` or `v2/error/result`.
+Reports show request/response context and redact authentication/cookie headers.
+Treat them as sensitive: debug roots are 0700 and files 0600. Save failures are
+logged without changing responses. Unknown or authentication-rejected requests are
+not saved. Completion logs record status, safe reason and duration once per request;
+query secrets are not included.
+
+## Import and reporting
+
+Both APIs export a deterministic ZIP of original manifest/source/contract provenance
+and accepted canonical findings. Import on the pipeline host:
+
+```sh
+python3 kcommit_pipeline.py ai-import --config output/pipeline_config.json \
+  --results-bundle results.zip
+```
+
+Import validates provenance, run identity, source membership and assessment fields
+before changing findings or reports; it never reruns Stage 08. Grouping does not
+change accepted values or membership. Stage 07 attaches findings to deep copies
+before one standard report-generation pass.
 
 ## Single-pass AI report scope
 
@@ -94,521 +178,9 @@ is prefixed with an apostrophe in tabular output; stored findings and JSON stay 
 Full CVE details and Reviewer correction proposals remain in JSON/detail and HTML
 outputs; proposals never replace baseline recommendations. Profile/rule/matrix score
 tables do not acquire AI columns. Tables without AI retain original headers/rows.
-Report-format integration and its HTML extension have user-reported QA passes.
-The acceptance-closure batch also has a user-reported QA pass on 2026-11-17.
+Earlier report/acceptance batches had user-reported QA passes. Those historical
+results do not validate this two-API redesign.
 
-## Acceptance coverage and execution status
-
-| Boundary | Regression coverage |
-| --- | --- |
-| Identity, canonical records and bounded planning | `test_ai_canonical.py`, `test_ai_planning.py` |
-| Versioned HTTP validation, publication and export | `test_ai_versioned_runtime.py` |
-| Legacy read-through, migration and restart | `test_ai_runtime_migration.py` |
-| Canonical import, regrouping and rejection safety | `test_ai_canonical_exchange.py`, `test_ai_import_store.py` |
-| Report scope, immutable inputs and tabular cells | `test_ai_report_invariants.py`, `test_ai_report_tables.py` |
-| Live /v1 and /v2 export through import to actual reports | `test_ai_end_to_end.py`: original and HTML cases user-reported passing |
-
-The live integration cases prepare a real five-commit package, submit three role
-contributions for a partial selection, retrieve/check canonical bytes, export a ZIP,
-and import it with real Stage 07 generation enabled. JSON/detail, CSV, standalone/
-combined XLSX/ODS, generated HTML/bootstrap data, metadata and table indexes are
-inspected. Source fixtures use distinct short-SHA prefixes. Assertions retain baseline recommendations despite
-Reviewer disagreement, distinguish absent findings, keep top-N/filtered membership,
-and preserve scores, cache/package bytes and profile/rule outputs. Only ancillary
-profile/config/helper-copy setup is stubbed; HTTP, storage, import and report writers
-are not replaced. Stage 08 is forbidden during import-driven report refresh.
-
-On 2026-11-16 the user reported QA passing for the original end-to-end batch,
-subsequently committed in 35eba9a. Exact commands, test counts and logs were not
-provided; this is user-reported validation, not an independently executed run.
-On 2026-11-17 the user also reported the HTML extension QA passing.
-The user reported acceptance-closure QA passing on 2026-11-17.
-Exact commands, test counts and logs were not supplied for this report;
-this records user-reported validation, not an independently executed run.
-The original nine-item plan is complete within its agreed scope.
-Generated HTML and its data are inspected without running JavaScript in a browser;
-interactive rendering and model context feasibility remain outside these cases.
-Existing one-writer, per-SHA atomicity and nontransactional report-publication
-limitations still apply.
-
-### Original nine-item plan: requirements mapping
-
-This mapping follows the user's original remaining-work plan after 672beda,
-supplied on 2026-11-17. All nine items are complete within the agreed scope,
-based on the implementation, named regression coverage and user-reported QA pass.
-This status does not imply independent test execution or expand the requirements.
-
-| Item | Implementation and regression evidence | Closure status |
-| --- | --- | --- |
-| 1. Grouping-independent analysis identity | `ai_canonical.analysis_identity`; `test_ai_canonical.py`, `test_ai_planning.py` | Complete; direct group/record comparison included in user-reported closure QA pass |
-| 2. Canonical per-commit contract and storage | `CanonicalStore`, `record_path`; `test_ai_canonical.py`, `test_ai_runtime_migration.py` | Complete with legacy compatibility and per-SHA paths |
-| 3. Shared, chunk-independent request contracts | Shared versioned assembly; `test_ai_canonical.py`, `test_ai_versioned_runtime.py` | Complete; populated-store parity included in user-reported closure QA pass |
-| 4. Canonical export/import contract | Shared export/import; `test_ai_canonical_exchange.py`, `test_ai_import_store.py` | Complete; provenance, record validation, regrouping, accumulation and replacement covered |
-| 5. Explicit v1 and v2 interfaces | Versioned catalogs/delivery over shared core; `test_ai_versioned_runtime.py` | Complete; isolated same-input equality included in user-reported closure QA pass |
-| 6. Deterministic cached v2 planning | `PlanCache`; `test_ai_planning.py`, `test_ai_versioned_runtime.py` | Complete; different delivered-group submissions included in user-reported closure QA pass |
-| 7. Stage 08 configuration and feasibility | Planning defaults, exact source-document byte limits and oversized-commit rejection; `test_ai_planning.py`, `test_st08_prepare_ai.py`, `configs/ai_planning.example.json` | Complete for delivery sizing, not model token/context feasibility |
-| 8. Complete reporting invariants | `test_ai_report_invariants.py`, `test_ai_report_tables.py`, `test_ai_end_to_end.py` | Complete; no-AI scope/repeatability included in user-reported closure QA pass |
-| 9. Full end-to-end acceptance matrix | Existing suites above plus `test_ai_acceptance_closure.py` | Complete within agreed scope on the basis of user-reported QA passing on 2026-11-17 |
-
-`test_equivalent_versions_and_v2_groups_have_identical_records` runs four isolated
-copies of the same zipapp: direct v1, direct v2, and v2 with one- and two-commit
-groups fetched from the planning API. It compares complete record paths/bytes,
-retrieval, receipt digests, assembled values and deterministic ZIP exports.
-`test_validation_submission_parity_preserves_existing_records` checks both APIs
-against empty and populated stores: valid validation is write-free; wrong-run,
-unknown-SHA, invalid-field, fourth-document and coverage failures are rejected by
-both gates without file/mtime changes. A valid partial reassessment then publishes
-only the supplied SHA, retaining the other record unchanged.
-`test_no_ai_reports_repeat_and_respect_requested_formats` repeats real no-package,
-no-AI reporting with CSV requested, checks core JSON/detail and CSV repeatability,
-top-N/filtered scope, original headers/scores, unchanged caches, no extra HTML/XLSX/
-ODS or report-server output, and no Stage 08 preparation. Other output formats retain
-their existing writer and live-report tests; this is not a browser-interaction test.
-
-These additions close specific proof gaps rather than introduce new runtime
-requirements. Closure is based on the supplied plan, named regression coverage
-and user-reported QA; existing publication limitations remain unchanged.
-
-## Legacy result-store core
-
-`lib/ai_result_store.py` provides a run-bound `ResultStore` with an injected
-source index and result validator. Assessments are immutable JSON blobs under
-`runs/<run_id>/commits/<SHA-prefix>/<SHA>/<content-checksum>.json`. A chunk index
-references those blobs and is atomically replaced only after validation and all
-blob writes complete. Valid submissions replace supplied assessments and retain
-other accepted assessments. Reads reconstruct and validate canonical envelopes.
-Missing blobs and checksum failures are errors, not absent results. Failed
-publication can leave unreferenced blobs; there is no automatic garbage collection.
-Use one writer instance per root: its lock does not coordinate separate processes.
-Atomicity covers one chunk, not a multi-chunk import or power-loss durability.
-The portable runtime packages an identical static result-store module. Upload,
-retrieval and ZIP export share one store instance; receipt checksums identify the
-published, merged canonical result bytes. Partial submissions accumulate and a
-valid reassessment replaces its SHA without removing other accepted assessments.
-Invalid requests do not change storage; storage failures are server errors.
-Validated legacy chunk files remain readable when no sharded index exists and
-are carried forward on the next valid upload; published indexes take precedence.
-Legacy files are retained, not deleted. Imported findings use a separate local
-store as described below. Parity, live round-trip, restart and failure tests cover
-the storage boundary. Run only one server writer per results directory.
-Upload-policy unit tests isolate preparation, store publication and response order.
-They verify receipt checksums use published rather than prepared bytes, and that
-publication failures propagate without a success receipt or client-error response.
-
-## Accumulated imports and Stage 07
-
-`ai-import` uses `ai_import_results/` under the output directory, separate from
-`serve_ai.pyz.results/`. Successive partial imports retain previously accepted
-assessments for the current run; a newly validated reassessment replaces its SHA.
-Within one incoming batch, sorted-input first-wins duplicate handling is unchanged.
-The entire incoming batch, prior findings and local cache membership are checked
-before publication. Findings use the same canonical record/store implementation as
-the versioned server, at `ai_import_results/<aa>/<bb>/<full-sha>.json`, bound to the
-manifest's grouping-independent `analysis_id`. Changing delivery grouping does not
-change accepted findings or their paths. Publication is atomic per SHA, not across
-the whole import or reports; an I/O failure may leave earlier records updated.
-The compatibility `ai_analysis_results.json` view retains the legacy `run_id` and
-is refreshed only after all canonical publications succeed. Validated same-legacy-run
-intermediate stores and sidecars fill missing findings; canonical records win.
-Reads never migrate files; the next valid import carries legacy findings forward.
-
-Canonical ZIPs require provenance, exact contract hashes, matching analysis identity,
-a source set equal to the local package and filename/record SHA agreement. Their
-physical chunk grouping may differ. Unknown/duplicate members and invalid records
-are rejected before publication. Loose canonical files must be named `<full-sha>.json`;
-legacy collections and chunk documents remain accepted. Duplicate handling within
-one incoming batch remains sorted first-wins, regardless of the input format.
-Stage 07 validates findings before writing reports and can read the store without
-the sidecar. Reading never migrates data or regenerates Stage 08 assets. Old-run
-findings are ignored; scores, cache records and ranking remain unchanged.
-
-## Shared source indexing foundation
-
-`lib/ai_source.py` provides storage-independent source identity indexing through
-an injected chunk-byte reader. It verifies paths before reads, exact-byte
-checksums, strict JSON, chunk identities and structure, duplicate source SHAs,
-and aggregate counts. Preparation reuses its commit-identity index; publication
-and import reuse `SourceIndex`. Source diagnostics use safe field/commit context
-without echoing malformed payloads. Selections are validated, unique and sorted;
-record/context access returns defensive copies. Existing exchange envelopes,
-role coverage and result storage remain unchanged. The portable runtime uses the
-same index definitions through static `source.py` and `source_contract.py` assets,
-with class/function, constant and schema parity enforced by tests. Startup verifies
-all source chunks and retains their raw bytes and parsed records in memory;
-this adds eager startup work and memory proportional to the source package.
-Context, validation, upload, chunk delivery and export use that verified snapshot
-rather than independently rereading and rebinding archived source documents.
-
-`validate_assessment(commit, item, schema)` validates a single assessment without
-inventing an exchange envelope; source membership remains the caller's duty.
-The importer verifies membership with `SourceIndex` before using this gate.
-Full result validation retains identity, completeness and count checks and shares
-the same assessment rules. Field and cross-field failures carry safe commit/field
-diagnostics; existing length diagnostics retain limit and actual counts.
-`validate_contribution_set` explicitly checks the existing three-role submission
-or four-document workflow shapes, with no new wire format. Cross-role coverage
-and exact assembly preservation remain workflow gates. Portable validation and
-workflow assets mirror these functions, with AST-parity tests covering the helpers.
-
-## Embedded runtime modules
-
-The portable server starts through a static `lib/ai_embedded/entrypoint.py.src`
-asset and imports `kcap_ai_runtime.server` from inside the zipapp. The generator
-reads `.py.src` assets as UTF-8 data and syntax-checks them without execution;
-there is no template substitution. These assets must be distributed with `lib`.
-`ASSET_LAYOUT` in `lib/ai_code_assets.py` is the single source-to-ZIP registry;
-`ASSET_FILES` is derived from it for source-reader compatibility. Each generation
-validates registry coverage and unique destinations before reading every asset
-once, syntax-checking it once and packaging its original bytes. No insertion
-marker check or second server compilation remains. Archive-membership, all-asset
-freshness and publication-failure tests cover this packaging boundary.
-Workflow and contract routes are read afresh from `workflow.py.src` and
-`contract_routes.py.src` and packaged verbatim as separate runtime modules.
-The entrypoint imports the base server first, then the contract module, which
-registers its routes once against explicit shared server dependencies. It calls
-`contract_routes.install()` to bind the upload hook before starting the server;
-repeating installation does not duplicate routes. Workflow validation imports the
-base server's validation helpers, preserving exception identity and avoiding a
-circular import. No workflow source inspection or entry-point source insertion
-remains in the package generator. Asset failures are checked before publication.
-The base HTTP runtime is read afresh from `lib/ai_embedded/server.py.src` for each
-generation and imports static `validation.py` and `prompt_body.py` modules.
-All runtime modules are syntax-checked and packaged without source inspection,
-helper prefixes or template substitution. Static helpers and workflow functions
-must stay in sync with their shared host definitions; AST-parity, constant and
-prompt-byte tests enforce consistency. Validation exceptions retain one shared
-class identity across server, workflow and contract routes.
-`_MAIN_SOURCE` remains an import-time snapshot of the package-module source;
-executing it requires package context. Tests import the packaged server under a
-unique temporary package name and clean up its modules and archive afterward.
-Zipapp generation uses fresh registry-driven reads instead of that snapshot.
-This refactor preserves API behavior, identities and result paths; API versioning
-and plan-based delivery are not enabled by this increment.
-
-## Analyst output safeguards
-
-The Analyst prompt includes a final literal-key checklist, distinguishes missing
-configuration/exposure evidence from established non-applicability, and qualifies
-dependency and target-kernel compatibility claims. It uses trusted product context
-alongside source evidence; final assembly remains a server responsibility.
-These are instruction safeguards, not a replacement for server validation or a
-schema/API change. Regenerate the package and restart its server to expose the
-updated prompt; existing zipapps retain their original prompt snapshots.
-
-Invented field identifiers stay in regression fixtures, not Analyst instructions.
-The closing rules retain an explicit raw-JSON-only reminder.
-
-## Upload storage boundary
-
-The embedded handler prepares validated storage bytes and a receipt before creating
-result directories or temporary files. It sends the receipt only after atomic
-replacement succeeds. Directory packages validate exactly three role documents,
-assemble the final result, and return `status: stored`, `source_chunk`, `run_id`
-and the SHA-256 `result_checksum` of exact stored bytes. Legacy result uploads are rejected.
-
-## Combined source context
-
-`GET /context/<name>` returns `{"envelope": {...}, "chunk": {...}}` in one
-request. The envelope contains trusted identity/checksum fields; the chunk is the
-parsed archived input document. `/contract` lists the combined context URLs.
-`GET /chunk/<name>` remains byte-identical to the archive, and `input_checksum`
-always identifies those original bytes, not a serialization of the context response.
-The `/api` catalog describes the context response and links its chunk to `/schema/input`.
-
-The former metadata and assembly routes return 404. Rebuild packages and update
-workflows for this breaking API migration. Stored results and offline import are unchanged.
-
-## Compact role output contract
-
-The shared role validator supports contracts requiring exactly `run_id`,
-`source_chunk`, `role` and `results`. For these contracts it derives checksums,
-counts and coverage status from trusted source context in an internal validation
-view; models must not supply those fields. This does not change stored final-result
-documents or CSV/import. Shipped analyst, cve and reviewer schemas now require
-only these four fields; old role envelopes are rejected by regenerated packages.
-Submit the three compact role documents together; do not synthesize a final envelope.
-
-## Structured validation diagnostics
-
-Length-limit failures include optional `error.details` in HTTP 400 responses:
-`commit`, `field`, `limit`, `actual`, and `role` when known. The shared validator
-preserves its readable error message. Details contain identifiers and sizes, not
-assessment text. Other failures can omit details; clients must not require them.
-
-## Deterministic server assembly
-
-POST exactly `analyst`, `cve` and `reviewer` documents to `/result/<name>`.
-The server validates against archived source, joins reviewed contributions by full
-SHA, derives the final envelope and runs the workflow gate before atomic storage.
-Missing contributions yield partial coverage; invalid reviewer coverage is rejected.
-Values and review proposals are preserved, never corrected. HTTP 200 returns the
-storage receipt, not the assembled document. GET the same URL to verify stored bytes.
-
-## Directory-only integration
-
-Validation and Stage 08 use `load_contract(cfg)` to snapshot `ai.prompts_dir` and
-`ai.schemas_dir`. Defaults are `ai/prompts` and `ai/schemas` under the initial
-configuration directory; installed samples require explicit TOOLDIR selection.
-The old `prompt_path` and `result_schema_path` keys are removed.
-
-Stage 08 calls `build_package` with Stage 04 prefilter-kept commits and the Stage 03
-product map, then `generate_ai_package_server` with the exact snapshots and guide.
-All selected prompt/schema bytes affect identity; deterministic scores do not.
-The complete package and zipapp are prepared before live assets are replaced.
-Validation/generation failures preserve existing outputs. Publication is per-file/
-per-tree replacement, not a transaction across filesystem failures.
-
-`lib.ai_workflow` validators are embedded in the portable server. Result submission
-independently enforces the complete role chain before any storage write.
-
-## Directory-contract portable server
-
-`lib.ai_package_server.generate_ai_package_server` consumes the new in-memory
-package, verifies contract/root/source checksums and atomically publishes a zipapp.
-Its `/contract`, `/prompt/<name>`, `/schema/<name>` and `/context/<name>` routes
-provide exact assets and trusted identity fields through the executable registry.
-The zipapp has no repository or third-party runtime imports. Stage 08 selects
-this entry point, including the validation-only POST gates described below.
-
-## Directory-package construction engine
-
-`lib.ai_preparation.build_package` builds chunks and manifest/file snapshots in
-memory from the selected contract. It uses exact selected schema bytes, enforces
-input constraints, checks global SHA uniqueness and hashes every prompt/schema
-into run identity. It performs no output writes. Stage 08 publishes its returned
-files, including the complete `ai_contract/` tree, and embeds them in the server.
-
-## Forward-only contract tests
-
-The review-runtime, CSV-review and server-contract tests select only
-`configs/ai/schemas/result.json`. Review cases always execute; old-schema fixture
-combinations and their skip branches have been removed. Ordinary non-nullable
-array/string cell semantics remain tested because they are part of the current
-contract too. Stage 08 integration tests exercise directory configuration.
-
-## AI package ownership
-
-Stage 08 alone creates AI inputs, prompt/schema snapshots and the portable server.
-Stage 07 and import-driven report refreshes leave existing AI package bytes alone,
-including packages awaiting remote analysis. Report regeneration does not require
-prompt/schema resources or rerun analysis. The obsolete Stage 07 single-file/flat
-chunk generator and its import-wrapper workaround have been removed. This does
-not change scoring. Import verifies every packaged contract asset checksum.
-
-## Runtime schema correctness checks
-
-Install `requirements.txt` before running the pipeline; tests use `requirements-dev.txt`.
-`validate`, Stage 00 and lightweight stage preflight check all five bundled schemas,
-even when AI is disabled. Missing or invalid bundled files are blocking errors.
-Active AI checks the selected directory contract. Independent Stage 08 repeats
-bundle and selected-asset checks before reading caches or replacing outputs.
-Input chunks use the exact selected `schemas/input.json`, not a generated schema.
-Checks use the Draft 2020-12 meta-schema and require the canonical dialect URI when
-`$schema` is present; legacy schemas without it default to that dialect.
-Local pointers and anchors must resolve to schemas. External references, nested
-`$id` resources, duplicate anchors/JSON keys and non-JSON constants are rejected.
-These checks are offline and report file/schema locations. They do not replace
-payload validation, source identity, coverage or cross-document preservation gates.
-Role serving, directory packaging and remote role/workflow validation gates are active.
-
-## Explicit role schema assets
-
-`configs/ai/schemas/` contains self-contained Draft 2020-12 contracts:
-`input.json`, `analyst.json`, `cve.json`, `reviewer.json` and `result.json`.
-The input asset initially preserves the generated input contract. Analyst, CVE
-and Reviewer documents require their role identity; final results have no role
-field and require all 18 assessment fields. Agree requires null review arrays;
-disagree requires nonempty, ASCII-formatted arrays naming known assessment fields.
-`output_schema_checksum` identifies the shared final result schema for all roles.
-Runtime packaging, role discovery and HTTP validation use these selected assets.
-
-Assessment text and lists have hard size limits (v21.4.0) so that every role output,
-and therefore the Reviewer and server-assembly inputs, stays bounded: `maxLength` 600 for
-`ai_categorisation_rationale`, 450 for `ai_impact_description` and `ai_summary`, 250 for
-`ai_backport_effort_reason`; `maxItems` 10 for `ai_cve_ids` and `ai_cve_probabilities`;
-`maxItems` 15 for `rv_notes` and `rv_recommendation`, with `maxLength` 1500 and 700 per
-entry. Each description repeats its limit, while prose limits such as 20 words stay
-guidance. The shared validator enforces them in the role gates, the workflow gate,
-`POST /result`, import and the CSV converter: over-limit values are rejected, never
-truncated (HTTP 400 on the server).
-
-## Multi-role prompt preparation
-
-Basic role prompts are in `configs/ai/prompts/`: Analyst (`analyst.md`), CVE
-expert (`cve.md`) and Reviewer (`reviewer.md`). No Assembler LLM prompt is required.
-The Reviewer emits only review fields; deterministic server assembly preserves the validated
-specialist and review values in the final document without applying corrections.
-Prompt rules must only name fields defined in the supplied schemas and must not
-add behaviour the workflow validator rejects (for example altering specialist
-values); `tests/test_ai_prompt_consistency.py` enforces this.
-The obsolete single-prompt and result-schema configuration files have been removed;
-use the selected `prompts/` and `schemas/` directories. Generated package snapshots
-retain their existing filenames and checksums for package/import validation;
-they are derived from the selected assets, not the removed configuration files.
-Each role prompt directly instructs the model to return one JSON document matching
-its supplied output schema: Analyst uses `analyst.json`, CVE uses `cve.json`,
-Reviewer uses `reviewer.json`; server assembly produces `result.json`. Supply the relevant
-input and output schemas as attachments or quoted content after the prompt.
-Roles receive original chunks, trusted metadata and prior role outputs the same way.
-Capabilities are role-specific and independent of model or provider: Analyst and
-Reviewer use supplied evidence only; the server performs mechanical assembly only.
-Only the CVE expert may use configured `web_search` to verify source-message CVE
-candidates; search cannot add IDs absent from the source commit message. Tool
-availability is configured externally. Server API access, validation gates, bounded
-retries, handoffs and final storage belong to the operator or external orchestrator.
-Intermediate outputs must not use the final-result schema. A missing, unreadable
-or conflicting required schema stops the task instead of producing guessed JSON.
-The same failure path covers inconsistent or unreadable required inputs: report
-to the caller, never submit the report as an assessment. Roles copy only run_id
-and source_chunk; the server supplies checksums and counts in the final result.
-CVE JSON contains no research-reference fields; only an orchestrator-managed,
-separate evidence channel may carry captured tool records to Reviewer.
-
-Field-crafting semantics live in schema descriptions; role prompts define evidence
-policy, tool permissions and analysis procedures. Matching assessment fields in role
-schemas and `result.json` must have identical definitions. Descriptions guide models
-but are annotations, not additional validation constraints or proof of factual accuracy.
-Server assembly copies values without reinterpreting descriptions as assessment work.
-Legacy workflow guidance is adapted only for evidence-based classification, omission
-impact, mitigation applicability, dependencies and independent review. It introduces no
-vendor assumptions, fixed effort thresholds, placeholder values or legacy file discovery.
-Description-only edits leave validation constraints unchanged but change asset checksums.
-Existing exported packages retain their schema snapshots; newly generated packages use
-the updated assets. Never rewrite trusted checksums to combine different snapshots.
-
-The legacy assessment policy is distributed by responsibility, not discarded:
-
-| Policy | Owner |
-| --- | --- |
-| Prefilter-kept inputs, independent product assessment, evidence and uncertainty | Analyst |
-| Explicit mitigation safeguards, concise rationales, effort beyond line counts | Analyst; Reviewer checks |
-| Source-message-only CVEs, empty unsupported matches, aligned integer percentages | CVE expert; Reviewer checks |
-| Preserve source metadata, scores, rankings and cherry-pickability | Analyst and Reviewer |
-| Risk `none` alone, advisory decisions and `maybe` for insufficient evidence | Analyst |
-| Trusted identities, full SHA joins, exact value preservation and coverage | All roles; server assembly joins |
-| Batch selection, pagination, POST/GET verification and export | Shared server guide; workflow orchestration |
-
-### Legacy instruction coverage
-
-This mapping covers substantive instructions from the temporary legacy prompts.
-The temporary directory is not a runtime dependency; copied transport instructions
-and platform-specific assumptions are excluded. Adaptations below preserve the
-current evidence policy rather than restoring conflicting legacy rules.
-
-| Legacy instruction | Current destination or deliberate adaptation |
-| --- | --- |
-| Upstream kernel assessment for product backports; omission impact; human decisions | Analyst scope/procedure; analyst/result impact and recommendation descriptions |
-| Separate Analyst and CVE responsibilities | Analyst scope; CVE expert owns CVE fields; no placeholder fields |
-| Assess every commit independently; never merge commits | Analyst scope and role coverage envelopes; omissions remain explicit partial results |
-| Full commit identity and source-file identity | Full SHA result keys and trusted source_chunk metadata; never fabricate unknown identities |
-| Classification flags and risk/impact/effort/recommendation values | Typed role/final schema properties and enums; none is used alone |
-| Product security context | Generic evidence-dependent secure boot, trusted execution, encryption, integrity, access controls and debug restrictions |
-| Detailed hardening controls | Analyst/Reviewer explicitly consider SELinux Enforcing, seccomp allow-lists, capability dropping and compile-time hardening only when evidenced |
-| Automatic mitigation downgrade; all kernel memory bugs high/critical | Replaced by attack-path and product-exposure reasoning; neither automatic downgrades nor blanket severity floors |
-| Impact description 1-2 sentences; summary 2-3 sentences | Matching analyst/result field descriptions |
-| Effort reason maximum 20 words; dependency references | Matching analyst/result ai_backport_effort_reason descriptions; the word limit is guidance, backed by a 250-character hard cap |
-| Six recommendation scenarios | Analyst illustrative recommendation scenarios plus schema safeguards; breaking changes require evidenced risk |
-| Conservative classification defaults | Preserve evidence discipline and maybe for uncertainty; do not equate uncertainty with false or low impact |
-| meta.has_cve, meta.is_fix and meta.has_stable_cc | Named in Analyst/Reviewer as hints, not proof |
-| Product evidence, files, changed lines, file counts and hunks | Analyst/Reviewer procedures; supplied evidence, not assumed exposure or effort ground truth |
-| Fixed line-count effort thresholds | Replaced by engineering effort, integration and dependency reasoning |
-| CVE subject/body scan, authoritative lookup and conservative reporting | CVE verification procedure; NVD and MITRE/CVE examples; no speculative association as fact |
-| Web-discovered CVE IDs absent from source messages | Not retained: source-message-only candidates; web search verifies candidates only |
-| body_match/web_search provenance fields | Legacy fields not retained; orchestrator may supply separate captured research evidence to Reviewer |
-| Independent review of every assessment against original input | Reviewer procedure and coverage rules; specialist claims are not authoritative evidence |
-| Genuine vulnerability fixes versus hardening; evidence-backed disagreements | Security-fix schema descriptions and Reviewer procedure; supported corrections need not change the final recommendation |
-| Review agreement, correction identifiers and printable ASCII | reviewer/result schemas and Reviewer field instructions; JSON arrays/null replace legacy delimiters/placeholders |
-| Preserve assessments exactly; join CVE data by commit identity | Server assembly full-SHA joins, field ownership and exact preservation; review proposals are not applied |
-| Missing lookup becomes an empty placeholder | Not retained: distinguish explicit empty findings from missing contributions; report partial coverage |
-| File discovery, fixed chunk size, CSV quoting/headers and workflow variables | Excluded; supplied inputs, server orchestration and JSON schemas remain authoritative |
-
-Stage 08 packages every selected prompt and serves `/prompt/<name>`.
-`/contract` lists assets and context URLs; the bare prompt URL is removed. Submit
-all three specialist/reviewer documents together, never one role alone.
-The new prompt loader snapshots immediate `*.md` files, dereferencing directory
-and file symlinks, validating UTF-8 and preserving entry filenames and exact bytes.
-
-`/prompt/analyst`, `/prompt/cve` and `/prompt/reviewer` return the complete static
-prompt for the role, not only the stored file: the prompt text, then `## Artefacts`
-with the schemas the role reads in fenced `json` blocks (Analyst: input and
-analyst; CVE: input and cve; Reviewer: input, analyst, cve and reviewer, with
-the output schema last). The bytes are identical for every chunk, so their size
-is fixed and known. The orchestrator appends only the envelope and chunk from
-`/context/<name>` and, for Reviewer, validated specialist outputs. Any other
-prompt asset is returned exactly as stored. `/contract` keeps the stored file's
-checksum as the asset identity and adds `body` (`bytes` and `checksum`) to these
-three entries, describing what the URL returns.
-
-## Remote validation gates
-
-POST each Analyst, CVE and Reviewer document to `/validate/role/<role>/<name>`.
-`role` is `analyst`, `cve` or `reviewer`; `name` is the manifest-listed chunk path,
-such as `batch_001/001.json`. A role gate checks that document's identity, source
-membership, counts, fields and size limits; it does not cross-check specialist contributions.
-
-After assembly, POST an object with exactly `analyst`, `cve`, `reviewer` and
-`result` documents to `/validate/workflow/<name>`. It validates every document,
-requires reviewer coverage to have both specialist contributions, and requires
-final coverage to be reviewed. Final values must equal the combined contributions;
-recommendations remain advisory and are never applied. Partial coverage is allowed
-when the individual statuses/counts and cross-document subset relations are valid.
-
-Both endpoints return HTTP 200 with `status: valid`, trusted `run_id` and
-`source_chunk`; malformed JSON, identities, fields or assembly return 400. Unknown
-roles/chunks return 404. Normal authentication and access logging apply. Bodies
-must be UTF-8 JSON, 1 byte to 10 MiB with one Content-Length and no Transfer-Encoding.
-Duplicate JSON keys and non-JSON constants are rejected. `/api` lists effective
-limits and role contracts from the executable registry. Validation uses archived
-source bytes, manifest checksums and packaged schemas, never supplied context.
-
-These are validation-only operations: they neither create nor replace stored
-results and return no reusable validation ticket. Submit the three role documents
-together to `/result/<name>`, which revalidates and assembles them before storage.
-Manual CSV results remain supported through offline import, not HTTP submission.
-Keep the package unchanged during delayed remote analysis/import.
-
-## Convert manual CSV assessments
-
-Use the original run's generated configuration; the converter reads its resolved
-output directory, original manifest, exact source chunks and generated schemas.
-It does not rerun Stage 08, import assessments or regenerate reports.
-
-```sh
-python3 tools/ai_csv_to_results.py --config output/pipeline_config.json \
-  --output-dir converted-results --rationale-from-summary manual-results/
-python3 kcommit_pipeline.py ai-import --config output/pipeline_config.json \
-  --results-bundle converted-results/
-```
-
-Inputs may be CSV files or recursively scanned batch directories. `commit_hash`
-is authoritative; CSV filenames and folder names do not determine identity.
-Output uses the original `batch_NNN/NNN.json` paths and server-compatible result
-envelopes, including original identities, exact-byte checksums and complete or
-partial status. Chunks without assessments are omitted. Import these JSONs using
-`ai-import --results-bundle`; they are not contribution-only HTTP request bodies.
-The tool itself never contacts a server.
-
-Boolean cells accept TRUE/FALSE, case-insensitively. Array cells accept JSON
-arrays or one scalar item; blank/EMPTY arrays become `[]`. Numeric probabilities
-must be integers aligned with the CVE IDs; they are never inferred from text.
-Missing probabilities are allowed only when no CVEs are present. String EMPTY
-markers become empty strings. Missing rationale is an error unless the explicit
-`--rationale-from-summary` option copies the existing summary. This option does
-not generate new assessment evidence. All other required columns must be present.
-The known `extracted_Filename` and `ai_cve_id_pattern` columns are ignored and
-reported; unknown columns are errors. UTF-8 BOM and quoted CSV cells are supported.
-Review columns selected by the packaged schema are required and validated, not
-ignored. For nullable arrays, blank, EMPTY and the exact JSON literal null become
-JSON null; explicit [] remains an empty array. Agreement requires null arrays;
-disagreement requires nonempty, unique, schema-formatted arrays. JSON arrays and
-single-item scalar shorthand are accepted; no agreement or review text is inferred.
-With a legacy schema, non-contract rv_* columns remain ignored and reported, and
-blank/EMPTY non-nullable arrays remain [].
-
-The output directory must not already exist. All rows and result documents are
-validated before creating it; write failures may leave a partial new directory.
-Duplicate and progress behavior is shared with import, with CSV line locations
-in conflict warnings. Progress goes to stderr; stdout contains one JSON summary.
 
 ## Import grouping and progress
 
@@ -634,8 +206,8 @@ SHAs and identity mismatches remain fatal; all input is validated before the
 store, sidecar or reports change. Imports accumulate for the current run; a valid
 assessment in a later import replaces the existing assessment for that SHA.
 The first-wins rule above applies only to duplicates within one incoming batch.
-Publication is atomic per chunk, not across the whole import. The compatibility
-sidecar is refreshed after successful chunk publication.
+Publication is atomic per SHA, not across the whole import. The compatibility
+sidecar is refreshed after successful canonical-record publication.
 
 Progress and warnings go to stderr, with elapsed time and periodic discovery,
 source-validation, file/commit-processing and final-summary messages. Normal
@@ -643,302 +215,91 @@ progress is throttled to about once per second; phase boundaries, first/last
 files and conflicting-duplicate warnings are always shown. Stage 08 preparation
 is not rerun during import.
 
-## Server version provenance
 
-`GET /api/version` returns the generating tool's `tool_version`, read directly
-from its current `MANIFEST.json` during zipapp generation and embedded with
-`version_source: MANIFEST.json` and `captured_at: zipapp_generation` metadata.
-It is not inferred from the input bundle's `pipeline_version` or a stale imported
-constant. Existing zipapps retain their snapshot; rebuild to use a newer version.
+## Convert manual CSV assessments
+
+Use the original run's generated configuration; the converter reads its resolved
+output directory, original manifest, exact source chunks and generated schemas.
+It does not rerun Stage 08, import assessments or regenerate reports.
+
+```sh
+python3 tools/ai_csv_to_results.py --config output/pipeline_config.json \
+  --output-dir converted-results --rationale-from-summary manual-results/
+python3 kcommit_pipeline.py ai-import --config output/pipeline_config.json \
+  --results-bundle converted-results/
+```
+
+Inputs may be CSV files or recursively scanned batch directories. `commit_hash`
+is authoritative; CSV filenames and folder names do not determine identity.
+Output uses the original `batch_NNN/NNN.json` paths and offline import result
+envelopes, including original identities, exact-byte checksums and complete or
+partial status. Chunks without assessments are omitted. Import these JSONs using
+`ai-import --results-bundle`; they are not contribution-only HTTP request bodies.
+The tool itself never contacts a server.
+
+Boolean cells accept TRUE/FALSE, case-insensitively. Array cells accept JSON
+arrays or one scalar item; blank/EMPTY arrays become `[]`. Numeric probabilities
+must be integers aligned with the CVE IDs; they are never inferred from text.
+Missing probabilities are allowed only when no CVEs are present. String EMPTY
+markers become empty strings. Missing rationale is an error unless the explicit
+`--rationale-from-summary` option copies the existing summary. This option does
+not generate new assessment evidence. All other required columns must be present.
+The known `extracted_Filename` and `ai_cve_id_pattern` columns are ignored and
+reported; unknown columns are errors. UTF-8 BOM and quoted CSV cells are supported.
+Review columns selected by the packaged schema are required and validated, not
+ignored. For nullable arrays, blank, EMPTY and the exact JSON literal null become
+JSON null; explicit [] remains an empty array. Agreement requires null arrays;
+disagreement requires nonempty, unique, schema-formatted arrays. JSON arrays and
+single-item scalar shorthand are accepted; no agreement or review text is inferred.
+
+The output directory must not already exist. All rows and result documents are
+validated before creating it; write failures may leave a partial new directory.
+Duplicate and progress behavior is shared with import, with CSV line locations
+in conflict warnings. Progress goes to stderr; stdout contains one JSON summary.
+
+
+## Acceptance coverage and execution status
+
+The previous nine-item plan was closed on user-reported QA; that historical pass
+is distinct from validation of this v21.5.0 redesign.
+
+On 2026-11-18 the user manually applied the patch and reported `./run_tests`
+passing 100%. Exact counts and logs were not supplied. This is user-reported
+QA, not an independently executed run against the Denux working tree.
+
+The earlier sandbox run completed with 1,907 passed and 7 failed.
+The same seven tests failed against the original snapshot; kconfiglib was
+absent in that sandbox. These results are separate from the user's local pass.
+
+Browser interaction, model context feasibility, whole-batch transactions and
+multiple writers remain outside the claimed coverage.
+
+| Boundary | Regression coverage |
+| --- | --- |
+| Isolated catalogs, rejection of old routes, live registry | `test_ai_server_api.py` |
+| Exact documents, local links, schema/prompt agreement | `test_ai_api_documents.py`, `test_ai_prompt_body.py` |
+| Response contracts and protocol errors | `test_ai_api_responses.py` |
+| Packaged selection and safe pagination | `test_ai_batch_entries.py`, `test_ai_server_pagination.py` |
+| Cached v2 delivery and API/group equivalence | `test_ai_versioned_runtime.py`, `test_ai_acceptance_closure.py` |
+| Assembly, advisory values, receipt timing, rejection safety | `test_ai_assembly.py`, `test_ai_upload_policy.py`, `test_ai_server_upload_methods.py` |
+| Read-only access and canonical persistence | `test_ai_runtime_persistence.py` |
+| CLI/authentication/logging/framing/diagnostic saves | `test_ai_server_runtime.py`, `test_ai_save_posts.py`, `test_ai_structured_errors.py` |
+| Live export/import through actual report writers | `test_ai_end_to_end.py` |
+| Portable code assets and module initialization | `test_ai_code_assets.py`, `test_ai_embedded_runtime.py`, `test_ai_runtime_modules.py` |
+| Standalone two-API smoke tool | `test_ai_smoke_discovery.py` |
+
+Obsolete tests for global catalogs, chunk-bound HTTP uploads, batch-navigation APIs
+and live legacy migration are replaced by current-interface tests, not skipped or
+hidden from collection. Pure archive/source validation and host import/store tests
+remain independent of the public HTTP surface.
 
 ## Test entry points
 
-`./run_tests` includes pagination and smoke-tool regression tests. Run
-`./run_tests_ai output/serve_ai.pyz` to exercise the actual generated zipapp with
-curl in an isolated temporary directory. The smoke tool checks live `/api`, batch
-and chunk discovery, pagination against complete listings, and unpaginated API
-and ZIP export. It handles empty/small listings and verifies returned results;
-its uploads affect only the temporary copy, not the original server results.
-
-## Selecting work for debug runs and retries
-
-`/batches`, `/chunks`, and `/batch/<batch_id>` accept independent `limit` and
-`offset` query parameters. An absent or zero `limit` means unlimited; an absent
-`offset` means zero. Supplied values must be nonnegative integers and occur once.
-Empty, malformed, negative, repeated and unknown parameters return HTTP 400 rather
-than expanding the selected work. Offset skips items before limit caps the result;
-order and full-collection totals are preserved. Beyond-end offsets return empty
-lists. Batch detail returns `chunks` entries with exactly `name`, `path` and
-`result_path`, without a separate `results` array. For example:
-
-```json
-{"name":"batch_001/002.json","path":"/chunk/batch_001/002.json","result_path":"/result/batch_001/002.json"}
-```
-
-Use `name` for `source_chunk` and `"/context/" + item.name` for combined context.
-Use `path` and `result_path` directly as endpoint paths; neither is a chunk name.
-The old `chunk` and `result` keys are removed: update workflows and regenerate/
-restart zipapps. Pagination selects whole entries and leaves batch metadata unchanged.
-A result path does not imply a stored result exists.
-`/batches` retains complete membership and `/chunks` remains a list of chunk URLs.
-`/api` is never paginated.
-
-Use `/batches?limit=2` for two complete batches, `/chunks?limit=5&offset=10` for
-five selected chunks, or `/batch/batch_002` without parameters for a complete
-batch retry. Clients must follow that selected listing and submit per-chunk
-results; discovery does not execute analysis or remove previous results.
-Rebuild Stage 08 and restart the regenerated zipapp to enable these options.
-
-`GET /api` exposes a live JSON catalog generated by the executable HTTP route
-registry in `serve_ai.pyz`, not by a separate document. It includes methods,
-path parameters, descriptions from handler docstrings, content types, schema
-links, effective upload limits and runtime authentication status (no secrets).
-The same registry dispatches requests. Rebuild Stage 08 to update an existing
-zipapp; the front page explains how clients use `/api` without duplicating it.
-
-Each route advertises `responses`, keyed by HTTP status strings. Success entries
-specify description, content_type and schema, plus representative examples for
-validation/upload acknowledgements. Shared `response_schemas` define JSON body
-contracts, including the common error envelope; shared `error_responses` describe
-statuses, examples and relevant headers. Catalog-local `$ref` values resolve
-against the whole `/api` document, while `/schema/...` links resolve on the server.
-`protocol_responses` lists shared routing/protocol failures; route entries include
-applicable 400/404/500 responses and 401 only when authentication is enabled.
-New extension routes without an explicit schema advertise an unconstrained JSON
-schema, not an invented body structure. Markdown responses describe text; ZIP
-success bodies are binary. Errors remain JSON regardless of success content type.
-Examples are illustrative and cannot authorize storage or supply trusted identities.
-This is additive discovery metadata: response bodies, validation rules and storage
-behavior do not change. Regenerate the zipapp to expose the new response contracts.
-
-JSON and Markdown routes honor `Accept: text/plain`: the identical body is returned
-as `text/plain; charset=utf-8` when `text/plain` is listed with q > 0 and with a
-higher q than the route's default type (an equal q keeps the default). Wildcards,
-malformed items and a missing header keep the default; a 406 is never returned.
-Negotiable responses carry `Vary: Accept`, and their catalog 200 entry lists
-`alternative_content_types: ["text/plain"]`. ZIP downloads and error bodies
-(always `application/json`) are never negotiated. The alternative changes only the
-media type, not the schema or content.
-
-JSON bodies must be raw JSON. A 400 whose message ends with "a Markdown code fence
-starts at this position" means the body, or one embedded document such as `result`,
-was wrapped in a fence; remove it. The hint changes no acceptance rule. Role prompts
-require the first character of every response to be `{` and forbid fences.
-
-### Saving POSTs for diagnostics
-
-`serve_ai.pyz -s` (`--save-posts`, independent of `-d`) keeps the latest POST per
-path under `serve_ai.pyz.debug/<verb>/<ok|error>/<rest of the path>`, for example
-`validate/ok/role/analyst/batch_001/001.json` or `result/error/batch_001/001.json`.
-`ok` means HTTP 200; anything else is `error`. The first level comes from the route
-path, so future POST routes are covered automatically. Each capture is the posted
-body plus `<name>.md`, a Markdown report with request context, request headers,
-response headers and response body. `Authorization`, `Proxy-Authorization` and
-`Cookie` values are redacted. A repeat POST to the same path overwrites the capture.
-
-Successful `/result` calls save the submitted role-contribution body and report;
-the assembled, possibly accumulated result lives in the sharded store. Its exact
-canonical checksum is recorded in the response receipt. When a request is rejected before its
-body is read (for example a wrong `Content-Type`), the report says so and no body
-file is kept. Only authenticated requests that match a known route, chunk and role
-are saved: 401, 404, 405 and unknown names or roles are not. A failed write is
-logged as `SERVER save_posts failed` and never changes the response.
-
-The directory (mode 0700) is created at startup and startup fails if it cannot be
-created. The server warns that content is being saved: it may be sensitive, and
-nothing is purged automatically, so delete the directory when finished.
-
-API entries are sorted by discovery/guide, contract assets, sources, validation,
-and results/export, independent of decorator registration order. Per-route `group`
-and `order` metadata remain in the executable registry. `path_parameters` describe
-parameters and provide examples; role enums and concrete URLs use selected assets
-and manifest IDs. Query examples follow the declared query contract. Each example
-contains exactly `method` and `url`; no curl, body-file, schema or note fields.
-The separate `request_body` contract declares whether a body is required, its
-content type and schema. Single-role validation references `/schema/<role>` (use
-the URL role); workflow validation describes an object requiring exactly the four
-complete documents, with per-property schema links and no additional properties.
-The URL selects trusted source context; submitted documents arrive in the POST
-body, not as filenames or source chunk names. Route-specific descriptions take
-precedence over shared handler docstrings, keeping these two operations distinct.
-Empty source/batch listings produce no invented example IDs. Examples do not run
-requests or upload anything; add authentication credentials separately when needed.
-
-`/schema/result` is the sole final-result schema URL; the former output alias is
-removed. Root package artifact names and the `output_schema_checksum` envelope
-field are unchanged. `/context/<name>` supplies trusted envelope fields and parsed
-source. Models return compact role documents; the server derives final checksums,
-counts and status rather than asking an LLM to calculate them.
-
-AI assessment is advisory. The ordinary pipeline runs stages 00–07 and does not
-require an AI service. Stage 08 prepares an independent work package from the
-stage 04 prefilter-kept commits, before scoring and postfiltering. It does not
-change scores, priorities, or cherry-pick test results.
-
-## Enabling AI
-
-The configuration alone decides (v20.1.0; there is no `--ai` option). The AI
-workflow is active when the config declares an `ai` section, unless
-`ai.enabled` is `false`. When active:
-
-- a full `run` includes Stage 08 after Stage 07;
-- `validate` and Stage 00 check `ai.prompts_dir`, `ai.schemas_dir` and
-  `ai.front_page_path`, including required assets and contract consistency. Defaults
-  are `ai/prompts`, `ai/schemas` and `ai/ai_server_front_page.md` under the initial
-  configuration directory.
-
-With no `ai` section or `"enabled": false`, product AI resources are not
-validated and Stage 08 does not run; `run --stage 8` / `--from 8` are refused.
-Tool-bundled schema correctness checks still run independently of this flag.
-
-## Prepare
-
-A full run prepares the package. To rerun only Stage 08:
-
 ```sh
-python3 kcommit_pipeline.py run --config product.json --stage 8
+KCAP_TEST_LOG=./qa-full-v21.5.0.log ./run_tests
+./run_tests_ai output/serve_ai.pyz
 ```
 
-`ai.chunk_size` counts commits per chunk (default 100); `ai.batch_size` counts
-chunks per batch (default 10). Both require positive integers, not booleans.
-`ai.prompts_dir` selects role prompts. Inputs use `ai_analysis_input/batch_001/001.json`,
-etc., with global chunk numbering and at least three digits. The last batch may
-be smaller. Empty input produces one empty chunk in one batch.
-
-The manifest records sizes, total chunks/batches, and an ordered `batches` list
-with `batch_id`, `batch_number`, `chunks` and `total_commits`. Checksums use full
-relative chunk paths. Chunk metadata includes `batch_number`, `total_batches`
-and `chunk_in_batch`. Batch size contributes to the run identity.
-Use `/batches` and `/batch/<id>` to discover work; `/chunks` still lists all inputs.
-Submit three role documents per chunk to `/result/<source_chunk>`. Result storage and ZIP
-export/import preserve subfolders. Regenerate packages after configuration migration.
-Rerun Stage 08 with `--force` to replace old flat outputs. Update custom prompts
-and front pages to describe batch paths; do not manually move existing chunks.
-The sample result schema is `configs/ai/schemas/result.json`.
-Stage 08 writes numbered JSON chunks, input and output schemas, a prompt, a
-checksummed bundle manifest, and `serve_ai.pyz` to the configured output
-directory. An empty prefilter set produces an empty chunk. Keep these files
-together until importing the returned results.
-
-## Server front page
-
-Set `ai.front_page_path` in `configs/conf.d/07_ai.json` to an external UTF-8
-Markdown file. The shipped value is `${TOOLDIR}/configs/ai/ai_server_front_page.md`.
-Stage 08 validates the file, copies it to `output/ai_server_front_page.md`,
-and embeds it in `serve_ai.pyz`; missing, empty, or invalid UTF-8 files fail
-preparation before outputs are modified. The portable bundle needs no access
-to the original config directory. Regenerate it after editing the Markdown.
-
-`GET /` serves raw Markdown with
-`Content-Type: text/markdown; charset=utf-8`. It uses the same authentication
-and access logging as other endpoints. Rendering HTML is not required; this
-keeps the zipapp dependency-free. The guide explains the purpose, workflow,
-endpoints, result requirements, and network safety without replacing selected prompts.
-The guide is presentation-only and does not change analysis run identities.
-
-## Analyze remotely
-
-Copy `serve_ai.pyz` to the analysis machine and start it with Python 3:
-
-```sh
-python3 serve_ai.pyz -l ./ai-server.log --auth 'user:password'
-```
-
-By default, the server detaches into the background and listens on loopback
-(`127.0.0.1:8000`). Daemon mode requires explicit `-l PATH` or `--log-file PATH`.
-It prints its PID, actual listening address, and log
-location. Stop it with `kill PID` using that printed PID. SIGTERM and SIGINT
-close the server cleanly. Positional `port host` arguments remain supported;
-port 0 selects an available port. The old default was `127.0.0.1:8001` in the
-foreground. Regenerate existing bundles with Stage 08 to receive the new code.
-
-`-d`, `--debug`, and `--no-daemon` are aliases for one foreground option;
-`--debug` does not add verbose logging. Background mode requires Unix.
-For foreground operation without a log file, run `./serve_ai.pyz -d`; all logs
-go to stderr. To select file-only logging instead:
-
-```sh
-python3 serve_ai.pyz -d --log-file "$HOME/kcommit-analyze-ai-server.log" \
-  --auth 'user:password' 8000 127.0.0.1
-curl --user 'user:password' http://localhost:8000/chunks
-```
-
-There is no default log-file path. `-l PATH` and `--log-file PATH` are aliases:
-when supplied, logs append only to that file, regardless of foreground or daemon
-mode. An unwritable file causes startup failure with no fallback to stderr.
-Without this option, foreground mode logs only to stderr; daemon mode rejects
-the invocation before detaching. New log files use mode 0600. Startup diagnostics
-may still appear on stderr when startup fails. Startup and shutdown lines are
-marked `SERVER`. Foreground startup also prints one flushed summary to stdout,
-independent of log selection, showing debug mode, PID, bind address, log location
-(or stderr), and the connection URL. The daemon's startup summary includes its URL.
-The actual bound port is used; for `0.0.0.0`, the URL uses local `127.0.0.1` while
-retaining the wildcard bind address. No credentials appear in these summaries.
-Each request emits one completion line with UTC time, client, escaped method/path,
-status, duration in milliseconds, and a safe reason. Authentication failures,
-invalid uploads, unknown paths, unsupported methods, and internal errors are
-logged without duplicate default messages. Timeouts and disconnects are logged
-once; status is `-` if no response was started, otherwise the attempted status.
-Idle connections closed without a request do not produce access lines. Query
-strings, request bodies, credentials, and exception text are omitted. HTTP only;
-no TLS or proxy handling is added:
-
-```text
-2026-10-09T00:10:03Z client=127.0.0.1 method="GET" path="/chunks" status=200 duration_ms=2 reason=ok
-2026-10-09T00:10:05Z client=127.0.0.1 method="POST" path="/result/batch_001/001.json" status=400 duration_ms=1 reason=invalid_result
-```
-
-`--auth USER:PASSWORD` protects all endpoints using HTTP Basic authentication.
-Both parts must be nonempty; passwords may contain colons. Missing, malformed,
-or incorrect credentials receive a 401 challenge before endpoint processing.
-Clients that support URL credentials may use `http://user:password@host:8000/`;
-prefer an explicit client authentication option, and use the browser's login
-prompt rather than relying on credential-bearing URLs. Special URL characters
-require percent-encoding. Command-line credentials can appear in shell history
-and process listings. Basic authentication is not encryption: plain HTTP exposes
-credentials and data to interception. Use only on a trusted network or behind
-TLS termination. Omitting `--auth` leaves all endpoints unauthenticated and
-produces a startup warning. This is minimal shared-password access control,
-not a production-hardened public web service. Connections have a 10-second
-socket timeout; the server processes requests serially.
-
-Use `GET /contract`, its listed prompts, schemas, chunk listings and
-`GET /context/<name>` to inspect work. Submit exactly the `analyst`, `cve` and
-`reviewer` documents to `POST /result/<name>`. POST enforces authentication,
-size limits, role-chain validation, assembly and atomic replacement. HTTP 200
-returns `status: stored`, `source_chunk`, `run_id` and `result_checksum` for exact
-stored bytes. PUT returns HTTP 405; use `/` for the guide.
-Regenerate and restart the zipapp after changing server code or assets. Results may
-be partial; a complete result must cover every source SHA. `GET /result/<name>`
-retrieves an uploaded result. `GET /export` returns a ZIP containing the source
-manifest, chunks, and any accepted results. Keep the ZIP for the import step.
-
-Do not assume mitigation settings or infer CVE IDs that are not supported by
-source commits. Risk value `none` must be used alone; CVE probabilities align
-positionally with CVE IDs. Human review is required before backporting.
-
-## Import
-
-Transfer the exported ZIP back to the pipeline machine and run:
-
-```sh
-python3 kcommit_pipeline.py ai-import --config product.json --results-bundle results.zip
-```
-
-The importer checks manifest and schema identities, exact chunk bytes, source
-SHA membership, prior accepted findings and cache membership before publication.
-Stage 07 reads the accumulated run-bound store, with validated legacy sidecar
-fallback for missing chunks, and decorates report-only copies with `ai_analysis`.
-The relevant and filtered JSON reports and commit-detail shards carry this advisory
-object; the HTML commit detail pane shows an advisory card. Existing scoring
-caches and ranking remain unchanged. A later Stage 08 run with a different identity
-isolates earlier findings. Missing assessments mean no AI assessment was returned,
-not a negative finding. The JSON sidecar remains a compatibility view, not the
-only persistence source.
-
-## QA before committing
-
-Run `./run_tests` from the repository root and review any changes to the
-HTML report, JSON exports, and imported sidecar. If tests cannot be executed,
-do not commit. The `--stage 8 --force` path can remove Stage 08 outputs; keep
-a copy of the exported result ZIP until import has been verified.
+The smoke tool copies the package to a temporary directory, starts a loopback server,
+checks both APIs/shared documents/source delivery/gates/export, then stops the child.
+It never changes the operator's original result store.

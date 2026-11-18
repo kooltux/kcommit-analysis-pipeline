@@ -43,7 +43,7 @@ def test_archive_layout_covers_exactly_the_runtime_members():
     assert {name: source for name, (source, target) in assets.ASSET_LAYOUT.items()} == assets.ASSET_FILES
     assert {target for source, target in assets.ASSET_LAYOUT.values()} == {
         '__main__.py', 'kcap_ai_runtime/__init__.py', 'kcap_ai_runtime/server.py',
-        'kcap_ai_runtime/workflow.py', 'kcap_ai_runtime/contract_routes.py',
+        'kcap_ai_runtime/workflow.py',
         'kcap_ai_runtime/validation.py', 'kcap_ai_runtime/prompt_body.py',
         'kcap_ai_runtime/source_contract.py', 'kcap_ai_runtime/source.py',
         'kcap_ai_runtime/result_store.py',
@@ -51,7 +51,7 @@ def test_archive_layout_covers_exactly_the_runtime_members():
         'kcap_ai_runtime/ai_contract.py', 'kcap_ai_runtime/ai_result_store.py',
         'kcap_ai_runtime/ai_source.py', 'kcap_ai_runtime/versioned_routes.py',
     }
-    assert len(assets.ASSET_LAYOUT) == 16
+    assert len(assets.ASSET_LAYOUT) == 15
 
 
 def test_archive_loader_reads_each_asset_once_without_execution(monkeypatch):

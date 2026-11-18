@@ -38,19 +38,19 @@ def test_basic_apis_and_role_validation_after_runtime_import(app, package):
     manifest = package['manifest']
     name = next(iter(manifest['chunks']))
     with running(app) as (port, log, errors):
-        for path in ('/api', '/api/version', '/chunks', '/context/' + name):
+        for path in ('/v1/api', '/v1/version', '/v1/chunks', '/v1/chunk/' + name):
             status, _, body = request(port, path)
             assert status == 200
             assert isinstance(json.loads(body), dict)
         assert request(port, '/')[2] == PAGE
         assert request(port, '/missing-route')[0] == 404
-        document = dict(run_id=manifest['run_id'], source_chunk=name, role='analyst', results={})
-        status, _, raw = request(port, '/validate/role/analyst/' + name,
+        document = dict(run_id=manifest['analysis_id'], role='analyst', results={})
+        status, _, raw = request(port, '/v1/validate/role/analyst',
                                  method='POST', body=json.dumps(document).encode())
         assert status == 200
-        assert json.loads(raw) == dict(status='valid', run_id=manifest['run_id'], source_chunk=name)
-        assert request(port, '/validate/role/analyst/' + name, method='POST', body=b'{}')[0] == 400
-        assert request(port, '/result/' + name)[0] == 404
+        assert json.loads(raw) == dict(status='valid', run_id=manifest['analysis_id'], role='analyst')
+        assert request(port, '/v1/validate/role/analyst', method='POST', body=b'{}')[0] == 400
+        assert request(port, '/v1/result/' + 'a' * 40)[0] == 404
     assert not app.with_name(app.name + '.results').exists()
 
 

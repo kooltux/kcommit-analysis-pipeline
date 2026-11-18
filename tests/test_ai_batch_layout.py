@@ -54,38 +54,3 @@ def test_unsafe_chunk_paths(name):
     assert NAME.fullmatch(name) is None
 
 
-def test_http_export_import(tmp_path, monkeypatch):
-    cfg, cache, out, summary, manifest = prepare(tmp_path)
-    token = basic('reviewer:secret')
-    with running(out / 'serve_ai.pyz', auth='reviewer:secret') as (port, log, errors):
-        def req(path, **kwargs):
-            return request(port, path, authorization=token, **kwargs)
-        assert request(port, '/batches')[0] == 401
-        batches = json.loads(req('/batches')[2])
-        assert batches['total_batches'] == 3
-        paths = [p['path'] for b in batches['batches'] for p in json.loads(req(b['url'])[2])['chunks']]
-        assert paths == json.loads(req('/chunks')[2])['chunks']
-        name = manifest['batches'][1]['chunks'][0]
-        source = req('/chunk/' + name)[2]
-        chunk = json.loads(source)
-        result = {'schema_version': '1.0', 'run_id': manifest['run_id'], 'source_chunk': name,
-                  'input_checksum': digest(source), 'input_schema_checksum': manifest['input_schema_checksum'],
-                  'output_schema_checksum': manifest['output_schema_checksum'], 'analysis_status': 'partial',
-                  'total_commits': len(chunk['commits']), 'analyzed_commits': 0, 'results': {}}
-        bad = dict(result, source_chunk=name.split('/')[1])
-        assert req('/result/' + name, method='POST', body=json.dumps(bad).encode())[0] == 400
-        payload = (json.dumps(result, sort_keys=True, separators=(',', ':')) + '\n').encode()
-        assert req('/result/' + name, method='POST', body=role_body(out / 'serve_ai.pyz', result))[0] == 200
-        assert req('/result/' + name)[2] == payload
-        for path in ['/batch/batch_999', '/chunk/batch_999/001.json', '/chunk/batch_001/../001.json']:
-            assert req(path)[0] == 404
-        code, _, exported = req('/export')
-        assert code == 200
-    with zipfile.ZipFile(io.BytesIO(exported)) as app:
-        assert app.read('results/' + name) == payload
-        for n in manifest['chunks']:
-            assert app.read('ai_analysis_input/' + n) == (out / 'ai_analysis_input' / n).read_bytes()
-    bundle = tmp_path / 'returned.zip'
-    bundle.write_bytes(exported)
-    monkeypatch.setattr('lib.stages.st07_ai_report.run', lambda *args: None)
-    assert import_results(cfg, str(bundle)) == {'run_id': manifest['run_id'], 'analyzed_commits': 0}

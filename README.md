@@ -10,7 +10,7 @@ folders through `--results-bundle PATH`; commit SHA, run identity and schema
 validation are independent of file grouping. See
 [AI import details](docs/AI_ANALYSIS.md#import-grouping-and-progress).
 
-Current release: `v21.4.0`. Unreleased breaking API migration: compact role outputs, combined `/context/<name>` retrieval and contribution-only `POST /result/<name>` with server assembly, atomic storage and an exact-byte checksum receipt. Rebuild packages and update workflows; old final-result uploads and separate metadata/assembly routes are no longer supported. See [AI workflow and configuration migration](docs/AI_ANALYSIS.md#directory-only-integration).
+Current release: `v21.5.0`. The AI server exposes two self-contained APIs: `/v1/api` (packaged delivery) and `/v2/api` (planned delivery). `/` is the human/AI entry guide; unversioned API routes are removed. Rebuild the pipeline and packages from scratch. See [AI server APIs](docs/AI_ANALYSIS.md#versioned-runtime-interfaces).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
@@ -38,27 +38,16 @@ prefilter-kept commits separately without changing pipeline scores.
 
 Stage 08 selects `ai.prompts_dir` and `ai.schemas_dir`, snapshots every selected
 asset into `ai_contract/`, and embeds the directory contract in `serve_ai.pyz`.
-Removed single-file settings must be migrated. `/contract` and `/context/<name>`
-provide exact assets, trusted identities and source context. Import verifies the
-retained asset tree. Validation gates store nothing; result submission independently
-enforces the complete role chain before assembly and atomic storage.
+Each API exposes its own contract index, complete role prompts and effective schemas.
+Start at `/v1/api` or `/v2/api`, or read `/` for the two workflows. Both delivery forms
+share one analysis identity and canonical per-commit results. The external
+orchestrator supplies source selections and validated outputs to Analyst, CVE expert
+and Reviewer. Submit exactly three role documents with matched SHA coverage to
+`/v1/result` or `/v2/result`. Each contains exactly `run_id`, `role`, `results`.
+The server validates and assembles records without applying advisory review proposals,
+returns per-SHA exact-byte checksums, and supports retrieval/export through either API.
+Validation gates never publish findings.
 
-The Analyst, CVE expert and Reviewer prompts include their required schemas.
-Append only chunk-specific metadata, source data and prior role outputs in the
-external workflow. Submit exactly `analyst`, `cve` and `reviewer` documents to
-`POST /result/<name>`. The server validates, assembles and stores the final result
-without applying review proposals, then returns `status: stored`, `source_chunk`,
-`run_id` and `result_checksum`. GET retrieves the unchanged final-result format.
-
-`/api` lists routes in logical workflow order with parameter descriptions, selected
-role values, concrete package-derived URLs and request examples. Use `/schema/result`
-for stored final results and `/context/<name>` for trusted envelope plus source.
-The redundant output-schema alias has been removed.
-
-Batch detail entries now expose `name`, `path` and `result_path`, replacing
-`chunk` and `result`. Build context requests from `"/context/" + item.name`, not
-from the chunk URL path. `/batches` memberships, `/chunks` URL listings, manifests
-and stored results are unchanged. Regenerate/restart zipapps and migrate clients.
 
 ## Pipeline stages
 

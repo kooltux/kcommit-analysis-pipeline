@@ -13,7 +13,7 @@ from lib.ai_contract import digest
 from lib.manifest import CACHE_FILES, COMMIT_COLS, COMMIT_COLS_FILTERED
 from lib.stages import st07_ai_report, st07_report, st08_prepare_ai
 from test_ai_package_server import app, package, snapshots
-from test_ai_runtime_migration import snapshot
+from test_ai_runtime_persistence import snapshot
 from test_ai_server_runtime import request, running
 from test_ai_versioned_runtime import contributions, post
 from test_st08_prepare_ai import setup_source

@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+No additional changes pending.
+
+## v21.5.0 — Two self-contained AI APIs (2026-11-18)
+
+### Two self-contained APIs
+
+- Retain `/` as the human/AI guide and expose catalogs only at `/v1/api` and
+  `/v2/api`. Remove unversioned API routes and bare-version catalog aliases.
+- Repeat contract discovery, prompts, effective schemas and captured version
+  within each API, sharing handlers and keeping links version-local. Hash exact
+  served document bytes rather than raw prompt/schema provenance assets.
+- Align role instructions and embedded schemas with grouping-independent
+  contributions. Preserve canonical validation, advisory values and receipts;
+  remove live legacy HTTP publication, read-through and migration paths.
+- Replace obsolete HTTP tests with current-interface coverage, rewrite the smoke
+  tool and client/project guides, and require fresh packages rather than aliases.
+- Increment the minor version within v21 as requested despite the intentional
+  interface break. Tag creation requires separate approval.
+- QA: on 2026-11-18 the user reported `./run_tests` passing 100% after
+  manual patch application. This is user-reported validation; exact counts
+  and logs were not supplied, and it is not an independent Denux test run.
+
+### Earlier work included in v21.5.0
+
+The entries below were already committed but remained unreleased after v21.4.0.
+They are included in this release; their original QA attributions are retained.
+
 - Reconcile the original nine-item plan supplied by the user and record the
   user-reported HTML QA pass without attributing it to an independent run.
   Add isolated v1/v2 and delivered-v2-group record/export equality comparisons,

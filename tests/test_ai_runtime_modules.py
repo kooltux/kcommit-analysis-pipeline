@@ -30,23 +30,16 @@ def test_isolated_module_initialization_and_idempotent_install(app, tmp_path):
     program = """import sys
 sys.path.insert(0, sys.argv[1])
 sys.argv[0] = sys.argv[1]
-from kcap_ai_runtime import server
-base_count = len(server.ROUTES)
-from kcap_ai_runtime import contract_routes, workflow
-keys = [(entry['method'], entry['path']) for entry in server.ROUTES]
-assert len(keys) == base_count + 4
-assert len(keys) == len(set(keys))
-assert server.prepare_upload is not contract_routes.prepare_upload
-contract_routes.install()
-contract_routes.install()
-assert server.prepare_upload is contract_routes.prepare_upload
-assert keys == [(entry['method'], entry['path']) for entry in server.ROUTES]
-assert workflow.AssessmentValidationError is server.AssessmentValidationError
-assert workflow.validate_result is server.validate_result
-assert ('GET', '/context/<name>') in keys
-assert ('GET', '/contract') in keys
-assert ('POST', '/validate/role/<role>/<name>') in keys
-assert ('POST', '/validate/workflow/<name>') in keys
+from kcap_ai_runtime import server, versioned_routes
+assert [(r['method'],r['path']) for r in server.ROUTES] == [('GET','/')]
+versioned_routes.install()
+keys=[(r['method'],r['path']) for r in server.ROUTES]
+versioned_routes.install()
+assert keys==[(r['method'],r['path']) for r in server.ROUTES]
+assert len(keys)==len(set(keys))
+assert all(path=='/' or path.startswith(('/v1/','/v2/')) for method,path in keys)
+assert ('GET','/v1/api') in keys and ('GET','/v2/api') in keys
+assert ('GET','/api') not in keys
 server.ARCHIVE.close()
 """
     result = subprocess.run([sys.executable, '-I', '-S', '-c', program, str(app)],

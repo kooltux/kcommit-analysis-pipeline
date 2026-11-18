@@ -73,18 +73,20 @@ def test_send_bytes_negotiates_markdown_and_skips_zip(namespace):
 
 
 @pytest.mark.parametrize('auth', [None, 'reviewer:secret'])
-def test_text_plain_accept_over_http(app, workflow, auth):
+def test_text_plain_accept_over_http(app, workflow, auth, package):
     name, documents = workflow
+    documents = {role: dict(run_id=package['manifest']['analysis_id'], role=role, results=value['results'])
+                 for role, value in documents.items() if role != 'result'}
     with running(app, auth=auth) as (port, log, errors):
         token = basic(auth) if auth else None
-        catalog = json.loads(request(port, '/api', authorization=token)[2])
+        catalog = json.loads(request(port, '/v1/api', authorization=token)[2])
         for entry in catalog['routes']:
             success = entry['responses']['200']
             negotiable = success['content_type'].split(';')[0] in (JSON, 'text/markdown')
             assert ('alternative_content_types' in success) == negotiable
             if negotiable:
                 assert success['alternative_content_types'] == ['text/plain']
-        for path in ('/api', '/contract', '/chunks', '/schema/input', '/', '/prompt/analyst'):
+        for path in ('/v1/api', '/v1/contract', '/v1/chunks', '/v1/schema/input', '/', '/v1/prompt/analyst'):
             default = request(port, path, authorization=token)
             plain = request(port, path, authorization=token, accept='text/plain')
             assert default[0] == plain[0] == 200
@@ -92,11 +94,11 @@ def test_text_plain_accept_over_http(app, workflow, auth):
             assert default[1]['Content-Type'] != PLAIN
             assert plain[1]['Vary'] == default[1]['Vary'] == 'Accept'
             assert plain[2] == default[2]
-        response = request(port, '/validate/role/analyst/' + name, method='POST',
+        response = request(port, '/v1/validate/role/analyst', method='POST',
                            body=encode(documents['analyst']), authorization=token,
                            accept='text/plain')
         assert response[0] == 200 and response[1]['Content-Type'] == PLAIN
         assert json.loads(response[2])['status'] == 'valid'
-        response = request(port, '/prompt/unknown', authorization=token, accept='text/plain')
+        response = request(port, '/v1/prompt/unknown', authorization=token, accept='text/plain')
         assert response[0] == 404 and response[1]['Content-Type'] == JSON
         assert json.loads(response[2])['error']['status'] == 404

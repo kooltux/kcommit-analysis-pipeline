@@ -18,6 +18,7 @@ def runtime_namespace(app):
     module = None
     try:
         module = importlib.import_module(name + '.server')
+        importlib.import_module(name + '.versioned_routes').install()
         yield vars(module)
     finally:
         if module is not None:

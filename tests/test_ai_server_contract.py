@@ -73,24 +73,3 @@ def test_packaged_source_execution_uses_shared_validation(contract_app, monkeypa
             namespace['validate'](result['source_chunk'], bad)
 
 
-@pytest.mark.parametrize('method', ['POST'])
-def test_live_upload_validation_preserves_accepted_result(contract_app, method):
-    app, result = contract_app
-    name = result['source_chunk']
-    record = result['results'][SHA]
-    candidates = [copy.deepcopy(result)]
-    record.update(rv_agreement='disagree', rv_notes=[NOTE],
-                  rv_recommendation=[RECOMMENDATION])
-    candidates.append(copy.deepcopy(result))
-    with running(app) as (port, log, errors):
-        for candidate in candidates:
-            data = encode(candidate)
-            assert request(port, '/result/' + name, method=method, body=role_body(app, data))[0] == 200
-            bad = copy.deepcopy(candidate)
-            bad['results'][SHA]['rv_notes'] = []
-            assert request(port, '/result/' + name, method=method, body=role_body(app, bad))[0] == 400
-            assert request(port, '/result/' + name)[2] == data
-        status, _, exported = request(port, '/export')
-        assert status == 200
-        with zipfile.ZipFile(io.BytesIO(exported)) as archive:
-            assert archive.read('results/' + name) == data

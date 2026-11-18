@@ -79,7 +79,11 @@ def validate_role_document(role, value, source, schemas, run_id):
         raise AssessmentValidationError('Invalid canonical role document', field='results')
     for sha, assessment in value['results'].items():
         source.chunk_for(sha)
-        validate_assessment(sha, assessment, schemas[role])
+        try:
+            validate_assessment(sha, assessment, schemas[role])
+        except AssessmentValidationError as exc:
+            exc.details.setdefault('role', role)
+            raise
     return True
 
 

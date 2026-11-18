@@ -60,7 +60,7 @@ def backend(request, package, app):
     else:
         with runtime_namespace(app) as values:
             module = importlib.import_module(values['__package__'] + '.result_store')
-            yield module, values['RESULT_STORE']
+            yield module, module.ResultStore(values['RESULTS'], values['SOURCE_INDEX'], values['validate'])
 
 
 def test_packaged_store_is_exact_host_source(app):
@@ -98,33 +98,3 @@ def test_legacy_migration_and_failed_publication(backend, package, record, monke
     assert not list(Path(store.root).rglob('.result-*'))
 
 
-def test_live_accumulation_replacement_receipts_export_and_restart(app, package, record):
-    name = next(iter(package['manifest']['chunks']))
-    replacement = copy.deepcopy(record)
-    schema = json.loads(package['files']['ai_analysis_result_schema.json'])
-    field = next(key for key, spec in result_properties(schema).items()
-                 if spec['type'] == 'string' and 'enum' not in spec)
-    replacement[field] = 'replacement evidence'
-    expected = {}
-    with running(app) as (port, log, errors):
-        for selected in ({'a' * 40: record}, {'b' * 40: record}, {'a' * 40: replacement}):
-            submission = document(package, selected)
-            code, _, reply = http_request(port, '/result/' + name, method='POST',
-                                          body=role_body(app, submission))
-            assert code == 200, reply
-            expected.update(selected)
-            code, _, data = http_request(port, '/result/' + name)
-            assert code == 200 and data == encode(document(package, expected))
-            assert json.loads(reply) == dict(status='stored', run_id=package['manifest']['run_id'],
-                                            source_chunk=name, result_checksum=digest(data))
-            code, _, exported = http_request(port, '/export')
-            assert code == 200
-            with zipfile.ZipFile(io.BytesIO(exported)) as archive:
-                assert archive.read('results/' + name) == data
-        assert http_request(port, '/result/' + name, method='POST', body=b'{}')[0] == 400
-        assert http_request(port, '/result/' + name)[2] == data
-    log.unlink()
-    with running(app) as (port, log, errors):
-        assert http_request(port, '/result/' + name)[2] == data
-    blobs = list(Path(str(app) + '.results').glob('runs/*/commits/*/*/*.json'))
-    assert blobs and not (Path(str(app) + '.results') / name).exists()

@@ -47,18 +47,18 @@ def test_version_endpoint_is_portable_authenticated_and_discoverable(app, packag
     source.unlink()
     with running(target, auth=auth) as (port, log, errors):
         if auth:
-            assert request(port, '/api/version')[0] == 401
+            assert request(port, '/v1/version')[0] == 401
         token = basic(auth) if auth else None
-        code, headers, raw = request(port, '/api/version?limit=1&offset=999', authorization=token)
+        code, headers, raw = request(port, '/v1/version?limit=1&offset=999', authorization=token)
         assert code == 200 and headers['Content-Type'] == 'application/json'
         assert int(headers['Content-Length']) == len(raw)
         assert json.loads(raw) == expected
         assert expected['tool_version'] != bundle['pipeline_version']
-        catalog = json.loads(request(port, '/api', authorization=token)[2])
-        route = next(r for r in catalog['routes'] if r['method'] == 'GET' and r['path'] == '/api/version')
+        catalog = json.loads(request(port, '/v1/api', authorization=token)[2])
+        route = next(r for r in catalog['routes'] if r['method'] == 'GET' and r['path'] == '/v1/version')
         assert route['response_content_type'] == 'application/json'
         assert 'query_parameters' not in route
-        assert request(port, '/api/version/extra', authorization=token)[0] == 404
+        assert request(port, '/v1/version/extra', authorization=token)[0] == 404
 
 
 @pytest.mark.parametrize('value', [None, '', ' ', True, 3, []])

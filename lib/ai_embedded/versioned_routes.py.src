@@ -6,7 +6,7 @@ import zipfile
 
 from . import server as base
 from .canonical import (ROLES, CanonicalStore, assemble_contributions, record_path,
-                        record_schema, role_schema, validate_role_document, validate_record)
+                        record_schema, role_schema, validate_role_document)
 from .planning import PlanCache, source_document
 from .result_store import _decode, _encode
 
@@ -28,6 +28,8 @@ def response_schemas():
             authentication=obj(required=dict(type='boolean'), scheme=dict(type=['string', 'null'])),
             response_schemas=dict(type='object'), error_responses=dict(type='object'),
             schemas=dict(type='object', additionalProperties=text)),
+        'versioned_contract': obj(run_id=identity, assets=dict(type='object', additionalProperties=obj(
+            url=text, checksum=identity, bytes=dict(type='integer', minimum=0)))),
         'versioned_role_ack': obj(status=dict(const='valid'), run_id=identity,
             role=dict(enum=list(ROLES))),
         'versioned_workflow_ack': obj(status=dict(const='valid'), run_id=identity, commits=selection),
@@ -45,59 +47,132 @@ def reply(self, value):
     self.send_bytes(_encode(value))
 
 
+def prefix_for(self):
+    return '/' + self.path.split('?', 1)[0].split('/')[1]
+
+
 def catalog(self):
-    prefix = '/' + self.path.split('?', 1)[0].split('/')[1]
-    entries = [copy.deepcopy({key: value for key, value in item.items() if key not in ('handler', 'matcher')})
-               for item in base.ROUTES if item['path'] == prefix or item['path'].startswith(prefix + '/')]
-    for entry in entries:
+    """Describe this API completely from its executable route registry."""
+    prefix = prefix_for(self)
+    groups = ['discovery', 'contract', 'sources', 'validation', 'results', 'other']
+    entries = []
+    choices = dict(prompts=prompt_names(), schemas=sorted(EXPOSED), roles=list(ROLES),
+                   chunks=sorted(base.NAMES), shas=sorted(base.SOURCE_INDEX.records))
+    for item in base.ROUTES:
+        if not item['path'].startswith(prefix + '/') or not callable(getattr(type(self), 'do_' + item['method'], None)):
+            continue
+        entry = copy.deepcopy({key: value for key, value in item.items() if key not in ('handler', 'matcher')})
+        entry.setdefault('group', 'other')
+        entry.setdefault('order', 0)
+        entry['description'] = entry.get('description') or (item['handler'].__doc__ or '').strip()
         if self.server.auth_credentials is not None:
             entry['responses']['401'] = {'$ref': '#/error_responses/401'}
         if entry.get('request_content_type'):
             entry['request_body'] = dict(required=True, content_type=entry['request_content_type'],
-                                         schema={'$ref': entry['request_schema']})
+                description='Supply the complete JSON document in the POST body, not a filename or source delivery name.',
+                schema={'$ref': entry['request_schema']})
+        sources = entry.pop('parameter_sources', {})
+        entry['path_parameters'] = {}
+        url = entry['path']
+        for name in entry['parameters']:
+            kind = sources.get(name, 'shas' if name == 'sha' else None)
+            values = choices.get(kind, [])
+            value = 'analyst' if kind in ('roles', 'prompts') and 'analyst' in values else next(iter(values), None)
+            spec = dict(type='string', description='Select a value from this API; never substitute a delivery identity for an analysis identity.', example=value)
+            if kind in ('roles', 'prompts', 'schemas'):
+                spec['enum'] = list(values)
+            entry['path_parameters'][name] = spec
+            if value is not None:
+                url = url.replace('<' + name + '>', base.urllib.parse.quote(value, safe='/'))
+        entry['examples'] = []
+        if '<' not in url:
+            entry['examples'].append(dict(method=entry['method'], url=url))
+            if entry.get('query_parameters'):
+                entry['examples'].append(dict(method=entry['method'], url=url + '?limit=1&offset=0'))
+        entries.append(entry)
+    entries.sort(key=lambda item: (groups.index(item['group']), item['order'], item['path'], item['method']))
     reply(self, dict(run_id=RUN_ID, routes=entries, planning_defaults=PLANS.defaults,
                     authentication=dict(required=self.server.auth_credentials is not None,
                         scheme='Basic' if self.server.auth_credentials is not None else None),
-                    error_responses=base.error_responses(),
-                    response_schemas=base.RESPONSE_SCHEMAS,
+                    error_responses=base.error_responses(), response_schemas=base.RESPONSE_SCHEMAS,
                     schemas={name: prefix + '/schema/' + name for name in sorted(EXPOSED)}))
 
 
+def version(self):
+    """Report the tool version captured when this package was generated."""
+    reply(self, base.SERVER_VERSION)
+
+
+def prompt_names():
+    return sorted(name.split('/')[1][:-3] for name in base.CONTRACT if name.startswith('prompts/'))
+
+
+def asset_bytes(path):
+    """Use exactly the exposed API schemas when composing a role prompt."""
+    if path.startswith('schemas/'):
+        name = path.split('/')[1][:-5]
+        if name in EXPOSED:
+            return _encode(EXPOSED[name])
+    return base.ARCHIVE.read('ai_contract/' + path)
+
+
+def prompt_bytes(name):
+    if name in base.BODY_SCHEMAS:
+        return base.build_prompt_body(name, asset_bytes)
+    return base.ARCHIVE.read('ai_contract/prompts/' + name + '.md')
+
+
+def prompt(self, name):
+    """Read role instructions and exact input/output schemas; extra prompts are served unchanged."""
+    if name not in prompt_names():
+        self.send_error(404)
+        return
+    self.send_bytes(prompt_bytes(name))
+
+
+def contract(self):
+    """Discover this API's effective documents with exact served-byte checksums."""
+    prefix = prefix_for(self)
+    assets = {}
+    for name in prompt_names():
+        raw = prompt_bytes(name)
+        assets['prompts/' + name + '.md'] = dict(url=prefix + '/prompt/' + name,
+                                               checksum=base.checksum(raw), bytes=len(raw))
+    for name in sorted(EXPOSED):
+        raw = _encode(schema_value(name, prefix))
+        assets['schemas/' + name + '.json'] = dict(url=prefix + '/schema/' + name,
+                                                 checksum=base.checksum(raw), bytes=len(raw))
+    reply(self, dict(run_id=RUN_ID, assets=assets))
+
+
+def schema_value(name, prefix):
+    value = copy.deepcopy(EXPOSED[name])
+    if name == 'workflow':
+        value['properties'] = {role: {'$ref': prefix + '/schema/' + role} for role in ROLES}
+    return value
+
+
 def schema(self, name):
+    """Read effective schemas; workflow references stay within this API version."""
     if name not in EXPOSED:
         self.send_error(404)
         return
-    value = EXPOSED[name]
-    if name == 'workflow':
-        prefix = '/' + self.path.split('/')[1]
-        value = dict(value, properties={role: {'$ref': prefix + '/schema/' + role} for role in ROLES})
-    reply(self, value)
+    reply(self, schema_value(name, prefix_for(self)))
 
 
-def stored_records(shas=None, legacy_only=False):
-    """Read canonical findings first; validate legacy chunks once per selection."""
+def stored_records(shas=None):
+    """Read canonical findings without migration or write side effects."""
     selected = base.SOURCE_INDEX.select(list(base.SOURCE_INDEX.records) if shas is None else shas)
-    records, missing = {}, {}
+    records = {}
     for sha in selected:
         data = STORE.get(sha)
-        if data is None:
-            missing.setdefault(base.SOURCE_INDEX.chunk_for(sha), []).append(sha)
-        elif not legacy_only:
+        if data is not None:
             records[sha] = _decode(data)
-    for name in sorted(missing):
-        data = base.RESULT_STORE.read_chunk(name)
-        if data is None:
-            continue
-        assessments = _decode(data)['results']
-        for sha in missing[name]:
-            if sha in assessments:
-                value = dict(run_id=RUN_ID, commit=sha, assessment=assessments[sha])
-                validate_record(value, base.SOURCE_INDEX, SCHEMAS['result'], RUN_ID, sha)
-                records[sha] = value
     return records
 
 
 def contributions(self):
+    """Validate exactly three role documents from the POST body; publish per-commit records only on /result."""
     try:
         _, document = self.read_json()
         records = assemble_contributions(document, base.SOURCE_INDEX, SCHEMAS, RUN_ID)
@@ -109,14 +184,13 @@ def contributions(self):
         reply(self, dict(status='valid', run_id=RUN_ID, commits=sorted(records)))
     else:
         with STORE._lock:
-            merged = stored_records(legacy_only=True)
-            merged.update(records)
-            published = STORE.put_many(merged)
+            published = STORE.put_many(records)
         receipts = {sha: published[sha] for sha in sorted(records)}
         reply(self, dict(status='stored', run_id=RUN_ID, results=receipts))
 
 
 def validate_role(self, role):
+    """Validate one role document from the POST body without storing or correcting it."""
     if role not in ROLES:
         self.send_error(404)
         return
@@ -131,6 +205,7 @@ def validate_role(self, role):
 
 
 def result(self, sha):
+    """Retrieve an accepted canonical record by full commit SHA; 404 if unassessed."""
     try:
         base.SOURCE_INDEX.chunk_for(sha)
     except ValueError:
@@ -144,11 +219,13 @@ def result(self, sha):
 
 
 def chunks(self):
+    """List packaged v1 delivery URLs without changing analysis identity."""
     reply(self, dict(run_id=RUN_ID, chunks=[dict(name=name, url='/v1/chunk/' + name)
-                                          for name in sorted(base.NAMES)]))
+                                          for name in base.listing_page(self.path, sorted(base.NAMES))]))
 
 
 def chunk(self, name):
+    """Read a packaged selection as a grouping-independent source document."""
     if name not in base.NAMES:
         self.send_error(404)
         return
@@ -157,6 +234,7 @@ def chunk(self, name):
 
 
 def plan(self):
+    """Create or reuse a bounded v2 delivery plan without publishing findings."""
     try:
         _, document = self.read_json()
         value = PLANS.get(document)
@@ -168,6 +246,7 @@ def plan(self):
 
 
 def planned(self, plan_id, group_id=None):
+    """Read a cached plan or source group; unknown IDs return 404."""
     value = PLANS.cached(plan_id)
     if value is not None:
         if group_id is None:
@@ -181,6 +260,7 @@ def planned(self, plan_id, group_id=None):
 
 
 def export(self):
+    """Export provenance and accepted canonical findings as a deterministic ZIP."""
     members = {'ai_analysis_bundle_manifest.json': base.ARCHIVE.read('ai_analysis_bundle_manifest.json')}
     members.update({'ai_contract/' + name: base.ARCHIVE.read('ai_contract/' + name)
                     for name in base.CONTRACT})
@@ -198,10 +278,12 @@ def export(self):
 
 
 def install():
-    """Install once for new packages; retain legacy-only startup for older packages."""
+    """Install exactly two self-contained APIs for newly generated packages."""
     global STORE, PLANS
-    if RUN_ID is None or STORE is not None:
+    if STORE is not None:
         return
+    if RUN_ID is None:
+        raise ValueError("A grouping-independent analysis_id is required")
     SCHEMAS.update({role: json.loads(base.ARCHIVE.read('ai_contract/schemas/' + role + '.json'))
                     for role in ROLES + ('result',)})
     EXPOSED.update({role: role_schema(SCHEMAS[role]) for role in ROLES})
@@ -217,7 +299,11 @@ def install():
     source['required'] = ['run_id', 'commits']
     source['properties'] = {key: source['properties'][key] for key in source['required']}
     source['additionalProperties'] = False
+    source['description'] = 'Trusted analysis identity and selected source commits; delivery groups are not identities.'
     EXPOSED['input'] = source
+    for path in base.CONTRACT:
+        if path.startswith('schemas/'):
+            EXPOSED.setdefault(path.split('/')[1][:-5], json.loads(base.ARCHIVE.read('ai_contract/' + path)))
     store = CanonicalStore(base.RESULTS, base.SOURCE_INDEX, SCHEMAS['result'], RUN_ID)
     plans = PlanCache(base.SOURCE_INDEX, RUN_ID, base.MANIFEST.get('planning'))
     STORE, PLANS = store, plans
@@ -225,11 +311,16 @@ def install():
     post = dict(request_content_type='application/json', min_body_bytes=1,
                 max_body_bytes=base.MAX_RESULT_BYTES)
     for prefix in ('/v1', '/v2'):
-        base.route('GET', prefix, group='discovery',
-                   response_schema='#/response_schemas/versioned_catalog')(catalog)
         base.route('GET', prefix + '/api', group='discovery',
                    response_schema='#/response_schemas/versioned_catalog')(catalog)
+        base.route('GET', prefix + '/version', group='discovery',
+                   response_schema='#/response_schemas/version')(version)
+        base.route('GET', prefix + '/contract', group='contract',
+                   response_schema='#/response_schemas/versioned_contract')(contract)
+        base.route('GET', prefix + '/prompt/<name>', 'text/markdown; charset=utf-8',
+                   group='contract', parameter_sources={'name': 'prompts'})(prompt)
         base.route('GET', prefix + '/schema/<name>', group='contract',
+                   parameter_sources={'name': 'schemas'},
                    response_schema='https://json-schema.org/draft/2020-12/schema')(schema)
         base.route('POST', prefix + '/validate/role/<role>', group='validation',
                    roles=list(ROLES), parameter_sources={'role': 'roles'}, writes_results=False,
@@ -244,7 +335,7 @@ def install():
         base.route('GET', prefix + '/result/<sha>', group='results',
                    response_schema=prefix + '/schema/result')(result)
         base.route('GET', prefix + '/export', 'application/zip', group='results')(export)
-    base.route('GET', '/v1/chunks', group='sources',
+    base.route('GET', '/v1/chunks', group='sources', query_parameters=base.LIST_QUERY_PARAMETERS,
                response_schema='#/response_schemas/versioned_chunks')(chunks)
     base.route('GET', '/v1/chunk/<name>', group='sources',
                response_schema='/v1/schema/input', parameter_sources={'name': 'chunks'})(chunk)

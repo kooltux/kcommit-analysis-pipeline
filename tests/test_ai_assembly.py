@@ -1,74 +1,63 @@
-"""Submission assembles, stores and returns an exact-byte checksum receipt."""
+"""Canonical assembly preserves specialist values and advisory review proposals."""
 import copy
 import json
-
+from pathlib import Path
 import pytest
-
-from lib.ai_contract import digest, encode
-from test_ai_package_server import app, package, snapshots, workflow
+from lib.ai_contract import digest
+from test_ai_package_server import app, package, snapshots
 from test_ai_server_runtime import basic, request, running
-
+from test_ai_versioned_runtime import contributions, post
 
 @pytest.mark.parametrize('auth', [None, 'reviewer:secret'])
 @pytest.mark.parametrize('mode', ['complete', 'partial', 'disagree'])
-def test_submission_receipt_and_preservation(app, workflow, auth, mode):
-    name, documents = workflow
+def test_submission_receipt_and_preservation(app, package, auth, mode):
+    documents = contributions(package)
     if mode == 'partial':
-        for document in documents.values():
-            document['results'] = {}
-        documents['result'].update(analysis_status='partial', analyzed_commits=0)
-    elif mode == 'disagree':
-        for role in ('reviewer', 'result'):
-            for record in documents[role]['results'].values():
-                record.update(rv_agreement='disagree',
-                    rv_notes=['ai_summary: [strong] - evidence -> changed (evidence)'],
-                    rv_recommendation=['ai_summary: use changed'])
-    inputs = {role: documents[role] for role in ('analyst', 'cve', 'reviewer')}
+        for doc in documents.values():
+            doc['results'].pop('b' * 40)
+    if mode == 'disagree':
+        for item in documents['reviewer']['results'].values():
+            item.update(rv_agreement='disagree', rv_notes=['ai_summary: [strong] - Manual assessment -> changed (evidence)'], rv_recommendation=['ai_summary: use changed'])
+    token = basic(auth) if auth else None
     with running(app, auth=auth) as (port, log, errors):
-        token = basic(auth) if auth else None
-        path = '/result/' + name
-        if auth:
-            assert request(port, path, method='POST', body=encode(inputs))[0] == 401
         for attempt in range(2):
-            status, _, body = request(port, path, method='POST', body=encode(inputs), authorization=token)
-            assert status == 200, body
-            stored = request(port, path, authorization=token)[2]
-            assert stored == encode(documents['result'])
-            assert json.loads(body) == dict(status='stored', source_chunk=name,
-                run_id=documents['result']['run_id'], result_checksum=digest(stored))
-        routes = json.loads(request(port, '/api', authorization=token)[2])['routes']
-        assert not any(entry['path'].startswith(('/metadata', '/assemble')) for entry in routes)
-        for removed in ('/metadata/' + name, '/assemble/' + name):
-            assert request(port, removed, authorization=token)[0] == 404
-            assert request(port, removed, method='POST', body=b'{}', authorization=token)[0] == 404
+            code, _, raw = post(port, '/v1/result', documents, token)
+            assert code == 200, raw
+            receipts = json.loads(raw)['results']
+            assert set(receipts) == set(documents['analyst']['results'])
+            for sha, checksum in receipts.items():
+                data = request(port, '/v2/result/' + sha, authorization=token)[2]
+                assert digest(data) == checksum
+                expected = {key: value for doc in documents.values() for key, value in doc['results'][sha].items()}
+                assert json.loads(data) == dict(run_id=package['manifest']['analysis_id'], commit=sha, assessment=expected)
+        if mode == 'partial':
+            assert request(port, '/v2/result/' + 'b' * 40, authorization=token)[0] == 404
 
-
-@pytest.mark.parametrize('problem', ['legacy', 'four_documents', 'missing', 'extra', 'identity', 'field', 'coverage'])
-def test_invalid_submission_cannot_create_or_replace_results(app, workflow, problem):
-    name, documents = workflow
-    inputs = {role: documents[role] for role in ('analyst', 'cve', 'reviewer')}
-    invalid = copy.deepcopy(inputs)
-    if problem == 'legacy':
-        invalid = documents['result']
-    elif problem == 'four_documents':
-        invalid = documents
+@pytest.mark.parametrize('problem', ['four_documents', 'missing', 'extra', 'identity', 'field', 'coverage', 'transport'])
+def test_invalid_submission_cannot_replace_results(app, package, problem):
+    valid = contributions(package)
+    bad = copy.deepcopy(valid)
+    if problem == 'four_documents':
+        bad['result'] = {}
     elif problem == 'missing':
-        del invalid['cve']
+        del bad['cve']
     elif problem == 'extra':
-        invalid['metadata'] = {}
+        bad['metadata'] = {}
     elif problem == 'identity':
-        invalid['analyst']['run_id'] = 'f' * 64
+        bad['analyst']['run_id'] = 'f' * 64
     elif problem == 'field':
-        next(iter(invalid['analyst']['results'].values()))['ai_is_bug_fix'] = 'yes'
+        bad['analyst']['results']['a' * 40]['ai_is_bug_fix'] = 'yes'
+    elif problem == 'transport':
+        bad['analyst']['source_chunk'] = 'batch_001/001.json'
     else:
-        invalid['analyst']['results'] = {}
+        bad['analyst']['results'] = {}
+    root = Path(str(app) + '.results')
     with running(app) as (port, log, errors):
-        path = '/result/' + name
-        assert request(port, path, method='POST', body=encode(invalid))[0] == 400
-        assert request(port, path)[0] == 404
-        assert not app.with_name(app.name + '.results').exists()
-        assert request(port, path, method='POST', body=encode(inputs))[0] == 200
-        original = request(port, path)[2]
-        assert request(port, path, method='POST', body=encode(invalid))[0] == 400
-        assert request(port, path)[2] == original
-        assert request(port, '/result/batch_999/999.json', method='POST', body=b'{}')[0] == 404
+        for populated in (False, True):
+            if populated:
+                assert post(port, '/v1/result', valid)[0] == 200
+            before = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            for prefix in ('/v1', '/v2'):
+                for endpoint in ('/result', '/validate/workflow'):
+                    assert post(port, prefix + endpoint, bad)[0] == 400
+            assert {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()} == before

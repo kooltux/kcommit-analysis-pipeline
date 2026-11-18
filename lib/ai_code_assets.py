@@ -7,7 +7,6 @@ ASSET_LAYOUT = {
     'package': ('package.py.src', 'kcap_ai_runtime/__init__.py'),
     'server': ('server.py.src', 'kcap_ai_runtime/server.py'),
     'workflow': ('workflow.py.src', 'kcap_ai_runtime/workflow.py'),
-    'contract_routes': ('contract_routes.py.src', 'kcap_ai_runtime/contract_routes.py'),
     'validation': ('validation.py.src', 'kcap_ai_runtime/validation.py'),
     'prompt_body': ('prompt_body.py.src', 'kcap_ai_runtime/prompt_body.py'),
     'source_contract': ('source_contract.py.src', 'kcap_ai_runtime/source_contract.py'),

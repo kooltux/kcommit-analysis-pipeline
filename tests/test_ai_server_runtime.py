@@ -163,7 +163,7 @@ def test_defaults(namespace):
 def test_foreground_aliases(app, namespace, flag):
     assert namespace['build_parser']().parse_args([flag]).no_daemon
     with running(app, flag=flag) as (port, log, stderr):
-        assert request(port, '/chunks')[0] == 200
+        assert request(port, '/v1/chunks')[0] == 200
         assert_access_count(log, 1)
         assert 'WARNING: authentication disabled' in log.read_text()
         assert stderr.read_text() == ''
@@ -183,10 +183,10 @@ def test_colon_password(namespace):
 
 def test_all_endpoints_require_auth_and_log_once(app):
     credentials = 'test-user:secret:password'
-    cases = [('GET', '/prompt/analyst'), ('GET', '/schema/input'), ('GET', '/schema/result'),
-             ('GET', '/chunks'), ('GET', '/chunk/batch_001/001.json'), ('GET', '/result/batch_001/001.json'),
-             ('POST', '/result/batch_001/001.json'), ('GET', '/export'), ('HEAD', '/chunks'),
-             ('POST', '/chunks')]
+    cases = [('GET', '/v1/prompt/analyst'), ('GET', '/v1/schema/input'), ('GET', '/v1/schema/result'),
+             ('GET', '/v1/chunks'), ('GET', '/v1/chunk/batch_001/001.json'), ('GET', '/v1/result'),
+             ('POST', '/v1/result'), ('GET', '/v1/export'), ('HEAD', '/v1/chunks'),
+             ('POST', '/v1/chunks')]
     with running(app, auth=credentials) as (port, log, stderr):
         for method, path in cases:
             status, headers, body = request(port, path, method=method)
@@ -196,11 +196,11 @@ def test_all_endpoints_require_auth_and_log_once(app):
             else:
                 assert json.loads(body)['error']['code'] == 'authentication_failed'
         for header in [basic('test-user:wrong'), 'Basic !!!', 'Bearer token', 'Basic']:
-            assert request(port, '/chunks', authorization=header)[0] == 401
-        assert request(port, '/chunks?limit=1', authorization=basic(credentials))[0] == 200
-        assert request(port, '/chunks?token=do-not-log', authorization=basic(credentials))[0] == 400
+            assert request(port, '/v1/chunks', authorization=header)[0] == 401
+        assert request(port, '/v1/chunks?limit=1', authorization=basic(credentials))[0] == 200
+        assert request(port, '/v1/chunks?token=do-not-log', authorization=basic(credentials))[0] == 400
         assert request(port, '/missing', authorization=basic(credentials))[0] == 404
-        assert request(port, '/result/batch_001/001.json', method='POST', body=b'{}',
+        assert request(port, '/v1/result', method='POST', body=b'{}',
                        authorization=basic(credentials))[0] == 400
         assert_access_count(log, len(cases) + 8)
         assert not Path(str(app) + '.results').exists()
@@ -209,28 +209,13 @@ def test_all_endpoints_require_auth_and_log_once(app):
             assert secret not in text
 
 
-def test_valid_upload_and_export(app):
-    with zipfile.ZipFile(app) as archive:
-        manifest = json.loads(archive.read('ai_analysis_bundle_manifest.json'))
-    payload = json.dumps({'schema_version': '1.0', 'run_id': manifest['run_id'],
-        'source_chunk': 'batch_001/001.json', 'input_checksum': manifest['chunks']['batch_001/001.json'],
-        'input_schema_checksum': manifest['input_schema_checksum'], 'output_schema_checksum': manifest['output_schema_checksum'],
-        'total_commits': 0, 'analyzed_commits': 0, 'analysis_status': 'complete', 'results': {}},
-        sort_keys=True, separators=(',', ':')).encode() + b'\n'
-    with running(app, auth='user:password') as (port, log, stderr):
-        authorization = basic('user:password')
-        assert request(port, '/result/batch_001/001.json', method='POST', body=role_body(app, payload),
-                       authorization=authorization)[0] == 200
-        assert request(port, '/result/batch_001/001.json', authorization=authorization)[2] == payload
-        assert request(port, '/export', authorization=authorization)[0] == 200
-        assert_access_count(log, 3)
 
 
 def test_log_appends(app):
     log = app.parent / 'access.log'
     log.write_text('sentinel\n')
     with running(app) as (port, log, stderr):
-        assert request(port, '/chunks')[0] == 200
+        assert request(port, '/v1/chunks')[0] == 200
     assert log.read_text().startswith('sentinel\n')
 
 
@@ -273,7 +258,7 @@ def test_startup_failures_do_not_detach(app):
 @pytest.mark.skipif(not hasattr(os, 'fork'), reason='Unix daemon lifecycle')
 def test_daemon_lifecycle(app):
     with running(app, daemon=True, auth='user:password') as (port, log, stderr):
-        assert request(port, '/chunks', authorization=basic('user:password'))[0] == 200
+        assert request(port, '/v1/chunks', authorization=basic('user:password'))[0] == 200
         assert_access_count(log, 1)
     with socket.socket() as sock:
         wait_until(lambda: sock.connect_ex(('127.0.0.1', port)) != 0)
@@ -297,7 +282,7 @@ def test_front_page_routes(app, auth):
 @pytest.mark.parametrize('flag', ['-d', '--debug', '--no-daemon'])
 def test_foreground_without_file_uses_only_stderr(app, flag):
     with running(app, flag=flag, file_logging=False) as (port, log, stderr):
-        assert request(port, '/chunks')[0] == 200
+        assert request(port, '/v1/chunks')[0] == 200
         assert log == stderr
         assert_access_count(log, 1)
         assert 'WARNING: authentication disabled' in stderr.read_text()
@@ -346,12 +331,12 @@ def test_wildcard_connection_url(namespace):
 def test_request_completion_logs(app):
     with running(app, auth='user:secret') as (port, log, stderr):
         token = basic('user:secret')
-        assert request(port, '/chunks?limit=1', authorization=token)[0] == 200
-        assert request(port, '/chunks?secret=hidden', authorization=token)[0] == 400
-        assert request(port, '/chunks')[0] == 401
+        assert request(port, '/v1/chunks?limit=1', authorization=token)[0] == 200
+        assert request(port, '/v1/chunks?secret=hidden', authorization=token)[0] == 400
+        assert request(port, '/v1/chunks')[0] == 401
         assert request(port, '/missing', authorization=token)[0] == 404
-        assert request(port, '/chunks', method='DELETE', authorization=token)[0] == 501
-        assert request(port, '/result/batch_001/001.json', method='POST', body=b'{}', authorization=token)[0] == 400
+        assert request(port, '/v1/chunks', method='DELETE', authorization=token)[0] == 501
+        assert request(port, '/v1/result', method='POST', body=b'{}', authorization=token)[0] == 400
         assert_access_count(log, 6)
         lines = access_lines(log)
         for status, reason, line in zip([200, 400, 401, 404, 501, 400],
@@ -376,7 +361,7 @@ def test_exception_logs_once(namespace, monkeypatch, failure, reason):
     def perform(self):
         self.raw_requestline = b'GET /chunks HTTP/1.0'
         self.command = 'GET'
-        self.path = '/chunks'
+        self.path = '/v1/chunks'
         if failure == 'timeout':
             self.log_message('Request timed out: %r', TimeoutError())
         elif failure == 'disconnect':
@@ -391,17 +376,6 @@ def test_exception_logs_once(namespace, monkeypatch, failure, reason):
     assert 'sensitive' not in records[0]
 
 
-def test_internal_error_returns_500_and_logs_once(app):
-    results = Path(str(app) + '.results')
-    with zipfile.ZipFile(app) as archive:
-        name = next(iter(json.loads(archive.read('ai_analysis_bundle_manifest.json'))['chunks']))
-    target = results / name
-    target.parent.mkdir(parents=True)
-    target.write_text('invalid JSON')
-    with running(app) as (port, log, stderr):
-        assert request(port, '/export')[0] == 500
-        wait_until(lambda: len(access_lines(log)) == 1)
-        assert 'reason=internal_error' in access_lines(log)[0]
 
 
 def test_malformed_request_logged_once(app):

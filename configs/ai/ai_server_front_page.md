@@ -1,277 +1,129 @@
-# Kernel commit analysis API
+# Kernel commit analysis: two APIs
 
 ## 1. For human readers
 
-This server shares kernel commit analysis inputs and accepts validated results.
-It serves instructions, JSON schemas, and source chunks, stores assessments,
-and provides an export ZIP. It does not perform the analysis itself.
+This server shares selected kernel commit evidence and accepts validated advisory
+findings. It does not run AI models, approve backports, or change pipeline scores.
+Human reviewers, AI clients and CI jobs start here and choose one live catalog:
 
-This reference is for human reviewers, AI clients, and CI jobs. Assessment
-instructions live in `/prompt/<name>` assets listed by `/contract`; schemas define exact data contracts.
+- [GET /v1/api](/v1/api): source selections delivered in packaged chunks.
+- [GET /v2/api](/v2/api): source selections delivered through bounded cached plans.
 
-### Batch navigation
+These are the only API-definition endpoints. Bare `/v1` and `/v2` are not catalogs.
+Unversioned API paths return HTTP 404; there are no aliases or redirects. This
+readable guide at `/` is the only unversioned document. Each catalog is generated
+from the executable route registry rather than a second endpoint table.
 
-`GET /batches` lists batches and `/batch/<batch_id>` lists their canonical chunk
-names and endpoint paths. `/chunks` remains the complete URL listing. `ai.batch_size` counts chunks per
-folder (default 10); `ai.chunk_size` counts commits per chunk (default 100).
-Preserve paths such as `batch_002/011.json` in `source_chunk` and result URLs.
-Process every chunk in an assigned batch, submitting a separate result per chunk.
+Each API is self-contained. Use its `/contract`, `/prompt/<name>`, `/schema/<name>`,
+`/version`, validation, result and export URLs. For example, `/v1/prompt/analyst`
+and `/v2/prompt/analyst` provide the same role instructions and effective schemas.
+Stay within the chosen prefix. A contract checksum/byte count identifies the exact
+served document, including schemas appended to complete role prompts. Original
+archive schema assets are provenance, not replacements for effective HTTP schemas.
 
-Optional `limit` and `offset` apply only to `/batches`, `/chunks`, and
-`/batch/<batch_id>`. An absent or zero `limit` means unlimited; an absent `offset`
-means zero. Supplied values must be nonnegative integers and occur exactly once.
-Empty, malformed, negative, repeated or unknown query parameters return HTTP 400;
-they never silently expand the work selection. Offset is applied first in existing
-order; out-of-range offsets return empty lists. No source work is changed.
-`/batches?limit=2` selects two complete batches; `/chunks?limit=5&offset=10`
-selects five chunks after skipping ten. `/batch/batch_002?limit=3` selects three
-chunks in that batch; omit both parameters to retry the complete batch.
-Each `/batch/<batch_id>` entry in `chunks` contains exactly:
-- `name`: canonical identity, for example `batch_001/002.json`.
-- `path`: original-byte URL path, for example `/chunk/batch_001/002.json`.
-- `result_path`: submission/retrieval URL path, for example `/result/batch_001/002.json`.
+### Source selection
 
-Build context requests as `"/context/" + item.name`. Use `item.path` and
-`item.result_path` directly; never prepend `/context/` to `item.path`.
-Use `item.name` as `source_chunk` in role documents. This replaces the old
-`chunk` and `result` keys; migrate clients and regenerate/restart the package.
-There is no separate `results` array. Pagination keeps each complete entry together.
-Result URLs exist in discovery even before upload. Totals remain full-collection values, and
-`/api` always returns the complete catalog, even with pagination parameters.
+For v1, retrieve `/v1/chunks`, preserve the selected entries and fetch each entry's
+`url` directly. The listing supports `limit` and `offset`: absent/zero limit is
+unlimited. Both values must be nonnegative integers supplied once. Unknown,
+repeated, empty or malformed parameters return HTTP 400 rather than expanding work.
 
-### Access and scope
+For v2, POST a JSON object to `/v2/plan`, optionally selecting full commit SHAs and
+positive `max_commits`/`max_bytes`. Use returned `plan_id` and `group_id` at
+`/v2/plan/<plan_id>/<group_id>`. Plans are deterministic, cached and bounded;
+evicted or unknown plans return HTTP 404. Recreate the plan when needed.
+Oversized commits are rejected, not truncated. Source-byte limits do not establish
+model token/context feasibility.
 
-GET requests are read-only. POST to `/result/<name>` replaces the stored result;
-POST to validation gates checks documents without storing them.
-When authentication is enabled, use the operator-provided credentials; browsers
-can use the HTTP login prompt. Assessments remain advisory. This server is an
-exchange interface, not an autonomous reviewer or a backport approval system.
-
-### Live API discovery
-
-Human readers, AI clients and CI jobs should retrieve `GET /api` for the live
-JSON API catalog. It is generated from the same executable route registry that
-dispatches requests, using handler docstrings and effective route contracts.
-It describes methods, paths, parameters, content types, schema links and upload
-limits. Authentication status comes from the running server; no credentials
-are exposed. `/api` requires authentication whenever the server enables it.
-Each route's `responses` maps HTTP status strings to descriptions, content types,
-schemas and illustrative examples when provided. Resolve catalog-local `$ref`
-values against this `/api` document: `#/response_schemas/...` defines shared body
-schemas and `#/error_responses/...` defines shared error responses. Existing
-`/schema/...` references still identify assessment/input schemas, not acknowledgements.
-`protocol_responses` lists shared routing/protocol errors. Authentication errors
-appear on routes only when enabled; errors always use application/json, including
-for Markdown/ZIP endpoints. ZIP success bodies are marked binary, not JSON.
-Validation returns status valid without storing anything; upload returns status ok.
-Examples are illustrative, not real validation tickets or trusted source metadata.
-JSON and Markdown responses can be requested as plain text with `Accept: text/plain`
-(listed as `alternative_content_types` in the catalog): the body is identical and only
-the media type changes. A default-type entry with an equal or higher q keeps the default;
-ZIP downloads and errors are never converted.
-This guide explains usage; it does not maintain a second endpoint catalog.
-
-The catalog orders routes by discovery/guide, contract assets, source work,
-validation, then results/export. Each entry has a group and order, path-parameter
-descriptions/examples, and concrete request examples using this package's IDs.
-Role values come from the selected assets or the validation route's role contract.
-Example objects contain only `method` and `url`, including concrete path/query
-parameters. They contain no curl commands, body filenames, schemas or extra notes.
-Read the separate `request_body` contract for POST payload requirements; the
-method/URL example alone is not a complete request. Role validation requires the
-complete role JSON document in the body, conforming to `/schema/<role>` with the
-URL role substituted. Workflow validation requires an object with exactly four
-complete documents: `analyst`, `cve`, `reviewer` and `result`; each has its own schema
-link. Neither validation endpoint runs an AI model or looks up saved role outputs.
-GET result examples may return 404 until an assessment has been uploaded.
-
-### Trusted metadata
-
-Use `/context/<name>` for the source chunk selected from `/chunks` or `/contract`.
-It returns trusted `envelope` fields and the parsed `chunk`. Compact role documents
-contain exactly `run_id`, `source_chunk`, `role` and `results`; do not add transport
-checksums, counts or status. The server derives the full final envelope.
-The input checksum hashes exact archived bytes from `/chunk/<name>`, not context JSON.
-`/schema/result` describes the stored final document. Its output schema checksum
-identifies the final result schema, never a role-specific schema.
-
-`GET /api/version` reports `tool_version`, captured from the generating tool's
-`MANIFEST.json`, with `version_source` and `captured_at` provenance. The version
-is embedded in the zipapp, remains unchanged when the repository changes, and
-does not require repository access at runtime. It is separate from the input
-bundle's `pipeline_version`; normal authentication applies and it is not paginated.
+Both delivery forms return exactly `run_id` and `commits`. The run identity belongs
+to the analysis, not a chunk or plan. Changing groups does not change accepted
+records. Never expand an operator's restricted selection automatically.
 
 ## 2. For AI clients
 
 ### Context and task
 
-You are the analysis client, not the server. Your task is to assess the supplied
-kernel commits under the selected `/prompt/<name>` instructions, using available
-evidence. Analyst returns `/schema/analyst`, CVE expert returns `/schema/cve`,
-and Reviewer returns `/schema/reviewer`; server assembly returns `/schema/result`.
-This API guide explains access and submission; it does not replace those
-assessment instructions.
-Do not infer that a missing result is a negative assessment.
+The operator/orchestrator performs HTTP requests and supplies trusted sources,
+complete prompts and effective schemas to the models. LLMs return documents; they
+do not perform server operations. Missing findings are not negative assessments.
+Only the CVE expert may use configured research tools to verify candidate IDs
+already present in source commit messages. Analyst and Reviewer use supplied evidence.
 
 ### Role workflow
 
-The client orchestrates this workflow for each selected chunk. The server serves
-assets and validates documents; it does not run AI models or invoke the roles.
-The operator or external orchestrator performs every server API
-request described below and supplies schemas, chunks, trusted metadata and prior
-role outputs as attachments or quoted content. LLMs return documents only;
-the orchestrator validates, retries, routes handoffs and stores accepted results.
-Only the CVE expert may use configured `web_search` to verify source-message CVE
-candidates, without adding IDs absent from the source commit message. Analyst and
-Reviewer use supplied evidence only; the server performs deterministic assembly.
-These capabilities do not depend on model or provider.
+1. Analyst and CVE expert independently assess the same selected commits. Analyst
+   owns non-CVE findings; CVE expert owns supported source-message CVE candidates
+   and probabilities. Validate at `/validate/role/analyst` or `/validate/role/cve`
+   under the chosen API prefix.
+2. Reviewer reads original evidence and both validated specialist documents,
+   recording advisory `rv_*` proposals without rewriting specialist values.
+   Validate at that API's `/validate/role/reviewer`.
+3. Role documents contain exactly `run_id`, `role`, and `results`, keyed by full
+   commit SHA. All three submitted documents must cover exactly the same SHAs.
+   Other commits remain unassessed. Delivery names and plan/group IDs are not
+   envelope fields. Do not emit transport checksums, counts or status.
+4. POST exactly `analyst`, `cve`, `reviewer` to the API's `/validate/workflow`, then
+   submit the same object to `/result`. There is no fourth final document.
+   Validation gates store nothing; submission repeats validation and assembly.
+5. Require HTTP 200 and `status: stored`. The `results` map gives a SHA-256 checksum
+   for every accepted SHA. GET `/result/<sha>` under either API and compare exact
+   bytes. A record contains `run_id`, `commit`, `assessment`.
+   Do not apply review recommendations. Partial reassessment replaces supplied SHAs
+   only and retains other accepted records.
 
-1. Analyst and CVE expert independently read the same original chunk and metadata.
-   Analyst assesses non-CVE classifications, product impact, backport effort and
-   recommendations under `/prompt/analyst` and `/schema/analyst`. Validate its
-   complete intermediate document at `/validate/role/analyst/<name>`.
-2. CVE expert owns supported CVE IDs and their probabilities under `/prompt/cve`
-   and `/schema/cve`; it does not rewrite Analyst assessments. Validate its
-   complete intermediate document at `/validate/role/cve/<name>`. Both specialist
-   outputs must pass their gates before being passed to Reviewer.
-3. Reviewer reads the original chunk and both validated specialist outputs. It
-   checks evidence, identities, coverage and uncertainty under `/prompt/reviewer`
-   and `/schema/reviewer`, recording agreement or proposed corrections in `rv_*`
-   without rewriting specialist values. Validate the complete review document at
-   `/validate/role/reviewer/<name>` before passing all three outputs to server assembly.
-4. POST exactly `analyst`, `cve` and `reviewer` documents to `/result/<name>`.
-   Server assembly joins by full commit SHA and stores one `/schema/result`
-   document, preserving values exactly. Do not apply review recommendations.
-   Missing contributions produce partial coverage; invalid reviewer coverage is rejected.
-5. Require HTTP 200 and `status: stored`, then GET that URL to verify acceptance
-   and compare `result_checksum` with the SHA-256 of exact retrieved bytes. Submission
-   runs the workflow gate internally. Validation gates store nothing;
-   `/validate/workflow/<name>` can separately check all four documents.
-
-If required schemas or inputs are missing, unreadable or inconsistent, stop and
-report the failure to the caller. Never POST a failure report as an assessment.
+Missing or inconsistent inputs require a failure report to the caller. Never POST
+a failure report as an assessment. Schemas are authoritative over examples.
 
 ### Using this server
 
-1. Retrieve `/api` and `/contract`, then the listed `/prompt/<name>` and `/schema/<name>` assets.
-   A role prompt (`/prompt/analyst`, `/prompt/cve`, `/prompt/reviewer`) already contains the
-   schemas that role reads; append only the metadata, the chunk and prior validated outputs.
-2. Retrieve the selected batch or chunk listing, preserving any `limit` and
-   `offset`. Use its run ID and URLs exactly; do not guess filenames or replace
-   a debug subset or single-batch retry with the unrestricted global listing.
-3. Retrieve `/context/<name>` and supply its envelope and chunk to the roles.
-   Copy authoritative identities, never calculate hashes with an LLM. Follow the
-   role workflow without expanding selected work.
-4. Collect three schema-conforming compact role documents. Do not fabricate missing
-   assessments or unsupported CVE IDs; the server derives coverage and status.
-5. When authorized, submit the three documents together to `POST /result/<name>`.
-   POST validates, assembles and atomically replaces the final result.
-6. Require HTTP 200 with `status: stored`, `source_chunk`, `run_id` and
-   `result_checksum`; GET the result and compare its exact-byte SHA-256. Rejected uploads are not complete.
+Choose the API prefix first. Read its `/api`, `/contract`, and complete role prompts;
+the prompts already embed the effective schemas they read. Append source selections
+and prior validated outputs separately. Catalog method/URL examples alone are not
+complete POST requests: follow the separate `request_body` definition.
 
-### Result contract
-
-- Follow `/schema/result` exactly, including field names and types.
-- Preserve run ID, source chunk name, schema checksums, and source commit IDs.
-  `input_checksum` is SHA-256 of the original downloaded chunk bytes, not
-  reserialized JSON. `total_commits` must match the source chunk.
-- `analyzed_commits` must equal the number of result entries. A complete result
-  covers every source commit in the chunk; a partial result may cover a subset.
-
-Do not invent missing assessments or unsupported CVE IDs. Assessments are
-advisory, not proof of backport safety.
+Export through the API's `/export`: the deterministic ZIP includes original source/
+contract provenance and all accepted canonical findings. GET never publishes or
+migrates findings. Publication is atomic per SHA, not a whole-batch transaction.
+One writer per result root is supported; report publication is not transactional.
 
 ## 3. For automation and testing
 
-CI jobs can discover, retrieve, and validate data without performing assessments.
-Keep read-only checks separate from authorized uploads. Never upload placeholder
-results as a connectivity test.
-
 ### HTTP requirements and responses
 
-- POST bodies must be 1 byte to 10 MiB with one `Content-Length` and one
-  `Content-Type: application/json` header, without `Transfer-Encoding`.
-- Successful uploads return HTTP 200 with `status: stored`, `source_chunk`, `run_id`
-  and `result_checksum` (SHA-256 of exact stored bytes).
-- HTTP 400 rejects an invalid upload; read the error and correct the submission.
-- HTTP 401 indicates missing or incorrect authentication.
-- HTTP 404 indicates an unknown path or chunk, or an absent stored result.
-- HTTP 405 rejects a method not allowed for a known path; read the `Allow` header.
+POST raw JSON with one `Content-Length`, one `Content-Type: application/json`, no
+`Transfer-Encoding`, and 1 byte to 10 MiB of body. Each catalog describes request
+schemas, limits, path parameters, response schemas and authentication. Resolve
+catalog-local fragments within that catalog, and schema links within its prefix.
+GET result examples can return 404 until accepted findings exist.
 
-### Read-only checks with curl
+HTTP 400 rejects invalid inputs; HTTP 401 requires valid credentials; HTTP 404
+means an absent route/source/plan/finding; HTTP 405 rejects a method on an existing
+route and supplies `Allow`. Errors are always JSON. Successful JSON and Markdown
+can negotiate `Accept: text/plain` without changing bytes. ZIP and errors are not
+converted. Validation never corrects values.
 
-Set the reachable server URL and operator-provided credentials. In CI, supply
-credentials through the job's secret mechanism rather than committing them.
-Omit `--user "$AUTH"` from commands when authentication is disabled.
+### Read, validate, submit and export
+
+These examples use v1. For v2 select `API="$BASE/v2"` and use planned source delivery.
+Do not upload placeholder findings to an operator's server as a connectivity test.
 
 ```sh
 BASE='http://localhost:8000'
+API="$BASE/v1"
 AUTH='user:password'
-
 curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/"
-curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/prompt/analyst"
-curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/schema/input"
-curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/schema/result"
-curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/chunks"
-
-# Replace this example with a filename returned by /chunks.
-CHUNK='batch_001/001.json'  # Use a source_chunk listed by this server.
+curl --fail-with-body --silent --show-error --user "$AUTH" "$API/api"
+curl --fail-with-body --silent --show-error --user "$AUTH" "$API/contract"
+curl --fail-with-body --silent --show-error --user "$AUTH" "$API/prompt/analyst"
+curl --fail-with-body --silent --show-error --user "$AUTH" "$API/chunks"
 curl --fail-with-body --silent --show-error --user "$AUTH" \
-  "$BASE/chunk/$CHUNK" --output chunk.json
-sha256sum chunk.json
+  -H 'Content-Type: application/json' --data-binary @contributions.json "$API/validate/workflow"
+curl --fail-with-body --silent --show-error --user "$AUTH" \
+  -H 'Content-Type: application/json' --data-binary @contributions.json "$API/result"
+curl --fail-with-body --silent --show-error --user "$AUTH" "$API/export" --output results.zip
 ```
 
-`--fail-with-body` makes HTTP errors produce a nonzero curl exit status while
-retaining the response body. A CI job should check exit statuses and validate
-JSON against the supplied schemas, rather than assuming a response is valid.
-
-### Submit and verify a real result
-
-Use authorized `contributions.json` with exactly the three complete role documents.
-The upload changes server state; the verification and export requests do not.
-
-```sh
-curl --fail-with-body --silent --show-error --user "$AUTH" \
-  -H 'Content-Type: application/json' --data-binary @contributions.json "$BASE/result/$CHUNK"
-curl --fail-with-body --silent --show-error --user "$AUTH" "$BASE/result/$CHUNK"
-curl --fail-with-body --silent --show-error --user "$AUTH" \
-  "$BASE/export" --output results.zip
-```
-
-### Read-only Python check
-
-This Python 3 example discovers chunks without uploading. Set `BASE_URL` to
-this server's address and optionally supply `AI_AUTH` through the CI secret
-environment. Authentication, HTTP, and JSON errors make the script fail;
-this checks discovery only, not full schema compliance.
-
-```python
-import base64
-import json
-import os
-from urllib.request import Request, urlopen
-
-base = os.environ.get("BASE_URL", "http://localhost:8000").rstrip("/")
-headers = {}
-credentials = os.environ.get("AI_AUTH")
-if credentials:
-    token = base64.b64encode(credentials.encode("utf-8")).decode("ascii")
-    headers["Authorization"] = "Basic " + token
-request = Request(base + "/chunks", headers=headers)
-with urlopen(request, timeout=10) as response:
-    listing = json.load(response)
-if not isinstance(listing, dict) or not isinstance(listing.get("run_id"), str):
-    raise ValueError("Invalid chunk listing identity")
-chunks = listing.get("chunks")
-if not isinstance(chunks, list) or not all(isinstance(path, str) for path in chunks):
-    raise ValueError("Invalid chunk URLs")
-print(json.dumps(listing, indent=2))
-```
-
-### Authentication and network safety
-
-When authentication is enabled, every endpoint requires HTTP Basic credentials,
-including this guide. Use credentials supplied by the operator; do not guess
-or disclose them. Browsers can use the HTTP login prompt.
-Plain HTTP does not encrypt credentials or analysis data. Use a trusted network
-or an operator-provided HTTPS endpoint. Without authentication, access is unrestricted.
+Omit `--user` when authentication is disabled. When enabled, normal authentication
+applies to both APIs and this guide. Use operator-provided credentials; never guess
+or publish secrets. Plain HTTP does not encrypt credentials/evidence: use a trusted
+network or HTTPS termination. Without authentication, access is unrestricted.

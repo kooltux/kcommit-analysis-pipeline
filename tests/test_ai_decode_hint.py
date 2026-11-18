@@ -35,5 +35,5 @@ def test_fenced_document_is_rejected_with_hint_over_http(app, workflow):
     name, documents = workflow
     body = b'{"result": ' + FENCE + b'json\n{}\n' + FENCE + b'}'
     with running(app) as (port, log, errors):
-        status, headers, data = request(port, '/validate/workflow/' + name, method='POST', body=body)
+        status, headers, data = request(port, '/v1/validate/workflow', method='POST', body=body)
     assert status == 400 and HINT in data.decode()

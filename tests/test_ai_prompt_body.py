@@ -65,19 +65,22 @@ def app(files, tmp_path):
 
 def test_server_serves_bodies_and_reports_them_in_the_contract(app, files):
     with running(app) as (port, log, errors):
-        index = json.loads(request(port, '/contract')[2])
-        for role in EXPECTED:
-            status, headers, data = request(port, '/prompt/' + role)
-            assert status == 200
-            assert data == build_prompt_body(role, reader(files))
-            entry = index['assets']['prompts/%s.md' % role]
-            assert entry['checksum'] == digest(files['prompts/%s.md' % role])
-            assert entry['body'] == {'bytes': len(data), 'checksum': digest(data)}
+        for prefix in ('/v1', '/v2'):
+            index = json.loads(request(port, prefix + '/contract')[2])
+            for role in EXPECTED:
+                status, headers, data = request(port, prefix + '/prompt/' + role)
+                assert status == 200
+                schemas = {name: request(port, prefix + '/schema/' + name)[2] for name in EXPECTED[role]}
+                def effective(path):
+                    return schemas[path.split('/')[1][:-5]] if path.startswith('schemas/') else files[path]
+                assert data == build_prompt_body(role, effective)
+                entry = index['assets']['prompts/%s.md' % role]
+                assert entry['checksum'] == digest(data) and entry['bytes'] == len(data)
 
 
 def test_other_prompt_assets_are_served_as_stored(app):
     with running(app) as (port, log, errors):
-        status, headers, data = request(port, '/prompt/notes')
+        status, headers, data = request(port, '/v1/prompt/notes')
         assert (status, data) == (200, b'# Extra notes\n')
-        entry = json.loads(request(port, '/contract')[2])['assets']['prompts/notes.md']
-        assert 'body' not in entry
+        entry = json.loads(request(port, '/v1/contract')[2])['assets']['prompts/notes.md']
+        assert entry['checksum'] == digest(data) and entry['bytes'] == len(data)

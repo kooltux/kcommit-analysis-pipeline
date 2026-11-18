@@ -71,3 +71,12 @@ def test_hard_rules_and_rules_blocks_stay_json_only(role):
     text = prompt(role)
     assert 'You output ONLY raw JSON' in text
     assert 'Return raw JSON only' in text or 'Response starts with { and ends with }' in text
+
+
+@pytest.mark.parametrize('role', ROLES)
+def test_prompt_envelopes_are_independent_of_delivery_grouping(role):
+    text = prompt(role)
+    assert 'source_chunk' not in text
+    assert 'never merge source chunks' not in text
+    assert 'exactly run_id,' in text
+    assert 'run_id from trusted server metadata verbatim' in text

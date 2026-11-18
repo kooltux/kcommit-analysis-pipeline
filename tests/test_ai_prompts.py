@@ -21,7 +21,7 @@ def test_role_prompts_direct_model_to_exact_output_contract(role, output, inputs
     assert 'Do not reproduce the schema itself' in contract
     assert 'missing, unreadable or conflicting, stop and report' in contract
     assert 'Before answering, check your document against the supplied output schema' in contract
-    assert 'Copy run_id and source_chunk from trusted server metadata verbatim' in contract
+    assert 'Copy run_id from trusted server metadata verbatim' in contract
     assert 'Do not emit checksums, counts or status' in contract
     assert 'Send a plain-text failure report to the caller' in contract
     assert 'Never present a failure report as a valid assessment document' in contract

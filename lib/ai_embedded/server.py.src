@@ -19,7 +19,6 @@ import hashlib
 from .validation import AssessmentValidationError, result_properties, validate_result
 from .prompt_body import BODY_SCHEMAS, build_prompt_body
 from .source import SourceIndex
-from .result_store import ResultStore
 
 ARCHIVE = zipfile.ZipFile(sys.argv[0], 'r')
 MANIFEST = json.loads(ARCHIVE.read('ai_analysis_bundle_manifest.json'))
@@ -33,12 +32,6 @@ RESULTS = os.path.abspath(sys.argv[0]) + '.results'
 
 def checksum(data):
     return hashlib.sha256(data).hexdigest()
-
-
-def prepare_upload(name, data, document):
-    """Prepare stored bytes and receipt; validation must finish before writing."""
-    validate(name, document)
-    return data, {'status': 'ok'}
 
 
 for asset_name, expected in CONTRACT.items():
@@ -71,7 +64,6 @@ def validate(name, value):
         raise ValueError('Unknown chunk')
     return validate_result(value, SOURCE_INDEX.context(name), SCHEMA, SOURCE_INDEX.checksums[name])
 
-RESULT_STORE = ResultStore(RESULTS, SOURCE_INDEX, validate)
 
 ROUTES = []
 MAX_RESULT_BYTES = 10 * 1024 * 1024
@@ -123,42 +115,8 @@ ERROR_CODES = {400: 'invalid_request', 401: 'authentication_failed', 404: 'not_f
 RESPONSE_SCHEMAS = {
     'error': response_object(error=response_object(
         code={'type': 'string'}, status={'type': 'integer'}, message={'type': 'string'})),
-    'validation_ack': response_object(status={'const': 'valid'},
-        run_id={'type': 'string'}, source_chunk={'type': 'string'}),
-    'upload_ack': response_object(status={'const': 'ok'}),
     'version': response_object(tool_version={'type': 'string'},
         version_source={'const': 'MANIFEST.json'}, captured_at={'const': 'zipapp_generation'}),
-    'chunks': response_object(run_id={'type': 'string'},
-        chunks=response_array({'type': 'string'})),
-    'metadata': response_object(schema_version={'const': '1.0'}, run_id={'type': 'string'},
-        source_chunk={'type': 'string'}, input_checksum={'type': 'string'},
-        input_schema_checksum={'type': 'string'}, output_schema_checksum={'type': 'string'},
-        total_commits={'type': 'integer', 'minimum': 0}),
-    'contract': response_object(run_id={'type': 'string'},
-        assets={'type': 'object', 'additionalProperties': {
-            'type': 'object', 'required': ['checksum', 'url'], 'additionalProperties': False,
-            'properties': {'checksum': {'type': 'string'}, 'url': {'type': 'string'},
-                           'body': response_object(bytes={'type': 'integer', 'minimum': 0},
-                                                   checksum={'type': 'string'})}}},
-        input_schema_checksum={'type': 'string'}, output_schema_checksum={'type': 'string'},
-        chunks={'type': 'object', 'additionalProperties': {'type': 'string'}}),
-    'batch': response_object(batch_id={'type': 'string'}, batch_number={'type': 'integer'},
-        total_commits={'type': 'integer'}, run_id={'type': 'string'},
-        chunks=response_array(response_object(
-            name={'type': 'string', 'pattern': SAFE.pattern,
-                  'description': 'Canonical source_chunk name; no endpoint prefix.'},
-            path={'type': 'string', 'description': 'Original archived chunk URL path; use directly.'},
-            result_path={'type': 'string', 'description': 'Result submission/retrieval URL path; use directly.'}))),
-    'batches': response_object(run_id={'type': 'string'}, batch_size={'type': ['integer', 'null']},
-        total_batches={'type': 'integer'}, batches=response_array(response_object(
-            batch_id={'type': 'string'}, batch_number={'type': 'integer'},
-            total_commits={'type': 'integer'}, chunks=response_array({'type': 'string'}),
-            url={'type': 'string'}))),
-    'catalog': response_object(run_id={'type': 'string'}, groups=response_array({'type': 'string'}),
-        routes=response_array({'type': 'object', 'required': ['method', 'path', 'responses']}),
-        authentication=response_object(required={'type': 'boolean'}, scheme={'type': ['string', 'null']}),
-        response_schemas={'type': 'object'}, error_responses={'type': 'object'},
-        protocol_responses={'type': 'object'}),
 }
 
 
@@ -307,6 +265,8 @@ def negotiate(header, default):
 
 def route(method, path, content_type='application/json', **contract):
     """Register an executable route and its machine-readable contract together."""
+    if path != '/' and not path.startswith(('/v1/', '/v2/')):
+        raise ValueError('API routes require /v1/ or /v2/')
     parameters = re.findall(r'<([a-z_]+)>', path)
     pattern = re.escape(path)
     for name in parameters:
@@ -410,6 +370,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def parse_request(self):
         if not super().parse_request():
+            return False
+        path = self.path.split('?', 1)[0]
+        if path != '/' and not path.startswith(('/v1/', '/v2/')):
+            self.send_error(404)
             return False
         expected = self.server.auth_credentials
         if expected is None:
@@ -530,183 +494,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.allowed_methods = sorted({item['method'] for item in ROUTES if item['matcher'].fullmatch(path)})
         self.send_error(405 if self.allowed_methods else 404)
 
-    @route('GET', '/api', group='discovery', order=0, response_schema='#/response_schemas/catalog')
-    def api(self):
-        """Describe routes from the executable registry, not a packaged document."""
-        groups = ['discovery', 'contract', 'sources', 'validation', 'results', 'other']
-        assets = globals().get('CONTRACT', {})
-        routes = []
-        for item in ROUTES:
-            if not callable(getattr(type(self), 'do_' + item['method'], None)):
-                continue
-            entry = {key: value for key, value in item.items() if key not in ('handler', 'matcher')}
-            entry['responses'] = dict(item['responses'])
-            if self.server.auth_credentials is not None:
-                entry['responses']['401'] = {'$ref': '#/error_responses/401'}
-            entry.setdefault('group', 'other')
-            entry.setdefault('order', 0)
-            entry['description'] = entry.get('description') or (item['handler'].__doc__ or '').strip()
-            if entry.get('request_content_type'):
-                body = dict(required=True, content_type=entry['request_content_type'])
-                if entry.get('document_roles'):
-                    documents = entry['document_roles']
-                    body['schema'] = dict(type='object', required=list(documents), additionalProperties=False,
-                        properties={role: {'$ref': '/schema/' + role} for role in documents})
-                    body['description'] = 'An object containing exactly the listed complete JSON documents, not filenames or chunk names.'
-                elif entry.get('request_schema'):
-                    body['schema'] = {'$ref': entry['request_schema']}
-                    body['description'] = 'A complete JSON document conforming to the referenced schema, not the source chunk or its name. Replace <role> in the schema reference with the URL role when present.'
-                entry['request_body'] = body
-            choices = {'chunks': sorted(NAMES), 'batches': sorted(BATCHES), 'roles': list(entry.get('roles', []))}
-            for group in ('prompts', 'schemas'):
-                choices[group] = sorted(name.split('/')[1].rsplit('.', 1)[0] for name in assets if name.startswith(group + '/'))
-            descriptions = {'chunks': 'Canonical source_chunk name (batch entry name), including its batch folder; not an endpoint URL path.',
-                            'batches': 'Batch identifier from /batches.', 'roles': 'Intermediate validation role.',
-                            'prompts': 'Selected prompt name from /contract.', 'schemas': 'Selected schema name from /contract.'}
-            sources = entry.pop('parameter_sources', {})
-            entry['path_parameters'] = {}
-            url = entry['path']
-            for parameter in entry['parameters']:
-                source = sources.get(parameter)
-                values = choices.get(source, [])
-                value = ('analyst' if source in ('roles', 'prompts') and 'analyst' in values else next(iter(values), None))
-                spec = dict(type='string', description=descriptions.get(source, 'Route path parameter.'), example=value)
-                if source in ('roles', 'prompts', 'schemas'):
-                    spec['enum'] = list(values)
-                entry['path_parameters'][parameter] = spec
-                if value is not None:
-                    url = url.replace('<' + parameter + '>', urllib.parse.quote(value, safe='/'))
-            entry['examples'] = []
-            if '<' not in url:
-                entry['examples'].append(dict(method=entry['method'], url=url))
-                if entry.get('query_parameters'):
-                    query = {key: spec.get('example', spec.get('default', 0)) for key, spec in entry['query_parameters'].items()}
-                    query_url = url + '?' + urllib.parse.urlencode(query)
-                    entry['examples'].append(dict(method=entry['method'], url=query_url))
-            routes.append(entry)
-        routes.sort(key=lambda entry: (groups.index(entry['group']) if entry['group'] in groups else len(groups),
-                    entry['order'], entry['path'], {'GET': 0, 'POST': 1}.get(entry['method'], 9)))
-        required = self.server.auth_credentials is not None
-        self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'], 'groups': groups, 'routes': routes,
-            'authentication': {'required': required, 'scheme': 'Basic' if required else None},
-            'response_schemas': RESPONSE_SCHEMAS, 'error_responses': error_responses(),
-            'protocol_responses': {str(code): {'$ref': '#/error_responses/' + str(code)}
-                                   for code in (404, 405, 408, 414, 431, 501)}},
-            sort_keys=True).encode())
-
-    @route('GET', '/api/version', group='discovery', order=1, response_schema='#/response_schemas/version')
-    def version(self):
-        """Report the tool manifest version captured when this zipapp was generated."""
-        self.send_bytes(json.dumps(SERVER_VERSION, sort_keys=True).encode())
-
-    @route('GET', '/', 'text/markdown; charset=utf-8', group='discovery', order=2)
+    @route('GET', '/', 'text/markdown; charset=utf-8', group='discovery', order=0)
     def front_page(self):
-        """Read the shared human, AI-client and automation guide."""
+        """Read the human and AI entry guide for the two versioned APIs."""
         self.send_bytes(ARCHIVE.read('ai_server_front_page.md'))
 
-    @route('GET', '/prompt/<name>', 'text/markdown; charset=utf-8', group='contract', order=1,
-           parameter_sources={'name': 'prompts'})
-    def prompt_asset(self, name):
-        """Retrieve one prompt; analyst, cve and reviewer return the complete static role prompt (instructions plus the schemas it reads), other prompts are returned as stored."""
-        asset = 'prompts/' + name + '.md'
-        if asset not in CONTRACT:
-            self.send_error(404)
-            return
-        if name in BODY_SCHEMAS:
-            self.send_bytes(build_prompt_body(name, lambda path: ARCHIVE.read('ai_contract/' + path)))
-            return
-        self.send_bytes(ARCHIVE.read('ai_contract/' + asset))
-
-    @route('GET', '/schema/<name>', group='contract', order=2, response_schema='https://json-schema.org/draft/2020-12/schema',
-           parameter_sources={'name': 'schemas'})
-    def schema_asset(self, name):
-        """Retrieve one selected schema: input, a specialist/reviewer, result, or an additional asset."""
-        asset = 'schemas/' + name + '.json'
-        if asset not in CONTRACT:
-            self.send_error(404)
-            return
-        self.send_bytes(ARCHIVE.read('ai_contract/' + asset))
-
-    @route('GET', '/batches', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=0, response_schema='#/response_schemas/batches')
-    def batches(self):
-        """List batch assignments, member chunk paths and discovery URLs."""
-        self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
-            'batch_size': MANIFEST.get('batch_size'), 'total_batches': len(BATCHES),
-            'batches': [dict(batch, url='/batch/' + key)
-                        for key, batch in listing_page(self.path, BATCHES.items())]}, sort_keys=True).encode())
-
-    @route('GET', '/batch/<batch_id>', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=1, parameter_sources={'batch_id': 'batches'}, response_schema='#/response_schemas/batch')
-    def batch(self, batch_id):
-        """List canonical chunk names, source paths and result paths for a batch from /batches."""
-        if batch_id not in BATCHES:
-            self.send_error(404)
-            return
-        batch = BATCHES[batch_id]
-        names = listing_page(self.path, batch['chunks'])
-        self.send_bytes(json.dumps(dict(batch, run_id=MANIFEST['run_id'],
-            chunks=[{'name': name, 'path': '/chunk/' + name, 'result_path': '/result/' + name}
-                    for name in names]), sort_keys=True).encode())
-
-    @route('GET', '/chunks', query_parameters=LIST_QUERY_PARAMETERS, group='sources', order=2, response_schema='#/response_schemas/chunks')
-    def chunks(self):
-        """List the run identity and all available source-chunk URLs."""
-        self.send_bytes(json.dumps({'run_id': MANIFEST['run_id'],
-            'chunks': ['/chunk/' + name for name in listing_page(self.path, NAMES)]}, sort_keys=True).encode())
-
-    @route('GET', '/chunk/<name>', response_schema='/schema/input', group='sources', order=3, parameter_sources={'name': 'chunks'})
-    def chunk(self, name):
-        """Read a manifest-listed chunk; name includes the batch folder when present."""
-        if name not in NAMES or not SAFE.fullmatch(name):
-            self.send_error(404)
-            return
-        self.send_bytes(SOURCE_INDEX.raw[name])
-
-    @route('GET', '/result/<name>', response_schema='/schema/result', group='results', order=0, parameter_sources={'name': 'chunks'})
-    def result(self, name):
-        """Read an accepted result using its full source_chunk path; 404 if absent."""
-        if name not in NAMES or not SAFE.fullmatch(name):
-            self.send_error(404)
-            return
-        data = RESULT_STORE.read_chunk(name)
-        if data is None:
-            self.send_error(404)
-            return
-        self.send_bytes(data)
-
-    @route('GET', '/export', 'application/zip', group='results', order=1)
-    def export(self):
-        """Download a ZIP of the manifest, source chunks and validated stored results."""
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as dest:
-            dest.writestr('ai_analysis_bundle_manifest.json',
-                          ARCHIVE.read('ai_analysis_bundle_manifest.json'))
-            for name in NAMES:
-                source = SOURCE_INDEX.raw[name]
-                dest.writestr('ai_analysis_input/' + name, source)
-                data = RESULT_STORE.read_chunk(name)
-                if data is not None:
-                    dest.writestr('results/' + name, data)
-        self.send_bytes(buf.getvalue())
-
-    @route('POST', '/result/<name>', request_content_type='application/json', group='results', order=0, parameter_sources={'name': 'chunks'},
-           request_schema='/schema/result', min_body_bytes=1, max_body_bytes=MAX_RESULT_BYTES,
-           response_schema='#/response_schemas/upload_ack', response_description='Result validated and atomically stored.',
-           response_example={'status': 'ok'})
-    def post_result(self, name):
-        """Validate and atomically replace a result for a manifest-listed source_chunk path."""
-        if name not in NAMES or not SAFE.fullmatch(name):
-            self.send_error(404)
-            return
-        try:
-            data, document = self.read_json()
-            data, receipt = prepare_upload(name, data, document)
-        except (ValueError, UnicodeError, RecursionError) as exc:
-            self.send_error(400, exc)
-            return
-        data = RESULT_STORE.write_chunk(name, decode_json(data))
-        if 'result_checksum' in receipt:
-            receipt['result_checksum'] = checksum(data)
-        self.send_bytes(json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode())
 
 def connection_url(host, port):
     connect_host = '127.0.0.1' if host == '0.0.0.0' else host

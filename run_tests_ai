@@ -100,76 +100,58 @@ def check_pages(base, endpoint, full, fields):
 
 
 def check_discovery(base, expected_version=None):
-    """Exercise live API, batch discovery and pagination; return the full chunk list."""
-    api = json.loads(expect(base, '/api'))
-    check(isinstance(api.get('routes'), list), 'Missing API routes')
-    routes = {(r['method'], r['path']): r for r in api['routes']}
-    schema = routes.get(('GET', '/schema/<name>'), {})
-    check('result' in schema.get('path_parameters', {}).get('name', {}).get('enum', []), 'Missing canonical result schema')
-    check(('GET', '/schema/output') not in routes, 'Removed schema alias is advertised')
-    groups = [api['groups'].index(route['group']) for route in api['routes']]
-    check(groups == sorted(groups), 'API groups are not logically ordered')
-    check(all('examples' in route and 'path_parameters' in route for route in api['routes']),
-          'Missing API parameter examples')
-    check(('GET', '/api') in routes, 'API must describe itself')
-    check(('GET', '/api/version') in routes, 'Missing version route')
-    version = json.loads(expect(base, '/api/version'))
-    check(isinstance(version.get('tool_version'), str) and bool(version['tool_version'].strip()),
-          'Invalid tool version')
-    check(version.get('version_source') == 'MANIFEST.json' and
-          version.get('captured_at') == 'zipapp_generation', 'Invalid version provenance')
-    if expected_version is not None:
-        check(version == expected_version, 'Reported version differs from the generated zipapp')
-    check(json.loads(expect(base, '/api/version?limit=1&offset=999')) == version,
-          'Version endpoint must not be paginated')
-    for path in ('/batches', '/chunks', '/batch/<batch_id>'):
-        check(('GET', path) in routes, 'Missing discovery route: ' + path)
-        check(set(routes[('GET', path)].get('query_parameters', {})) == {'limit', 'offset'},
-              'Missing pagination contract: ' + path)
-    check('query_parameters' not in routes[('GET', '/api')], 'API must not advertise pagination')
-    chunks = json.loads(expect(base, '/chunks'))
-    batches = json.loads(expect(base, '/batches'))
-    check(isinstance(chunks.get('chunks'), list), 'Invalid chunk listing')
-    check(isinstance(batches.get('batches'), list), 'Invalid batch listing')
-    check(api['run_id'] == batches['run_id'] == chunks['run_id'], 'Discovery run IDs differ')
-    check(batches['total_batches'] == len(batches['batches']), 'Incorrect total batch count')
-    check_pages(base, '/chunks', chunks, ('chunks',))
-    check_pages(base, '/batches', batches, ('batches',))
-    members = batches['batches']
-    if members:
-        names = [name for batch in members for name in batch['chunks']]
-        check(['/chunk/' + name for name in names] == chunks['chunks'], 'Batch membership differs from chunks')
-        selected = members[:1] + (members[-1:] if len(members) > 1 else [])
-        for batch in selected:
-            endpoint = '/batch/' + batch['batch_id']
-            check(batch['url'] == endpoint, 'Incorrect batch URL')
-            detail = json.loads(expect(base, endpoint))
-            check(detail['run_id'] == chunks['run_id'], 'Batch run ID differs')
-            check('results' not in detail, 'Batch detail must not expose parallel result arrays')
-            expected = [{'name': n, 'path': '/chunk/' + n, 'result_path': '/result/' + n} for n in batch['chunks']]
-            check(detail['chunks'] == expected, 'Batch chunk names/paths differ')
-            check_pages(base, endpoint, detail, ('chunks',))
-    check(json.loads(expect(base, '/api?limit=1&offset=999999')) == api, 'API catalog was paginated')
-    return chunks
+    """Check both complete APIs and return the v1 source listing."""
+    for path in ('/api', '/contract', '/prompt/analyst', '/schema/input', '/chunks', '/export', '/v1', '/v2'):
+        expect(base, path, 404)
+    listing = None
+    for prefix in ('/v1', '/v2'):
+        api = json.loads(expect(base, prefix + '/api'))
+        routes = {(r['method'], r['path']): r for r in api['routes']}
+        check(all(path.startswith(prefix + '/') for method, path in routes), 'Cross-version or unversioned route advertised')
+        check(('GET', prefix + '/api') in routes, 'Catalog must describe itself')
+        for path in ('/version', '/contract', '/prompt/<name>', '/schema/<name>'):
+            check(('GET', prefix + path) in routes, 'Missing shared document route: ' + path)
+        check(all('examples' in r and 'path_parameters' in r and r.get('description') for r in api['routes']), 'Missing API metadata')
+        check(json.loads(expect(base, prefix + '/api?limit=1&offset=999')) == api, 'API catalog was paginated')
+        version = json.loads(expect(base, prefix + '/version'))
+        if expected_version is not None:
+            check(version == expected_version, 'Captured tool version differs')
+        contract = json.loads(expect(base, prefix + '/contract'))
+        check(contract['run_id'] == api['run_id'], 'Contract identity mismatch')
+        for entry in contract['assets'].values():
+            check(entry['url'].startswith(prefix + '/'), 'Contract link escapes API')
+            data = expect(base, entry['url'])
+            check(hashlib.sha256(data).hexdigest() == entry['checksum'], 'Document checksum mismatch')
+            check(len(data) == entry['bytes'], 'Document size mismatch')
+        if prefix == '/v1':
+            listing = json.loads(expect(base, prefix + '/chunks'))
+            check_pages(base, prefix + '/chunks', listing, ('chunks',))
+            for entry in listing['chunks']:
+                check(entry['url'] == '/v1/chunk/' + entry['name'], 'Invalid source URL')
+                source = json.loads(expect(base, entry['url']))
+                check(set(source) == {'run_id', 'commits'} and source['run_id'] == api['run_id'], 'Invalid source document')
+        else:
+            plan = json.loads(expect(base, prefix + '/plan', method='POST', data=b'{"max_commits":1}'))
+            check(plan['run_id'] == api['run_id'], 'Plan identity mismatch')
+            for group in plan['groups']:
+                data = expect(base, prefix + '/plan/' + plan['plan_id'] + '/' + group['group_id'])
+                check(len(data) == group['input_bytes'], 'Plan byte count mismatch')
+                check([c['commit'] for c in json.loads(data)['commits']] == group['commits'], 'Plan membership mismatch')
+    return listing
 
 
 def check_export(data, listing, result_name=None, payload=None):
-    """Prove export stays complete after paginated discovery, including empty input."""
-    with zipfile.ZipFile(io.BytesIO(data)) as exported:
-        check(exported.testzip() is None, 'Corrupt export')
-        manifest = json.loads(exported.read('ai_analysis_bundle_manifest.json'))
-        names = {path.removeprefix('/chunk/') for path in listing['chunks']}
-        check(manifest['run_id'] == listing['run_id'], 'Export run ID mismatch')
-        check(set(manifest['chunks']) == names, 'Export chunk listing differs')
-        sources = {n.removeprefix('ai_analysis_input/') for n in exported.namelist()
-                   if n.startswith('ai_analysis_input/') and not n.endswith('/')}
-        check(sources == names, 'Export omitted or added source chunks')
+    """Verify complete original source provenance and optional canonical bytes."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        manifest = json.loads(archive.read('ai_analysis_bundle_manifest.json'))
+        check(manifest['analysis_id'] == listing['run_id'], 'Export identity mismatch')
+        names = {e['name'] for e in listing['chunks']}
+        actual = {n.removeprefix('ai_analysis_input/') for n in archive.namelist() if n.startswith('ai_analysis_input/')}
+        check(actual == names == set(manifest['chunks']), 'Export omitted or added sources')
         for name in names:
-            source = exported.read('ai_analysis_input/' + name)
-            check(hashlib.sha256(source).hexdigest() == manifest['chunks'][name], 'Export source checksum mismatch')
+            check(hashlib.sha256(archive.read('ai_analysis_input/' + name)).hexdigest() == manifest['chunks'][name], 'Source checksum mismatch')
         if result_name is not None:
-            check(exported.read('results/' + result_name) == payload, 'Export result differs')
-        print('Verified export members: ' + ', '.join(exported.namelist()), flush=True)
+            check(archive.read('results/' + result_name) == payload, 'Export result differs')
 
 
 def free_port():
@@ -201,7 +183,7 @@ def smoke(app):
                     if proc.poll() is not None:
                         raise RuntimeError(f'Server exited before readiness: {proc.returncode}')
                     try:
-                        code, _ = curl(base, '/chunks')
+                        code, _ = curl(base, '/v1/chunks')
                         if code == 200:
                             break
                     except (AssertionError, subprocess.TimeoutExpired):
@@ -210,75 +192,23 @@ def smoke(app):
                     time.sleep(0.1)
                 print('Server ready; starting HTTP checks', flush=True)
 
-                front_page = expect(base, '/')
-                check(bool(front_page.strip()), 'Empty server front page')
-                expect(base, '/README.md', 404, reason='removed guide alias is rejected')
-                prompt = expect(base, '/prompt/analyst')
-                check(bool(prompt.strip()), 'Empty prompt')
-                input_schema = expect(base, '/schema/input')
-                output_schema = expect(base, '/schema/result')
-                check(json.loads(input_schema)['type'] == 'object', 'Invalid input schema')
-                check(json.loads(output_schema)['type'] == 'object', 'Invalid output schema')
+                check(bool(expect(base, '/').strip()), 'Empty entry guide')
                 with zipfile.ZipFile(copy) as source_archive:
-                    expected_version = json.loads(source_archive.read('ai_server_version.json'))
-                listing = check_discovery(base, expected_version)
-                paths = listing['chunks']
-                check(isinstance(paths, list), 'Invalid chunk listing')
-                if not paths:
-                    check_export(expect(base, '/export', binary=True), listing)
-                    print(paint('PASS: empty discovery, pagination and complete export', '32'))
-                    return
-                check(all(re.fullmatch(r'/chunk/(?:batch_[0-9]{3,}/)?[0-9]+[.]json', path) for path in paths),
-                      'Invalid chunk paths')
-                name = paths[0].removeprefix('/chunk/')
-                source = expect(base, paths[0])
-                chunk = json.loads(source)
-                check(chunk['run_id'] == listing['run_id'], 'Run ID mismatch')
-                check(chunk['source_chunk'] == name, 'Chunk name mismatch')
-                check(chunk['total_commits'] == len(chunk['commits']), 'Chunk count mismatch')
-                check(chunk['input_schema_checksum'] == hashlib.sha256(input_schema).hexdigest(),
-                      'Input schema checksum mismatch')
-                check(chunk['output_schema_checksum'] == hashlib.sha256(output_schema).hexdigest(),
-                      'Output schema checksum mismatch')
-                expect(base, '/chunk/999999999999999999999999.json', 404,
-                       reason='unknown chunk is rejected')
-                expect(base, '/result/' + name, 404,
-                       reason='result is absent before upload')
-                expect(base, '/result/' + name, 405, method='PUT', data=b'{}',
-                       reason='removed PUT upload is rejected')
-                expect(base, '/result/' + name, 400, method='POST', data=b'{}',
-                       reason='invalid POST result is rejected')
-                expect(base, '/result/' + name, 404,
-                       reason='rejected upload saved nothing')
-                result = {
-                    'schema_version': '1.0', 'run_id': listing['run_id'],
-                    'source_chunk': name, 'input_checksum': hashlib.sha256(source).hexdigest(),
-                    'input_schema_checksum': chunk['input_schema_checksum'],
-                    'output_schema_checksum': chunk['output_schema_checksum'],
-                    'analysis_status': 'partial' if chunk['commits'] else 'complete',
-                    'total_commits': len(chunk['commits']), 'analyzed_commits': 0, 'results': {},
-                }
-                context = json.loads(expect(base, '/context/' + name))
-                check(context['chunk'] == chunk, 'Context source differs')
-                check(context['envelope']['input_checksum'] == hashlib.sha256(source).hexdigest(),
-                      'Context checksum differs from archived bytes')
-                expect(base, '/metadata/' + name, 404, reason='metadata route removed')
-                expect(base, '/assemble/' + name, 404, method='POST', data=b'{}', reason='assembly route removed')
-                payload = (json.dumps(result, sort_keys=True, separators=(',', ':')) + '\n').encode()
-                expect(base, '/result/' + name, 400, method='POST', data=payload, reason='legacy upload rejected')
-                inputs = {role: dict(run_id=listing['run_id'], source_chunk=name, role=role, results={})
-                          for role in ('analyst', 'cve', 'reviewer')}
-                reply = json.loads(expect(base, '/result/' + name, method='POST', data=json.dumps(inputs).encode()))
-                check(reply == dict(status='stored', source_chunk=name, run_id=listing['run_id'],
-                    result_checksum=hashlib.sha256(payload).hexdigest()), 'Unexpected storage receipt')
-                check(expect(base, '/result/' + name) == payload, 'Result round trip differs')
-                expect(base, '/result/' + name, 405, method='PUT', data=b'{}',
-                       reason='PUT cannot overwrite an accepted result')
-                check(expect(base, '/result/' + name) == payload,
-                      'Rejected PUT changed the accepted result')
-                archive = expect(base, '/export', binary=True)
-                check_export(archive, listing, name, payload)
-                print(paint(f'PASS: {len(paths)} chunks; API, batches, pagination, upload, complete export', '32'))
+                    version = json.loads(source_archive.read('ai_server_version.json'))
+                listing = check_discovery(base, version)
+                for prefix in ('/v1', '/v2'):
+                    expect(base, prefix + '/validate/workflow', 400, method='POST', data=b'{}')
+                    expect(base, prefix + '/result', 400, method='POST', data=b'{}')
+                    expect(base, prefix + '/result', 405, method='PUT', data=b'{}')
+                    inputs = {role: dict(run_id=listing['run_id'], role=role, results={}) for role in ('analyst', 'cve', 'reviewer')}
+                    payload = json.dumps(inputs).encode()
+                    for role in inputs:
+                        expect(base, prefix + '/validate/role/' + role, method='POST', data=json.dumps(inputs[role]).encode())
+                    expect(base, prefix + '/validate/workflow', method='POST', data=payload)
+                    reply = json.loads(expect(base, prefix + '/result', method='POST', data=payload))
+                    check(reply == dict(status='stored', run_id=listing['run_id'], results={}), 'Invalid empty-selection receipt')
+                    check_export(expect(base, prefix + '/export', binary=True), listing)
+                print(paint('PASS: both APIs, shared documents, delivery, validation and export', '32'))
             finally:
                 if proc.poll() is None:
                     proc.terminate()
