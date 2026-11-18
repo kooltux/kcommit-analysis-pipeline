@@ -85,3 +85,72 @@ class PlanCache:
             while len(self._cache) > self.defaults['cache_entries']:
                 self._cache.popitem(last=False)
             return copy.deepcopy(result)
+
+
+class GroupPlanner(PlanCache):
+    """AI planning with durable group membership, independent of the plan cache."""
+
+    def __init__(self, source, run_id, root, defaults=None):
+        super().__init__(source, run_id, defaults)
+        from pathlib import Path
+        self.group_directory = Path(root) / 'groups' / run_id
+
+    @staticmethod
+    def query_options(query):
+        from urllib.parse import parse_qsl
+        pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=True,
+                          max_num_fields=3)
+        allowed = {'max_commits_per_group', 'max_bytes_per_group', 'max_groups'}
+        options = {}
+        for name, value in pairs:
+            if name not in allowed or name in options or not re.fullmatch(r'[0-9]+', value):
+                raise ValueError('Invalid planning query parameter')
+            number = int(value)
+            if number < 1:
+                raise ValueError('Planning limits must be positive integers')
+            options[name] = number
+        return options
+
+    def plan(self, options=None):
+        options = {} if options is None else options
+        allowed = {'max_commits_per_group', 'max_bytes_per_group', 'max_groups'}
+        if (not isinstance(options, dict) or set(options) - allowed
+                or any(type(value) is not int or value < 1 for value in options.values())):
+            raise ValueError('Invalid group planning options')
+        limits = {
+            'max_commits': options.get('max_commits_per_group', self.defaults['max_commits']),
+            'max_bytes': options.get('max_bytes_per_group', self.defaults['max_bytes']),
+        }
+        complete = super().get(limits)
+        parameters = dict(max_commits_per_group=limits['max_commits'],
+                          max_bytes_per_group=limits['max_bytes'],
+                          max_groups=options.get('max_groups'))
+        groups = complete['groups'][:options.get('max_groups')]
+        public = []
+        from .ai_result_store import _atomic_bytes
+        for group in groups:
+            definition = dict(run_id=self.run_id, commits=group['commits'])
+            _atomic_bytes(str(self.group_directory / (group['group_id'] + '.json')),
+                          _encode(definition))
+            public.append(dict(group_id=group['group_id'],
+                               commit_count=len(group['commits']), input_bytes=group['input_bytes']))
+        return dict(run_id=self.run_id,
+                    plan_id=digest(_encode(dict(run_id=self.run_id, parameters=parameters))),
+                    parameters=parameters, total_groups=len(complete['groups']),
+                    returned_groups=len(public), limited=len(public) < len(complete['groups']),
+                    groups=public)
+
+    def group(self, group_id):
+        from .ai_result_store import _decode
+        if not isinstance(group_id, str) or not re.fullmatch(r'[0-9a-f]{64}', group_id):
+            raise KeyError('Unknown group')
+        try:
+            data = (self.group_directory / (group_id + '.json')).read_bytes()
+        except FileNotFoundError:
+            raise KeyError('Unknown group') from None
+        definition = _decode(data)
+        if (not isinstance(definition, dict) or set(definition) != {'run_id', 'commits'}
+                or definition['run_id'] != self.run_id or digest(_encode(definition)) != group_id
+                or not isinstance(definition['commits'], list) or not definition['commits']):
+            raise ValueError('Invalid persisted group definition')
+        return source_document(self.source, self.run_id, definition['commits'])
