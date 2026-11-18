@@ -4,10 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Reconcile the original nine-item plan supplied by the user and record the
+  user-reported HTML QA pass without attributing it to an independent run.
+  Add isolated v1/v2 and delivered-v2-group record/export equality comparisons,
+  empty/populated-store gate parity checks and repeatable CSV-only no-AI reporting.
+  Record the acceptance-closure QA pass reported by the user on 2026-11-17 and
+  mark all nine items complete within the agreed scope. Commands, counts and logs
+  were not supplied; this is not an independently executed QA run.
+
+- Extend both live versioned export/import/report acceptance cases to generated
+  HTML, bootstrap scope, metadata and AI table indexes using real templates.
+  Retain score/cache/package checks and use distinct short-SHA fixture prefixes.
+  HTML extension QA was subsequently user-reported passing; the original plan
+  was then supplied and is mapped in docs/AI_ANALYSIS.md.
+
 - Add live /v1 and /v2 acceptance cases from real package submission/export through
   canonical import to real JSON/detail, CSV and standalone/combined XLSX/ODS reports.
   Assert advisory-value, scope, score, cache/package and exact-record preservation.
-  Document boundary coverage and limitations; new integration/full-suite QA is pending.
+  Document boundary coverage and limitations; original batch QA was user-reported passing.
 
 - Add one shared advisory AI summary to CSV and standalone/combined XLSX/ODS
   commit tables. Preserve base columns, scores, ordering and no-AI layouts; leave

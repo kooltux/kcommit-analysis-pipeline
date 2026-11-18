@@ -94,8 +94,8 @@ is prefixed with an apostrophe in tabular output; stored findings and JSON stay 
 Full CVE details and Reviewer correction proposals remain in JSON/detail and HTML
 outputs; proposals never replace baseline recommendations. Profile/rule/matrix score
 tables do not acquire AI columns. Tables without AI retain original headers/rows.
-Report-format integration is implemented; the cross-boundary acceptance tests
-below still require execution.
+Report-format integration and its HTML extension have user-reported QA passes.
+The acceptance-closure batch also has a user-reported QA pass on 2026-11-17.
 
 ## Acceptance coverage and execution status
 
@@ -106,22 +106,68 @@ below still require execution.
 | Legacy read-through, migration and restart | `test_ai_runtime_migration.py` |
 | Canonical import, regrouping and rejection safety | `test_ai_canonical_exchange.py`, `test_ai_import_store.py` |
 | Report scope, immutable inputs and tabular cells | `test_ai_report_invariants.py`, `test_ai_report_tables.py` |
-| Live /v1 and /v2 export through import to actual reports | `test_ai_end_to_end.py` (execution pending) |
+| Live /v1 and /v2 export through import to actual reports | `test_ai_end_to_end.py`: original and HTML cases user-reported passing |
 
 The live integration cases prepare a real five-commit package, submit three role
 contributions for a partial selection, retrieve/check canonical bytes, export a ZIP,
-and import it with real Stage 07 generation enabled. JSON/detail, CSV and standalone/
-combined XLSX/ODS are inspected. Assertions retain baseline recommendations despite
+and import it with real Stage 07 generation enabled. JSON/detail, CSV, standalone/
+combined XLSX/ODS, generated HTML/bootstrap data, metadata and table indexes are
+inspected. Source fixtures use distinct short-SHA prefixes. Assertions retain baseline recommendations despite
 Reviewer disagreement, distinguish absent findings, keep top-N/filtered membership,
 and preserve scores, cache/package bytes and profile/rule outputs. Only ancillary
 profile/config/helper-copy setup is stubbed; HTTP, storage, import and report writers
 are not replaced. Stage 08 is forbidden during import-driven report refresh.
 
-The user reported the preceding report batch QA passing. The new integration cases
-and full-suite regression run require fresh results; test presence is not a pass.
-These cases do not exercise HTML/browser rendering or model context feasibility,
-and do not establish completion of the full nine-item design. Existing one-writer,
-per-SHA atomicity and nontransactional report-publication limitations still apply.
+On 2026-11-16 the user reported QA passing for the original end-to-end batch,
+subsequently committed in 35eba9a. Exact commands, test counts and logs were not
+provided; this is user-reported validation, not an independently executed run.
+On 2026-11-17 the user also reported the HTML extension QA passing.
+The user reported acceptance-closure QA passing on 2026-11-17.
+Exact commands, test counts and logs were not supplied for this report;
+this records user-reported validation, not an independently executed run.
+The original nine-item plan is complete within its agreed scope.
+Generated HTML and its data are inspected without running JavaScript in a browser;
+interactive rendering and model context feasibility remain outside these cases.
+Existing one-writer, per-SHA atomicity and nontransactional report-publication
+limitations still apply.
+
+### Original nine-item plan: requirements mapping
+
+This mapping follows the user's original remaining-work plan after 672beda,
+supplied on 2026-11-17. All nine items are complete within the agreed scope,
+based on the implementation, named regression coverage and user-reported QA pass.
+This status does not imply independent test execution or expand the requirements.
+
+| Item | Implementation and regression evidence | Closure status |
+| --- | --- | --- |
+| 1. Grouping-independent analysis identity | `ai_canonical.analysis_identity`; `test_ai_canonical.py`, `test_ai_planning.py` | Complete; direct group/record comparison included in user-reported closure QA pass |
+| 2. Canonical per-commit contract and storage | `CanonicalStore`, `record_path`; `test_ai_canonical.py`, `test_ai_runtime_migration.py` | Complete with legacy compatibility and per-SHA paths |
+| 3. Shared, chunk-independent request contracts | Shared versioned assembly; `test_ai_canonical.py`, `test_ai_versioned_runtime.py` | Complete; populated-store parity included in user-reported closure QA pass |
+| 4. Canonical export/import contract | Shared export/import; `test_ai_canonical_exchange.py`, `test_ai_import_store.py` | Complete; provenance, record validation, regrouping, accumulation and replacement covered |
+| 5. Explicit v1 and v2 interfaces | Versioned catalogs/delivery over shared core; `test_ai_versioned_runtime.py` | Complete; isolated same-input equality included in user-reported closure QA pass |
+| 6. Deterministic cached v2 planning | `PlanCache`; `test_ai_planning.py`, `test_ai_versioned_runtime.py` | Complete; different delivered-group submissions included in user-reported closure QA pass |
+| 7. Stage 08 configuration and feasibility | Planning defaults, exact source-document byte limits and oversized-commit rejection; `test_ai_planning.py`, `test_st08_prepare_ai.py`, `configs/ai_planning.example.json` | Complete for delivery sizing, not model token/context feasibility |
+| 8. Complete reporting invariants | `test_ai_report_invariants.py`, `test_ai_report_tables.py`, `test_ai_end_to_end.py` | Complete; no-AI scope/repeatability included in user-reported closure QA pass |
+| 9. Full end-to-end acceptance matrix | Existing suites above plus `test_ai_acceptance_closure.py` | Complete within agreed scope on the basis of user-reported QA passing on 2026-11-17 |
+
+`test_equivalent_versions_and_v2_groups_have_identical_records` runs four isolated
+copies of the same zipapp: direct v1, direct v2, and v2 with one- and two-commit
+groups fetched from the planning API. It compares complete record paths/bytes,
+retrieval, receipt digests, assembled values and deterministic ZIP exports.
+`test_validation_submission_parity_preserves_existing_records` checks both APIs
+against empty and populated stores: valid validation is write-free; wrong-run,
+unknown-SHA, invalid-field, fourth-document and coverage failures are rejected by
+both gates without file/mtime changes. A valid partial reassessment then publishes
+only the supplied SHA, retaining the other record unchanged.
+`test_no_ai_reports_repeat_and_respect_requested_formats` repeats real no-package,
+no-AI reporting with CSV requested, checks core JSON/detail and CSV repeatability,
+top-N/filtered scope, original headers/scores, unchanged caches, no extra HTML/XLSX/
+ODS or report-server output, and no Stage 08 preparation. Other output formats retain
+their existing writer and live-report tests; this is not a browser-interaction test.
+
+These additions close specific proof gaps rather than introduce new runtime
+requirements. Closure is based on the supplied plan, named regression coverage
+and user-reported QA; existing publication limitations remain unchanged.
 
 ## Legacy result-store core
 

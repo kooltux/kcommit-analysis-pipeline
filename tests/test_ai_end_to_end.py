@@ -2,6 +2,7 @@
 import copy
 import csv
 import json
+from pathlib import Path
 
 import pytest
 from openpyxl import load_workbook
@@ -14,14 +15,17 @@ from lib.ai_report import load_ai_results
 from lib.commands.cmd_ai_import import import_results
 from lib.manifest import CACHE_FILES, COMMIT_COLS, COMMIT_COLS_FILTERED
 from lib.stages import st07_report, st08_prepare_ai
-from test_ai_batch_layout import prepare
+from test_st08_prepare_ai import setup_source
 from test_ai_report_tables import assert_summary, ods_tables, rows
 from test_ai_server_runtime import request, running
 
 
 @pytest.mark.parametrize('prefix', ['/v1', '/v2'])
 def test_live_export_import_generates_real_reports(tmp_path, monkeypatch, rows, prefix):
-    cfg, cache, out, _, _ = prepare(tmp_path, count=5)
+    cfg, cache, out = setup_source(tmp_path, [
+        {'commit': letter * 40, 'subject': 'Fix'} for letter in 'abcde'])
+    cfg['paths']['cache_dir'] = str(cache)
+    st08_prepare_ai.run(cfg, str(cache), str(out))
     source = WorkPackage(cfg, Progress('acceptance'))
     shas = sorted(source.by_sha)
     commits = [dict(commit=sha, subject='Fix', score=11-i, pick_priority=30-i,
@@ -30,13 +34,17 @@ def test_live_export_import_generates_real_reports(tmp_path, monkeypatch, rows, 
     for key, values in [('relevant', commits[:3]), ('filtered', [commits[3]]),
                         ('postfilter_dropped', [commits[4]])]:
         (cache / CACHE_FILES[key]).write_text(json.dumps(values))
-    cfg['reports'] = {'outputs': ['csv', 'xlsx', 'ods'], 'top_n': 2}
+    cfg['reports'] = {'outputs': ['csv', 'xlsx', 'ods', 'html'], 'top_n': 2,
+                      'html_detail_mode': 'sidecar'}
+    cfg['paths']['templates_dir'] = str(Path(__file__).resolve().parents[1] / 'configs/html')
     monkeypatch.setattr(st07_report, '_load_profile_rules_safe', lambda *_: {})
     monkeypatch.setattr(st07_report, '_copy_helper_scripts', lambda *_: [])
     monkeypatch.setattr(st07_report, '_dump_merged_config', lambda *_: None)
     st07_report.run(cfg, str(cache), str(out))
     baseline = {name: json.loads((out / (name + '_commits.json')).read_text())
                 for name in ('relevant', 'filtered')}
+    baseline_indexes = {name: json.loads((out / (name + '_commits.table.json')).read_text())
+                        for name in ('relevant', 'filtered')}
     unchanged = {name: (out / name).read_bytes() for name in
                  ('profile_summary.json', 'profile_matrix.json', 'rule_trace.json',
                   'profile_summary.csv', 'profile_matrix.csv', 'rule_trace.csv')}
@@ -83,11 +91,29 @@ def test_live_export_import_generates_real_reports(tmp_path, monkeypatch, rows, 
     details = {sha: value for path in (out / 'commits').rglob('*.json')
                for sha, value in json.loads(path.read_text()).items()}
     assert set(details) == {shas[0], shas[1], shas[3], shas[4]}
+    html = (out / 'summary.html').read_text(encoding='utf-8')
+    assert '<!doctype html>' in html.lower() and '__COMMITS_DATA__' not in html
+    ui = json.JSONDecoder().raw_decode(html.split('window.__KC_UI__=', 1)[1])[0]
+    assert [row['sha'] for row in ui['rows']] == shas[:2]
+    assert [row['score'] for row in ui['rows']] == [row['score'] for row in commits[:2]]
+    assert [row['sha'] for row in ui['filtered_rows']] == shas[3:]
+    assert ui['detail_root'] == './commits'
+    assert 'window.KCOMMIT_REPORT_METADATA_URL="./report_metadata.json";' in html
+    metadata = json.loads((out / 'report_metadata.json').read_text())
+    assert metadata['report_stats']['ai_reported_commits'] == 2
+    assert {'summary.html', 'relevant_commits.table.json', 'filtered_commits.table.json',
+            'report_metadata.json'}.issubset(calls[0]['generated_files'])
     for name, title, base, expected in [
             ('relevant', 'Relevant Commits', COMMIT_COLS, commits[:2]),
             ('filtered', 'Filtered Commits', COMMIT_COLS_FILTERED, commits[3:])]:
         data = json.loads((out / (name + '_commits.json')).read_text())
         assert [{k: v for k, v in row.items() if k != 'ai_analysis'} for row in data] == baseline[name]
+        index = json.loads((out / (name + '_commits.table.json')).read_text())
+        assert [{k: v for k, v in row.items() if k != 'ai_analysis'}
+                for row in index] == baseline_indexes[name]
+        assert [row['commit'] for row in index] == [row['commit'] for row in data]
+        assert {row['commit']: row['ai_analysis'] for row in index if 'ai_analysis' in row} == {
+            row['commit']: row['ai_analysis'] for row in data if 'ai_analysis' in row}
         for row in data:
             assert details[row['commit']] == row
             if row['commit'] in selected:
