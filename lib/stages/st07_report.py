@@ -412,7 +412,7 @@ def _write_cherry_pick_scripts(cfg, cache, outdir):
 
 
 def _copy_helper_scripts(cfg, outdir):
-    """Copy helper scripts (json_query.sh, archive_output.sh) to output/scripts/.
+    """Copy optional product helpers and the required commit-set tool to output/scripts/.
 
     These scripts are self-contained and portable - they determine their own
     location and work correctly when invoked from any directory. They are
@@ -451,6 +451,13 @@ def _copy_helper_scripts(cfg, outdir):
         else:
             logging.warning('Helper script not found: %s', src_path)
 
+    # Required tool-owned helper; independent of optional product assets.
+    src_path = os.path.join(os.path.dirname(__file__), '..', 'commit_sets.py')
+    os.makedirs(scripts_dir, exist_ok=True)
+    dst_path = os.path.join(scripts_dir, 'list_commits.py')
+    shutil.copy2(src_path, dst_path)
+    os.chmod(dst_path, 0o755)
+    written.append(os.path.join('scripts', 'list_commits.py'))
     return written
 
 

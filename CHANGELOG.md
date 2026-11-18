@@ -4,7 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
-No additional changes pending.
+- Add the standalone Stage 07 `scripts/list_commits.py` helper. Resolve existing
+  cache/report data through the exported pipeline configuration, list named sets
+  with counts, and query union/intersection/difference/complement expressions.
+  Preserve collection order, full threshold membership and report top-N scope;
+  distinguish unavailable data from empty sets. No new snapshot or dependency.
+
+- Present commit counts as a partition tree, suppress equal diagnostic sets by
+  membership equality, and expand partial-scoring/top-N branches when needed.
+  Preserve all named set and expression queries, including `filtered`.
 
 ## v21.5.0 — Two self-contained AI APIs (2026-11-18)
 

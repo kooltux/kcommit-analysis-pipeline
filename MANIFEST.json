@@ -23,7 +23,8 @@
       "output/report_stats.json", "output/prefilter_debug.json", "output/pipeline_run_stats.json",
       "output/serve_report.pyz", "output/commits",
       "output/cherry_pick.sh", "output/cherry_pick_data.json", "output/pipeline_config.json",
-      "output/scripts/json_query.sh", "output/scripts/archive_output.sh"
+      "output/scripts/json_query.sh", "output/scripts/archive_output.sh",
+      "output/scripts/list_commits.py"
     ]},
     {"index": 8, "key": "prepare_ai_analysis", "outputs": [
       "output/ai_analysis_input", "output/ai_contract", "output/ai_analysis_prompt.md", "output/ai_server_front_page.md",

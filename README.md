@@ -412,6 +412,61 @@ automatic fallback to the shipped `configs/profiles/` and `configs/rules/`;
 select them explicitly through `${TOOLDIR}`. See `docs/PROFILES_AND_RULES.md`
 for the full format.
 
+## Commit-set queries
+
+Stage 07 always delivers the tool-owned `output/scripts/list_commits.py`, independent
+of optional product assets. Run from the output directory:
+
+```sh
+python3 scripts/list_commits.py
+python3 scripts/list_commits.py --sets
+python3 scripts/list_commits.py relevant
+python3 scripts/list_commits.py --expr 'related - relevant'
+python3 scripts/list_commits.py --expr '(prefilter_rejected | below_threshold) & ~displayed'
+```
+
+No arguments, `-h` or `--help` show usage and the commit-set tree. `--sets`
+shows the tree only. A named set or expression prints unique full SHAs, one per line,
+in collection order, without headings. Errors go to stderr; no Git or write
+operations occur. Python 3 standard library only; pipeline modules are not needed.
+
+Equal `scored`/`related` and `displayed`/`relevant` sets are summarized by
+membership equality, not duplicate numeric rows. When they differ, the tree
+shows `unscored` (`related - scored`) and `not_displayed` (`relevant - displayed`)
+branches. Existing set names, including `filtered`, remain queryable.
+
+The fixed layout is `output/scripts/list_commits.py` beside its parent directory's
+`pipeline_config.json`. The script locates itself, reads that merged JSON, and
+resolves `paths.cache_dir` and `paths.output_dir` relative to the config file.
+Nested `${NAME}` references use config `vars`; `${env:NAME}` reads the environment.
+`CONFIGDIR` defaults to the exported config directory. Moving the script by itself
+or removing its configured data can make it fail; there is no fallback search.
+No additional commit snapshot is generated.
+
+| Set | Meaning |
+| --- | --- |
+| `all` | Stage 01 collected commits; collection limits are respected |
+| `related` | Stage 04 prefilter-kept commits |
+| `scored` | Stage 05 scoring results |
+| `relevant` | Stage 06 threshold-kept commits, before report top-N |
+| `prefilter_rejected` | `all - related` |
+| `below_threshold` | Explicit Stage 06 threshold rejections |
+| `filtered` | `related - relevant`, including any unscored related commits |
+| `displayed` | Actual relevant report selection, possibly restricted by top-N |
+
+Operators, highest precedence first: `~`, then `&` and `-` (left associative),
+then `^`, then `|`. Parentheses override precedence. `~X` means `all - X`.
+There is no `eval` or execution of expressions. `related - scored` exposes
+unprocessed related commits rather than claiming they failed the threshold.
+The report's combined filtered view is not the `filtered` set defined here.
+
+Missing or malformed inputs display `unavailable`, never a false zero count.
+Queries needing an unavailable set fail; valid empty results succeed with no
+SHA output. Queries require a valid `all` universe. Membership and available
+Stage 06 partition consistency are checked, but caches carry no full run
+provenance guarantee: use coherent data from the same run.
+Exit status: 0 success, 1 unavailable/invalid data, 2 invalid command/expression.
+
 ## Outputs
 
 | File | Description |

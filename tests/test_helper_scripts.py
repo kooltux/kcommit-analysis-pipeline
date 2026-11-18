@@ -44,6 +44,7 @@ def test_copy_helper_scripts_creates_scripts_subdir(tmp_path):
     assert sorted(written) == [
         os.path.join('scripts', 'archive_output.sh'),
         os.path.join('scripts', 'json_query.sh'),
+        os.path.join('scripts', 'list_commits.py'),
     ]
     assert not any(os.path.isabs(p) for p in written)
 
@@ -61,14 +62,14 @@ def test_copy_helper_scripts_are_executable(tmp_path):
     cfg = _cfg_with_assets_dir(str(assets_dir))
     _copy_helper_scripts(cfg, str(outdir))
 
-    for name in ('json_query.sh', 'archive_output.sh'):
+    for name in ('json_query.sh', 'archive_output.sh', 'list_commits.py'):
         path = outdir / 'scripts' / name
         mode = stat.S_IMODE(os.stat(path).st_mode)
         assert mode & stat.S_IXUSR, f'{name} should be user-executable'
 
 
 def test_copy_helper_scripts_missing_source_is_graceful(tmp_path):
-    """Missing source scripts are skipped with a warning, not an exception."""
+    """Missing optional product scripts do not prevent the required tool helper."""
     assets_dir = tmp_path / 'empty_assets'
     assets_dir.mkdir()  # no scripts inside
 
@@ -78,9 +79,9 @@ def test_copy_helper_scripts_missing_source_is_graceful(tmp_path):
     cfg = _cfg_with_assets_dir(str(assets_dir))
     written = _copy_helper_scripts(cfg, str(outdir))
 
-    assert written == []
-    # scripts/ dir should not be created if nothing was copied into it
-    assert not (outdir / 'scripts').exists()
+    assert written == [os.path.join('scripts', 'list_commits.py')]
+    # The required tool helper is delivered even without optional product assets.
+    assert (outdir / 'scripts' / 'list_commits.py').is_file()
 
 
 def test_copy_helper_scripts_partial_missing(tmp_path):
@@ -96,7 +97,8 @@ def test_copy_helper_scripts_partial_missing(tmp_path):
     cfg = _cfg_with_assets_dir(str(assets_dir))
     written = _copy_helper_scripts(cfg, str(outdir))
 
-    assert written == [os.path.join('scripts', 'json_query.sh')]
+    assert written == [os.path.join('scripts', 'json_query.sh'),
+                       os.path.join('scripts', 'list_commits.py')]
     assert not any(os.path.isabs(p) for p in written)
     assert (outdir / 'scripts' / 'json_query.sh').exists()
     assert not (outdir / 'scripts' / 'archive_output.sh').exists()
@@ -107,5 +109,5 @@ def test_copy_helper_scripts_does_not_fall_back_to_repo_assets(tmp_path):
     outdir = tmp_path / 'output'
     outdir.mkdir()
     cfg = {'paths': {}, '_meta': {'initial_config_dir': str(tmp_path)}}
-    assert _copy_helper_scripts(cfg, str(outdir)) == []
-    assert not (outdir / 'scripts').exists()
+    assert _copy_helper_scripts(cfg, str(outdir)) == [os.path.join('scripts', 'list_commits.py')]
+    assert (outdir / 'scripts' / 'list_commits.py').is_file()
