@@ -6,6 +6,7 @@ import pytest
 from lib.ai_contract import digest
 from test_ai_package_server import app, package, snapshots
 from test_ai_server_runtime import basic, request, running
+from ai_http_helpers import record_url, workflow_paths
 from test_ai_versioned_runtime import contributions, post
 
 @pytest.mark.parametrize('auth', [None, 'reviewer:secret'])
@@ -26,12 +27,13 @@ def test_submission_receipt_and_preservation(app, package, auth, mode):
             receipts = json.loads(raw)['results']
             assert set(receipts) == set(documents['analyst']['results'])
             for sha, checksum in receipts.items():
-                data = request(port, '/v2/result/' + sha, authorization=token)[2]
+                status, _, data = request(port, record_url('/v2', sha), authorization=token)
+                assert status == 200, data
                 assert digest(data) == checksum
                 expected = {key: value for doc in documents.values() for key, value in doc['results'][sha].items()}
                 assert json.loads(data) == dict(run_id=package['manifest']['analysis_id'], commit=sha, assessment=expected)
         if mode == 'partial':
-            assert request(port, '/v2/result/' + 'b' * 40, authorization=token)[0] == 404
+            assert request(port, record_url('/v2', 'b' * 40), authorization=token)[0] == 404
 
 @pytest.mark.parametrize('problem', ['four_documents', 'missing', 'extra', 'identity', 'field', 'coverage', 'transport'])
 def test_invalid_submission_cannot_replace_results(app, package, problem):
@@ -52,12 +54,12 @@ def test_invalid_submission_cannot_replace_results(app, package, problem):
     else:
         bad['analyst']['results'] = {}
     root = Path(str(app) + '.results')
-    with running(app) as (port, log, errors):
+    with running(app, extra=('--strict-schema',)) as (port, log, errors):
         for populated in (False, True):
             if populated:
                 assert post(port, '/v1/result', valid)[0] == 200
             before = {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()}
             for prefix in ('/v1', '/v2'):
-                for endpoint in ('/result', '/validate/workflow'):
-                    assert post(port, prefix + endpoint, bad)[0] == 400
+                for endpoint in workflow_paths(port, prefix):
+                    assert post(port, endpoint, bad)[0] == 400
             assert {p.relative_to(root): p.read_bytes() for p in root.rglob('*') if p.is_file()} == before

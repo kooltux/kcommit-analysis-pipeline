@@ -14,6 +14,7 @@ from lib.ai_contract import digest, result_properties
 from test_ai_import_sources import record as assessment
 from test_ai_package_server import app, package, snapshots
 from test_ai_server_runtime import basic, request, running
+from ai_http_helpers import record_url, workflow_paths
 
 
 def contributions(package):
@@ -52,13 +53,14 @@ def test_versioned_validation_submission_retrieval_and_export_share_one_store(ap
             assert catalog['run_id'] == package['manifest']['analysis_id']
             assert all(route['path'] == prefix or route['path'].startswith(prefix + '/')
                        for route in catalog['routes'])
-            assert post(port, prefix + '/validate/workflow', documents, token)[0] == 200
+            validation, _ = workflow_paths(port, prefix, token=token)
+            assert post(port, validation, documents, token)[0] == 200
         assert not root.exists()
         status, _, data = post(port, '/v1/result', documents, token)
         assert status == 200
         receipt = json.loads(data)
         for sha in ('a' * 40, 'b' * 40):
-            status, _, data = request(port, '/v2/result/' + sha, authorization=token)
+            status, _, data = request(port, record_url('/v2', sha), authorization=token)
             assert status == 200 and digest(data) == receipt['results'][sha]
             assert set(json.loads(data)) == {'run_id', 'commit', 'assessment'}
             assert (root / canonical.record_path(sha)).read_bytes() == data
@@ -66,7 +68,8 @@ def test_versioned_validation_submission_retrieval_and_export_share_one_store(ap
         changed['analyst']['results']['a' * 40]['ai_summary'] = 'Updated assessment'
         for role in canonical.ROLES:
             changed[role]['results'].pop('b' * 40)
-        assert post(port, '/v2/result', changed, token)[0] == 200
+        _, submission = workflow_paths(port, '/v2', size=1, token=token)
+        assert post(port, submission, changed, token)[0] == 200
         data = request(port, '/v1/result/' + 'a' * 40, authorization=token)[2]
         assert json.loads(data)['assessment']['ai_summary'] == 'Updated assessment'
         assert digest(request(port, '/v1/result/' + 'b' * 40, authorization=token)[2]) == receipt['results']['b' * 40]
@@ -93,33 +96,34 @@ def test_both_workflow_gates_reject_invalid_input_without_publication(app, packa
         value['reviewer']['results'].pop('a' * 40)
     else:
         value['analyst']['results']['a' * 40]['ai_is_bug_fix'] = 'FALSE'
-    with running(app) as (port, log, errors):
+    with running(app, extra=('--strict-schema',)) as (port, log, errors):
         for prefix in ('/v1', '/v2'):
-            for endpoint in ('/validate/workflow', '/result'):
-                assert post(port, prefix + endpoint, value)[0] == 400
+            for endpoint in workflow_paths(port, prefix):
+                assert post(port, endpoint, value)[0] == 400
     assert not Path(str(app) + '.results').exists()
 
 
 def test_v1_packaged_sources_and_v2_cached_groups_use_same_identity(app, package):
     with running(app) as (port, log, errors):
         listing = json.loads(request(port, '/v1/chunks')[2])
-        one = post(port, '/v2/plan', {'max_commits': 1})
-        two = post(port, '/v2/plan', {'max_commits': 2})
+        one = request(port, '/v2/plan?max_commits_per_group=1')
+        two = request(port, '/v2/plan?max_commits_per_group=2')
         assert one[0] == two[0] == 200
         plan = json.loads(one[2])
-        assert post(port, '/v2/plan', {'max_commits': 1})[2] == one[2]
+        assert request(port, '/v2/plan?max_commits_per_group=1')[2] == one[2]
         assert len(plan['groups']) == 2 and len(json.loads(two[2])['groups']) == 1
         physical = [json.loads(request(port, entry['url'])[2]) for entry in listing['chunks']]
         planned = []
         for group in plan['groups']:
-            path = '/v2/plan/' + plan['plan_id'] + '/' + group['group_id']
+            path = '/v2/group/' + group['group_id']
             status, _, data = request(port, path)
             assert status == 200 and len(data) == group['input_bytes']
             planned.append(json.loads(data))
         assert physical == planned
         assert all(value['run_id'] == package['manifest']['analysis_id'] for value in planned)
-        assert post(port, '/v2/plan', {'max_bytes': 1})[0] == 400
-        assert post(port, '/v2/plan', {'commits': ['f' * 40]})[0] == 400
+        assert request(port, '/v2/plan?max_bytes_per_group=1')[0] == 400
+        assert request(port, '/v2/plan?commits=' + 'f' * 40)[0] == 400
         assert request(port, '/v2/plan/' + 'f' * 64)[0] == 404
-        assert json.loads(request(port, '/v2/plan/' + plan['plan_id'])[2]) == plan
+        assert request(port, '/v2/plan/' + plan['plan_id'])[0] == 404
+        assert json.loads(request(port, '/v2/plan?max_commits_per_group=1')[2]) == plan
     assert not Path(str(app) + '.results').exists()

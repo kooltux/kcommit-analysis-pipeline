@@ -28,12 +28,14 @@ For v1, retrieve `/v1/chunks`, preserve the selected entries and fetch each entr
 unlimited. Both values must be nonnegative integers supplied once. Unknown,
 repeated, empty or malformed parameters return HTTP 400 rather than expanding work.
 
-For v2, POST a JSON object to `/v2/plan`, optionally selecting full commit SHAs and
-positive `max_commits`/`max_bytes`. Use returned `plan_id` and `group_id` at
-`/v2/plan/<plan_id>/<group_id>`. Plans are deterministic, cached and bounded;
-evicted or unknown plans return HTTP 404. Recreate the plan when needed.
+For v2, call `GET /v2/plan`, optionally with positive integer query parameters
+`max_commits_per_group`, `max_bytes_per_group`, and testing cap `max_groups`.
+Packaged commits are implicit. Iterate `groups` and pass only `group_id` to a child.
+`total_groups`, `returned_groups`, `limited` distinguish a capped test subset.
+GET `/v2/group/<group_id>` returns the complete source input; durable definitions
+survive plan-cache eviction and restart. Unknown groups return HTTP 404.
 Oversized commits are rejected, not truncated. Source-byte limits do not establish
-model token/context feasibility.
+model token/context feasibility. Old POST planning and plan-ID paths are removed.
 
 Both delivery forms return exactly `run_id` and `commits`. The run identity belongs
 to the analysis, not a chunk or plan. Changing groups does not change accepted
@@ -53,23 +55,25 @@ already present in source commit messages. Analyst and Reviewer use supplied evi
 
 1. Analyst and CVE expert independently assess the same selected commits. Analyst
    owns non-CVE findings; CVE expert owns supported source-message CVE candidates
-   and probabilities. Validate at `/validate/role/analyst` or `/validate/role/cve`
-   under the chosen API prefix.
-2. Reviewer reads original evidence and both validated specialist documents,
-   recording advisory `rv_*` proposals without rewriting specialist values.
-   Validate at that API's `/validate/role/reviewer`.
+   and probabilities. Optional checks use `/validate/role/analyst` or
+   `/validate/role/cve` under the chosen API prefix.
+2. Reviewer reads original evidence and both specialist documents, recording
+   advisory `rv_*` proposals without rewriting specialist values. Its optional
+   role check is `/validate/role/reviewer` under the chosen API prefix.
 3. Role documents contain exactly `run_id`, `role`, and `results`, keyed by full
    commit SHA. All three submitted documents must cover exactly the same SHAs.
    Other commits remain unassessed. Delivery names and plan/group IDs are not
    envelope fields. Do not emit transport checksums, counts or status.
-4. POST exactly `analyst`, `cve`, `reviewer` to the API's `/validate/workflow`, then
-   submit the same object to `/result`. There is no fourth final document.
-   Validation gates store nothing; submission repeats validation and assembly.
+4. Mechanically assemble exactly `analyst`, `cve`, `reviewer` as role JSON objects.
+   There is no fourth final document. V2 submits the entire group once to
+   `POST /v2/result/<group_id>`; optionally check at `POST /v2/validate/<group_id>`.
+   V1 uses `POST /v1/result` and optional `POST /v1/validate/workflow`.
+   Validation gates store nothing. Pre-validation is not a prerequisite.
 5. Require HTTP 200 and `status: stored`. The `results` map gives a SHA-256 checksum
-   for every accepted SHA. GET `/result/<sha>` under either API and compare exact
-   bytes. A record contains `run_id`, `commit`, `assessment`.
-   Do not apply review recommendations. Partial reassessment replaces supplied SHAs
-   only and retains other accepted records.
+   for every accepted SHA. Retrieve exact bytes at `/v2/result/commit/<sha>` or
+   `/v1/result/<sha>`. Records contain `run_id`, `commit`, `assessment`.
+   Do not apply review recommendations. Reassessment replaces supplied SHAs only;
+   v2 requires all SHAs in the identified group and retains other accepted records.
 
 Missing or inconsistent inputs require a failure report to the caller. Never POST
 a failure report as an assessment. Schemas are authoritative over examples.
@@ -78,7 +82,7 @@ a failure report as an assessment. Schemas are authoritative over examples.
 
 Choose the API prefix first. Read its `/api`, `/contract`, and complete role prompts;
 the prompts already embed the effective schemas they read. Append source selections
-and prior validated outputs separately. Catalog method/URL examples alone are not
+and prior specialist outputs separately. Catalog method/URL examples alone are not
 complete POST requests: follow the separate `request_body` definition.
 
 Export through the API's `/export`: the deterministic ZIP includes original source/
@@ -97,14 +101,22 @@ catalog-local fragments within that catalog, and schema links within its prefix.
 GET result examples can return 404 until accepted findings exist.
 
 HTTP 400 rejects invalid inputs; HTTP 401 requires valid credentials; HTTP 404
-means an absent route/source/plan/finding; HTTP 405 rejects a method on an existing
+means an absent route/source/group/finding; HTTP 405 rejects a method on an existing
 route and supplies `Allow`. Errors are always JSON. Successful JSON and Markdown
 can negotiate `Accept: text/plain` without changing bytes. ZIP and errors are not
 converted. Validation never corrects values.
 
+HTTP contributions ignore unknown fields at the closed workflow, role-envelope
+and per-commit assessment levels before validation. `--strict-schema` rejects
+those extras instead. Both APIs and their validation/submission endpoints share
+this policy, reported in the catalog's `schema_policy`. Missing fields, invalid
+defined values, identities and SHA coverage are never repaired. Stored records
+and offline import remain strict. Normal logs record escaped ignored field paths,
+not values; explicitly enabling `--save-posts` still captures raw requests.
+
 ### Read, validate, submit and export
 
-These examples use v1. For v2 select `API="$BASE/v2"` and use planned source delivery.
+These examples use v1 only. V2 uses the explicit group paths above; replacing the prefix alone is insufficient.
 Do not upload placeholder findings to an operator's server as a connectivity test.
 
 ```sh

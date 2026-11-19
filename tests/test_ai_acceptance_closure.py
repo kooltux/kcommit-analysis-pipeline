@@ -15,6 +15,7 @@ from lib.stages import st07_ai_report, st07_report, st08_prepare_ai
 from test_ai_package_server import app, package, snapshots
 from test_ai_runtime_persistence import snapshot
 from test_ai_server_runtime import request, running
+from ai_http_helpers import record_url, workflow_paths
 from test_ai_versioned_runtime import contributions, post
 from test_st08_prepare_ai import setup_source
 
@@ -31,30 +32,33 @@ def test_equivalent_versions_and_v2_groups_have_identical_records(app, package, 
         isolated.write_bytes(app.read_bytes())
         root = Path(str(isolated) + '.results')
         with running(isolated) as (port, log, errors):
-            groups = [expected_shas]
-            if size is not None:
-                response = post(port, '/v2/plan', {'max_commits': size})
+            groups = [(None, expected_shas)]
+            if prefix == '/v2':
+                size = size or len(expected_shas)
+                response = request(port, '/v2/plan?max_commits_per_group=' + str(size))
                 assert response[0] == 200
                 plan = json.loads(response[2])
                 assert plan['run_id'] == package['manifest']['analysis_id']
                 plan_ids.append(plan['plan_id'])
                 groups = []
                 for group in plan['groups']:
-                    status, _, raw = request(port, '/v2/plan/' + plan['plan_id'] + '/' + group['group_id'])
+                    status, _, raw = request(port, '/v2/group/' + group['group_id'])
                     assert status == 200 and len(raw) == group['input_bytes']
                     source = json.loads(raw)
                     assert source['run_id'] == package['manifest']['analysis_id']
                     members = [item['commit'] for item in source['commits']]
-                    assert members == group['commits']
-                    groups.append(members)
+                    assert len(members) == group['commit_count']
+                    groups.append((group['group_id'], members))
                 assert len(groups) == (len(expected_shas) + size - 1) // size
-            for members in groups:
+            for group_id, members in groups:
                 supplied = {role: dict(document, results={sha: document['results'][sha] for sha in members})
                             for role, document in documents.items()}
                 before, existed = snapshot(root), root.exists()
-                assert post(port, prefix + '/validate/workflow', supplied)[0] == 200
+                validation = '/v2/validate/' + group_id if prefix == '/v2' else '/v1/validate/workflow'
+                submission = '/v2/result/' + group_id if prefix == '/v2' else '/v1/result'
+                assert post(port, validation, supplied)[0] == 200
                 assert snapshot(root) == before and root.exists() == existed
-                status, _, raw = post(port, prefix + '/result', supplied)
+                status, _, raw = post(port, submission, supplied)
                 assert status == 200
                 receipt = json.loads(raw)['results']
                 assert set(receipt) == set(members)
@@ -64,7 +68,7 @@ def test_equivalent_versions_and_v2_groups_have_identical_records(app, package, 
                       for path in root.rglob('*') if path.is_file()}
             assert set(actual) == {record_path(sha) for sha in expected_shas}
             for sha in expected_shas:
-                status, _, raw = request(port, prefix + '/result/' + sha)
+                status, _, raw = request(port, record_url(prefix, sha))
                 assert status == 200 and raw == actual[record_path(sha)]
                 value = json.loads(raw)
                 assert set(value) == {'run_id', 'commit', 'assessment'}
@@ -92,13 +96,15 @@ def test_validation_submission_parity_preserves_existing_records(app, package, p
     for document in candidate.values():
         document['results'] = {sha: document['results'][sha]}
     candidate['analyst']['results'][sha]['ai_summary'] = 'Validated replacement'
-    with running(app) as (port, log, errors):
+    with running(app, extra=('--strict-schema',)) as (port, log, errors):
+        validation, submission = workflow_paths(port, prefix, size=1)
+        _, full_submission = workflow_paths(port, prefix, size=2)
         for populated in (False, True):
             if populated:
-                assert post(port, prefix + '/result', documents)[0] == 200
+                assert post(port, full_submission, documents)[0] == 200
             before, existed = snapshot(root), root.exists()
             assert existed == populated
-            assert post(port, prefix + '/validate/workflow', candidate)[0] == 200
+            assert post(port, validation, candidate)[0] == 200
             assert snapshot(root) == before and root.exists() == existed
             for problem in ('run', 'unknown', 'field', 'fourth', 'coverage'):
                 bad = copy.deepcopy(candidate)
@@ -113,15 +119,17 @@ def test_validation_submission_parity_preserves_existing_records(app, package, p
                     bad['result'] = {}
                 else:
                     bad['reviewer']['results'].pop(sha)
-                for endpoint in ('/validate/workflow', '/result'):
-                    assert post(port, prefix + endpoint, bad)[0] == 400
+                for endpoint in (validation, submission):
+                    assert post(port, endpoint, bad)[0] == 400
                     assert snapshot(root) == before and root.exists() == existed
-        assert post(port, prefix + '/result', candidate)[0] == 200
+        assert post(port, submission, candidate)[0] == 200
         assert snapshot(root) != before
         for member, (raw, mtime) in before.items():
             if member != record_path(sha):
                 assert snapshot(root)[member] == (raw, mtime)
-        value = json.loads(request(port, prefix + '/result/' + sha)[2])
+        status, _, raw = request(port, record_url(prefix, sha))
+        assert status == 200, raw
+        value = json.loads(raw)
         assert value['assessment']['ai_summary'] == 'Validated replacement'
 
 

@@ -514,6 +514,8 @@ def build_parser():
     parser.add_argument('-l', '--log-file', metavar='PATH',
                         help='Log only to this file; required in daemon mode')
     parser.add_argument('--auth', metavar='USER:PASSWORD', help='Require HTTP Basic authentication')
+    parser.add_argument('--strict-schema', action='store_true',
+                        help='Reject extra contribution fields instead of ignoring them')
     parser.add_argument('-s', '--save-posts', action='store_true',
                         help='Save the latest POST body and a Markdown exchange report per path under <zipapp>.debug')
     return parser
@@ -611,6 +613,7 @@ def main(argv=None):
         server.access_logger = logger
         server.auth_credentials = credentials
         server.save_dir = save_dir
+        server.strict_schema = args.strict_schema
         signal.signal(signal.SIGTERM, stop_server)
         signal.signal(signal.SIGINT, stop_server)
         host, port = server.server_address[:2]

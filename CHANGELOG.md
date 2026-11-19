@@ -4,15 +4,46 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
-- Add the standalone Stage 07 `scripts/list_commits.py` helper. Resolve existing
-  cache/report data through the exported pipeline configuration, list named sets
-  with counts, and query union/intersection/difference/complement expressions.
-  Preserve collection order, full threshold membership and report top-N scope;
-  distinguish unavailable data from empty sets. No new snapshot or dependency.
+## v21.6.0 — Durable AI groups and workflow-agent handoff (2026-11-19)
 
-- Present commit counts as a partition tree, suppress equal diagnostic sets by
-  membership equality, and expand partial-scoring/top-N branches when needed.
-  Preserve all named set and expression queries, including `filtered`.
+### Release scope and migration
+
+- Keep major version 21 and increment the minor version as explicitly requested,
+  despite the intentional v2 interface break. V1 delivery remains available.
+- Replace POST planning and plan-scoped retrieval with GET /v2/plan and
+  GET /v2/group/<group_id>. Source commits are implicit. Support positive
+  max_commits_per_group, max_bytes_per_group and optional max_groups; the cap
+  returns a stable prefix with complete/returned group counts and a limited flag.
+- Persist run-bound group definitions independently of plan-cache eviction and
+  restart. Byte limits bound exact source bytes, not model tokens or context.
+- Validate or submit all three roles for an entire group at
+  POST /v2/validate/<group_id> or POST /v2/result/<group_id>. Pre-validation is
+  optional. Retrieve canonical records at GET /v2/result/commit/<sha>.
+  Superseded v2 routes have no compatibility aliases; rebuild packages/clients.
+- Ignore unknown HTTP contribution fields by default; --strict-schema rejects
+  extras. Defined values, identities and exact coverage remain validated.
+  Stored-record checks and offline import remain strict. Catalogs expose the
+  policy and public planning defaults; normal logs contain ignored paths, not values.
+- Add independent parent/group workflow-agent prompts and handoff instructions;
+  align the served guide, schemas, catalog, regression clients and smoke tool.
+
+### Commit-set queries
+
+- Add the standalone Stage 07 scripts/list_commits.py helper over existing
+  cache/report data via exported configuration. List named sets/counts and query
+  union/intersection/difference/complement without new snapshots or dependencies.
+- Preserve collection order, full threshold membership and report top-N scope;
+  distinguish unavailable from empty data. Present counts as a partition tree,
+  suppress equal sets by membership, and retain all named queries including filtered.
+
+### QA and release preparation
+
+- On 2026-11-19 the user reported 2001 tests passing after regression migration,
+  then confirmed QA passing after schema-policy completion. The final run's exact
+  count/log was not supplied; neither report is an independent assistant execution.
+- Version metadata and release documentation are updated together. Rerun full QA
+  after release preparation; tag v21.6.0 only on the finalized approved commit.
+  Staging, committing and tagging require their respective approvals; never push.
 
 ## v21.5.0 — Two self-contained AI APIs (2026-11-18)
 

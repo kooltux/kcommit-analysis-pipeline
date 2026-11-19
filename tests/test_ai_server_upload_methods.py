@@ -6,11 +6,12 @@ from email.message import Message
 import pytest
 from test_ai_package_server import app, package, snapshots
 from test_ai_server_runtime import namespace, basic, request, running
+from ai_http_helpers import record_url, workflow_paths
 from test_ai_versioned_runtime import contributions, post
 
 def test_only_post_is_registered_for_upload(namespace):
-    for prefix in ('/v1', '/v2'):
-        assert {r['method'] for r in namespace['ROUTES'] if r['path'] == prefix + '/result'} == {'POST'}
+    for path in ('/v1/result', '/v2/result/<group_id>'):
+        assert {r['method'] for r in namespace['ROUTES'] if r['path'] == path} == {'POST'}
 
 @pytest.mark.parametrize('auth', [None, 'reviewer:secret'])
 def test_post_replaces_validates_and_exports(app, package, auth):
@@ -21,10 +22,12 @@ def test_post_replaces_validates_and_exports(app, package, auth):
         assert post(port, '/v1/result', contributions(package), token)[0] == 200
         before = request(port, '/v1/result/' + 'a' * 40, authorization=token)[2]
         for prefix in ('/v1', '/v2'):
-            assert post(port, prefix + '/result', {}, token)[0] == 400
-            code, headers, body = request(port, prefix + '/result', method='PUT', body=b'{}', authorization=token)
+            _, submission = workflow_paths(port, prefix, token=token)
+            assert post(port, submission, {}, token)[0] == 400
+            code, headers, body = request(port, submission, method='PUT', body=b'{}', authorization=token)
             assert code == 405 and headers['Allow'] == 'POST'
-            assert request(port, prefix + '/result/' + 'a' * 40, authorization=token)[2] == before
+            status, _, raw = request(port, record_url(prefix, 'a' * 40), authorization=token)
+            assert status == 200 and raw == before
             assert request(port, prefix + '/export', authorization=token)[0] == 200
     assert not list(Path(str(app) + '.results').rglob('.result-*'))
 

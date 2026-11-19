@@ -16,7 +16,24 @@ the supplied runtime state root. Definitions contain only run identity and SHA
 membership, not duplicated source evidence. Reads verify the content-derived ID,
 run and source membership, and do not depend on the plan cache.
 
-This foundation does not yet install the new HTTP routes. Route integration,
-strict-schema CLI handling, documentation replacement and HTTP regression migration
-remain pending; do not describe the target interface as delivered until those
-changes and integrated QA are complete. No compatibility aliases are planned.
+The runtime now registers GET planning, durable group retrieval, optional group
+validation, and direct complete-group submission. Individual records are read
+at GET /v2/result/commit/<sha>. Definitions persist under the sibling
+<zipapp>.results.planning state root, separately from published findings.
+
+See AI_WORKFLOW_AGENTS.md for the two independent workflow-agent prompts and
+required matching catalog/context documents.
+
+## HTTP acceptance policy
+
+Default HTTP handling filters unknown workflow/role/assessment fields using the
+selected role property sets, then runs every existing canonical check. Result SHA
+keys are never filtered. `--strict-schema` disables filtering and rejects extras.
+Both APIs use the same policy for role validation, combined validation and storage.
+Defined values are never repaired; persisted-record checks and import stay strict.
+The catalog reports the active policy and public GET planning-default names.
+
+The user reported 2001 tests passing after regression migration and subsequently
+confirmed QA passing after schema-policy completion on 2026-11-19. The final
+count/log was not supplied. The functional handoff gate is cleared by that user
+report; release-metadata changes still require fresh QA before commit. See AI_V2_QA.md.

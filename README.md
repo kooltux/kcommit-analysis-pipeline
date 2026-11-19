@@ -10,7 +10,7 @@ folders through `--results-bundle PATH`; commit SHA, run identity and schema
 validation are independent of file grouping. See
 [AI import details](docs/AI_ANALYSIS.md#import-grouping-and-progress).
 
-Current release: `v21.5.0`. The AI server exposes two self-contained APIs: `/v1/api` (packaged delivery) and `/v2/api` (planned delivery). `/` is the human/AI entry guide; unversioned API routes are removed. Rebuild the pipeline and packages from scratch. See [AI server APIs](docs/AI_ANALYSIS.md#versioned-runtime-interfaces).
+Current release: `v21.6.0`. The AI server exposes two self-contained APIs: `/v1/api` (packaged delivery) and `/v2/api` (planned delivery). `/` is the human/AI entry guide; unversioned API routes are removed. Rebuild the pipeline and packages from scratch. See [AI server APIs](docs/AI_ANALYSIS.md#versioned-runtime-interfaces).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
@@ -41,12 +41,18 @@ asset into `ai_contract/`, and embeds the directory contract in `serve_ai.pyz`.
 Each API exposes its own contract index, complete role prompts and effective schemas.
 Start at `/v1/api` or `/v2/api`, or read `/` for the two workflows. Both delivery forms
 share one analysis identity and canonical per-commit results. The external
-orchestrator supplies source selections and validated outputs to Analyst, CVE expert
-and Reviewer. Submit exactly three role documents with matched SHA coverage to
-`/v1/result` or `/v2/result`. Each contains exactly `run_id`, `role`, `results`.
+orchestrator supplies original evidence to Analyst and CVE expert, then passes
+that evidence and both outputs to Reviewer. Submit three role documents covering
+the same SHAs to `/v1/result` or `/v2/result/<group_id>`. Each contains exactly
+`run_id`, `role`, `results`.
 The server validates and assembles records without applying advisory review proposals,
 returns per-SHA exact-byte checksums, and supports retrieval/export through either API.
-Validation gates never publish findings.
+Validation gates never publish findings; pre-validation is optional.
+V2 uses `GET /v2/plan` and `GET /v2/group/<group_id>`. See the
+[AI workflow agent handoff](docs/AI_WORKFLOW_AGENTS.md) for independent prompts.
+HTTP contribution handling ignores unknown fields by default; `--strict-schema`
+rejects them. Defined values, identities and coverage are never repaired. Stored
+canonical records and offline import remain strict in both server modes.
 
 
 ## Pipeline stages

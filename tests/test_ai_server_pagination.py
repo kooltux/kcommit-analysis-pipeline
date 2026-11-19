@@ -23,4 +23,7 @@ def test_v1_pagination_preserves_selection_and_catalogs(tmp_path, auth):
         for prefix in ('/v1', '/v2'):
             assert get(prefix + '/api?limit=1&offset=999') == get(prefix + '/api')
             for entry in get(prefix + '/api')['routes']:
-                assert ('query_parameters' in entry) == (entry['path'] == '/v1/chunks')
+                assert ('query_parameters' in entry) == (entry['path'] in ('/v1/chunks', '/v2/plan'))
+                if entry['path'] == '/v2/plan':
+                    assert set(entry['query_parameters']) == {
+                        'max_commits_per_group', 'max_bytes_per_group', 'max_groups'}

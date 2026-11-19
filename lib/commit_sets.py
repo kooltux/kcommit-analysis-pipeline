@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only commit-set queries for output/scripts/list_commits.py (v21.5.0)."""
+"""Read-only commit-set queries for output/scripts/list_commits.py (v21.6.0)."""
 import json
 import os
 import re

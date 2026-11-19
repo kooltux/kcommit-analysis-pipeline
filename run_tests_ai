@@ -131,12 +131,23 @@ def check_discovery(base, expected_version=None):
                 source = json.loads(expect(base, entry['url']))
                 check(set(source) == {'run_id', 'commits'} and source['run_id'] == api['run_id'], 'Invalid source document')
         else:
-            plan = json.loads(expect(base, prefix + '/plan', method='POST', data=b'{"max_commits":1}'))
+            plan = json.loads(expect(base, prefix + '/plan?max_commits_per_group=1'))
             check(plan['run_id'] == api['run_id'], 'Plan identity mismatch')
+            check(plan['total_groups'] == plan['returned_groups'] == len(plan['groups'])
+                  and not plan['limited'], 'Invalid complete-plan counts')
+            seen = []
             for group in plan['groups']:
-                data = expect(base, prefix + '/plan/' + plan['plan_id'] + '/' + group['group_id'])
+                data = expect(base, prefix + '/group/' + group['group_id'])
                 check(len(data) == group['input_bytes'], 'Plan byte count mismatch')
-                check([c['commit'] for c in json.loads(data)['commits']] == group['commits'], 'Plan membership mismatch')
+                source = json.loads(data)
+                check(source['run_id'] == api['run_id'], 'Group identity mismatch')
+                members = [c['commit'] for c in source['commits']]
+                check(len(members) == group['commit_count'] == 1, 'Plan membership count mismatch')
+                seen.extend(members)
+            expected = [c['commit'] for entry in listing['chunks']
+                        for c in json.loads(expect(base, entry['url']))['commits']]
+            check(sorted(seen) == sorted(expected) and len(seen) == len(set(seen)),
+                  'Groups must cover every original source commit exactly once')
     return listing
 
 
@@ -197,16 +208,34 @@ def smoke(app):
                     version = json.loads(source_archive.read('ai_server_version.json'))
                 listing = check_discovery(base, version)
                 for prefix in ('/v1', '/v2'):
-                    expect(base, prefix + '/validate/workflow', 400, method='POST', data=b'{}')
-                    expect(base, prefix + '/result', 400, method='POST', data=b'{}')
-                    expect(base, prefix + '/result', 405, method='PUT', data=b'{}')
+                    if prefix == '/v1':
+                        expect(base, prefix + '/validate/workflow', 400, method='POST', data=b'{}')
+                        expect(base, prefix + '/result', 400, method='POST', data=b'{}')
+                        expect(base, prefix + '/result', 405, method='PUT', data=b'{}')
+                    else:
+                        expect(base, prefix + '/plan', 405, method='POST', data=b'{}')
+                        expect(base, prefix + '/result', 404, method='POST', data=b'{}')
                     inputs = {role: dict(run_id=listing['run_id'], role=role, results={}) for role in ('analyst', 'cve', 'reviewer')}
                     payload = json.dumps(inputs).encode()
                     for role in inputs:
                         expect(base, prefix + '/validate/role/' + role, method='POST', data=json.dumps(inputs[role]).encode())
-                    expect(base, prefix + '/validate/workflow', method='POST', data=payload)
-                    reply = json.loads(expect(base, prefix + '/result', method='POST', data=payload))
-                    check(reply == dict(status='stored', run_id=listing['run_id'], results={}), 'Invalid empty-selection receipt')
+                    if prefix == '/v1':
+                        expect(base, prefix + '/validate/workflow', method='POST', data=payload)
+                        reply = json.loads(expect(base, prefix + '/result', method='POST', data=payload))
+                        check(reply == dict(status='stored', run_id=listing['run_id'], results={}), 'Invalid empty-selection receipt')
+                    else:
+                        plan = json.loads(expect(base, prefix + '/plan'))
+                        if plan['groups']:
+                            group_id = plan['groups'][0]['group_id']
+                            for endpoint in ('/validate/', '/result/'):
+                                expect(base, prefix + endpoint + group_id, 400, method='POST', data=b'{}')
+                                expect(base, prefix + endpoint + group_id, 400, method='POST', data=payload,
+                                       reason='empty role coverage cannot satisfy a nonempty group')
+                            expect(base, prefix + '/result/' + group_id, 405, method='PUT', data=b'{}')
+                        else:
+                            check(plan['total_groups'] == plan['returned_groups'] == 0
+                                  and not plan['limited'], 'Empty sources must produce no groups')
+                        expect(base, prefix + '/group/' + 'f' * 64, 404)
                     check_export(expect(base, prefix + '/export', binary=True), listing)
                 print(paint('PASS: both APIs, shared documents, delivery, validation and export', '32'))
             finally:

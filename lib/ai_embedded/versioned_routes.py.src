@@ -7,7 +7,7 @@ import zipfile
 from . import server as base
 from .canonical import (ROLES, CanonicalStore, assemble_contributions, record_path,
                         record_schema, role_schema, validate_role_document)
-from .planning import PlanCache, source_document
+from .planning import GroupPlanner, source_document
 from .result_store import _decode, _encode
 
 RUN_ID = base.MANIFEST.get('analysis_id')
@@ -24,7 +24,9 @@ def response_schemas():
     selection = dict(array(sha), uniqueItems=True)
     return {
         'versioned_catalog': obj(run_id=identity, routes=array(dict(type='object')),
-            planning_defaults=obj(max_commits=positive, max_bytes=positive, cache_entries=positive),
+            planning_defaults=obj(max_commits_per_group=positive, max_bytes_per_group=positive,
+                                  max_groups=dict(type=['integer', 'null'], minimum=1)),
+            schema_policy=obj(strict=dict(type='boolean'), extra_fields=dict(enum=['ignore', 'reject'])),
             authentication=obj(required=dict(type='boolean'), scheme=dict(type=['string', 'null'])),
             response_schemas=dict(type='object'), error_responses=dict(type='object'),
             schemas=dict(type='object', additionalProperties=text)),
@@ -38,8 +40,11 @@ def response_schemas():
                          additionalProperties=False)),
         'versioned_chunks': obj(run_id=identity, chunks=array(obj(name=text, url=text))),
         'versioned_plan': obj(run_id=identity, plan_id=identity,
-            parameters=obj(max_commits=positive, max_bytes=positive, commits=selection),
-            groups=array(obj(group_id=identity, commits=selection, input_bytes=positive))),
+            parameters=obj(max_commits_per_group=positive, max_bytes_per_group=positive,
+                           max_groups=dict(type=['integer', 'null'], minimum=1)),
+            total_groups=dict(type='integer', minimum=0),
+            returned_groups=dict(type='integer', minimum=0), limited=dict(type='boolean'),
+            groups=array(obj(group_id=identity, commit_count=positive, input_bytes=positive))),
     }
 
 
@@ -88,10 +93,15 @@ def catalog(self):
         if '<' not in url:
             entry['examples'].append(dict(method=entry['method'], url=url))
             if entry.get('query_parameters'):
-                entry['examples'].append(dict(method=entry['method'], url=url + '?limit=1&offset=0'))
+                query = '?max_commits_per_group=10&max_groups=1' if entry['path'] == '/v2/plan' else '?limit=1&offset=0'
+                entry['examples'].append(dict(method=entry['method'], url=url + query))
         entries.append(entry)
     entries.sort(key=lambda item: (groups.index(item['group']), item['order'], item['path'], item['method']))
-    reply(self, dict(run_id=RUN_ID, routes=entries, planning_defaults=PLANS.defaults,
+    defaults = dict(max_commits_per_group=PLANS.defaults['max_commits'],
+                    max_bytes_per_group=PLANS.defaults['max_bytes'], max_groups=None)
+    strict = getattr(self.server, 'strict_schema', False)
+    reply(self, dict(run_id=RUN_ID, routes=entries, planning_defaults=defaults,
+                    schema_policy=dict(strict=strict, extra_fields='reject' if strict else 'ignore'),
                     authentication=dict(required=self.server.auth_credentials is not None,
                         scheme='Basic' if self.server.auth_credentials is not None else None),
                     error_responses=base.error_responses(), response_schemas=base.RESPONSE_SCHEMAS,
@@ -171,16 +181,59 @@ def stored_records(shas=None):
     return records
 
 
-def contributions(self):
-    """Validate exactly three role documents from the POST body; publish per-commit records only on /result."""
+def normalize_document(self, document, role=None):
+    """Filter only unknown contract fields; defined values still require validation."""
+    server = getattr(self, 'server', None)
+    if getattr(server, 'strict_schema', False) or not isinstance(document, dict):
+        return document
+    ignored = []
+
+    def closed(value, allowed, path):
+        if not isinstance(value, dict):
+            return copy.deepcopy(value)
+        ignored.extend(path + [key] for key in value if key not in allowed)
+        return {key: copy.deepcopy(item) for key, item in value.items() if key in allowed}
+
+    def role_document(name, value):
+        result = closed(value, ('run_id', 'role', 'results'), [name])
+        if isinstance(result, dict) and isinstance(result.get('results'), dict):
+            fields = base.result_properties(SCHEMAS[name])
+            result['results'] = {sha: closed(item, fields, [name, 'results', sha])
+                                 for sha, item in result['results'].items()}
+        return result
+
+    if role is None:
+        result = closed(document, ROLES, [])
+        result = {name: role_document(name, value) for name, value in result.items()}
+    else:
+        result = role_document(role, document)
+    logger = getattr(server, 'access_logger', None)
+    if ignored and logger is not None:
+        logger.info('SERVER schema_filter ignored_paths=%s', json.dumps(ignored, ensure_ascii=True))
+    return result
+
+
+def contributions(self, group_id=None):
+    """Validate three role documents; group submission requires exact full-group coverage."""
+    source = None
+    if group_id is not None:
+        try:
+            source = PLANS.group(group_id)
+        except KeyError:
+            self.send_error(404)
+            return
     try:
         _, document = self.read_json()
+        document = normalize_document(self, document)
         records = assemble_contributions(document, base.SOURCE_INDEX, SCHEMAS, RUN_ID)
+        if source is not None and set(records) != {item['commit'] for item in source['commits']}:
+            raise ValueError('Contribution SHA coverage must equal the complete group')
     except (ValueError, UnicodeError, RecursionError) as exc:
         self.close_connection = True
         self.send_error(400, exc)
         return
-    if self.path.split('?', 1)[0].endswith('/validate/workflow'):
+    path = self.path.split('?', 1)[0]
+    if path.endswith('/validate/workflow') or path.startswith('/v2/validate/'):
         reply(self, dict(status='valid', run_id=RUN_ID, commits=sorted(records)))
     else:
         with STORE._lock:
@@ -190,12 +243,13 @@ def contributions(self):
 
 
 def validate_role(self, role):
-    """Validate one role document from the POST body without storing or correcting it."""
+    """Apply the active schema policy and validate one role without storing findings."""
     if role not in ROLES:
         self.send_error(404)
         return
     try:
         _, document = self.read_json()
+        document = normalize_document(self, document, role)
         validate_role_document(role, document, base.SOURCE_INDEX, SCHEMAS, RUN_ID)
     except (ValueError, UnicodeError, RecursionError) as exc:
         self.close_connection = True
@@ -234,29 +288,24 @@ def chunk(self, name):
 
 
 def plan(self):
-    """Create or reuse a bounded v2 delivery plan without publishing findings."""
+    """Plan implicit source commits using positive per-group limits and optional max_groups."""
     try:
-        _, document = self.read_json()
-        value = PLANS.get(document)
-    except (ValueError, UnicodeError, RecursionError) as exc:
-        self.close_connection = True
+        query = base.urllib.parse.urlsplit(self.path).query
+        value = PLANS.plan(PLANS.query_options(query))
+    except ValueError as exc:
         self.send_error(400, exc)
         return
     reply(self, value)
 
 
-def planned(self, plan_id, group_id=None):
-    """Read a cached plan or source group; unknown IDs return 404."""
-    value = PLANS.cached(plan_id)
-    if value is not None:
-        if group_id is None:
-            reply(self, value)
-            return
-        for group in value['groups']:
-            if group['group_id'] == group_id:
-                reply(self, source_document(base.SOURCE_INDEX, RUN_ID, group['commits']))
-                return
-    self.send_error(404)
+def group(self, group_id):
+    """Read complete group evidence using only its durable group ID."""
+    try:
+        value = PLANS.group(group_id)
+    except KeyError:
+        self.send_error(404)
+        return
+    reply(self, value)
 
 
 def export(self):
@@ -290,11 +339,6 @@ def install():
     EXPOSED['result'] = record_schema(SCHEMAS['result'])
     EXPOSED['workflow'] = dict(type='object', additionalProperties=False, required=list(ROLES),
                               properties={role: {} for role in ROLES})
-    EXPOSED['plan'] = dict(type='object', additionalProperties=False, properties={
-        'max_commits': dict(type='integer', minimum=1),
-        'max_bytes': dict(type='integer', minimum=1),
-        'commits': dict(type='array', uniqueItems=True,
-                        items=dict(type='string', pattern='^[0-9a-f]{40}$'))})
     source = json.loads(base.ARCHIVE.read('ai_contract/schemas/input.json'))
     source['required'] = ['run_id', 'commits']
     source['properties'] = {key: source['properties'][key] for key in source['required']}
@@ -305,7 +349,8 @@ def install():
         if path.startswith('schemas/'):
             EXPOSED.setdefault(path.split('/')[1][:-5], json.loads(base.ARCHIVE.read('ai_contract/' + path)))
     store = CanonicalStore(base.RESULTS, base.SOURCE_INDEX, SCHEMAS['result'], RUN_ID)
-    plans = PlanCache(base.SOURCE_INDEX, RUN_ID, base.MANIFEST.get('planning'))
+    plans = GroupPlanner(base.SOURCE_INDEX, RUN_ID, base.RESULTS + '.planning',
+                         base.MANIFEST.get('planning'))
     STORE, PLANS = store, plans
     base.RESPONSE_SCHEMAS.update(response_schemas())
     post = dict(request_content_type='application/json', min_body_bytes=1,
@@ -326,23 +371,32 @@ def install():
                    roles=list(ROLES), parameter_sources={'role': 'roles'}, writes_results=False,
                    request_schema=prefix + '/schema/<role>',
                    response_schema='#/response_schemas/versioned_role_ack', **post)(validate_role)
-        for suffix in ('/validate/workflow', '/result'):
+        for suffix in (('/validate/workflow', '/result') if prefix == '/v1' else ()):
             base.route('POST', prefix + suffix, group='validation' if 'validate' in suffix else 'results',
                        writes_results=suffix == '/result', request_schema=prefix + '/schema/workflow',
                        response_schema='#/response_schemas/' + (
                            'versioned_workflow_ack' if 'validate' in suffix else 'versioned_upload_ack'),
                        **post)(contributions)
-        base.route('GET', prefix + '/result/<sha>', group='results',
+        result_path = '/result/<sha>' if prefix == '/v1' else '/result/commit/<sha>'
+        base.route('GET', prefix + result_path, group='results',
                    response_schema=prefix + '/schema/result')(result)
         base.route('GET', prefix + '/export', 'application/zip', group='results')(export)
     base.route('GET', '/v1/chunks', group='sources', query_parameters=base.LIST_QUERY_PARAMETERS,
                response_schema='#/response_schemas/versioned_chunks')(chunks)
     base.route('GET', '/v1/chunk/<name>', group='sources',
                response_schema='/v1/schema/input', parameter_sources={'name': 'chunks'})(chunk)
-    base.route('POST', '/v2/plan', group='sources', writes_results=False,
-               request_schema='/v2/schema/plan',
-               response_schema='#/response_schemas/versioned_plan', **post)(plan)
-    base.route('GET', '/v2/plan/<plan_id>/<group_id>', group='sources',
-               response_schema='/v2/schema/input')(planned)
-    base.route('GET', '/v2/plan/<plan_id>', group='sources',
-               response_schema='#/response_schemas/versioned_plan')(planned)
+    query = {name: dict(type='integer', minimum=1, required=False,
+                       description='Optional positive integer; omit unset values.')
+             for name in ('max_commits_per_group', 'max_bytes_per_group', 'max_groups')}
+    base.route('GET', '/v2/plan', group='sources', writes_results=False,
+               query_parameters=query,
+               response_schema='#/response_schemas/versioned_plan')(plan)
+    base.route('GET', '/v2/group/<group_id>', group='sources',
+               response_schema='/v2/schema/input')(group)
+    for suffix in ('validate', 'result'):
+        base.route('POST', '/v2/' + suffix + '/<group_id>',
+                   group='validation' if suffix == 'validate' else 'results',
+                   writes_results=suffix == 'result', request_schema='/v2/schema/workflow',
+                   response_schema='#/response_schemas/' + (
+                       'versioned_workflow_ack' if suffix == 'validate' else 'versioned_upload_ack'),
+                   **post)(contributions)

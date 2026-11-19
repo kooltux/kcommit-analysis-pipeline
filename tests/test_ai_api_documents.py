@@ -10,6 +10,7 @@ from lib.ai_preparation import build_package
 from lib.manifest import VERSION
 from test_ai_package_server import app, package, snapshots
 from test_ai_server_runtime import basic, request, running
+from ai_http_helpers import workflow_paths
 from test_ai_versioned_runtime import contributions, post
 
 def refs(value):
@@ -65,7 +66,8 @@ def test_all_shared_documents_resolve_with_exact_sizes_and_checksums(app, packag
                 Draft202012Validator(schema).validate(payload[role])
             workflow = json.loads(get(prefix + '/schema/workflow'))
             assert workflow['properties'] == {r: {'$ref': prefix + '/schema/' + r} for r in payload}
-            assert post(port, prefix + '/validate/workflow', payload, token)[0] == 200
+            validation, _ = workflow_paths(port, prefix, token=token)
+            assert post(port, validation, payload, token)[0] == 200
             assert not app.with_name(app.name + '.results').exists()
             for ref in refs(catalog):
                 if ref.startswith('/'):

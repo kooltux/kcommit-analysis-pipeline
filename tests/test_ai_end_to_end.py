@@ -18,6 +18,7 @@ from lib.stages import st07_report, st08_prepare_ai
 from test_st08_prepare_ai import setup_source
 from test_ai_report_tables import assert_summary, ods_tables, rows
 from test_ai_server_runtime import request, running
+from ai_http_helpers import record_url, submit_selection
 
 
 @pytest.mark.parametrize('prefix', ['/v1', '/v2'])
@@ -61,12 +62,12 @@ def test_live_export_import_generates_real_reports(tmp_path, monkeypatch, rows, 
                                           for key in result_properties(schema)}
                                     for sha in selected}) for role, schema in schemas.items()}
     with running(out / 'serve_ai.pyz') as (port, log, errors):
-        status, _, raw = request(port, prefix + '/result', method='POST', body=encode(documents))
+        status, _, raw = submit_selection(port, prefix, documents)
         assert status == 200
         receipt = json.loads(raw)
         remote = {}
         for sha in selected:
-            status, _, raw = request(port, prefix + '/result/' + sha)
+            status, _, raw = request(port, record_url(prefix, sha))
             assert status == 200 and digest(raw) == receipt['results'][sha]
             remote[sha] = raw
         status, _, exported = request(port, prefix + '/export')

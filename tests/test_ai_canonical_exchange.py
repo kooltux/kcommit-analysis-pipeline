@@ -16,6 +16,7 @@ from lib.commands.cmd_ai_import import import_results
 from lib.stages.st08_prepare_ai import run as prepare_ai
 from test_ai_import_sources import package, collection, record, write_json
 from test_ai_server_runtime import request, running
+from ai_http_helpers import submit_selection
 
 
 def canonical(source, sha, item):
@@ -66,7 +67,7 @@ def test_real_versioned_export_import_uses_identical_canonical_records(package, 
                                     for sha in selected}) for role, schema in schemas.items()}
     app = out / 'serve_ai.pyz'
     with running(app) as (port, log, errors):
-        assert request(port, prefix + '/result', method='POST', body=encode(documents))[0] == 200
+        assert submit_selection(port, prefix, documents)[0] == 200
         status, _, data = request(port, prefix + '/export')
         assert status == 200
     path = tmp_path / 'canonical.zip'

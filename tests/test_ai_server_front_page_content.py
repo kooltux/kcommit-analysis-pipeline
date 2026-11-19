@@ -12,7 +12,7 @@ def test_front_page_is_shared_api_reference():
 
 def test_role_handoffs_and_group_independence_are_explicit():
     text = PAGE.read_text()
-    for fragment in ('Analyst and CVE expert', 'Reviewer', 'exactly `run_id`, `role`, and `results`', 'exactly the same SHAs', 'There is no fourth', 'store nothing', 'Do not apply review recommendations', 'SHA-256', 'unassessed', '/validate/workflow', '/result/<sha>', '/v2/plan/<plan_id>/<group_id>'):
+    for fragment in ('Analyst and CVE expert', 'Reviewer', 'exactly `run_id`, `role`, and `results`', 'exactly the same SHAs', 'There is no fourth', 'store nothing', 'Do not apply review recommendations', 'SHA-256', 'unassessed', '/validate/workflow', '/result/<sha>', '/v2/group/<group_id>', '/v2/result/<group_id>', '/v2/result/commit/<sha>', 'max_groups', 'Pre-validation is not a prerequisite'):
         assert fragment in text
     assert 'source_chunk' not in text
 

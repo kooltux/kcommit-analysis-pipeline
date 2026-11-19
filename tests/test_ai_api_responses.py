@@ -10,6 +10,7 @@ from lib.ai_contract import encode
 from test_ai_package_server import app, package, workflow
 from test_ai_preparation import snapshots
 from test_ai_server_runtime import namespace, basic, request, running
+from ai_http_helpers import workflow_paths
 
 
 def resolve(catalog, value):
@@ -104,15 +105,18 @@ def test_versioned_catalogs_publish_and_enforce_response_contracts(app, package,
             for role in ('analyst', 'cve', 'reviewer'):
                 check(prefix + '/validate/role/' + role, prefix + '/validate/role/<role>',
                       'POST', documents[role])
-            check(prefix + '/validate/workflow', prefix + '/validate/workflow', 'POST', documents)
-            check(prefix + '/result', prefix + '/result', 'POST', documents)
+            validation, submission = workflow_paths(port, prefix, token=token)
+            validation_pattern = '/v1/validate/workflow' if prefix == '/v1' else '/v2/validate/<group_id>'
+            submission_pattern = '/v1/result' if prefix == '/v1' else '/v2/result/<group_id>'
+            check(validation, validation_pattern, 'POST', documents)
+            check(submission, submission_pattern, 'POST', documents)
             check(prefix + '/export', prefix + '/export')
             if prefix == '/v1':
                 check(prefix + '/chunks', prefix + '/chunks')
             else:
-                response = check(prefix + '/plan', prefix + '/plan', 'POST', {})
-                plan_id = json.loads(response[2])['plan_id']
-                check(prefix + '/plan/' + plan_id, prefix + '/plan/<plan_id>')
+                response = check(prefix + '/plan', prefix + '/plan')
+                for group in json.loads(response[2])['groups']:
+                    check(prefix + '/group/' + group['group_id'], prefix + '/group/<group_id>')
             response = request(port, prefix + '/schema/unknown', authorization=token)
             assert response[0] == 404
             check_response(catalog, catalog['error_responses']['404'], response, port, token)

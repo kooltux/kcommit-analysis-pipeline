@@ -1,18 +1,38 @@
 # Optional AI analysis workflow
 
+## HTTP submission policy
+
+The server ignores unknown contribution fields by default; `--strict-schema`
+rejects them. Filtering covers the closed combined-role object, role envelopes,
+and per-commit assessment property sets resolved from the selected role schemas.
+It never removes result SHA keys, invents missing fields, coerces defined values,
+or changes identities or coverage. All canonical checks run after filtering.
+Role validation, workflow validation and submission share this policy in both APIs;
+separate validation calls remain optional. Served output schemas stay exact.
+The catalog reports the active `schema_policy`. Normal logs contain escaped
+ignored paths, not values; explicit `--save-posts` still captures raw bodies.
+Stored-record verification and offline imports are always strict.
+
 ## Versioned runtime interfaces
 
-Version v21.5.0 exposes two self-contained APIs: `/v1/api` for packaged delivery
+Version v21.6.0 exposes two self-contained APIs: `/v1/api` for packaged delivery
 and `/v2/api` for bounded planned delivery. `/` is the readable entry guide for
 humans and AI clients. These are the only catalog endpoints. All unversioned API
 paths, bare `/v1` and bare `/v2` return 404 without aliases or redirects.
 Rebuild the pipeline and its packages from scratch. No HTTP migration is provided.
 
-Under each version prefix, the common interface includes `/api`, `/version`,
-`/contract`, `/prompt/<name>`, `/schema/<name>`, `POST /validate/role/<role>`,
-`POST /validate/workflow`, `POST /result`, `GET /result/<sha>`, and `GET /export`.
-V1 adds `GET /v1/chunks` and `GET /v1/chunk/<name>`. V2 adds `POST /v2/plan`,
-`GET /v2/plan/<plan_id>` and `GET /v2/plan/<plan_id>/<group_id>`.
+Both prefixes expose `/api`, `/version`, `/contract`, `/prompt/<name>`,
+`/schema/<name>`, optional `POST /validate/role/<role>`, and `GET /export`.
+V1 uses `GET /v1/chunks`, `GET /v1/chunk/<name>`, optional
+`POST /v1/validate/workflow`, `POST /v1/result` and `GET /v1/result/<sha>`.
+V2 uses `GET /v2/plan`, `GET /v2/group/<group_id>`, optional
+`POST /v2/validate/<group_id>`, `POST /v2/result/<group_id>` and
+`GET /v2/result/commit/<sha>`, without aliases for superseded v2 paths.
+GET planning accepts positive `max_commits_per_group`, `max_bytes_per_group`
+and optional `max_groups`. Commits are implicit; the group cap returns a stable
+prefix. Group retrieval does not depend on the plan cache.
+See [AI workflow agent handoff](AI_WORKFLOW_AGENTS.md) for the independent prompts
+and required matching catalog/context documents.
 Catalogs derive from executable routing, contain only their own namespace and
 include all shared-document access, request bodies, responses, authentication,
 size limits, parameter choices and examples. IDs not yet created are never invented.
@@ -34,8 +54,9 @@ Changing a chunk selection, delivery plan or group never changes record identity
 Both source forms return exactly `run_id`, `commits`. Role documents require
 exactly `run_id`, `role`, `results`, keyed by full source commit SHA. Delivery names,
 plan/group IDs, checksums, counts and status are not contribution-envelope fields.
-The three submitted roles must cover the same selected SHA set. Other commits stay
-unassessed; missing findings are not negative classifications.
+The three submitted roles must cover the same selected SHA set; v2 additionally
+requires the complete identified group. Other commits stay unassessed; missing
+findings are not negative classifications.
 
 The shared gate validates source membership, identities, roles, fields, limits and
 coverage before assembling values. Submit exactly `analyst`, `cve`, `reviewer`;
@@ -65,15 +86,19 @@ input retains one empty packaged selection. Archive paths are not result identit
 `/v1/chunks` supports nonnegative integer `limit` and `offset`, applied in stable
 order. Absent/zero limit means unlimited. Invalid, repeated, negative, empty or
 unknown parameters return 400; rejected pagination never expands selected work.
-Catalogs are never paginated. V2 source selection is specified in its plan request.
+Catalogs are never paginated. V2 implicitly partitions all packaged source commits.
 
 `ai.planning` accepts positive `max_commits` (default 100), `max_bytes` (1048576),
 and `cache_entries` (32); unknown options are rejected. Use
 `configs/ai_planning.example.json` to override defaults. Stage 08 verifies default
-plan feasibility before publishing assets. Plans select known SHAs deterministically,
-count exact source-document bytes and use a bounded LRU cache. Unknown/evicted plans
-return 404; recreate a plan when needed. An oversized single commit is rejected,
-not truncated or omitted. Byte limits are not model token/context feasibility.
+plan feasibility before publishing assets. V2 deterministically partitions all
+packaged SHAs and counts exact source-document bytes. GET query parameters
+`max_commits_per_group` and `max_bytes_per_group` override the first two defaults;
+`cache_entries` remains internal. Optional `max_groups` returns a stable prefix.
+Group definitions persist independently of the bounded plan cache and survive
+restart. Only unknown groups return 404; eviction does not invalidate group IDs.
+An oversized single commit is rejected, not truncated or omitted. Byte limits
+are not model token/context feasibility.
 
 ## Directory-only integration
 
@@ -260,8 +285,13 @@ in conflict warnings. Progress goes to stderr; stdout contains one JSON summary.
 
 ## Acceptance coverage and execution status
 
+For the current v21.6.0 interface, the user confirmed QA passing after schema-policy
+completion on 2026-11-19. No exact count or fresh log was supplied for that final
+run; see [current QA notes](AI_V2_QA.md). Release-metadata changes require a new
+full run before committing. The older validation history below is retained.
+
 The previous nine-item plan was closed on user-reported QA; that historical pass
-is distinct from validation of this v21.5.0 redesign.
+is distinct from validation of the v21.5.0 redesign.
 
 On 2026-11-18 the user manually applied the patch and reported `./run_tests`
 passing 100%. Exact counts and logs were not supplied. This is user-reported
@@ -280,7 +310,8 @@ multiple writers remain outside the claimed coverage.
 | Exact documents, local links, schema/prompt agreement | `test_ai_api_documents.py`, `test_ai_prompt_body.py` |
 | Response contracts and protocol errors | `test_ai_api_responses.py` |
 | Packaged selection and safe pagination | `test_ai_batch_entries.py`, `test_ai_server_pagination.py` |
-| Cached v2 delivery and API/group equivalence | `test_ai_versioned_runtime.py`, `test_ai_acceptance_closure.py` |
+| Durable v2 groups and API/group equivalence | `test_ai_versioned_runtime.py`, `test_ai_acceptance_closure.py`, `test_ai_group_http.py` |
+| Default/strict schema policy and publication safety | `test_ai_schema_policy.py` |
 | Assembly, advisory values, receipt timing, rejection safety | `test_ai_assembly.py`, `test_ai_upload_policy.py`, `test_ai_server_upload_methods.py` |
 | Read-only access and canonical persistence | `test_ai_runtime_persistence.py` |
 | CLI/authentication/logging/framing/diagnostic saves | `test_ai_server_runtime.py`, `test_ai_save_posts.py`, `test_ai_structured_errors.py` |
@@ -296,7 +327,7 @@ remain independent of the public HTTP surface.
 ## Test entry points
 
 ```sh
-KCAP_TEST_LOG=./qa-full-v21.5.0.log ./run_tests
+KCAP_TEST_LOG=./qa-full-v21.6.0.log ./runtests
 ./run_tests_ai output/serve_ai.pyz
 ```
 
