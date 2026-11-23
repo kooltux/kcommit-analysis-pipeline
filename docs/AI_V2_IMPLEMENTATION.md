@@ -8,8 +8,10 @@ and one POST /v2/result/<group_id> carrying all three role documents.
 
 GroupPlanner implements max_commits_per_group, max_bytes_per_group and optional
 max_groups. The last option returns a stable prefix of the complete partition;
-responses identify total_groups, returned_groups and limited. Limits must be
-positive integers. Source bytes are not model token/context budgets.
+responses identify total_groups, returned_groups and limited. Query limits accept
+nonnegative integers; empty, zero or omitted values use configured defaults.
+Built-in defaults are 25 commits, 262144 bytes per group and unlimited groups.
+Source bytes are not model token/context budgets.
 
 Returned group definitions persist under groups/<run_id>/<group_id>.json beneath
 the supplied runtime state root. Definitions contain only run identity and SHA

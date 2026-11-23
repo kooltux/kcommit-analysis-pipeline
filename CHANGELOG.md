@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+- Update `/v2/plan` defaults to 25 commits and 262144 bytes (256 KiB) per group,
+  with no group-count limit. Empty and zero query values behave like omission;
+  positive values override defaults. Preserve rejection of malformed, negative,
+  unknown and duplicate parameters; add unit and packaged-server HTTP coverage.
+
 ## v21.7.0 — Commit exploration companion (2026-11-23)
 
 ### Commit exploration

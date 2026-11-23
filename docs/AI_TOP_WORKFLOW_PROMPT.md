@@ -7,9 +7,11 @@ child independently analyzes one group. Use generic AI names throughout.
 ## Configuration
 
 Preconfigure API base URL/authentication and child workflow reference. Allow
-optional positive integers max_commits_per_group, max_bytes_per_group, max_groups.
-Omit unset query parameters; never send empty values. max_groups is a testing cap
-on returned groups, not a limit on commits inside each group.
+optional nonnegative integers max_commits_per_group, max_bytes_per_group, max_groups.
+Empty, zero or omitted query values use defaults: 25 commits and 262144 bytes
+per group (unless configured otherwise), with no group-count limit.
+max_groups is a testing cap on returned groups, not a limit on commits inside
+each group. Negative, malformed, unknown and duplicate parameters are rejected.
 
 ## Node sequence
 

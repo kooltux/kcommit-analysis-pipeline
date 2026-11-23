@@ -28,8 +28,10 @@ V1 uses `GET /v1/chunks`, `GET /v1/chunk/<name>`, optional
 V2 uses `GET /v2/plan`, `GET /v2/group/<group_id>`, optional
 `POST /v2/validate/<group_id>`, `POST /v2/result/<group_id>` and
 `GET /v2/result/commit/<sha>`, without aliases for superseded v2 paths.
-GET planning accepts positive `max_commits_per_group`, `max_bytes_per_group`
-and optional `max_groups`. Commits are implicit; the group cap returns a stable
+GET planning accepts nonnegative `max_commits_per_group`, `max_bytes_per_group`
+and optional `max_groups`. Empty, zero or omitted values use defaults: 25 commits,
+262144 bytes per group (unless configured otherwise), and unlimited groups.
+Commits are implicit; the group cap returns a stable
 prefix. Group retrieval does not depend on the plan cache.
 See [AI workflow agent handoff](AI_WORKFLOW_AGENTS.md) for the independent prompts
 and required matching catalog/context documents.
@@ -88,13 +90,15 @@ order. Absent/zero limit means unlimited. Invalid, repeated, negative, empty or
 unknown parameters return 400; rejected pagination never expands selected work.
 Catalogs are never paginated. V2 implicitly partitions all packaged source commits.
 
-`ai.planning` accepts positive `max_commits` (default 100), `max_bytes` (1048576),
+`ai.planning` accepts positive `max_commits` (default 25), `max_bytes` (262144),
 and `cache_entries` (32); unknown options are rejected. Use
 `configs/ai_planning.example.json` to override defaults. Stage 08 verifies default
 plan feasibility before publishing assets. V2 deterministically partitions all
 packaged SHAs and counts exact source-document bytes. GET query parameters
 `max_commits_per_group` and `max_bytes_per_group` override the first two defaults;
 `cache_entries` remains internal. Optional `max_groups` returns a stable prefix.
+For all three GET parameters, empty values and 0 mean omission. Group count
+defaults to unlimited; the built-in byte bound is 256 KiB (262144 bytes).
 Group definitions persist independently of the bounded plan cache and survive
 restart. Only unknown groups return 404; eviction does not invalidate group IDs.
 An oversized single commit is rejected, not truncated or omitted. Byte limits

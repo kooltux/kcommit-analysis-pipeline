@@ -7,7 +7,7 @@ import threading
 from .ai_contract import digest
 from .ai_result_store import _encode
 
-DEFAULTS = {'max_commits': 100, 'max_bytes': 1048576, 'cache_entries': 32}
+DEFAULTS = {'max_commits': 25, 'max_bytes': 262144, 'cache_entries': 32}
 
 
 def planning_defaults(value=None):
@@ -103,11 +103,11 @@ class GroupPlanner(PlanCache):
         allowed = {'max_commits_per_group', 'max_bytes_per_group', 'max_groups'}
         options = {}
         for name, value in pairs:
-            if name not in allowed or name in options or not re.fullmatch(r'[0-9]+', value):
+            if name not in allowed or name in options or not re.fullmatch(r'[0-9]*', value):
                 raise ValueError('Invalid planning query parameter')
-            number = int(value)
-            if number < 1:
-                raise ValueError('Planning limits must be positive integers')
+            number = int(value or '0')
+            if number < 0:
+                raise ValueError('Planning limits must be nonnegative integers')
             options[name] = number
         return options
 
@@ -115,8 +115,9 @@ class GroupPlanner(PlanCache):
         options = {} if options is None else options
         allowed = {'max_commits_per_group', 'max_bytes_per_group', 'max_groups'}
         if (not isinstance(options, dict) or set(options) - allowed
-                or any(type(value) is not int or value < 1 for value in options.values())):
+                or any(type(value) is not int or value < 0 for value in options.values())):
             raise ValueError('Invalid group planning options')
+        options = {name: value for name, value in options.items() if value != 0}
         limits = {
             'max_commits': options.get('max_commits_per_group', self.defaults['max_commits']),
             'max_bytes': options.get('max_bytes_per_group', self.defaults['max_bytes']),

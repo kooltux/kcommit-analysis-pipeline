@@ -28,8 +28,10 @@ For v1, retrieve `/v1/chunks`, preserve the selected entries and fetch each entr
 unlimited. Both values must be nonnegative integers supplied once. Unknown,
 repeated, empty or malformed parameters return HTTP 400 rather than expanding work.
 
-For v2, call `GET /v2/plan`, optionally with positive integer query parameters
+For v2, call `GET /v2/plan`, optionally with nonnegative integer query parameters
 `max_commits_per_group`, `max_bytes_per_group`, and testing cap `max_groups`.
+Empty, zero or omitted values use defaults: 25 commits and 262144 bytes per group
+(unless configured otherwise), with no group-count limit.
 Packaged commits are implicit. Iterate `groups` and pass only `group_id` to a child.
 `total_groups`, `returned_groups`, `limited` distinguish a capped test subset.
 GET `/v2/group/<group_id>` returns the complete source input; durable definitions

@@ -54,12 +54,27 @@ def test_empty_input_and_oversized_commit(tmp_path):
         GroupPlanner(Source(), 'a' * 64, tmp_path).plan({'max_bytes_per_group': 1})
 
 
-@pytest.mark.parametrize('query', ['max_groups=0', 'max_groups=-1', 'max_groups=',
+@pytest.mark.parametrize('query', ['max_groups=-1',
     'max_groups=1&max_groups=2', 'max_commits=1', 'max_bytes=2', 'unknown=1',
-    'max_groups=true', 'max_groups=1.0', 'max_groups', 'max_groups=+1'])
+    'max_groups=true', 'max_groups=1.0', 'max_groups', 'max_groups=+1',
+    'max_groups=&max_groups=0'])
 def test_bad_queries(query):
     with pytest.raises(ValueError):
         GroupPlanner.query_options(query)
+
+
+@pytest.mark.parametrize('name', ['max_commits_per_group', 'max_bytes_per_group', 'max_groups'])
+@pytest.mark.parametrize('value', ['', '0'])
+def test_empty_and_zero_queries_use_defaults(tmp_path, name, value):
+    options = GroupPlanner.query_options(name + '=' + value)
+    assert options == {name: 0}
+    planner = GroupPlanner(Source(26), 'a' * 64, tmp_path)
+    expected = planner.plan()
+    assert expected['parameters'] == dict(max_commits_per_group=25,
+                                        max_bytes_per_group=262144, max_groups=None)
+    assert expected['total_groups'] == expected['returned_groups'] == 2
+    assert not expected['limited']
+    assert planner.plan(options) == expected
 
 
 def test_valid_queries_and_defaults():
