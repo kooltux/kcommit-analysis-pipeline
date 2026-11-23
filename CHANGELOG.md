@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## v21.7.0 — Commit exploration companion (2026-11-23)
+
+### Commit exploration
+
+- Add read-only exploration, shared JMESPath selection and filter validation,
+  manual commit lists, output-only reports, regression tests and documentation.
+  New runtime dependency: `jmespath>=1.1,<2`. The pipeline, AI APIs and
+  existing outputs are unchanged.
+- Add `kcommit_tool.py check`: individual/series application simulation with
+  index or isolated cherry-pick methods, ancestor-first ordering, conflict
+  recovery, stop/skip policy, dry-run preview and per-commit diagnostics. It
+  never changes the user's branches, index or working files.
+- Add `kcommit_tool.py apply`: ancestor-first real cherry-picks in a disposable
+  worktree onto a new or existing branch, published atomically with a
+  compare-and-swap ref update; stop/skip and complete/applied policies,
+  origin trailer, dry-run, and exit codes distinguishing policy blocks. The
+  shared engine now has a reusable `run_entries()`.
+
 ## v21.6.0 — Durable AI groups and workflow-agent handoff (2026-11-19)
 
 ### Release scope and migration

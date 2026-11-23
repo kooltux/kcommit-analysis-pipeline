@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only commit-set queries for output/scripts/list_commits.py (v21.6.0)."""
+"""Read-only commit-set queries for output/scripts/list_commits.py (v21.7.0)."""
 import json
 import os
 import re
@@ -87,8 +87,8 @@ def directories(config, base):
     return result
 
 
-def ids(path):
-    values = load_json(path)
+def ids(path, values=None):
+    values = load_json(path) if values is None else values
     if not isinstance(values, list):
         raise ValueError('expected a JSON array: ' + path)
     ordered, seen = [], set()
@@ -108,12 +108,20 @@ def read_sets(script_path):
     if not isinstance(config, dict):
         raise ValueError('configuration must be a JSON object')
     cache, output = directories(config, base)
+    return (config, *read_sets_from_dirs(cache, output))
+
+
+def read_sets_from_dirs(cache, output, artifacts=None):
+    """Read validated memberships and retain their artifact snapshot."""
+    artifacts = {} if artifacts is None else artifacts
     sets, errors, order = {}, {}, []
     sources = [(name, os.path.join(cache, file)) for name, file in FILES.items()]
     sources.append(('displayed', os.path.join(output, 'relevant_commits.json')))
     for name, path in sources:
         try:
-            values = ids(path)
+            rows = load_json(path)
+            values = ids(path, rows)
+            artifacts[name] = rows
             sets[name] = set(values)
             if name == 'all':
                 order = values
@@ -142,7 +150,8 @@ def read_sets(script_path):
     for name in NAMES:
         if name in errors:
             sets.pop(name, None)
-    return config, sets, errors, order
+            artifacts.pop(name, None)
+    return sets, errors, order
 
 
 class Expression:

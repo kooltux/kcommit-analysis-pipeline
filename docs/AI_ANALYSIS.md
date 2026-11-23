@@ -15,7 +15,7 @@ Stored-record verification and offline imports are always strict.
 
 ## Versioned runtime interfaces
 
-Version v21.6.0 exposes two self-contained APIs: `/v1/api` for packaged delivery
+Version v21.7.0 exposes two self-contained APIs: `/v1/api` for packaged delivery
 and `/v2/api` for bounded planned delivery. `/` is the readable entry guide for
 humans and AI clients. These are the only catalog endpoints. All unversioned API
 paths, bare `/v1` and bare `/v2` return 404 without aliases or redirects.
@@ -327,7 +327,7 @@ remain independent of the public HTTP surface.
 ## Test entry points
 
 ```sh
-KCAP_TEST_LOG=./qa-full-v21.6.0.log ./runtests
+KCAP_TEST_LOG=./qa-full-v21.7.0.log ./runtests
 ./run_tests_ai output/serve_ai.pyz
 ```
 

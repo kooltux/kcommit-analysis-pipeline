@@ -10,7 +10,7 @@ folders through `--results-bundle PATH`; commit SHA, run identity and schema
 validation are independent of file grouping. See
 [AI import details](docs/AI_ANALYSIS.md#import-grouping-and-progress).
 
-Current release: `v21.6.0`. The AI server exposes two self-contained APIs: `/v1/api` (packaged delivery) and `/v2/api` (planned delivery). `/` is the human/AI entry guide; unversioned API routes are removed. Rebuild the pipeline and packages from scratch. See [AI server APIs](docs/AI_ANALYSIS.md#versioned-runtime-interfaces).
+Current release: `v21.7.0`. The AI server exposes two self-contained APIs: `/v1/api` (packaged delivery) and `/v2/api` (planned delivery). `/` is the human/AI entry guide; unversioned API routes are removed. Rebuild the pipeline and packages from scratch. See [AI server APIs](docs/AI_ANALYSIS.md#versioned-runtime-interfaces).
 
 A restartable pipeline to analyse Linux kernel commits between two revisions
 and identify those relevant to a given embedded product, scored exclusively
@@ -500,11 +500,20 @@ Optional XLSX/ODS: enable with `"reports": { "outputs": ["xlsx", "ods"] }`.
 Each enabled format produces both `relevant_commits.*` and `filtered_commits.*`
 counterparts, plus `profile_summary.*`, `profile_matrix.*`, and workbook outputs when those formats are enabled.
 
+## Commit exploration
+
+Use `kcommit_tool.py` to explore existing results and validate JMESPath filters.
+`check` simulates applying commits without touching your repository state;
+`apply` cherry-picks them onto a new or existing branch, published atomically.
+See [the companion guide](docs/KCOMMIT_TOOL.md).
+Install runtime dependencies before using expressions.
+
 ## Requirements
 
 - Python 3.13+
 - `git` on `PATH`
 - `jsonschema>=4.18,<5` for mandatory offline AI schema checks
+- `jmespath>=1.1,<2` for companion queries
 - `openpyxl` for XLSX output (`pip install openpyxl`)
 
 Install runtime dependencies with `python3 -m pip install -r requirements.txt`.
